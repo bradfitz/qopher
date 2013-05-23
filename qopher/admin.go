@@ -96,11 +96,8 @@ func adminPollDebug(rw http.ResponseWriter, r *http.Request) {
 }
 
 var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
-	"selected": func(a, b string) string {
-		if a == b {
-			return "selected"
-		}
-		return ""
+	"taskURL": func(taskType, id string) string {
+		return task.TypeMap[taskType].TaskURL(id)
 	},
 }).Parse(`
 <!doctype html>
@@ -118,7 +115,7 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
      <b>Error:</b> {{$tt.Err}}
   {{else}}
     {{range $i, $task := $tt.Tasks}}
-       <p><b>[ID {{$task.ID}}]</b> - {{$task.Summary}}</p>
+       <p><b><a href="{{taskURL $tt.Type $task.ID}}">[ID {{$task.ID}}]</a></b> - {{$task.Title}}</p>
     {{end}}
   {{end}}
 

@@ -62,6 +62,10 @@ func (e *appengineEnv) HTTPClient() *http.Client {
 	return urlfetch.Client(e.ctx)
 }
 
+func (e *appengineEnv) Logf(format string, args ...interface{}) {
+	e.ctx.Infof(format, args...)
+}
+
 func init() {
 	http.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(rw, "It is %v.", time.Now())

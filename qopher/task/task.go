@@ -14,7 +14,7 @@ import (
 // It isn't written to the datastore as-is, but is converted
 // to a new or existing qopher.Task.
 type PolledTask struct {
-	ID    string
+	ID    string // without the "type." prefix.
 	Date  time.Time
 	Title string
 	Body  string // if any
@@ -25,11 +25,13 @@ type Type interface {
 	Type() string                // "issue"
 	PollInterval() time.Duration // minute granularity
 	Poll(Env) ([]*PolledTask, error)
+	TaskURL(id string) string
 }
 
 // An Env is the environment a task Type needs to do its work.
 type Env interface {
 	HTTPClient() *http.Client
+	Logf(format string, args ...interface{})
 }
 
 // TypeMap contains the types registered by RegisterType.
