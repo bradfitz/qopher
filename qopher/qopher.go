@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"time"
 
+	"appengine"
+	"appengine/urlfetch"
+
 	_ "qopher/task/issue"
 )
 
@@ -43,6 +46,20 @@ type LogEntry struct {
 	Action    string // "new", "close", "reassign", etc
 	Who       string // who performed the action, or "" for the system itself
 	WhoTo     string // recipient
+}
+
+type Person struct {
+	Likes    []string
+	Dislikes []string
+	Vacation bool
+}
+
+type appengineEnv struct {
+	ctx appengine.Context
+}
+
+func (e *appengineEnv) HTTPClient() *http.Client {
+	return urlfetch.Client(e.ctx)
 }
 
 func init() {

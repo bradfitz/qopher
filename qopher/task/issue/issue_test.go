@@ -5,9 +5,9 @@
 package issue
 
 import (
-	"testing"
-	"io/ioutil"
 	"bytes"
+	"io/ioutil"
+	"testing"
 )
 
 func TestParseIssues(t *testing.T) {
@@ -26,5 +26,3 @@ func TestParseIssues(t *testing.T) {
 		t.Logf("Issue: %+v", is)
 	}
 }
-
-
