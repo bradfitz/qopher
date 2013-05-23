@@ -10,8 +10,6 @@ import (
 	"time"
 
 	_ "qopher/task/issue"
-
-	"appengine"
 )
 
 // A Task is something that a human needs to do.
@@ -30,8 +28,9 @@ import (
 //     https://groups.google.com/forum/?hl=en_US&fromgroups#!pendingmsg/golang-dev
 //     https://groups.google.com/forum/?hl=en_US&fromgroups#!pendingmsg/golang-nuts
 type Task struct {
-	Owner     string // GAE email address (remapped to display name later), or "" if closed
 	TypeAndID string // "issue.4944", "cl.9668043", "moderate.gonuts"
+	Title     string `datastore:",noindex"`
+	Owner     string // GAE email address (remapped to display name later), or "" if closed
 	Created   time.Time
 	Modified  time.Time
 	Assigned  time.Time
@@ -48,6 +47,6 @@ type LogEntry struct {
 
 func init() {
 	http.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(rw, "It is %v. dev_appserver=%v", time.Now(), appengine.IsDevAppServer())
+		fmt.Fprintf(rw, "It is %v.", time.Now())
 	})
 }
