@@ -20,6 +20,13 @@ type PolledTask struct {
 	Body  string // if any
 }
 
+func (pt *PolledTask) DateOrNow() time.Time {
+	if pt.Date.IsZero() {
+		return time.Now()
+	}
+	return pt.Date
+}
+
 // Type is a task type.
 type Type interface {
 	Type() string                // "issue"

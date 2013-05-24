@@ -38,11 +38,12 @@ func adminAdd(rw http.ResponseWriter, r *http.Request) {
 	k := datastore.NewKey(ctx, "Task", typeId, 0, nil)
 	now := time.Now()
 	task := &Task{
-		Owner:     u.Email,
-		TypeAndID: typeId,
-		Created:   now,
-		Modified:  now,
-		Assigned:  now,
+		Owner:    u.Email,
+		Type:     "manual",
+		ID:       id,
+		Created:  now,
+		Modified: now,
+		Assigned: now,
 	}
 	_, err := datastore.Put(ctx, k, task)
 	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -51,7 +52,7 @@ func adminAdd(rw http.ResponseWriter, r *http.Request) {
 
 func adminPollDebug(rw http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
-	m := Poll(&appengineEnv{ctx}, 25 * time.Second, task.Types)
+	m := Poll(&appengineEnv{ctx}, 25*time.Second, task.Types)
 	var page struct {
 		Types []PollResult
 	}

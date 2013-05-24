@@ -19,25 +19,26 @@ type PollResult struct {
 }
 
 func Poll(env task.Env, timeout time.Duration, types []task.Type) map[string]PollResult {
-	m := make(map[string]res)
+	var mu sync.Mutex // guards m
+	m := make(map[string]PollResult)
 	var wg sync.WaitGroup
 	for _, tt := range types {
 		wg.Add(1)
 		go func(tt task.Type) {
 			defer wg.Done()
-			resc := make(chan res, 1)
+			resc := make(chan PollResult, 1)
 			go func() {
 				tasks, err := tt.Poll(env)
-				resc <- res{tt.Type(), tasks, err}
+				resc <- PollResult{tt.Type(), tasks, err}
 			}()
-			var v res
+			var v PollResult
 			select {
 			case v = <-resc:
 			case <-time.After(timeout):
-				v = res{tt.Type(), nil, errors.New("timeout")}
+				v = PollResult{tt.Type(), nil, errors.New("timeout")}
 			}
-			mmu.Lock()
-			defer mmu.Unlock()
+			mu.Lock()
+			defer mu.Unlock()
 			m[tt.Type()] = v
 		}(tt)
 	}

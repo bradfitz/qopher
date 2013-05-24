@@ -33,13 +33,17 @@ import (
 // * moderating an email to golang-nuts or golang-dev:
 //     https://groups.google.com/forum/?hl=en_US&fromgroups#!pendingmsg/golang-dev
 //     https://groups.google.com/forum/?hl=en_US&fromgroups#!pendingmsg/golang-nuts
+//
+// Keyed in datastore by "<Type>.<ID>"
 type Task struct {
-	TypeAndID string // "issue.4944", "cl.9668043", "moderate.gonuts"
-	Title     string `datastore:",noindex"`
-	Owner     string // GAE email address (remapped to display name later), or "" if closed
-	Created   time.Time
-	Modified  time.Time
-	Assigned  time.Time
+	Type     string // "issue", "codereview", "moderate", ...
+	ID       string // "4944", "gonuts", ...
+	Closed   bool
+	Title    string `datastore:",noindex"`
+	Owner    string // GAE email address (remapped to display name later), or "" if closed
+	Created  time.Time
+	Modified time.Time
+	Assigned time.Time
 }
 
 // A LogEntry records the creation, reassignment, and closing of Tasks.
@@ -71,6 +75,10 @@ func (e *appengineEnv) Logf(format string, args ...interface{}) {
 
 func init() {
 	http.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(rw, "It is %v.", time.Now())
+		if r.RequestURI != "/" {
+			http.NotFound(rw, r)
+			return
+		}
+		fmt.Fprintf(rw, "This is qopher.")
 	})
 }
