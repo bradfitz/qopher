@@ -75,7 +75,7 @@ func adminPollDebug(rw http.ResponseWriter, r *http.Request) {
 			var v res
 			select {
 			case v = <-resc:
-			case <-time.After(5 * time.Second):
+			case <-time.After(25 * time.Second):
 				v = res{tt.Type(), nil, errors.New("timeout")}
 			}
 			mmu.Lock()

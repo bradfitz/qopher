@@ -28,35 +28,47 @@ func (codereviewTask) TaskURL(id string) string    { return urlPrefix + id }
 func (codereviewTask) Type() string                { return "codereview" }
 func (codereviewTask) PollInterval() time.Duration { return 5 * time.Minute }
 
-func (codereviewTask) Poll(env task.Env) ([]*task.PolledTask, error) {
+func (codereviewTask) Poll(env task.Env) (pt []*task.PolledTask, err error) {
 	c := env.HTTPClient()
-	res, err := c.Get(query)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	reviews, cursor, err := ParseReviews(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	if cursor != "" {
-		panic("TODO: cursor")
-	}
-	env.Logf("got %d reviews", len(reviews))
-	tasks := make([]*task.PolledTask, 0, len(reviews))
-	for _, r := range reviews {
-		if r.Issue == 0 {
-			env.Logf("bogus issue %+v", r)
-			continue
+	cursor := ""
+	n := 0
+	for {
+		url := query
+		if cursor != "" {
+			url += "&cursor=" + cursor
 		}
-		t := &task.PolledTask{
-			ID:    fmt.Sprint(r.Issue),
-			Title: r.Desc,
+		n++
+		env.Logf("Fetching codereview page %d: %s", n, url)
+		res, err := c.Get(url)
+		if err != nil {
+			env.Logf("Error fetching %s: %v", url, err)
+			return nil, err
 		}
-		tasks = append(tasks, t)
+		var reviews []*Review
+		reviews, cursor, err = ParseReviews(res.Body)
+		res.Body.Close()
+		if err != nil {
+			env.Logf("ParseReviews error: %v", err)
+			return nil, err
+		}
+		env.Logf("got %d reviews, cursor is %q", len(reviews), cursor)
+		for _, r := range reviews {
+			if r.Issue == 0 {
+				env.Logf("bogus issue %+v", r)
+				continue
+			}
+			t := &task.PolledTask{
+				ID:    fmt.Sprint(r.Issue),
+				Title: r.Desc,
+			}
+			pt = append(pt, t)
+		}
+		if cursor == "" || len(reviews) == 0 {
+			break
+		}
 	}
-	env.Logf("returning %d tasks", len(tasks))
-	return tasks, nil
+	env.Logf("returning %d tasks", len(pt))
+	return pt, nil
 }
 
 type doc struct {
