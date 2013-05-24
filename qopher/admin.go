@@ -5,11 +5,9 @@
 package qopher
 
 import (
-	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
-	"sync"
 	"time"
 
 	"appengine"
@@ -53,41 +51,9 @@ func adminAdd(rw http.ResponseWriter, r *http.Request) {
 
 func adminPollDebug(rw http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
-
-	type res struct {
-		Type  string
-		Tasks []*task.PolledTask
-		Err   error
-	}
-	env := &appengineEnv{ctx}
-	var mmu sync.Mutex // guards m
-	m := make(map[string]res)
-	var wg sync.WaitGroup
-	for _, tt := range task.Types {
-		wg.Add(1)
-		go func(tt task.Type) {
-			defer wg.Done()
-			resc := make(chan res, 1)
-			go func() {
-				tasks, err := tt.Poll(env)
-				resc <- res{tt.Type(), tasks, err}
-			}()
-			var v res
-			select {
-			case v = <-resc:
-			case <-time.After(25 * time.Second):
-				v = res{tt.Type(), nil, errors.New("timeout")}
-			}
-			mmu.Lock()
-			defer mmu.Unlock()
-			m[tt.Type()] = v
-
-		}(tt)
-	}
-	wg.Wait()
-
+	m := Poll(&appengineEnv{ctx}, 25 * time.Second, task.Types)
 	var page struct {
-		Types []res
+		Types []PollResult
 	}
 	for _, tt := range task.Types {
 		page.Types = append(page.Types, m[tt.Type()])
