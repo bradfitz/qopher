@@ -12,7 +12,10 @@ import (
 	"appengine"
 	"appengine/urlfetch"
 
+	_ "qopher/task/codereview"
 	_ "qopher/task/issue"
+	//_ "qopher/task/moderate"
+	//_ "qopher/task/buildbreak"
 )
 
 // A Task is something that a human needs to do.
