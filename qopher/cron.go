@@ -28,7 +28,7 @@ func init() {
 func cleanKey(k *datastore.Key) string {
 	wtf := k.StringID() // should be "foo.1234" but is like "/Task,foo.134" instead. but only sometimes? wtf.
 	const pfx = "/Task,"
-	if string.HasPrefix(wtf, pfx) {
+	if strings.HasPrefix(wtf, pfx) {
 		return wtf[len(pfx):]
 	}
 	return strings.TrimLeft(wtf, "/")
