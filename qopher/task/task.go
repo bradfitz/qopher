@@ -17,7 +17,7 @@ type PolledTask struct {
 	ID    string // without the "type." prefix.
 	Date  time.Time
 	Title string
-	Body  string // if any
+	Body  []byte // if any
 }
 
 func (pt *PolledTask) DateOrNow() time.Time {

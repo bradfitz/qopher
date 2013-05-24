@@ -5,7 +5,6 @@
 package qopher
 
 import (
-	"fmt"
 	"net/http"
 	"time"
 
@@ -14,9 +13,21 @@ import (
 
 	_ "qopher/task/codereview"
 	_ "qopher/task/issue"
-	//_ "qopher/task/moderate"
-	//_ "qopher/task/buildbreak"
+	// TODO: implement these:
+	//_ "qopher/task/moderate"   // moderate golang-nuts and golang-dev
+	//_ "qopher/task/buildbreak" // investigate build.golang.org breakages
 )
+
+func init() {
+	http.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
+		// Oh, https://code.google.com/p/go/issues/detail?id=4799
+		if r.URL.Path == "/" {
+			serveFront(rw, r)
+		} else {
+			http.NotFound(rw, r)
+		}
+	})
+}
 
 // A Task is something that a human needs to do.
 //
@@ -40,6 +51,7 @@ type Task struct {
 	ID       string // "4944", "gonuts", ...
 	Closed   bool
 	Title    string `datastore:",noindex"`
+	Body     []byte `datastore:",noindex"`
 	Owner    string // GAE email address (remapped to display name later), or "" if closed
 	Created  time.Time
 	Modified time.Time
@@ -74,12 +86,6 @@ func (e *appengineEnv) Logf(format string, args ...interface{}) {
 	e.ctx.Infof(format, args...)
 }
 
-func init() {
-	http.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
-		if r.RequestURI != "/" {
-			http.NotFound(rw, r)
-			return
-		}
-		fmt.Fprintf(rw, "This is qopher.")
-	})
+func getMethod(r *http.Request) bool {
+	return r.Method == "GET" || r.Method == "HEAD"
 }

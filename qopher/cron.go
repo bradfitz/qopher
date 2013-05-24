@@ -96,6 +96,8 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 					ID:       pt.ID,
 					Created:  pt.DateOrNow(),
 					Modified: time.Now(),
+					Title:    pt.Title,
+					Body:     pt.Body,
 				}
 				_, err := datastore.Put(ctx, k, task)
 				if err != nil {

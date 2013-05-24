@@ -59,10 +59,10 @@ func adminPollDebug(rw http.ResponseWriter, r *http.Request) {
 	for _, tt := range task.Types {
 		page.Types = append(page.Types, m[tt.Type()])
 	}
-	frontPage.ExecuteTemplate(rw, "front", &page)
+	pollDebugPage.ExecuteTemplate(rw, "polldebug", &page)
 }
 
-var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
+var pollDebugPage = template.Must(template.New("polldebug").Funcs(template.FuncMap{
 	"taskURL": func(taskType, id string) string {
 		return task.TypeMap[taskType].TaskURL(id)
 	},
