@@ -97,9 +97,11 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
 
 <h1>qopher: the Gopher Queue</h1>
 
+<h2 style='color: red'>WORK IN PROGRESS</h2>
+
 <p>Total <b>{{$.NTotal}}</b> open tasks</a>
 
-<p>Viewing queue for <b>{{$.QueueEmail}}</b>.</p>
+<p>Viewing queue for <b>{{$.QueueEmail}}</b> (change with ?q= nickname or email)</p>
 
 {{if $.Yours}}
   <h2>Assigned to <i>{{$.QueueEmailShort}}</i> ({{len $.Yours}})</h2>
@@ -108,6 +110,8 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
     <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>: {{$t.Title}}</li>
   {{end}}
   </ul>
+{{else}}
+ <h2>Nothing assigned to <i>{{$.QueueEmail}}</i></h2>
 {{end}}
 
 {{if $.Other}}
