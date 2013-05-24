@@ -15,7 +15,7 @@ import (
 
 const (
 	urlPrefix = "https://code.google.com/p/go/issues/detail?id="
-	query     = "https://code.google.com/feeds/issues/p/go/issues/full?label=Priority-Triage&status=New&fields=entry(@gd:etag,id,title,updated,author,link[@rel='edit'])&max-results=1000"
+	query     = "https://code.google.com/feeds/issues/p/go/issues/full?label=Priority-Triage&status=New&fields=entry(@gd:etag,id,title,published,updated,author,issues:owner,link[@rel='edit'])&max-results=1000"
 )
 
 type issueTask struct{}
@@ -67,6 +67,15 @@ type feed struct {
 type Issue struct {
 	ID    string `xml:"id"`
 	Title string `xml:"title"`
+
+	// TODO:
+	// <published>2013-05-14T07:09:06.000Z</published>
+
+	// TODO:
+	// <updated>2013-05-05T01:56:19.000Z</updated>
+
+	// TODO:
+	// <issues:owner><issues:uri>/u/102602228801687104398/</issues:uri><issues:username>g...@golang.org</issues:username></issues:owner>
 }
 
 func ParseIssues(r io.Reader) ([]*Issue, error) {
