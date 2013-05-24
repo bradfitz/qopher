@@ -5,7 +5,9 @@
 package qopher
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,6 +22,11 @@ import (
 
 func init() {
 	http.HandleFunc("/cron/poll", cronPoll)
+	http.HandleFunc("/cron/assign", cronAssign)
+}
+
+func cleanKey(k *datastore.Key) string {
+	return strings.TrimLeft(k.StringID(), "/") // WTF?
 }
 
 func cronPoll(rw http.ResponseWriter, r *http.Request) {
@@ -47,9 +54,7 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 
 	inDatastore := make(map[string]bool) // "codereview.1234" => true
 	for _, key := range keys {
-		strKey := key.StringID()
-		strKey = strings.TrimLeft(strKey, "/")  // WTF?
-		inDatastore[strKey] = true
+		inDatastore[cleanKey(key)] = true
 	}
 
 	var ops []string
@@ -122,17 +127,95 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func cronAssign(rw http.ResponseWriter, r *http.Request) {
+	ctx := appengine.NewContext(r)
+	q := datastore.NewQuery("Task").
+		Filter("Closed = ", false).
+		Filter("Owner = ", "").
+		KeysOnly()
+	keys, err := q.GetAll(ctx, nil)
+	if err != nil {
+		ctx.Errorf("GetAll failed: %v", err)
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ctx.Infof("Keys open = %q", keys)
+	var buf bytes.Buffer
+	var wg sync.WaitGroup
+	for _, key := range keys {
+		wg.Add(1)
+		typeID := cleanKey(key)
+		go func() {
+			defer wg.Done()
+			taskAssignSomebody.Call(ctx, typeID)
+		}()
+		fmt.Fprintf(&buf, "open, unassigned = %s\n", typeID)
+	}
+	wg.Wait()
+	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprintf(rw, "%d assignments:\n", len(keys))
+	io.Copy(rw, &buf)
+}
+
+// close the task because it's no longer open elsewhere.
 var closeTask = delay.Func("close_task", func(c appengine.Context, typeID string) error {
+	now := time.Now()
 	key := datastore.NewKey(c, "Task", typeID, 0, nil)
-	return datastore.RunInTransaction(c, func(c appengine.Context) error {
+	doLog := false
+	err := datastore.RunInTransaction(c, func(c appengine.Context) error {
 		task := new(Task)
 		err := datastore.Get(c, key, task)
 		if err != nil {
 			return err
 		}
+		if task.Closed {
+			return nil
+		}
 		task.Closed = true
 		task.Owner = ""
 		_, err = datastore.Put(c, key, task)
+		doLog = true
 		return err
 	}, nil)
+	if err == nil && doLog {
+		key := datastore.NewIncompleteKey(c, "LogEntry", nil)
+		_, err = datastore.Put(c, key, &LogEntry{
+			Time:    now,
+			TaskKey: typeID,
+			Action:  "close",
+		})
+	}
+	return err
+})
+
+var taskAssignSomebody = delay.Func("task_assign_anybody", func(c appengine.Context, typeID string) error {
+	now := time.Now()
+	key := datastore.NewKey(c, "Task", typeID, 0, nil)
+	doLog := false
+	victim := RandomVictimEmail()
+	err := datastore.RunInTransaction(c, func(c appengine.Context) error {
+		task := new(Task)
+		err := datastore.Get(c, key, task)
+		if err != nil {
+			return err
+		}
+		if task.Owner != "" {
+			return nil
+		}
+		task.Owner = victim
+		task.Assigned = now
+		_, err = datastore.Put(c, key, task)
+		doLog = true
+		return err
+	}, nil)
+	if err == nil && doLog {
+		key := datastore.NewIncompleteKey(c, "LogEntry", nil)
+		_, err = datastore.Put(c, key, &LogEntry{
+			Time:    now,
+			TaskKey: typeID,
+			Action:  "assign",
+			WhoTo:   victim,
+		})
+	}
+	return err
 })

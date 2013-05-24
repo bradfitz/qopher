@@ -48,13 +48,14 @@ type Task struct {
 
 // A LogEntry records the creation, reassignment, and closing of Tasks.
 type LogEntry struct {
-	Time      time.Time
-	TypeAndID string
-	Action    string // "new", "close", "reassign", etc
-	Who       string // who performed the action, or "" for the system itself
-	WhoTo     string // recipient
+	Time    time.Time
+	TaskKey string // "<type>.<id>"
+	Action  string // "new", "close", "reassign", etc
+	Who     string // who performed the action, or "" for the system itself
+	WhoTo   string // recipient
 }
 
+// TODO(bradfitz): use this.
 type Person struct {
 	Likes    []string
 	Dislikes []string
