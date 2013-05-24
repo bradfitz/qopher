@@ -15,7 +15,7 @@ import (
 
 const (
 	urlPrefix = "https://codereview.appspot.com/"
-	query     = "https://codereview.appspot.com/search?closed=3&owner=&reviewer=golang-dev%40googlegroups.com&repo_guid=&base=&private=1&created_before=&created_after=2012-01-01+00%3A00%3A00&modified_before=&modified_after=&order=created&format=html&keys_only=False&with_messages=False&cursor=&limit=30&format=json"
+	query     = "https://codereview.appspot.com/search?closed=3&owner=&reviewer=golang-dev%40googlegroups.com&repo_guid=&base=&private=1&created_before=&created_after=2012-08-01+00%3A00%3A00&modified_before=&modified_after=&order=created&format=html&keys_only=False&with_messages=False&cursor=&limit=30&format=json"
 )
 
 type codereviewTask struct{}
