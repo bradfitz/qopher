@@ -6,6 +6,8 @@ package task
 
 import (
 	"net/http"
+	"runtime"
+	"strings"
 	"sort"
 	"time"
 )
@@ -52,6 +54,15 @@ var Types []Type
 func RegisterType(tt Type) {
 	key := tt.Type()
 	if _, dup := TypeMap[key]; dup {
+		if !devAppServer() {
+			// allow duplicate registration on production.
+			// Just ignore it.  dev_appserver.py has no
+			// testing story so I use symlink hangs to
+			// make "go test" work.  But dev_appserver.py
+			// ignores symlinks, but appcfg uploads dup
+			// code.
+			return
+		}
 		panic("duplicate registration of task type " + key)
 	}
 	TypeMap[key] = tt
@@ -64,4 +75,20 @@ func RegisterType(tt Type) {
 	for _, key := range keys {
 		Types = append(Types, TypeMap[key])
 	}
+}
+
+// We can't import "appengine" in this package.
+func devAppServer() bool {
+	i := 0
+	for {
+		i++
+		_, file, _, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+		if strings.HasPrefix(file, "/Users") || strings.HasPrefix(file, "/home/") {
+			return true
+		}
+	}
+	return false
 }

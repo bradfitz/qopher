@@ -26,7 +26,12 @@ func init() {
 }
 
 func cleanKey(k *datastore.Key) string {
-	return strings.TrimLeft(k.StringID(), "/") // WTF?
+	wtf := k.StringID() // should be "foo.1234" but is like "/Task,foo.134" instead. but only sometimes? wtf.
+	const pfx = "/Task,"
+	if string.HasPrefix(wtf, pfx) {
+		return wtf[len(pfx):]
+	}
+	return strings.TrimLeft(wtf, "/")
 }
 
 func cronPoll(rw http.ResponseWriter, r *http.Request) {
