@@ -6,31 +6,22 @@ package codereview
 
 import (
 	"flag"
-	"net/http"
 	"os"
 	"reflect"
 	"testing"
 	"time"
+
+	"qopher/qophertest"
 )
 
 var live = flag.Bool("live", false, "Hit the network.")
-
-type testEnv struct {
-	t *testing.T
-}
-
-func (e testEnv) Logf(format string, args ...interface{}) {
-	e.t.Logf(format, args...)
-}
-
-func (e testEnv) HTTPClient() *http.Client { return http.DefaultClient }
 
 func TestLive(t *testing.T) {
 	if !*live {
 		t.Skipf("skipping")
 	}
 	var task codereviewTask
-	tasks, err := task.Poll(testEnv{t})
+	tasks, err := task.Poll(qophertest.NewEnv(t))
 	if err != nil {
 		t.Fatal(err)
 	}

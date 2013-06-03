@@ -41,6 +41,17 @@ type Type interface {
 type Env interface {
 	HTTPClient() *http.Client
 	Logf(format string, args ...interface{})
+
+	// GetMeta returns a blob up to 1MB in size. The key's
+	// namespace is shared with all task types, so should
+	// be prefixed.
+	// If nothing is set, the return value is (nil, nil).
+	GetMeta(key string) ([]byte, error)
+
+	// SetMeta sets a blob up to 1MB in size. The key's
+	// namespace is shared with all task types, so should
+	// be prefixed.
+	SetMeta(key string, value []byte) error
 }
 
 // TypeMap contains the types registered by RegisterType.
