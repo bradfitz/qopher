@@ -62,7 +62,7 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 		inDatastore[cleanKey(key)] = true
 	}
 
-	var ops []string
+	var ops []string // human readable, for HTTP response output
 	noOps, adds, deletes := 0, 0, 0
 
 	for _, tt := range task.Types {
@@ -102,7 +102,6 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 					Created:  pt.DateOrNow(),
 					Modified: time.Now(),
 					Title:    pt.Title,
-					Body:     pt.Body,
 				}
 				_, err := datastore.Put(ctx, k, task)
 				if err != nil {

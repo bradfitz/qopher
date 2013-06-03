@@ -7,8 +7,8 @@ package task
 import (
 	"net/http"
 	"runtime"
-	"strings"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -16,10 +16,10 @@ import (
 // It isn't written to the datastore as-is, but is converted
 // to a new or existing qopher.Task.
 type PolledTask struct {
-	ID    string // without the "type." prefix.
-	Date  time.Time
-	Title string
-	Body  []byte // if any
+	ID        string // without the "type." prefix.
+	Date      time.Time
+	Title     string
+	OwnerHint string // optional. prefix or email address.
 }
 
 func (pt *PolledTask) DateOrNow() time.Time {

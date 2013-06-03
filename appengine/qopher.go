@@ -51,11 +51,14 @@ type Task struct {
 	ID       string // "4944", "gonuts", ...
 	Closed   bool
 	Title    string `datastore:",noindex"`
-	Body     []byte `datastore:",noindex"`
 	Owner    string // GAE email address (remapped to display name later), or "" if closed
 	Created  time.Time
 	Modified time.Time
 	Assigned time.Time
+
+	// PollerOpaque is an opaque value stored for task poller types
+	// 
+	PollerOpaque []byte `datastore:",noindex"`
 }
 
 // A LogEntry records the creation, reassignment, and closing of Tasks.

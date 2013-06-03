@@ -5,10 +5,12 @@
 package codereview
 
 import (
-	"os"
-	"testing"
 	"flag"
 	"net/http"
+	"os"
+	"reflect"
+	"testing"
+	"time"
 )
 
 var live = flag.Bool("live", false, "Hit the network.")
@@ -56,5 +58,31 @@ func TestParse(t *testing.T) {
 	}
 	for _, r := range reviews {
 		t.Logf("Got %+v", r)
+	}
+}
+
+func TestRelevantMonths(t *testing.T) {
+	nowFunc = func() time.Time {
+		return time.Unix(1370298894, 0)
+	}
+	got := relevantMonths()
+	want := []string{"2012-07", "2012-08", "2012-09", "2012-10", "2012-11", "2012-12", "2013-01", "2013-02", "2013-03", "2013-04", "2013-05", "2013-06"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("relevantMonths = %q; want %q", got, want)
+	}
+}
+
+func TestMonthAfter(t *testing.T) {
+	tests := []struct{
+		in, out string
+	}{
+		{"2011-12", "2012-01"},
+		{"2011-04", "2011-05"},
+	}
+	for _, tt := range tests {
+		got := monthAfter(tt.in)
+		if got != tt.out {
+			t.Errorf("monthAfter(%q) = %q; want %q", tt.in, got, tt.out)
+		}
 	}
 }
