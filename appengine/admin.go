@@ -20,15 +20,25 @@ import (
 func init() {
 	http.HandleFunc("/admin/add", adminAdd)
 	http.HandleFunc("/admin/polldebug", adminPollDebug)
+	http.HandleFunc("/admin/wipe", adminWipe)
 }
 
-func adminAdd(rw http.ResponseWriter, r *http.Request) {
+func checkAdmin(rw http.ResponseWriter, r *http.Request) bool {
 	ctx := appengine.NewContext(r)
 	u := user.Current(ctx)
 	if u == nil || !u.Admin {
 		http.Error(rw, "requires admin", 401)
+		return false
+	}
+	return true
+}
+
+func adminAdd(rw http.ResponseWriter, r *http.Request) {
+	if !checkAdmin(rw, r) {
 		return
 	}
+	ctx := appengine.NewContext(r)
+	u := user.Current(ctx)
 	id := r.FormValue("id")
 	if id == "" {
 		http.Error(rw, "no id parameter", 400)
@@ -48,6 +58,25 @@ func adminAdd(rw http.ResponseWriter, r *http.Request) {
 	_, err := datastore.Put(ctx, k, task)
 	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	fmt.Fprintf(rw, "put of %q = %v", typeId, err)
+}
+
+func adminWipe(rw http.ResponseWriter, r *http.Request) {
+	if !checkAdmin(rw, r) {
+		return
+	}
+	ctx := appengine.NewContext(r)
+	q := datastore.NewQuery("Task").KeysOnly()
+	keys, err := q.GetAll(ctx, nil)
+	if err != nil {
+		http.Error(rw, err.Error(), 500)
+		return
+	}
+	err = datastore.DeleteMulti(ctx, keys)
+	if err != nil {
+		http.Error(rw, err.Error(), 500)
+	} else {
+		fmt.Fprintf(rw, "success. wiped all %d tasks.", len(keys))
+	}
 }
 
 func adminPollDebug(rw http.ResponseWriter, r *http.Request) {
