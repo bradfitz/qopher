@@ -74,8 +74,20 @@ type Issue struct {
 	// TODO:
 	// <updated>2013-05-05T01:56:19.000Z</updated>
 
-	// TODO:
 	// <issues:owner><issues:uri>/u/102602228801687104398/</issues:uri><issues:username>g...@golang.org</issues:username></issues:owner>
+	//Owner  *IssuePerson `xml:"http://schemas.google.com/projecthosting/issues/2009 owner"`
+	Owner  *IssuePerson `xml:"owner"`
+	// TODO:
+}
+
+type IssuePerson struct {
+	Raw []byte `xml:",innerxml"`
+
+	// Like "/u/102602228801687104398/"
+	URI string `xml:"issues:uri"`
+
+	// Useless username: "g..@golang.org"
+	Username string `xml:"http://schemas.google.com/projecthosting/issues/2009 username"`
 }
 
 func ParseIssues(r io.Reader) ([]*Issue, error) {
