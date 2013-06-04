@@ -5,9 +5,12 @@
 package codereview
 
 import (
+	"bytes"
 	"flag"
+	"net/http"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,7 +67,7 @@ func TestRelevantMonths(t *testing.T) {
 }
 
 func TestMonthAfter(t *testing.T) {
-	tests := []struct{
+	tests := []struct {
 		in, out string
 	}{
 		{"2011-12", "2012-01"},
@@ -75,5 +78,76 @@ func TestMonthAfter(t *testing.T) {
 		if got != tt.out {
 			t.Errorf("monthAfter(%q) = %q; want %q", tt.in, got, tt.out)
 		}
+	}
+}
+
+func TestSummarizeIssue(t *testing.T) {
+	f, err := os.Open("testdata/issue-9910043-msgs.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	env := qophertest.NewEnv(t)
+	rt := qophertest.NewFakeRoundTripper(t)
+	rt.AddURL("https://codereview.appspot.com/api/9910043?messages=true", &http.Response{
+		Status:     "200 OK",
+		StatusCode: 200,
+		Body:       f,
+	})
+	env.SetHTTPClient(&http.Client{Transport: rt})
+	im := summarizeIssue(env, 9910043)
+	if im.err != nil {
+		t.Fatalf("Error summarizing: %v", im.err)
+	}
+	want := issueMeta{
+		issue:         9910043,
+		lastModified:  "2013-06-03 19:50:42.516010",
+		policyVersion: 1,
+		reviewer:      "dvyukov",
+	}
+	if im != want {
+		t.Errorf("summary = %+v; want %+v", im, want)
+	}
+}
+
+func TestParseMonthMeta(t *testing.T) {
+	mm, err := parseMonthMeta(strings.NewReader(`
+issue=123,modified=2012-10-28 10:23:18.058320,v=1,r=
+issue=1234,modified=2013-01-02 10:23:18.058320,v=2,r=close
+issue=12345,modified=2013-03-03 10:23:18.058320,v=3,r=foo
+`[1:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := monthMeta{
+		123: issueMeta{
+			issue:         123,
+			lastModified:  "2012-10-28 10:23:18.058320",
+			policyVersion: 1,
+			reviewer:      "",
+		},
+		1234: issueMeta{
+			issue:         1234,
+			lastModified:  "2013-01-02 10:23:18.058320",
+			policyVersion: 2,
+			reviewer:      "close",
+		},
+		12345: issueMeta{
+			issue:         12345,
+			lastModified:  "2013-03-03 10:23:18.058320",
+			policyVersion: 3,
+			reviewer:      "foo",
+		},
+	}
+	if !reflect.DeepEqual(mm, want) {
+		t.Fatalf("Results differ:\n Got %#v\n\nWant %#v", mm, want)
+	}
+
+	back, err := parseMonthMeta(bytes.NewReader(mm.serialize()))
+	if err != nil {
+		t.Fatalf("From serialized:\n\n%s\n\n... error parsing it back: %v", mm.serialize(), err)
+	}
+	if !reflect.DeepEqual(back, want) {
+		t.Fatalf("Parsing of serialization results differs from input:\n Got %#v\n\nWant %#v", back, want)
 	}
 }

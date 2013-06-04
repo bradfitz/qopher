@@ -5,6 +5,8 @@
 package codereview
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,8 +47,11 @@ const (
 	// The policy is currently:
 	//   R=close (anybody can close it)
 	//   R=bob (back open, with hint to assign it to bob)
+	//   PTAL (reopens again)
 	policyVersion = 1
 )
+
+var reviewRx = regexp.MustCompile(`^R=(\w+)\b`)
 
 type codereviewTask struct{}
 
@@ -77,7 +83,7 @@ func (codereviewTask) PollInterval() time.Duration { return 5 * time.Minute }
 //   like:
 //
 //   key "2013-05" value: "\n"-separated lines of:
-//   "issue=6737064,modified=2012-10-28 10:23:18.058320,v=1,closed=true"
+//   "issue=6737064,modified=2012-10-28 10:23:18.058320,v=1,r=who"
 //   ... one per issue in that month. (a line is an "issueMeta", and
 //   all the lines is a "monthMeta")
 //
@@ -113,13 +119,15 @@ func (codereviewTask) Poll(env task.Env) (pt []*task.PolledTask, err error) {
 
 var nowFunc = time.Now
 
+// NumMonths is the number of months into the past queried for new issues.
+var NumMonths = 12
+
 // relevantMonths returns the past n months in "yyyy-mm" format.
 // These are the months to query for open issues.
 func relevantMonths() []string {
-	const nMonths = 12
-	months := make([]string, nMonths)
+	months := make([]string, NumMonths)
 	year, mon, _ := nowFunc().Date()
-	for i := 0; i < nMonths; i++ {
+	for i := 0; i < NumMonths; i++ {
 		months[i] = fmt.Sprintf("%04d-%02d", year, int(mon))
 		mon--
 		if mon == 0 {
@@ -152,15 +160,74 @@ func monthAfter(month string) string {
 }
 
 type issueMeta struct {
+	issue         int
 	lastModified  string
 	policyVersion int
-	closed        bool
+	reviewer      string // or "" or "close"
+	err           error  // not stored in datastore; only used by summarizeIssue
 }
 
-type monthMeta map[int]*issueMeta
+var issueMetaRx = regexp.MustCompile(`^issue=(\d+),modified=(.+?),v=(\d+),r=(\w*)$`)
+
+func parseIssueMetaLine(line string) (issueMeta, error) {
+	m := issueMetaRx.FindStringSubmatch(line)
+	if m == nil {
+		return issueMeta{}, errors.New("bogus month metaline: " + line)
+	}
+	issue, _ := strconv.Atoi(m[1])
+	policyVersion, _ := strconv.Atoi(m[3])
+	return issueMeta{
+		issue:         issue,
+		lastModified:  m[2],
+		policyVersion: policyVersion,
+		reviewer:      m[4],
+	}, nil
+}
+
+type monthMeta map[int]issueMeta // keyed by issue number
+
+func (m monthMeta) serialize() []byte {
+	var buf bytes.Buffer
+	var ids []int
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	for _, id := range ids {
+		im := m[id]
+		fmt.Fprintf(&buf, "issue=%d,modified=%s,v=%d,r=%s\n", id, im.lastModified, im.policyVersion, im.reviewer)
+	}
+	return buf.Bytes()
+}
+
+const monthMetaPrefix = "codereview-month-"
 
 func getMonthMeta(env task.Env, month string) (monthMeta, error) {
-	return nil, errors.New("not implemented")
+	bs, err := env.GetMeta(monthMetaPrefix + month)
+	if err != nil {
+		return nil, err
+	}
+	return parseMonthMeta(bytes.NewReader(bs))
+}
+
+func parseMonthMeta(r io.Reader) (monthMeta, error) {
+	meta := make(monthMeta)
+	br := bufio.NewReader(r)
+	for {
+		ln, err := br.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		im, err := parseIssueMetaLine(strings.TrimSpace(ln))
+		if err != nil {
+			return nil, err
+		}
+		meta[im.issue] = im
+	}
+	return meta, nil
 }
 
 // itemsPerPage is the number of items to fetch for a single page.
@@ -182,6 +249,10 @@ func pollMonth(env task.Env, month string) (pt []*task.PolledTask, err error) {
 		defer metawg.Done()
 		meta, metaerr = getMonthMeta(env, month)
 	}()
+
+	// Opens issue to rietveld, even if they're logically closed
+	// (R=closed) to us.
+	var rietOpen []*Review
 
 	for {
 		url := urlWithParams(monthQuery, map[string]string{
@@ -210,11 +281,7 @@ func pollMonth(env task.Env, month string) (pt []*task.PolledTask, err error) {
 				env.Logf("bogus issue %+v", r)
 				continue
 			}
-			t := &task.PolledTask{
-				ID:    fmt.Sprint(r.Issue),
-				Title: r.Desc,
-			}
-			pt = append(pt, t)
+			rietOpen = append(rietOpen, r)
 		}
 		if cursor == "" || len(reviews) < itemsPerPage {
 			break
@@ -222,13 +289,130 @@ func pollMonth(env task.Env, month string) (pt []*task.PolledTask, err error) {
 	}
 
 	metawg.Wait()
-	// TODO(bradfitz): use meta
+	if metaerr != nil {
+		env.Logf("Error loading month meta for %q: %v", month, metaerr)
+		return nil, metaerr
+	}
 
-	env.Logf("returning %d tasks", len(pt))
+	// For each issue that Rietveld believes to be open, see if we
+	// have the latest comments for it and then see if it's
+	// actually logically still open, based on its comments.
+	var updates []chan issueMeta
+	for _, r := range rietOpen {
+		im := meta[r.Issue]
+		if im.policyVersion != policyVersion || im.lastModified != r.Modified {
+			env.Logf("Need to summarize issue %d", r.Issue)
+			ch := make(chan issueMeta, 1)
+			updates = append(updates, ch)
+			go func(issueId int) {
+				ch <- summarizeIssue(env, issueId)
+			}(r.Issue)
+		} else {
+			env.Logf("Issue %d is unmodified.", r.Issue)
+		}
+	}
+	var updateErr error
+	var errCount int
+	for _, ch := range updates {
+		im := <-ch
+		if im.err != nil {
+			errCount++
+			if updateErr == nil {
+				updateErr = im.err
+			}
+		} else {
+			meta[im.issue] = im
+		}
+	}
+	if updateErr != nil {
+		// Save what we've got so far.
+		env.Logf("Errors re-fetching month %q: %d/%d fetches failed. Saving %d good issue summaries.", month, errCount, len(updates), len(meta))
+		env.SetMeta(monthMetaPrefix+month, meta.serialize())
+		return nil, updateErr
+	}
+	if len(updates) > 0 {
+		if err := env.SetMeta(monthMetaPrefix+month, meta.serialize()); err != nil {
+			env.Logf("Error writing month meta for %q: %v", month, err)
+			return nil, err
+		}
+	}
+	for _, r := range rietOpen {
+		im := meta[r.Issue]
+		if im.reviewer == "close" {
+			continue
+		}
+		t := &task.PolledTask{
+			ID:    fmt.Sprint(r.Issue),
+			Title: r.Desc,
+		}
+		pt = append(pt, t)
+	}
+
+	env.Logf("codereview: for month %q, returning %d open tasks", month, len(pt))
 	return pt, nil
 }
 
-type doc struct {
+// summarizeIssue fetches a single codereview issue and all its
+// comments and summarizes its state by reading the comments.
+func summarizeIssue(env task.Env, id int) (im issueMeta) {
+	im.issue = id
+	im.policyVersion = policyVersion
+	url := urlWithParams(messagesQuery, map[string]string{
+		"ISSUE_NUMBER": strconv.Itoa(id),
+	})
+	c := env.HTTPClient()
+	res, err := c.Get(url)
+	env.Logf("Fetching %s = %v", url, err)
+	if err != nil {
+		im.err = err
+		return
+	}
+	defer res.Body.Close()
+	var r issueResult
+	err = json.NewDecoder(res.Body).Decode(&r)
+	if err != nil {
+		im.err = err
+		return
+	}
+	im.lastModified = r.Modified
+
+	if r.Closed {
+		im.reviewer = "close"
+		return
+	}
+	open := true
+	for _, m := range r.Messages {
+		if m := reviewRx.FindStringSubmatch(m.Text); m != nil {
+			if m[1] == "close" || m[1] == "closed" {
+				open = false
+				continue
+			}
+			open = true
+			im.reviewer = m[1]
+			continue
+		}
+		if strings.HasPrefix(m.Text, "PTAL") {
+			open = true
+		}
+	}
+	if !open {
+		im.reviewer = "close"
+	}
+	return
+}
+
+type issueResult struct {
+	Closed   bool       `json:"closed"`
+	Modified string     `json:"modified"`
+	Messages []*message `json:"messages"`
+}
+
+type message struct {
+	Sender string `json:"sender"`
+	Text   string `json:"text"`
+}
+
+type monthQueryResult struct {
 	Cursor  string    `json:"cursor"`
 	Results []*Review `json:"results"`
 }
@@ -257,11 +441,11 @@ type Review struct {
 	OwnerEmail string `json:"owner_email"`
 	Owner      string `json:"owner"`
 	Created    Time   `json:"created"`
-	Modified   Time   `json:"modified"`
+	Modified   string `json:"modified"` // just a string; more reliable to do string equality tests on it
 }
 
 func ParseReviews(r io.Reader) (reviews []*Review, cursor string, err error) {
-	var d doc
+	var d monthQueryResult
 	err = json.NewDecoder(r).Decode(&d)
 	return d.Results, d.Cursor, err
 }

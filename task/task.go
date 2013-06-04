@@ -65,15 +65,6 @@ var Types []Type
 func RegisterType(tt Type) {
 	key := tt.Type()
 	if _, dup := TypeMap[key]; dup {
-		if !devAppServer() {
-			// allow duplicate registration on production.
-			// Just ignore it.  dev_appserver.py has no
-			// testing story so I use symlink hangs to
-			// make "go test" work.  But dev_appserver.py
-			// ignores symlinks, but appcfg uploads dup
-			// code.
-			return
-		}
 		panic("duplicate registration of task type " + key)
 	}
 	TypeMap[key] = tt
@@ -88,7 +79,9 @@ func RegisterType(tt Type) {
 	}
 }
 
-// We can't import "appengine" in this package.
+// devAppServer returns whether we're on the devAppServer, without
+// importing the "appengine" package, so this file can still be
+// tested.
 func devAppServer() bool {
 	i := 0
 	for {

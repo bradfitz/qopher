@@ -7,8 +7,8 @@ package qopher
 // This file handles identities of people.
 
 import (
-	"sort"
 	"math/rand"
+	"sort"
 	"strings"
 	"time"
 )

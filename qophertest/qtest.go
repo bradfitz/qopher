@@ -5,6 +5,7 @@
 package qophertest
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -15,19 +16,33 @@ import (
 type Env struct {
 	t    *testing.T
 	meta map[string]string
+
+	// If nil, http.DefaultClient is used.
+	client *http.Client
 }
 
 var _ task.Env = (*Env)(nil)
 
 func NewEnv(t *testing.T) *Env {
-	return &Env{t, make(map[string]string)}
+	return &Env{t: t, meta: make(map[string]string)}
 }
 
 func (e *Env) Logf(format string, args ...interface{}) {
 	e.t.Logf(format, args...)
 }
 
-func (e *Env) HTTPClient() *http.Client { return http.DefaultClient }
+func (e *Env) HTTPClient() *http.Client {
+	if c := e.client; c != nil {
+		return c
+	}
+	return http.DefaultClient
+}
+
+// SetHTTPClient sets the http client to use for testing. If nil,
+// http.DefaultClient is used.
+func (e *Env) SetHTTPClient(c *http.Client) {
+	e.client = c
+}
 
 func (e *Env) SetMeta(key string, value []byte) error {
 	e.meta[key] = string(value)
@@ -40,4 +55,26 @@ func (e *Env) GetMeta(key string) ([]byte, error) {
 		return nil, nil
 	}
 	return []byte(s), nil
+}
+
+type RoundTripper struct {
+	t *testing.T
+	m map[string]*http.Response
+}
+
+func NewFakeRoundTripper(t *testing.T) *RoundTripper {
+	return &RoundTripper{t, make(map[string]*http.Response)}
+}
+
+func (rt *RoundTripper) AddURL(url string, res *http.Response) {
+	rt.m[url] = res
+}
+
+func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	url := req.URL.String()
+	res, ok := rt.m[url]
+	if !ok {
+		return nil, fmt.Errorf("qophertest: URL %q not registered in fake RoundTripper", url)
+	}
+	return res, nil
 }

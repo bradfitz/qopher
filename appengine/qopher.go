@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"appengine"
+	"appengine/datastore"
 	"appengine/urlfetch"
 
 	_ "qopher/task/codereview"
@@ -55,10 +56,6 @@ type Task struct {
 	Created  time.Time
 	Modified time.Time
 	Assigned time.Time
-
-	// PollerOpaque is an opaque value stored for task poller types
-	// 
-	PollerOpaque []byte `datastore:",noindex"`
 }
 
 // A LogEntry records the creation, reassignment, and closing of Tasks.
@@ -87,6 +84,26 @@ func (e *appengineEnv) HTTPClient() *http.Client {
 
 func (e *appengineEnv) Logf(format string, args ...interface{}) {
 	e.ctx.Infof(format, args...)
+}
+
+type meta struct {
+	Value []byte `datastore:",noindex"`
+}
+
+func (e *appengineEnv) GetMeta(key string) ([]byte, error) {
+	var m meta
+	k := datastore.NewKey(e.ctx, "Meta", key, 0, nil)
+	err := datastore.Get(e.ctx, k, &m)
+	if err == datastore.ErrNoSuchEntity {
+		return nil, nil
+	}
+	return m.Value, err
+}
+
+func (e *appengineEnv) SetMeta(key string, value []byte) error {
+	k := datastore.NewKey(e.ctx, "Meta", key, 0, nil)
+	_, err := datastore.Put(e.ctx, k, &meta{Value: value})
+	return err
 }
 
 func getMethod(r *http.Request) bool {
