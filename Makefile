@@ -6,3 +6,7 @@ wipe:
 
 test:
 	go test -v qopher/task/...
+
+deploy:
+	$(HOME)/sdk/appengine/appcfg.py update --oauth2 $(GOPATH)/src/qopher/appengine
+
