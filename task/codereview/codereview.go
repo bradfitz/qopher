@@ -6,12 +6,14 @@ package codereview
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"qopher/task"
@@ -76,7 +78,8 @@ func (codereviewTask) PollInterval() time.Duration { return 5 * time.Minute }
 //
 //   key "2013-05" value: "\n"-separated lines of:
 //   "issue=6737064,modified=2012-10-28 10:23:18.058320,v=1,closed=true"
-//   ... one per issue in that month.
+//   ... one per issue in that month. (a line is an "issueMeta", and
+//   all the lines is a "monthMeta")
 //
 // * for every rietveld-open issue in a month, compare its "modified"
 //   JSON time to the "modified" field in our cache. If they differ
@@ -148,6 +151,18 @@ func monthAfter(month string) string {
 	return fmt.Sprintf("%04d-%02d", yyyy, mm)
 }
 
+type issueMeta struct {
+	lastModified  string
+	policyVersion int
+	closed        bool
+}
+
+type monthMeta map[int]*issueMeta
+
+func getMonthMeta(env task.Env, month string) (monthMeta, error) {
+	return nil, errors.New("not implemented")
+}
+
 // itemsPerPage is the number of items to fetch for a single page.
 // Changed by tests.
 var itemsPerPage = maxItemsPerPage
@@ -156,12 +171,24 @@ func pollMonth(env task.Env, month string) (pt []*task.PolledTask, err error) {
 	c := env.HTTPClient()
 	cursor := ""
 	n := 0
+	var (
+		metawg  sync.WaitGroup // for meta or metaerr to be loaded
+		meta    monthMeta
+		metaerr error
+	)
+
+	metawg.Add(1)
+	go func() {
+		defer metawg.Done()
+		meta, metaerr = getMonthMeta(env, month)
+	}()
+
 	for {
 		url := urlWithParams(monthQuery, map[string]string{
 			"CREATED_AFTER":  month + "-01 00:00:00",
 			"CREATED_BEFORE": monthAfter(month) + "-01 00:00:00",
-			"CURSOR": cursor,
-			"LIMIT": fmt.Sprint(itemsPerPage),
+			"CURSOR":         cursor,
+			"LIMIT":          fmt.Sprint(itemsPerPage),
 		})
 		n++
 		env.Logf("Fetching codereview page %d: %s", n, url)
@@ -193,6 +220,10 @@ func pollMonth(env task.Env, month string) (pt []*task.PolledTask, err error) {
 			break
 		}
 	}
+
+	metawg.Wait()
+	// TODO(bradfitz): use meta
+
 	env.Logf("returning %d tasks", len(pt))
 	return pt, nil
 }
