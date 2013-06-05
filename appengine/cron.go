@@ -25,15 +25,6 @@ func init() {
 	http.HandleFunc("/cron/assign", cronAssign)
 }
 
-func cleanKey(k *datastore.Key) string {
-	wtf := k.StringID() // should be "foo.1234" but is like "/Task,foo.134" instead. but only sometimes? wtf.
-	const pfx = "/Task,"
-	if strings.HasPrefix(wtf, pfx) {
-		return wtf[len(pfx):]
-	}
-	return strings.TrimLeft(wtf, "/")
-}
-
 func cronPoll(rw http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
 	var wg sync.WaitGroup
@@ -42,6 +33,8 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 	var m map[string]PollResult
 	go func() {
 		defer wg.Done()
+		defer ctx.Infof("Poll complete.")
+		ctx.Infof("Poll starting...")
 		m = Poll(&appengineEnv{ctx}, 25*time.Second, task.Types)
 	}()
 
@@ -59,7 +52,7 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 
 	inDatastore := make(map[string]bool) // "codereview.1234" => true
 	for _, key := range keys {
-		inDatastore[cleanKey(key)] = true
+		inDatastore[key.StringID()] = true
 	}
 
 	var ops []string // human readable, for HTTP response output
@@ -150,7 +143,7 @@ func cronAssign(rw http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 	for _, key := range keys {
 		wg.Add(1)
-		typeID := cleanKey(key)
+		typeID := key.StringID()
 		go func() {
 			defer wg.Done()
 			taskAssignSomebody.Call(ctx, typeID)
