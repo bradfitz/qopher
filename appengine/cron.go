@@ -38,10 +38,9 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 		m = Poll(&appengineEnv{ctx}, 25*time.Second, task.Types)
 	}()
 
-	q := datastore.NewQuery("Task").
-		Filter("Closed = ", false).
-		KeysOnly()
-	keys, err := q.GetAll(ctx, nil)
+	var inDataStoreTasks []*Task
+	q := datastore.NewQuery("Task").Filter("Closed = ", false)
+	keys, err := q.GetAll(ctx, &inDataStoreTasks)
 	if err != nil {
 		ctx.Errorf("GetAll failed: %v", err)
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
@@ -50,9 +49,9 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 	ctx.Infof("Keys open = %q", keys)
 	wg.Wait()
 
-	inDatastore := make(map[string]bool) // "codereview.1234" => true
-	for _, key := range keys {
-		inDatastore[key.StringID()] = true
+	inDatastore := make(map[string]*Task) // "codereview.1234" => true
+	for i, key := range keys {
+		inDatastore[key.StringID()] = inDataStoreTasks[i]
 	}
 
 	var ops []string // human readable, for HTTP response output
@@ -75,7 +74,7 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 		}
 		for _, pt := range res.Tasks {
 			typeID := typeStr + "." + pt.ID
-			if inDatastore[typeID] {
+			if inDatastore[typeID] != nil {
 				ops = append(ops, fmt.Sprintf("Already open: %s", typeID))
 				// Common case; all good.
 				noOps++
@@ -92,8 +91,8 @@ func cronPoll(rw http.ResponseWriter, r *http.Request) {
 					Owner:    "", // To be assigned later.
 					Type:     typeStr,
 					ID:       pt.ID,
-					Created:  pt.DateOrNow(),
-					Modified: time.Now(),
+					Created:  pt.GetCreated(),
+					Modified: pt.GetModified(),
 					Title:    pt.Title,
 				}
 				_, err := datastore.Put(ctx, k, task)

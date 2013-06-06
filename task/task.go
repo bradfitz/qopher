@@ -16,17 +16,26 @@ import (
 // It isn't written to the datastore as-is, but is converted
 // to a new or existing qopher.Task.
 type PolledTask struct {
-	ID        string // without the "type." prefix.
-	Date      time.Time
-	Title     string
-	OwnerHint string // optional. prefix or email address.
+	ID            string    // without the "type." prefix.
+	Created       time.Time // or zero
+	Modified      time.Time // or zero
+	Title         string
+	OwnerHint     string    // optional. prefix or email address.
+	OwnerHintTime time.Time // time of assignment to OwnerHint
 }
 
-func (pt *PolledTask) DateOrNow() time.Time {
-	if pt.Date.IsZero() {
-		return time.Now()
+func (pt *PolledTask) GetCreated() time.Time {
+	if !pt.Created.IsZero() {
+		return pt.Created
 	}
-	return pt.Date
+	return time.Now()
+}
+
+func (pt *PolledTask) GetModified() time.Time {
+	if !pt.Modified.IsZero() {
+		return pt.Modified
+	}
+	return pt.GetCreated()
 }
 
 // Type is a task type.
