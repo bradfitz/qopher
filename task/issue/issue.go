@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"io"
 	"regexp"
+	"strings"
 	"time"
 
 	"qopher/task"
@@ -44,6 +45,10 @@ func (issueTask) Poll(env task.Env) ([]*task.PolledTask, error) {
 	env.Logf("got %d issues", len(issues))
 	tasks := make([]*task.PolledTask, 0, len(issues))
 	for _, issue := range issues {
+		if issue.Owner != nil {
+			// Owned issues aren't logically open
+			continue
+		}
 		t := &task.PolledTask{
 			Title: issue.Title,
 		}
@@ -75,16 +80,12 @@ type Issue struct {
 	// <updated>2013-05-05T01:56:19.000Z</updated>
 
 	// <issues:owner><issues:uri>/u/102602228801687104398/</issues:uri><issues:username>g...@golang.org</issues:username></issues:owner>
-	//Owner  *IssuePerson `xml:"http://schemas.google.com/projecthosting/issues/2009 owner"`
-	Owner  *IssuePerson `xml:"owner"`
-	// TODO:
+	Owner *IssuePerson `xml:"http://schemas.google.com/projecthosting/issues/2009 owner"`
 }
 
 type IssuePerson struct {
-	Raw []byte `xml:",innerxml"`
-
 	// Like "/u/102602228801687104398/"
-	URI string `xml:"issues:uri"`
+	URI string `xml:"http://schemas.google.com/projecthosting/issues/2009 uri"`
 
 	// Useless username: "g..@golang.org"
 	Username string `xml:"http://schemas.google.com/projecthosting/issues/2009 username"`
@@ -94,4 +95,42 @@ func ParseIssues(r io.Reader) ([]*Issue, error) {
 	var f feed
 	err := xml.NewDecoder(r).Decode(&f)
 	return f.Entry, err
+}
+
+// Start-up time sanity check of parsing logic, since my unit
+// tests passed with Go 1.1 and the App Engine SDK is Go 1.0,
+// but the SDK's "go test" is broken. Yay. So test this way,
+// rather than installing Go 1.0.
+func init() {
+	dat := `<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns='http://www.w3.org/2005/Atom' xmlns:gd='http://schemas.google.com/g/2005' xmlns:issues='http://schemas.google.com/projecthosting/issues/2009'>
+
+<entry gd:etag='W/&quot;DUANRX47eCl7ImA9WhBaFUk.&quot;'>
+   <id>http://code.google.com/feeds/issues/p/go/issues/full/5128</id>
+   <published>2013-03-25T22:26:38.000Z</published>
+   <updated>2013-05-26T05:56:34.000Z</updated>
+   <title>cmd/gofmt reformats block comments</title>
+   <author>
+     <name>bor...@google.com</name>
+     <uri>/u/106051431195682631099/</uri>
+   </author>
+   <issues:owner>
+     <issues:uri>/u/102602228801687104398/</issues:uri>
+     <issues:username>g...@golang.org</issues:username>
+   </issues:owner>
+</entry>
+</feed>`
+	issues, err := ParseIssues(strings.NewReader(dat))
+	if err != nil {
+		panic(err)
+	}
+	if len(issues) < 1 {
+		panic("no issues parsed")
+	}
+	if issues[0].Owner == nil {
+		panic("nil Owner parsed")
+	}
+	if issues[0].Owner.URI != "/u/102602228801687104398/" {
+		panic("no URI in Owner")
+	}
 }

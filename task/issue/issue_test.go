@@ -8,10 +8,17 @@ import (
 	"bytes"
 	"io/ioutil"
 	"testing"
+	"runtime"
 )
 
 func TestParseIssues(t *testing.T) {
-	slurp, err := ioutil.ReadFile("testdata/triage.xml")
+	t.Logf("version = %s", runtime.Version())
+	const minimal = false
+	file := "triage.xml"
+	if minimal {
+		file = "minimal.xml"
+	}
+	slurp, err := ioutil.ReadFile("testdata/" + file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,10 +26,10 @@ func TestParseIssues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(issues) < 2 {
+	if len(issues) == 0 {
 		t.Error("no issues parsed")
 	}
 	for _, is := range issues {
-		t.Logf("Issue: %+v", is)
+		t.Logf("Issue: %+v, owner=%#v", is, is.Owner)
 	}
 }
