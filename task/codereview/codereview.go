@@ -48,7 +48,7 @@ const (
 	//   R=close (anybody can close it)
 	//   R=bob (back open, with hint to assign it to bob)
 	//   PTAL (reopens again)
-	policyVersion = 1
+	policyVersion = 2
 )
 
 var reviewRx = regexp.MustCompile(`^R=(\w+)\b`)
@@ -342,8 +342,9 @@ func pollMonth(env task.Env, month string) (pt []*task.PolledTask, err error) {
 			continue
 		}
 		t := &task.PolledTask{
-			ID:    fmt.Sprint(r.Issue),
-			Title: r.Desc,
+			ID:        fmt.Sprint(r.Issue),
+			Title:     r.Desc,
+			OwnerHint: im.reviewer,
 		}
 		pt = append(pt, t)
 	}
