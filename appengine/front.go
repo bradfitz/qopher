@@ -87,6 +87,12 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
 	"taskURL": func(taskType, id string) string {
 		return task.TypeMap[taskType].TaskURL(id)
 	},
+	"shortOwner": func(t *Task) string {
+		if t.Owner == "" {
+			return ""
+		}
+		return emailToShort(t.Owner) + ": "
+	},
 }).Parse(`
 <!doctype html>
 <html>
@@ -118,7 +124,7 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
   <h2>Some other open tasks</h2>
   <ul>
   {{range $i, $t := $.Other}}
-    <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>: {{$t.Title}}</li>
+    <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>: <i>{{shortOwner $t}}</i> {{$t.Title}}</li>
   {{end}}
   </ul>
 {{end}}
