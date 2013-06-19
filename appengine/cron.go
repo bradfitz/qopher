@@ -25,102 +25,183 @@ func init() {
 	http.HandleFunc("/cron/assign", cronAssign)
 }
 
-func cronPoll(rw http.ResponseWriter, r *http.Request) {
-	ctx := appengine.NewContext(r)
-	var wg sync.WaitGroup
+type pollState struct {
+	ctx            appengine.Context
+	open           map[string]*Task // known & open in datastore. keys like "codereview.1234"
+	pollFailPrefix []string         // prefixes of task types that failed to poll ("codereview.")
 
-	wg.Add(1)
-	var m map[string]PollResult
+	wg sync.WaitGroup // for task update/delete/insert operations
+
+	// Summary for HTTP response
+	noops, adds, updates, deletes int
+	ops                           []string // human readable
+
+	pollwg   sync.WaitGroup
+	pollres  map[string]PollResult
+	pollopen map[string]bool // "codereview.1234" => true
+}
+
+func (ps *pollState) startPoll() {
+	ps.pollwg.Add(1)
 	go func() {
-		defer wg.Done()
-		defer ctx.Infof("Poll complete.")
-		ctx.Infof("Poll starting...")
-		m = Poll(&appengineEnv{ctx}, 25*time.Second, task.Types)
+		defer ps.pollwg.Done()
+		defer ps.ctx.Infof("Poll complete.")
+		ps.ctx.Infof("Poll starting...")
+		ps.pollres = Poll(&appengineEnv{ps.ctx}, 25*time.Second, task.Types)
+		ps.pollopen = make(map[string]bool)
+		for typeStr, res := range ps.pollres {
+			if res.Err != nil {
+				ps.pollFailPrefix = append(ps.pollFailPrefix, res.Type+".")
+				continue
+			}
+			for _, pt := range res.Tasks {
+				typeID := typeStr + "." + pt.ID
+				ps.pollopen[typeID] = true
+			}
+		}
 	}()
+}
 
-	var inDataStoreTasks []*Task
+func (ps *pollState) startCloseTask(typeID string) {
+	ps.wg.Add(1)
+	ps.ops = append(ps.ops, fmt.Sprintf("Delete: %s", typeID))
+	ps.deletes++
+	go func() {
+		defer ps.wg.Done()
+		closeTask.Call(ps.ctx, typeID)
+		ps.ctx.Infof("scheduled task %q for close", typeID)
+	}()
+}
+
+func (ps *pollState) startAddTask(typeStr, typeID string, pt *task.PolledTask) {
+	ps.wg.Add(1)
+	ps.adds++
+	ps.ops = append(ps.ops, fmt.Sprintf("Add: %s", typeID))
+	go func() {
+		defer ps.wg.Done()
+		k := datastore.NewKey(ps.ctx, "Task", typeID, 0, nil)
+		task := &Task{
+			Owner:    "", // To be assigned later.
+			Type:     typeStr,
+			ID:       pt.ID,
+			Created:  pt.GetCreated(),
+			Modified: pt.GetModified(),
+			Title:    pt.Title,
+		}
+		_, err := datastore.Put(ps.ctx, k, task)
+		if err != nil {
+			// Oh well. It'll happen next cron. But at least log:
+			ps.ctx.Errorf("cron: Error inserting task %q: %v", typeID, err)
+		}
+	}()
+}
+
+func (ps *pollState) startUpdateTaskOwner(typeStr, typeID string, pt *task.PolledTask, newOwner string) {
+	ps.wg.Add(1)
+	go func() {
+		defer ps.wg.Done()
+		taskAssignTo.Call(ps.ctx, typeID, newOwner)
+	}()
+}
+
+func (ps *pollState) loadOpenTasks() error {
+	var tasks []*Task
 	q := datastore.NewQuery("Task").Filter("Closed = ", false)
-	keys, err := q.GetAll(ctx, &inDataStoreTasks)
+	keys, err := q.GetAll(ps.ctx, &tasks)
 	if err != nil {
-		ctx.Errorf("GetAll failed: %v", err)
-		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return err
+	}
+	ps.ctx.Infof("Keys open = %q", keys)
+	ps.open = make(map[string]*Task)
+	for i, key := range keys {
+		ps.open[key.StringID()] = tasks[i]
+	}
+	return nil
+}
+
+// pollFailed returns whether the poll type for the given typeID
+// ("codereview.1234") failed.
+func (ps *pollState) pollFailed(typeID string) bool {
+	for _, pfx := range ps.pollFailPrefix {
+		if strings.HasPrefix(typeID, pfx) {
+			return true
+		}
+	}
+	return false
+}
+
+func (ps *pollState) updateTask(typeStr, typeID string, pt *task.PolledTask) {
+	task := ps.open[typeID]
+	if task == nil {
+		ps.startAddTask(typeStr, typeID, pt)
 		return
 	}
-	ctx.Infof("Keys open = %q", keys)
-	wg.Wait()
-
-	inDatastore := make(map[string]*Task) // "codereview.1234" => true
-	for i, key := range keys {
-		inDatastore[key.StringID()] = inDataStoreTasks[i]
+	newOwner := mapEmail(pt.OwnerHint)
+	if pt.OwnerHint == "" || newOwner == task.Owner {
+		// Common case: already open, no owner change.
+		ps.noops++
+		ps.ops = append(ps.ops, fmt.Sprintf("Already open: %s", typeID))
+		return
 	}
+	ps.updates++
+	ps.ops = append(ps.ops, fmt.Sprintf("Changing owner of %s from %q to %q", typeID, task.Owner, newOwner))
+	ps.startUpdateTaskOwner(typeStr, typeID, pt, newOwner)
+}
 
-	var ops []string // human readable, for HTTP response output
-	noOps, adds, deletes := 0, 0, 0
+func (ps *pollState) tasksToClose() (typeIDs []string) {
+	for typeID := range ps.open {
+		if ps.pollFailed(typeID) {
+			continue
+		}
+		if !ps.pollopen[typeID] {
+			typeIDs = append(typeIDs, typeID)
+		}
+	}
+	return
+}
+
+// updateDatastore waits for startPoll to finish, and then compares
+// what's in the datastore with the poll results and issues datastore
+// updates as necessary to add/remove/update tasks.
+func (ps *pollState) updateDatastore() {
+	ps.pollwg.Wait()
+	defer ps.wg.Wait()
 
 	for _, tt := range task.Types {
 		typeStr := tt.Type()
-		res := m[typeStr]
+		res := ps.pollres[typeStr]
 		if res.Err != nil {
-			ops = append(ops, fmt.Sprintf("Type %s poll failure: %v", res.Type, res.Err))
-			ctx.Errorf("Failed to poll %q: %v", res.Type, res.Err)
-			// Ignore that these exist in the datastore for now.
-			typeDot := typeStr + "."
-			for key := range inDatastore {
-				if strings.HasPrefix(key, typeDot) {
-					delete(inDatastore, key)
-				}
-			}
+			ps.ops = append(ps.ops, fmt.Sprintf("Type %s poll failure: %v", res.Type, res.Err))
+			ps.ctx.Errorf("Failed to poll %q: %v", res.Type, res.Err)
 			continue
 		}
 		for _, pt := range res.Tasks {
 			typeID := typeStr + "." + pt.ID
-			if inDatastore[typeID] != nil {
-				ops = append(ops, fmt.Sprintf("Already open: %s", typeID))
-				// Common case; all good.
-				noOps++
-				delete(inDatastore, typeID)
-				continue
-			}
-			ops = append(ops, fmt.Sprintf("Add: %s", typeID))
-			adds++
-			wg.Add(1)
-			go func(pt *task.PolledTask) {
-				defer wg.Done()
-				k := datastore.NewKey(ctx, "Task", typeID, 0, nil)
-				task := &Task{
-					Owner:    "", // To be assigned later.
-					Type:     typeStr,
-					ID:       pt.ID,
-					Created:  pt.GetCreated(),
-					Modified: pt.GetModified(),
-					Title:    pt.Title,
-				}
-				_, err := datastore.Put(ctx, k, task)
-				if err != nil {
-					// Oh well. It'll happen next cron. But at least log:
-					ctx.Errorf("cron: Error inserting task %q: %v", typeID, err)
-				}
-			}(pt)
+			ps.updateTask(typeStr, typeID, pt)
 		}
 	}
 
 	// Unassign things which are no longer open, but exist in the datastore.
-	for typeID := range inDatastore {
-		ops = append(ops, fmt.Sprintf("Delete: %s", typeID))
-		deletes++
-		wg.Add(1)
-		go func(typeID string) {
-			defer wg.Done()
-			closeTask.Call(ctx, typeID)
-			ctx.Infof("scheduled task %q for close", typeID)
-		}(typeID)
+	for _, typeID := range ps.tasksToClose() {
+		ps.startCloseTask(typeID)
+	}
+}
+
+func cronPoll(rw http.ResponseWriter, r *http.Request) {
+	ctx := appengine.NewContext(r)
+	ps := &pollState{ctx: ctx}
+	ps.startPoll()
+	if err := ps.loadOpenTasks(); err != nil {
+		ctx.Errorf("loadOpenTasks failed: %v", err)
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	wg.Wait()
+	ps.updateDatastore()
 
 	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprintf(rw, "noops=%d; adds=%d; deletes=%d\n\n", noOps, adds, deletes)
-	for _, op := range ops {
+	fmt.Fprintf(rw, "noops=%d; adds=%d; deletes=%d\n\n", ps.noops, ps.adds, ps.deletes)
+	for _, op := range ps.ops {
 		fmt.Fprintf(rw, "%s\n", op)
 	}
 }
@@ -201,6 +282,34 @@ var taskAssignSomebody = delay.Func("task_assign_anybody", func(c appengine.Cont
 			return nil
 		}
 		task.Owner = victim
+		task.Assigned = now
+		_, err = datastore.Put(c, key, task)
+		doLog = true
+		return err
+	}, nil)
+	if err == nil && doLog {
+		key := datastore.NewIncompleteKey(c, "LogEntry", nil)
+		_, err = datastore.Put(c, key, &LogEntry{
+			Time:    now,
+			TaskKey: typeID,
+			Action:  "assign",
+			WhoTo:   victim,
+		})
+	}
+	return err
+})
+
+var taskAssignTo = delay.Func("task_assign_to", func(c appengine.Context, typeID, victim string) error {
+	now := time.Now()
+	key := datastore.NewKey(c, "Task", typeID, 0, nil)
+	doLog := false
+	err := datastore.RunInTransaction(c, func(c appengine.Context) error {
+		task := new(Task)
+		err := datastore.Get(c, key, task)
+		if err != nil {
+			return err
+		}
+		task.Owner = mapEmail(victim)
 		task.Assigned = now
 		_, err = datastore.Put(c, key, task)
 		doLog = true

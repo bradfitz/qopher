@@ -21,7 +21,6 @@ type PolledTask struct {
 	Modified      time.Time // or zero
 	Title         string
 	OwnerHint     string    // optional. prefix or email address.
-	OwnerHintTime time.Time // time of assignment to OwnerHint
 }
 
 func (pt *PolledTask) GetCreated() time.Time {

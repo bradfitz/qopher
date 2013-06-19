@@ -48,10 +48,13 @@ const (
 	//   R=close (anybody can close it)
 	//   R=bob (back open, with hint to assign it to bob)
 	//   PTAL (reopens again)
-	policyVersion = 1
+	policyVersion = 2
 )
 
-var reviewRx = regexp.MustCompile(`^R=(\w+)\b`)
+var (
+	reviewRx = regexp.MustCompile(`^R=(\w+)\b`)
+	qRx      = regexp.MustCompile(`^Q=(\w+)\b`)
+)
 
 type codereviewTask struct{}
 
@@ -342,8 +345,9 @@ func pollMonth(env task.Env, month string) (pt []*task.PolledTask, err error) {
 			continue
 		}
 		t := &task.PolledTask{
-			ID:    fmt.Sprint(r.Issue),
-			Title: r.Desc,
+			ID:        fmt.Sprint(r.Issue),
+			Title:     r.Desc,
+			OwnerHint: im.reviewer,
 		}
 		pt = append(pt, t)
 	}
@@ -381,7 +385,9 @@ func summarizeIssue(env task.Env, id int) (im issueMeta) {
 		return
 	}
 	open := true
+	var lastMsg *message
 	for _, m := range r.Messages {
+		lastMsg = m
 		if m := reviewRx.FindStringSubmatch(m.Text); m != nil {
 			if m[1] == "close" || m[1] == "closed" {
 				open = false
@@ -393,6 +399,14 @@ func summarizeIssue(env task.Env, id int) (im issueMeta) {
 		}
 		if strings.HasPrefix(m.Text, "PTAL") {
 			open = true
+		}
+	}
+	if lastMsg != nil {
+		if m := qRx.FindStringSubmatch(lastMsg.Text); m != nil {
+			cmd := m[1]
+			if cmd == "wait" {
+				open = false
+			}
 		}
 	}
 	if !open {

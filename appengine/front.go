@@ -87,6 +87,12 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
 	"taskURL": func(taskType, id string) string {
 		return task.TypeMap[taskType].TaskURL(id)
 	},
+	"shortOwner": func(t *Task) string {
+		if t.Owner == "" {
+			return ""
+		}
+		return emailToShort(t.Owner) + ": "
+	},
 }).Parse(`
 <!doctype html>
 <html>
@@ -105,6 +111,7 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
 
 {{if $.Yours}}
   <h2>Assigned to <i>{{$.QueueEmailShort}}</i> ({{len $.Yours}})</h2>
+  <p>This list doesn't include your <a href="https://code.google.com/p/go/issues/list?can=3&q=&colspec=ID+Status+Stars+Priority+Owner+Reporter+Summary&cells=tiles">open and assigned issues</a>.</p>
   <ul>
   {{range $i, $t := $.Yours}}
     <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>: {{$t.Title}}</li>
@@ -112,13 +119,14 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
   </ul>
 {{else}}
  <h2>Nothing assigned to <i>{{$.QueueEmail}}</i></h2>
+  <p>Also check your <a href="https://code.google.com/p/go/issues/list?can=3&q=&colspec=ID+Status+Stars+Priority+Owner+Reporter+Summary&cells=tiles">open and assigned issues</a>.</p>
 {{end}}
 
 {{if $.Other}}
   <h2>Some other open tasks</h2>
   <ul>
   {{range $i, $t := $.Other}}
-    <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>: {{$t.Title}}</li>
+    <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>: <i>{{shortOwner $t}}</i> {{$t.Title}}</li>
   {{end}}
   </ul>
 {{end}}
