@@ -7,11 +7,11 @@ package qopher
 import (
 	"html/template"
 	"net/http"
+	"strings"
 
 	"appengine"
 	"appengine/datastore"
 	"appengine/user"
-
 	"qopher/task"
 )
 
@@ -64,7 +64,7 @@ func serveFront(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	const maxOther = 50
+	const maxOther = 200
 	if len(other) > maxOther {
 		other = other[:maxOther]
 	}
@@ -93,6 +93,15 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
 		}
 		return emailToShort(t.Owner) + ": "
 	},
+	"snippet": func(v string) string {
+		if i := strings.Index(v, "\n"); i > 0 {
+			v = v[:i]
+		}
+		if len(v) > 100 {
+			v = v[:100]
+		}
+		return v
+	},
 }).Parse(`
 <!doctype html>
 <html>
@@ -114,7 +123,7 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
   <p>This list doesn't include your <a href="https://code.google.com/p/go/issues/list?can=3&q=&colspec=ID+Status+Stars+Priority+Owner+Reporter+Summary&cells=tiles">open and assigned issues</a>.</p>
   <ul>
   {{range $i, $t := $.Yours}}
-    <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>: {{$t.Title}}</li>
+    <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>: {{snippet $t.Title}}</li>
   {{end}}
   </ul>
 {{else}}
@@ -126,8 +135,8 @@ var frontPage = template.Must(template.New("front").Funcs(template.FuncMap{
   <h2>Some other open tasks</h2>
   <ul>
   {{range $i, $t := $.Other}}
-    <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>: <i>{{shortOwner $t}}</i> {{$t.Title}}</li>
-  {{end}}
+    <li><a href="{{taskURL $t.Type $t.ID}}">{{$t.Type}}.{{$t.ID}}</a>, owner: <i>{{shortOwner $t}}</i>: {{snippet $t.Title}}</li>
+ {{end}}
   </ul>
 {{end}}
 
