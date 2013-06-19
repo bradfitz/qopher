@@ -30,7 +30,6 @@ var (
 		"nigeltao",
 		"r",
 		"rsc",
-		"sameer",
 	}
 )
 
