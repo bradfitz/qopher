@@ -5,7 +5,9 @@
 package qopher
 
 import (
+	"fmt"
 	"net/http"
+	"runtime"
 	"time"
 
 	"appengine"
@@ -19,6 +21,8 @@ import (
 	//_ "qopher/task/buildbreak" // investigate build.golang.org breakages
 )
 
+var isGo11 bool
+
 func init() {
 	http.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
 		// Oh, https://code.google.com/p/go/issues/detail?id=4799
@@ -27,6 +31,10 @@ func init() {
 		} else {
 			http.NotFound(rw, r)
 		}
+	})
+
+	http.HandleFunc("/go11", func(rw http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(rw, "isGo11 = %v; version = %v", isGo11, runtime.Version())
 	})
 }
 
