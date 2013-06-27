@@ -102,7 +102,7 @@ func TestSummarizeIssue(t *testing.T) {
 	want := issueMeta{
 		issue:         9910043,
 		lastModified:  "2013-06-03 19:50:42.516010",
-		policyVersion: 1,
+		policyVersion: 2,
 		reviewer:      "dvyukov",
 	}
 	if im != want {
