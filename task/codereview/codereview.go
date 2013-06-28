@@ -51,7 +51,8 @@ const (
 	//   R=close (anybody can close it)
 	//   R=bob (back open, with hint to assign it to bob)
 	//   PTAL (reopens again)
-	policyVersion = 2
+	//   final comment saying "*** Submitted as http://code.google.com/p/go/source/" means closed too
+	policyVersion = 3
 )
 
 var (
@@ -427,6 +428,9 @@ func summarizeIssue(env task.Env, id int) (im issueMeta) {
 			if cmd == "wait" {
 				open = false
 			}
+		}
+		if strings.Contains(lastMsg.Text, "*** Submitted as http://code.google.com/p/go/source/") {
+			open = false
 		}
 	}
 	if !open {
