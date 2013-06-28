@@ -55,6 +55,21 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestReviewersCC(t *testing.T) {
+	f, err := os.Open("testdata/cc.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	reviews, _, err := ParseReviews(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range reviews {
+		t.Logf("Owner of %v = %v", r.Issue, r.Reviewer())
+	}
+}
+
 func TestRelevantMonths(t *testing.T) {
 	nowFunc = func() time.Time {
 		return time.Unix(1370298894, 0)

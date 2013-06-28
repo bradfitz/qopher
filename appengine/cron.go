@@ -136,7 +136,7 @@ func (ps *pollState) updateTask(typeStr, typeID string, pt *task.PolledTask) {
 		ps.startAddTask(typeStr, typeID, pt)
 		return
 	}
-	newOwner := mapEmail(pt.OwnerHint)
+	newOwner := mapVictimEmail(pt.OwnerHint)
 	if pt.OwnerHint == "" || newOwner == task.Owner {
 		// Common case: already open, no owner change.
 		ps.noops++
@@ -303,13 +303,14 @@ var taskAssignTo = delay.Func("task_assign_to", func(c appengine.Context, typeID
 	now := time.Now()
 	key := datastore.NewKey(c, "Task", typeID, 0, nil)
 	doLog := false
+	victim = mapVictimEmail(victim)
 	err := datastore.RunInTransaction(c, func(c appengine.Context) error {
 		task := new(Task)
 		err := datastore.Get(c, key, task)
 		if err != nil {
 			return err
 		}
-		task.Owner = mapEmail(victim)
+		task.Owner = victim
 		task.Assigned = now
 		_, err = datastore.Put(c, key, task)
 		doLog = true

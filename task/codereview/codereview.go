@@ -360,10 +360,14 @@ func pollMonth(env task.Env, month string, cc bool) (pt []*task.PolledTask, err 
 		if im.reviewer == "close" {
 			continue
 		}
+		ownerHint := im.reviewer
+		if ownerHint == "" {
+			ownerHint = r.Reviewer()
+		}
 		t := &task.PolledTask{
 			ID:        fmt.Sprint(r.Issue),
 			Title:     r.Desc,
-			OwnerHint: im.reviewer,
+			OwnerHint: ownerHint,
 		}
 		pt = append(pt, t)
 	}
@@ -466,16 +470,30 @@ func (t *Time) UnmarshalJSON(b []byte) error {
 func (t Time) String() string { return time.Time(t).String() }
 
 type Review struct {
-	Issue      int    `json:"issue"`
-	Desc       string `json:"description"`
-	OwnerEmail string `json:"owner_email"`
-	Owner      string `json:"owner"`
-	Created    Time   `json:"created"`
-	Modified   string `json:"modified"` // just a string; more reliable to do string equality tests on it
+	Issue      int      `json:"issue"`
+	Desc       string   `json:"description"`
+	OwnerEmail string   `json:"owner_email"`
+	Owner      string   `json:"owner"`
+	Created    Time     `json:"created"`
+	Modified   string   `json:"modified"` // just a string; more reliable to do string equality tests on it
+	Reviewers  []string `json:"reviewers"`
+	CC         []string `json:"cc"`
 }
 
 func ParseReviews(r io.Reader) (reviews []*Review, cursor string, err error) {
 	var d monthQueryResult
 	err = json.NewDecoder(r).Decode(&d)
 	return d.Results, d.Cursor, err
+}
+
+// Reviewer returns the email address of an explicit reviewer, if any, else
+// returns the empty string.
+func (r *Review) Reviewer() string {
+	for _, who := range r.Reviewers {
+		if strings.HasSuffix(who, "@googlegroups.com") {
+			continue
+		}
+		return who
+	}
+	return ""
 }

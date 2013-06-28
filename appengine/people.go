@@ -44,11 +44,12 @@ func emailToShort(e string) string {
 	return "???"
 }
 
-// Converts either a person "foo" to an email address, or foo@google.com to foo@golang.org if it exists.
+// Converts either a person "foo" to an email address, or
+// foo@google.com to foo@golang.org if it exists.
 func mapEmail(e string) string {
 	const suffix = "@google.com"
 	if strings.HasSuffix(e, suffix) {
-		prefix := e[:len(e)-len(suffix)]
+		prefix := strings.TrimSuffix(e, suffix)
 		if pref, ok := preferredEmail[prefix]; ok {
 			return pref
 		}
@@ -59,6 +60,16 @@ func mapEmail(e string) string {
 		}
 	}
 	return e
+}
+
+// mapVictimEmail is like mapEmail but if the result is not a known
+// email address, it returns the empty string.
+func mapVictimEmail(e string) string {
+	e = mapEmail(e)
+	if _, ok := emailToPerson[e]; ok {
+		return e
+	}
+	return ""
 }
 
 func RandomVictimEmail() string {
