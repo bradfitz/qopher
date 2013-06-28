@@ -64,7 +64,7 @@ func serveFront(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	const maxOther = 200
+	const maxOther = 500
 	if len(other) > maxOther {
 		other = other[:maxOther]
 	}
