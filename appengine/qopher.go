@@ -87,7 +87,12 @@ type appengineEnv struct {
 }
 
 func (e *appengineEnv) HTTPClient() *http.Client {
-	return urlfetch.Client(e.ctx)
+	return &http.Client{
+		Transport: &urlfetch.Transport{
+			Context:  e.ctx,
+			Deadline: 30 * time.Second,
+		},
+	}
 }
 
 func (e *appengineEnv) Logf(format string, args ...interface{}) {
