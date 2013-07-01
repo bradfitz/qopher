@@ -52,7 +52,7 @@ const (
 	//   R=bob (back open, with hint to assign it to bob)
 	//   PTAL (reopens again)
 	//   final comment saying "*** Submitted as http://code.google.com/p/go/source/" means closed too
-	policyVersion = 3
+	policyVersion = 4
 )
 
 var (
@@ -407,6 +407,7 @@ func summarizeIssue(env task.Env, id int) (im issueMeta) {
 	}
 	open := true
 	var lastMsg *message
+	sort.Sort(byMessageDate(r.Messages))
 	for _, m := range r.Messages {
 		lastMsg = m
 		if m := reviewRx.FindStringSubmatch(m.Text); m != nil {
@@ -448,7 +449,14 @@ type issueResult struct {
 type message struct {
 	Sender string `json:"sender"`
 	Text   string `json:"text"`
+	Date   string `json:"date"` // "2012-04-07 00:51:58.602055"
 }
+
+type byMessageDate []*message
+
+func (s byMessageDate) Len() int           { return len(s) }
+func (s byMessageDate) Less(i, j int) bool { return s[i].Date < s[j].Date }
+func (s byMessageDate) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 type monthQueryResult struct {
 	Cursor  string    `json:"cursor"`

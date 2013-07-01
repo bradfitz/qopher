@@ -125,6 +125,35 @@ func TestSummarizeIssue(t *testing.T) {
 	}
 }
 
+func TestSummarizeIssue_Submitted(t *testing.T) {
+	f, err := os.Open("testdata/issue-5992058-msgs.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	env := qophertest.NewEnv(t)
+	rt := qophertest.NewFakeRoundTripper(t)
+	rt.AddURL("https://codereview.appspot.com/api/5992058?messages=true", &http.Response{
+		Status:     "200 OK",
+		StatusCode: 200,
+		Body:       f,
+	})
+	env.SetHTTPClient(&http.Client{Transport: rt})
+	im := summarizeIssue(env, 5992058)
+	if im.err != nil {
+		t.Fatalf("Error summarizing: %v", im.err)
+	}
+	want := issueMeta{
+		issue:         5992058,
+		lastModified:  "2012-04-06 21:18:41.128683",
+		policyVersion: policyVersion,
+		reviewer:      "close",
+	}
+	if im != want {
+		t.Errorf("summary = %+v; want %+v", im, want)
+	}
+}
+
 func TestParseMonthMeta(t *testing.T) {
 	mm, err := parseMonthMeta(strings.NewReader(`
 issue=123,modified=2012-10-28 10:23:18.058320,v=1,r=
