@@ -37,6 +37,9 @@ const (
 	// dates are like 2012-08-01+00%3A00%3A00.
 	monthQuery = "https://codereview.appspot.com/search?closed=3&reviewer=golang-dev%40googlegroups.com&private=1&created_before={{DATE_BEFORE}}&created_after={{DATE_AFTER}}&order=created&keys_only=False&with_messages=False&cursor={{CURSOR}}&limit={{LIMIT}}&format=json"
 
+	// monthQueryCC is the same as monthQuery, but finds issues where golang-dev was cc'ed instead.
+	monthQueryCC = "https://codereview.appspot.com/search?closed=3&cc=golang-dev%40googlegroups.com&private=1&modified_before={{DATE_BEFORE}}&modifed_after={{DATE_AFTER}}&order=-modified&keys_only=False&with_messages=False&cursor=&limit=100&format=json"
+
 	// JSON with the text of messages. e.g.
 	// https://codereview.appspot.com/api/6454085?messages=true
 	messagesQuery = "https://codereview.appspot.com/api/{{ISSUE_NUMBER}}?messages=true"
@@ -99,19 +102,21 @@ func (codereviewTask) PollInterval() time.Duration { return 5 * time.Minute }
 func (codereviewTask) Poll(env task.Env) (pts []*task.PolledTask, err error) {
 	type res struct {
 		pt  []*task.PolledTask
+		cc  bool
 		err error
 	}
 	var chs []chan res
-	for _, month := range relevantMonths() {
-		ch := make(chan res, 1)
-		chs = append(chs, ch)
-		go func(month string) {
-			pt, err := pollMonth(env, month)
-			env.Logf("Month %q = %d, %v", month, len(pt), err)
-			ch <- res{pt, err}
-		}(month)
+	for _, cc := range []bool{false, true} {
+		for _, month := range relevantMonths() {
+			ch := make(chan res, 1)
+			chs = append(chs, ch)
+			go func(month string, cc bool) {
+				pt, err := pollMonth(env, month, cc)
+				env.Logf("Month %q (cc=%v) = %d, %v", month, cc, len(pt), err)
+				ch <- res{pt, cc, err}
+			}(month, cc)
+		}
 	}
-
 	seen := make(map[string]bool) // ID -> true
 	for _, ch := range chs {
 		res := <-ch
@@ -245,7 +250,7 @@ func parseMonthMeta(r io.Reader) (monthMeta, error) {
 // Changed by tests.
 var itemsPerPage = maxItemsPerPage
 
-func pollMonth(env task.Env, month string) (pt []*task.PolledTask, err error) {
+func pollMonth(env task.Env, month string, cc bool) (pt []*task.PolledTask, err error) {
 	c := env.HTTPClient()
 	cursor := ""
 	n := 0
@@ -267,6 +272,9 @@ func pollMonth(env task.Env, month string) (pt []*task.PolledTask, err error) {
 
 	for {
 		query := monthQuery
+		if cc {
+			query = monthQueryCC
+		}
 		url := urlWithParams(query, map[string]string{
 			"DATE_AFTER":  month + "-01 00:00:00",
 			"DATE_BEFORE": monthAfter(month) + "-01 00:00:00",
