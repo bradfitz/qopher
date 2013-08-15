@@ -24,8 +24,8 @@ import (
 )
 
 var (
-	dir    = flag.String("dir", "", "Directory to put data files")
-	update = flag.Duration("update", 0, "If non-zero, duratation in past to update from.")
+	dir    = flag.String("dir", "", "Directory to put data files. Optional.")
+	update = flag.Bool("update", false, "Whether to update.")
 	report = flag.Bool("report", false, "Dump a report")
 )
 
@@ -48,23 +48,29 @@ var itemsPerPage = 100 // maxItemsPerPage
 
 var updatewg = new(sync.WaitGroup)
 
+var reviewMap = map[int]*Review{}
+
 func main() {
 	flag.Parse()
 	if *dir == "" {
-		log.Fatalf("--dir flag is required.")
+		*dir = findDir()
 	}
 	if fi, err := os.Stat(*dir); err != nil || !fi.IsDir() {
 		log.Fatalf("Directory %q needs to exist.", *dir)
 	}
 
-	if *update != 0 {
+	for _, r := range allReviews() {
+		reviewMap[r.Issue] = r
+	}
+
+	if *update {
 		for _, to := range []string{"reviewer", "cc"} {
 			updatewg.Add(1)
 			go loadReviews(to, updatewg)
 		}
 		updatewg.Wait()
 
-		for _, r := range allReviews() {
+		for _, r := range reviewMap {
 			for _, patchID := range r.PatchSets {
 				updatewg.Add(1)
 				go func(r *Review, id int) {
@@ -90,6 +96,22 @@ func main() {
 		}
 		fmt.Printf("open: %d, closed: %d\n", open, closed)
 	}
+}
+
+func findDir() string {
+	if os.Getenv("GOPATH") == "" {
+		log.Fatalf("No GOPATH. Can't infer -dir flag.")
+	}
+	for _, d := range filepath.SplitList(os.Getenv("GOPATH")) {
+		for _, qdir := range []string{"qopher", "github.com/bradfitz/qopher"} {
+			dir := filepath.Join(d, filepath.FromSlash("src/"+qdir+"/data"))
+			if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+				return dir
+			}
+		}
+	}
+	log.Fatalf("Failed to find qopher dir.")
+	panic("")
 }
 
 func allReviews() []*Review {
@@ -121,7 +143,6 @@ func allReviews() []*Review {
 func loadReviews(to string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	cursor := ""
-	oldestWant := time.Now().Add(-*update).Format(rvTimeFormat)
 	for {
 		url := urlWithParams(queryTmpl, map[string]string{
 			"CC_OR_REVIEWER": to,
@@ -138,20 +159,20 @@ func loadReviews(to string, wg *sync.WaitGroup) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		ngood := 0 // where good means "new enough"
-		nold := 0
+		var nfetch, nold int
 		for _, r := range reviews {
-			if r.Modified >= oldestWant {
-				ngood++
+			old := reviewMap[r.Issue]
+			if old != nil && old.Modified == r.Modified {
+				nold++
+			} else {
+				nfetch++
 				wg.Add(1)
 				go updateReview(r, wg)
-			} else {
-				nold++
 			}
 		}
-		log.Printf("for cursor %q, Got %d reviews (%d in time window, %d old)", cursor, len(reviews), ngood, nold)
+		log.Printf("for cursor %q, Got %d reviews (%d updated, %d old)", cursor, len(reviews), nfetch, nold)
 		res.Body.Close()
-		if cursor == "" || ngood == 0 || nold > 0 {
+		if cursor == "" || len(reviews) == 0 || nold > 0 {
 			break
 		}
 	}
