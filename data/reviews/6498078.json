@@ -1,0 +1,292 @@
+{
+	"description": "reflect: add Select",
+	"cc": [
+		"r@golang.org",
+		"iant@golang.org",
+		"rogpeppe@gmail.com",
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's great to see this going in.\r\n\r\nI have a reservation about the API, though. I think that\r\ninterpreting the zero value of SelectCase as the default\r\nclause is perhaps a bit dangerous.\r\n\r\nFor instance, here is a way of specifying a select statement\r\nthat avoids the need to refer to case clauses numerically:\r\n\r\nconst (\r\n    muxCase = iota\r\n    closedCase\r\n)\r\ncases := []reflect.SelectCase{\r\n\tmuxCase: {\r\n\t\tDir: reflect.RecvDir,\r\n\t\tChan: someC,\r\n\t},\r\n\tclosedCase: {\r\n\t\tDir: reflect.RecvDir,\r\n\t\tChan: someOtherC,\r\n\t},\r\n}\r\nswitch chosen, v, ok := reflect.Select(cases); chosen {\r\ncase muxCase:\r\n   ...\r\ncase ...\r\n}\r\n\r\nThe problem is, if you add a constant, you can\r\neasily leave a blank entry in the SelectCase slice, and\r\nthat will make the select non-blocking - a fairly significant\r\nchange and not easy to see in the code.\r\n\r\nHow about adding an explicit non-zero constant\r\nfor the default case (reflect.Default perhaps) and making\r\nthe select logic ignore cases with a zero Dir?\r\n\r\nThen it's easier to dynamically add and remove cases\r\nfrom the SelectCase slice, we can continue to\r\nenforce IsValid on channels that *do* have a direction,\r\nand it's clearer to the reader of the code when a select\r\nis non-blocking.\r\n",
+			"disapproval": false,
+			"date": "2012-09-10 10:11:40.882600",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"iant@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nYou can ignore the test - I have an idea for cleaning it up.\nBut please look at the rest of the code and the new API comments.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/all_test.go#newcode1062\nsrc/pkg/reflect/all_test.go:1062: //\t5 recv from closed channel\nOn 2012/09/05 15:07:04, r wrote:\n> probably want a nil channel in here.\n\nDone.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go\nFile src/pkg/reflect/value.go (right):\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1622\nsrc/pkg/reflect/value.go:1622: type runtimeSelect struct {\nOn 2012/09/05 15:53:10, iant wrote:\n> Add comment saying this struct must match runtime struct.\n\nDone.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1636\nsrc/pkg/reflect/value.go:1636: // The Dir specifies the type\nOn 2012/09/05 15:07:04, r wrote:\n> s/type/communication nature of the case/\n> (at least, don't use 'type')\n\nDone.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1638\nsrc/pkg/reflect/value.go:1638: Dir  ChanDir // type of select: default (0), send (SendDir), or receive (RecvDir)\nOn 2012/09/05 15:07:04, r wrote:\n> s/type of select/kind of case/\n> \n> default wants a name here - 0 is not obvious and heavily weighted with\n> semantics.\n\nDone.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1639\nsrc/pkg/reflect/value.go:1639: Chan Value   // channel to use (for a send or receive case)\nOn 2012/09/05 15:07:04, r wrote:\n> invalid should be ok and mean ignore\n\nDone.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1677\nsrc/pkg/reflect/value.go:1677: panic(\"reflect.Select: SendDir case missing Chan value\")\nOn 2012/09/05 15:07:04, r wrote:\n> all you need is break\n\nDone.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1696\nsrc/pkg/reflect/value.go:1696: if !ch.IsValid() {\nOn 2012/09/05 15:07:04, r wrote:\n> all you need is break\n\nDone.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/chan.c\nFile src/pkg/runtime/chan.c (right):\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/chan.c#newcode1028\nsrc/pkg/runtime/chan.c:1028: }\nOn 2012/09/05 15:07:04, r wrote:\n> what's this about?\n\nDone.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/chan.c#newcode1039\nsrc/pkg/runtime/chan.c:1039: typedef struct runtimeSelect runtimeSelect;\nOn 2012/09/05 15:53:10, iant wrote:\n> Add comment saying this struct must match reflect struct.\n\nDone.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/type.h\nFile src/pkg/runtime/type.h (right):\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/type.h#newcode91\nsrc/pkg/runtime/type.h:91: enum\nOn 2012/09/05 15:53:10, iant wrote:\n> Add comment that this must match values in reflect.  Also add reverse comment in\n> reflect/type.go.\n\nThere's a note at the top of this file. I updated the note in type.go to point at this file in addition to the ones it already pointed at.",
+			"disapproval": false,
+			"date": "2012-09-13 21:26:55.331780",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-09-05 14:54:13.812510",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Sep 17, 2012 at 2:34 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> This is my last PTAL.\r\n>\r\n\r\nAfter this one there is no \"Please\".\r\n",
+			"disapproval": false,
+			"date": "2012-09-17 21:37:39.768580",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"iant@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FYI\n\nhttps://codereview.appspot.com/6498078/diff/9/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttps://codereview.appspot.com/6498078/diff/9/src/pkg/reflect/all_test.go#newcode1071\nsrc/pkg/reflect/all_test.go:1071: func TestSelect(t *testing.T) {\nI don't see a test for using reflect.Select with types larger than uintptr, although that is a slightly separate code path in the implementation.\n\nhttps://codereview.appspot.com/6498078/diff/9/src/pkg/runtime/type.h\nFile src/pkg/runtime/type.h (right):\n\nhttps://codereview.appspot.com/6498078/diff/9/src/pkg/runtime/type.h#newcode93\nsrc/pkg/runtime/type.h:93: RecvDir = 1<<0,\nStill not needed, I think.",
+			"disapproval": false,
+			"date": "2012-09-17 22:12:32.684560",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/all_test.go#newcode1062\nsrc/pkg/reflect/all_test.go:1062: //\t5 recv from closed channel\nprobably want a nil channel in here.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go\nFile src/pkg/reflect/value.go (right):\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1636\nsrc/pkg/reflect/value.go:1636: // The Dir specifies the type\ns/type/communication nature of the case/\n(at least, don't use 'type')\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1638\nsrc/pkg/reflect/value.go:1638: Dir  ChanDir // type of select: default (0), send (SendDir), or receive (RecvDir)\ns/type of select/kind of case/\n\ndefault wants a name here - 0 is not obvious and heavily weighted with semantics.\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1639\nsrc/pkg/reflect/value.go:1639: Chan Value   // channel to use (for a send or receive case)\ninvalid should be ok and mean ignore\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1677\nsrc/pkg/reflect/value.go:1677: panic(\"reflect.Select: SendDir case missing Chan value\")\nall you need is break\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1696\nsrc/pkg/reflect/value.go:1696: if !ch.IsValid() {\nall you need is break\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/chan.c\nFile src/pkg/runtime/chan.c (right):\n\nhttp://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/chan.c#newcode1028\nsrc/pkg/runtime/chan.c:1028: }\nwhat's this about?",
+			"disapproval": false,
+			"date": "2012-09-05 15:07:04.540010",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's so easy to implement nil channels I think it should be done. That\r\nmeans that reflect can implement the full semantics of the select\r\nstatement.\r\n\r\nIf you don't implement it here, it means in Go it's silently ignored\r\nand in reflect it panics. That's a startling distinction.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-09-05 15:56:05.814530",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, I will introduce a separate enumeration for the case kinds.\r\n",
+			"disapproval": false,
+			"date": "2012-09-10 16:37:55.687400",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"iant@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello r@golang.org, iant@golang.org, rogpeppe@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-09-17 21:34:37.352850",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This is my last PTAL. I rewrote the test to be much cleaner.\r\n",
+			"disapproval": false,
+			"date": "2012-09-17 21:34:58.574750",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Sep 5, 2012 at 11:56 AM, Rob Pike <r@golang.org> wrote:\r\n> It's so easy to implement nil channels I think it should be done. That\r\n> means that reflect can implement the full semantics of the select\r\n> statement.\r\n>\r\n> If you don't implement it here, it means in Go it's silently ignored\r\n> and in reflect it panics. That's a startling distinction.\r\n\r\n\r\nnil channels are already handled correctly by the select runtime proper.\r\nWhat you're suggesting is to treat a zero reflect.Value as equivalent to\r\na nil channel. I can be talked into that, but the code as it stands is\r\ncompletely\r\nconsistent with the language. This is a new opportunity created by the\r\nreflect API, yet another way to say 'no value here'.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-05 21:41:59.138800",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm surprised to hear all this pushback about taking a panic *out* of\r\na library by making it behave like its model.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-09-05 22:47:47.565280",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Sep 17, 2012 at 5:37 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> On Mon, Sep 17, 2012 at 2:34 PM, Russ Cox <rsc@golang.org> wrote:\r\n>> This is my last PTAL.\r\n>\r\n> After this one there is no \"Please\".\r\n\r\nI just figured everyone was tired of LGTMing this CL. But I like your\r\ninterpretation too.\r\n",
+			"disapproval": false,
+			"date": "2012-09-17 21:45:54.479430",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"iant@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6498078/diff/8007/src/pkg/runtime/type.h\nFile src/pkg/runtime/type.h (right):\n\nhttps://codereview.appspot.com/6498078/diff/8007/src/pkg/runtime/type.h#newcode92\nsrc/pkg/runtime/type.h:92: {\nDo you still need this?",
+			"disapproval": false,
+			"date": "2012-09-13 23:01:28.949160",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"iant@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM after addressing iant's comments",
+			"disapproval": false,
+			"date": "2012-09-17 23:53:04.485640",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"iant@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6498078/diff/8007/src/pkg/runtime/type.h\nFile src/pkg/runtime/type.h (right):\n\nhttps://codereview.appspot.com/6498078/diff/8007/src/pkg/runtime/type.h#newcode92\nsrc/pkg/runtime/type.h:92: {\nOn 2012/09/13 23:01:29, iant wrote:\n> Do you still need this?\n\nGuess not.",
+			"disapproval": false,
+			"date": "2012-09-14 02:46:28.284830",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttps://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/all_test.go#newcode1062\nsrc/pkg/reflect/all_test.go:1062: //\t5 recv from closed channel\nOn 2012/09/05 15:07:04, r wrote:\n> probably want a nil channel in here.\n\nA nil channel makes sense in the language, but here, where you have to rebuild the slice anyhow each time you want to change things, I'm not sure it's worth supporting a nil channel.\n\nhttps://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go\nFile src/pkg/reflect/value.go (right):\n\nhttps://codereview.appspot.com/6498078/diff/2002/src/pkg/reflect/value.go#newcode1622\nsrc/pkg/reflect/value.go:1622: type runtimeSelect struct {\nAdd comment saying this struct must match runtime struct.\n\nhttps://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/chan.c\nFile src/pkg/runtime/chan.c (right):\n\nhttps://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/chan.c#newcode1039\nsrc/pkg/runtime/chan.c:1039: typedef struct runtimeSelect runtimeSelect;\nAdd comment saying this struct must match reflect struct.\n\nhttps://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/type.h\nFile src/pkg/runtime/type.h (right):\n\nhttps://codereview.appspot.com/6498078/diff/2002/src/pkg/runtime/type.h#newcode91\nsrc/pkg/runtime/type.h:91: enum\nAdd comment that this must match values in reflect.  Also add reverse comment in reflect/type.go.",
+			"disapproval": false,
+			"date": "2012-09-05 15:53:10.776580",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"iant@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-09-14 03:43:05.518080",
+			"approval": true
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"iant@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6498078/diff/8007/src/pkg/reflect/value.go\nFile src/pkg/reflect/value.go (right):\n\nhttps://codereview.appspot.com/6498078/diff/8007/src/pkg/reflect/value.go#newcode1644\nsrc/pkg/reflect/value.go:1644: SelectRecv              // case <-Chan:\nnit: if there's a \":\" here, it should be on the other comments and vice versa.\n\nhttps://codereview.appspot.com/6498078/diff/8007/src/pkg/reflect/value.go#newcode1657\nsrc/pkg/reflect/value.go:1657: // then the case is ignored, and the field Send will also be ignored and may be either zero\ns/the field // ?\n\nhttps://codereview.appspot.com/6498078/diff/8007/src/pkg/reflect/value.go#newcode1687\nsrc/pkg/reflect/value.go:1687: default:\ni still have a soft spot for the idea that the zero SelectDir would be \"ignore this case\", but i can also buy the view that this might mask an unintended bug, which is presumably your view here.",
+			"disapproval": false,
+			"date": "2012-09-14 07:27:04.080090",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"iant@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=1c33796be5cc ***\n\nreflect: add Select\n\nR=r, iant, rogpeppe, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6498078\n\nhttp://codereview.appspot.com/6498078/diff/9/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttp://codereview.appspot.com/6498078/diff/9/src/pkg/reflect/all_test.go#newcode1071\nsrc/pkg/reflect/all_test.go:1071: func TestSelect(t *testing.T) {\nOn 2012/09/17 22:12:32, iant wrote:\n> I don't see a test for using reflect.Select with types larger than uintptr,\n> although that is a slightly separate code path in the implementation.\n\nYes, and a buggy one. Added test and fixed.\n\nhttp://codereview.appspot.com/6498078/diff/9/src/pkg/runtime/type.h\nFile src/pkg/runtime/type.h (right):\n\nhttp://codereview.appspot.com/6498078/diff/9/src/pkg/runtime/type.h#newcode93\nsrc/pkg/runtime/type.h:93: RecvDir = 1<<0,\nOn 2012/09/17 22:12:32, iant wrote:\n> Still not needed, I think.\n\nDeleted. And deleting them would have made me find the other bug much faster. Nice call.",
+			"disapproval": false,
+			"date": "2012-09-18 18:22:49.718900",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6498078: reflect: add Select",
+	"created": "2012-09-01 19:42:59.754020",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		2002,
+		12001,
+		8007,
+		2007,
+		3007,
+		9,
+		15001,
+		18001
+	],
+	"modified": "2012-09-18 18:22:51.084520",
+	"closed": true,
+	"issue": 6498078
+}

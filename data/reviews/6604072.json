@@ -1,0 +1,210 @@
+{
+	"description": "net: fix connection resets when closed on windows\n\nIt is common to close network connection while another goroutine is\nblocked reading on another goroutine. This sequence corresponds to\nwindows calls to WSARecv to start io, followed by GetQueuedCompletionStatus\nthat blocks until io completes, and, finally, closesocket called from\nanother thread. We were expecting that closesocket would unblock\nGetQueuedCompletionStatus, and it does, but not always\n(http://code.google.com/p/go/issues/detail?id=4170#c5). Also that sequence\nresults in connection is being reset.\n\nThis CL inserts CancelIo between GetQueuedCompletionStatus and closesocket,\nand waits for both WSARecv and GetQueuedCompletionStatus to complete before\nproceeding to closesocket.  This seems to fix both connection resets and\nissue 4170. It also makes windows code behave similar to unix version.\n\nUnfortunately, CancelIo needs to be called on the same thread as WSARecv.\nSo we have to employ strategy we use for connections with deadlines to\nevery connection now. It means, there are 2 unavoidable thread switches\nfor every io. Some newer versions of windows have new CancelIoEx api that\ndoesn't have these drawbacks, and this CL uses this capability when available.\nAs time goes by, we should have less of CancelIo and more of CancelIoEx\nsystems. Computers with CancelIoEx are also not affected by issue 4195 anymore.\n\nFixes issue 3710\nFixes issue 3746\nFixes issue 4170\nPartial fix for issue 4195",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"mikioh.mikioh@gmail.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-10-11 06:28:09.985230",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (right):\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_unix.go#newcode674\nsrc/pkg/net/fd_unix.go:674: var skipReadWriteDeadlineTest bool // used for testing current package\nOn 2012/10/13 17:13:50, mikio wrote:\n> s/skipReadWriteDeadlineTest/canCancelIO/\n> also pls move this line before init() as same as fd_windows.go.\n\nDone.\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_windows.go#newcode21\nsrc/pkg/net/fd_windows.go:21: var skipReadWriteDeadlineTest bool // used for testing current package\nOn 2012/10/13 17:13:50, mikio wrote:\n> we can drop this variable.\n\nDone.\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_windows.go#newcode139\nsrc/pkg/net/fd_windows.go:139: // Is used on Windows with no CancelIoEx api only.\nOn 2012/10/13 17:13:50, mikio wrote:\n> It's?\n\nDone.\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/timeout_test.go\nFile src/pkg/net/timeout_test.go (right):\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/timeout_test.go#newcode124\nsrc/pkg/net/timeout_test.go:124: if skipReadWriteDeadlineTest {\nOn 2012/10/13 17:13:50, mikio wrote:\n> if !canCancelIO {\n\nDone.",
+			"disapproval": false,
+			"date": "2012-10-15 04:29:22.075220",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It might be better syscall for windows stuff in another CL, perhaps.\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (right):\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_unix.go#newcode674\nsrc/pkg/net/fd_unix.go:674: var skipReadWriteDeadlineTest bool // used for testing current package\ns/skipReadWriteDeadlineTest/canCancelIO/\nalso pls move this line before init() as same as fd_windows.go.\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_windows.go#newcode21\nsrc/pkg/net/fd_windows.go:21: var skipReadWriteDeadlineTest bool // used for testing current package\nwe can drop this variable.\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/fd_windows.go#newcode139\nsrc/pkg/net/fd_windows.go:139: // Is used on Windows with no CancelIoEx api only.\nIt's?\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/timeout_test.go\nFile src/pkg/net/timeout_test.go (right):\n\nhttps://codereview.appspot.com/6604072/diff/5001/src/pkg/net/timeout_test.go#newcode124\nsrc/pkg/net/timeout_test.go:124: if skipReadWriteDeadlineTest {\nif !canCancelIO {",
+			"disapproval": false,
+			"date": "2012-10-13 17:13:50.171790",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, mikioh.mikioh@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-10-15 04:28:09.393900",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go#newcode137\nsrc/pkg/net/fd_windows.go:137: // It is used on Windows with no CancelIoEx api only.\nAPI.  Also, I'd reword:\n\n// It is used on Windows only when the CancelIoEx API is unavailable.\n\nhttps://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go#newcode210\nsrc/pkg/net/fd_windows.go:210: // Wait for io to be canceled or complete successfully.\nIO (capital), like the next line.  (and elsewhere)\n\nhttps://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go#newcode238\nsrc/pkg/net/fd_windows.go:238: // Windows api determines the outcome.\nAPI.\n\nI would explain a little bit more here.  As is, it reads like \"the following line uses an if statement\".  You have a great CL description but those paragraphs of text will be harder to find once submitted.  It'd be great if some of that made its way into the code somewhere.\n\nhttps://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go#newcode278\nsrc/pkg/net/fd_windows.go:278: closec: make(chan bool, 2), // Close shouldn't block when signalling to both reader and writer\nwhy not just close the channel to signal close?",
+			"disapproval": false,
+			"date": "2012-10-16 03:46:42.515080",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm happy once Mikio is.\r\n",
+			"disapproval": false,
+			"date": "2012-10-16 17:41:44.566780",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, mikioh.mikioh@gmail.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-10-16 06:58:00.954520",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go#newcode137\nsrc/pkg/net/fd_windows.go:137: // It is used on Windows with no CancelIoEx api only.\nOn 2012/10/16 03:46:42, bradfitz wrote:\n> API.  Also, I'd reword:\n> \n> // It is used on Windows only when the CancelIoEx API is unavailable.\n\nDone.\n\nhttps://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go#newcode210\nsrc/pkg/net/fd_windows.go:210: // Wait for io to be canceled or complete successfully.\nOn 2012/10/16 03:46:42, bradfitz wrote:\n> IO (capital), like the next line.  (and elsewhere)\n\nDone.\n\nhttps://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go#newcode238\nsrc/pkg/net/fd_windows.go:238: // Windows api determines the outcome.\nOn 2012/10/16 03:46:42, bradfitz wrote:\n> API.\n> \n> I would explain a little bit more here.  As is, it reads like \"the following\n> line uses an if statement\".  You have a great CL description but those\n> paragraphs of text will be harder to find once submitted.  It'd be great if some\n> of that made its way into the code somewhere.\n\nDone.\n\nhttps://codereview.appspot.com/6604072/diff/11002/src/pkg/net/fd_windows.go#newcode278\nsrc/pkg/net/fd_windows.go:278: closec: make(chan bool, 2), // Close shouldn't block when signalling to both reader and writer\nOn 2012/10/16 03:46:42, bradfitz wrote:\n> why not just close the channel to signal close?\n\nDone.",
+			"disapproval": false,
+			"date": "2012-10-16 06:58:09.572270",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping",
+			"disapproval": false,
+			"date": "2012-10-25 00:37:49.719970",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Waiting on Mikio's review?\r\n\r\nOn Wed, Oct 24, 2012 at 5:37 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> ping\r\n>\r\n> http://codereview.appspot.com/**6604072/<http://codereview.appspot.com/6604072/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-25 00:46:08.486730",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/25 00:46:08, bradfitz wrote:\n> Waiting on Mikio's review?\n> \n\nI am.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-10-25 00:46:47.315280",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nsorry for the late response.",
+			"disapproval": false,
+			"date": "2012-10-30 06:08:11.362950",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=8087f34d11d6 ***\n\nnet: fix connection resets when closed on windows\n\nIt is common to close network connection while another goroutine is\nblocked reading on another goroutine. This sequence corresponds to\nwindows calls to WSARecv to start io, followed by GetQueuedCompletionStatus\nthat blocks until io completes, and, finally, closesocket called from\nanother thread. We were expecting that closesocket would unblock\nGetQueuedCompletionStatus, and it does, but not always\n(http://code.google.com/p/go/issues/detail?id=4170#c5). Also that sequence\nresults in connection is being reset.\n\nThis CL inserts CancelIo between GetQueuedCompletionStatus and closesocket,\nand waits for both WSARecv and GetQueuedCompletionStatus to complete before\nproceeding to closesocket.  This seems to fix both connection resets and\nissue 4170. It also makes windows code behave similar to unix version.\n\nUnfortunately, CancelIo needs to be called on the same thread as WSARecv.\nSo we have to employ strategy we use for connections with deadlines to\nevery connection now. It means, there are 2 unavoidable thread switches\nfor every io. Some newer versions of windows have new CancelIoEx api that\ndoesn't have these drawbacks, and this CL uses this capability when available.\nAs time goes by, we should have less of CancelIo and more of CancelIoEx\nsystems. Computers with CancelIoEx are also not affected by issue 4195 anymore.\n\nFixes issue 3710\nFixes issue 3746\nFixes issue 4170\nPartial fix for issue 4195\n\nR=golang-dev, mikioh.mikioh, bradfitz, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6604072",
+			"disapproval": false,
+			"date": "2012-10-30 23:24:43.272590",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 6604072: net: fix connection resets when closed on windows",
+	"created": "2012-10-11 05:29:20.998780",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		11002,
+		17001,
+		26001
+	],
+	"modified": "2012-10-30 23:24:45.438750",
+	"closed": true,
+	"issue": 6604072
+}

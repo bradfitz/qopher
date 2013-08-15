@@ -1,0 +1,190 @@
+{
+	"description": "go/build: add BuildTags to Context, allow !tag\n\nThis lets the client of go/build specify additional tags that\ncan be recognized in a // +build directive.  For example,\na build for a custom environment like App Engine might\ninclude \"appengine\" in the BuildTags list, so that packages\ncan be written with some files saying\n\n        // +build appengine   (build only on app engine)\n\nor\n\n        // +build !appengine  (build only when NOT on app engine)\n\nApp Engine here is just a hypothetical context.  I plan to use\nthis in the cmd/go sources to distinguish the bootstrap version\nof cmd/go (which will not use networking) from the full version\nusing a custom tag.  It might also be useful in App Engine.\n\nAlso, delete Build and Script, which we did not end up using for\ncmd/go and which never got turned on for real in goinstall.",
+	"cc": [
+		"r@golang.org",
+		"adg@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Jan 21, 2012 at 17:45,  <r@golang.org> wrote:\n> the words don't feel right\n\nagreed but the surrounding directory will be gone in a few days.\n",
+			"disapproval": false,
+			"date": "2012-01-22 04:12:52.106210",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-01-21 06:14:14.392090",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "code's fine. where is it documented?\n\nhttp://codereview.appspot.com/5554079/diff/3001/src/cmd/goinstall/main.go\nFile src/cmd/goinstall/main.go (right):\n\nhttp://codereview.appspot.com/5554079/diff/3001/src/cmd/goinstall/main.go#newcode47\nsrc/cmd/goinstall/main.go:47: useMake           = flag.Bool(\"make\", true, \"use make to build and install (obsolete, always true)\")\nthe words don't feel right\n\nhttp://codereview.appspot.com/5554079/diff/3001/src/pkg/crypto/tls/root_stub.go\nFile src/pkg/crypto/tls/root_stub.go (right):\n\nhttp://codereview.appspot.com/5554079/diff/3001/src/pkg/crypto/tls/root_stub.go#newcode5\nsrc/pkg/crypto/tls/root_stub.go:5: // +build plan9 darwin/!cgo\ni don't see where this syntax is documented",
+			"disapproval": false,
+			"date": "2012-01-21 22:45:05.072267",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you please add docs for +build directives to go/build in this CL?\n\nhttp://codereview.appspot.com/5554079/diff/3001/src/pkg/go/build/dir.go\nFile src/pkg/go/build/dir.go (right):\n\nhttp://codereview.appspot.com/5554079/diff/3001/src/pkg/go/build/dir.go#newcode572\nsrc/pkg/go/build/dir.go:572: if strings.HasPrefix(name, \"!!\") { // bad syntax, reject always\nSeems odd to reject this when the general case will work as expected.",
+			"disapproval": false,
+			"date": "2012-01-22 23:39:13.651067",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 22, 2012 at 18:39,  <adg@golang.org> wrote:\n> Seems odd to reject this when the general case will work as expected.\n\nI am not building an arbitrary expression parser here.\n",
+			"disapproval": false,
+			"date": "2012-01-23 17:16:03.252109",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jan 23, 2012 at 14:50,  <r@golang.org> wrote:\n> 1) define the syntax of one build option, so we know the 'and' of\n> multiple conditions\n> 2) define the syntax for multiple options, so we know the 'or'\n> the current structure oscillates between 'and' and 'or' and is\n> confusing.\n\nI don't believe the current structure oscillates: it is top down.\nI kept it top down but shortened it, which should help:\n\n// Build Constraints\n//\n// A build constraint is a line comment beginning with the directive +build\n// that lists the conditions under which a file should be included in\nthe package.\n// Constraints may appear in any kind of source file (not just Go), but\n// they must be appear near the top of the file, preceded\n// only by blank lines and other line comments.\n//\n// A build constraint is evaluated as the OR of space-separated options;\n// each option evaluates as the AND of ots comma-separated terms;\n// and each term is an alphanumeric word or, preceded by !, its negation.\n// That is, the build constraint:\n//\n//\t// +build linux,386 darwin,!cgo\n//\n// corresponds to the boolean formula:\n//\n//\t(linux AND 386) OR (darwin AND (NOT cgo))\n//\n// During a particular build, the following words are satisfied:\n//\n//\t- the target operating system, as spelled by runtime.GOOS\n//\t- the target architecture, as spelled by runtime.GOARCH\n//\t- \"cgo\", if ctxt.CgoEnabled is true\n//\t- any additional words listed in ctxt.BuildTags\n//\n// If a file's name, after stripping the extension and a possible _test suffix,\n// matches *_GOOS, *_GOARCH, or *_GOOS_GOARCH for any known operating\n// system and architecture values, then the file is considered to have\nan implicit\n// build constraint requiring those terms.\n",
+			"disapproval": false,
+			"date": "2012-01-23 20:08:37.381885",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go\nFile src/pkg/go/build/dir.go (right):\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode155\nsrc/pkg/go/build/dir.go:155: // Files ending in _test.go are treated as test files and included in\nshould this comment be at the top of the file?\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode156\nsrc/pkg/go/build/dir.go:156: // info.TestGoFiles info.XTestGoFiles list instead of info.GoFiles.\ncan't parse this\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode166\nsrc/pkg/go/build/dir.go:166: // Build Constraints\ngood to have here for now, but really it needs to be described outside the code. the issue of documentation of flags, usage and best practices can wait for another day, but it's very serious.\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode186\nsrc/pkg/go/build/dir.go:186: // Each option is itself a /-separated list of terms, satisfied only when\ns;/;slash;\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode187\nsrc/pkg/go/build/dir.go:187: // all the terms are satisfied.  In the example above, ``linux/amd64'' is\ndrop the quotes.\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode188\nsrc/pkg/go/build/dir.go:188: // satisfied when both linux and amd64 are satisfied.\ndoes amd64/linux work too? the similarity to file names is unfortunate and, to be honest, completely misled me until i read this. i suggest comma or ampersand instead.\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode192\nsrc/pkg/go/build/dir.go:192: // and vice versa.\nnot using slash would make what is now linux/!cgo a lot easier to understand. i was baffled when i first saw it",
+			"disapproval": false,
+			"date": "2012-01-23 18:42:53.163201",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-23 17:16:22.504214",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Large comment added.\n",
+			"disapproval": false,
+			"date": "2012-01-23 17:16:34.994967",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM for comment in dir.go after suggested rearrangement\n\nhttp://codereview.appspot.com/5554079/diff/13001/src/pkg/go/build/dir.go\nFile src/pkg/go/build/dir.go (right):\n\nhttp://codereview.appspot.com/5554079/diff/13001/src/pkg/go/build/dir.go#newcode185\nsrc/pkg/go/build/dir.go:185: // Each option is itself an comma-separated list of terms, satisfied only when\ns/an/a/\n\nhttp://codereview.appspot.com/5554079/diff/13001/src/pkg/go/build/dir.go#newcode188\nsrc/pkg/go/build/dir.go:188: // have the same meaning.\nthis is much better, but please do the following\n1) define the syntax of one build option, so we know the 'and' of multiple conditions\n2) define the syntax for multiple options, so we know the 'or'\nthe current structure oscillates between 'and' and 'or' and is confusing.",
+			"disapproval": false,
+			"date": "2012-01-23 19:50:50.868465",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go\nFile src/pkg/go/build/dir.go (right):\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode155\nsrc/pkg/go/build/dir.go:155: // Files ending in _test.go are treated as test files and included in\nI deleted this paragraph in favor of changing the\ncomment on GoFiles in DirInfo.\n\nMore generally, I agree that this big comment belongs elsewhere,\nbut right now I don't know where that should be.  I want to think\na bit more about what go/build is for, and that will inform whether\nthis belongs in a package comment.\n\nIt definitely belongs in a \"how to use the go tool\" document too,\nbut at least it is written down in one place now.\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode156\nsrc/pkg/go/build/dir.go:156: // info.TestGoFiles info.XTestGoFiles list instead of info.GoFiles.\nOn 2012/01/23 18:42:53, r wrote:\n> can't parse this\n\nDeleted.\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode166\nsrc/pkg/go/build/dir.go:166: // Build Constraints\nOn 2012/01/23 18:42:53, r wrote:\n> good to have here for now, but really it needs to be described outside the code.\n> the issue of documentation of flags, usage and best practices can wait for\n> another day, but it's very serious.\n\nAgreed.\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode188\nsrc/pkg/go/build/dir.go:188: // satisfied when both linux and amd64 are satisfied.\nOn 2012/01/23 18:42:53, r wrote:\n> does amd64/linux work too? the similarity to file names is unfortunate and, to\n> be honest, completely misled me until i read this. i suggest comma or ampersand\n> instead.\n\nChanged to comma.\n\nhttp://codereview.appspot.com/5554079/diff/9001/src/pkg/go/build/dir.go#newcode192\nsrc/pkg/go/build/dir.go:192: // and vice versa.\nOn 2012/01/23 18:42:53, r wrote:\n> not using slash would make what is now linux/!cgo a lot easier to understand. i\n> was baffled when i first saw it\n\nDone.",
+			"disapproval": false,
+			"date": "2012-01-23 19:40:16.600870",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n",
+			"disapproval": false,
+			"date": "2012-01-23 19:40:34.021739",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=0b94f1e20038 ***\n\ngo/build: add BuildTags to Context, allow !tag\n\nThis lets the client of go/build specify additional tags that\ncan be recognized in a // +build directive.  For example,\na build for a custom environment like App Engine might\ninclude \"appengine\" in the BuildTags list, so that packages\ncan be written with some files saying\n\n        // +build appengine   (build only on app engine)\n\nor\n\n        // +build !appengine  (build only when NOT on app engine)\n\nApp Engine here is just a hypothetical context.  I plan to use\nthis in the cmd/go sources to distinguish the bootstrap version\nof cmd/go (which will not use networking) from the full version\nusing a custom tag.  It might also be useful in App Engine.\n\nAlso, delete Build and Script, which we did not end up using for\ncmd/go and which never got turned on for real in goinstall.\n\nR=r, adg\nCC=golang-dev\nhttp://codereview.appspot.com/5554079",
+			"disapproval": false,
+			"date": "2012-01-23 20:16:41.308167",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5554079: go/build: add BuildTags to Context, allow !tag",
+	"created": "2012-01-21 04:18:31.990827",
+	"patchsets": [
+		1,
+		1002,
+		3001,
+		9001,
+		13001,
+		14002,
+		14003
+	],
+	"modified": "2012-01-23 20:16:42.184108",
+	"closed": true,
+	"issue": 5554079
+}

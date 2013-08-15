@@ -1,0 +1,583 @@
+{
+	"description": "runtime: add timer support, use for package time\n\nThis looks like it is just moving some code from\ntime to runtime (and translating it to C), but the\nruntime can do a better job managing the goroutines,\nand it needs this functionality for its own maintenance\n(for example, for the garbage collector to hand back\nunused memory to the OS on a time delay).\nMight as well have just one copy of the timer logic,\nand runtime can't depend on time, so vice versa.\n\nIt also unifies Sleep, NewTicker, and NewTimer behind\none mechanism, so that there are no claims that one\nis more efficient than another.  (For example, today\npeople recommend using time.After instead of time.Sleep\nto avoid blocking an OS thread.)\n\nFixes issue 1644.\nFixes issue 1731.\nFixes issue 2190.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org",
+		"hectorchu@gmail.com",
+		"iant@golang.org",
+		"iant@google.com",
+		"jsing@google.com",
+		"alex.brainman@gmail.com",
+		"dvyukov@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/lock_sema.c\nFile src/pkg/runtime/lock_sema.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/lock_sema.c#newcode184\nsrc/pkg/runtime/lock_sema.c:184: // Deadline hasn't arrived.  Keep sleeping.\nI think you're missing\n\nns = deadline - now;\n\nhere.",
+			"disapproval": false,
+			"date": "2011-11-08 02:14:32.039004",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Mon, Nov 7, 2011 at 06:26,  <dvyukov@google.com> wrote:\n> Now it would be nice if we rewrite\n> \u00a0case now <-time.After(timeout):\n> into\n> \u00a0runtime.selecttimeout(timeout, &now):\n> Because then we just need to choose a minimal timeout and use timed\n> sleep inside of select. No need to allocate/collect channel,\n> send/receive values, etc. But it won't pass the review, right?\n\nThis is a possible direction to go, but it is far\nfrom clear that it is a direction we should go.\nLet's not worry about it in this CL.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-07 17:38:47.443930",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/11/07 17:38:47, rsc wrote:\n> On Mon, Nov 7, 2011 at 06:26,  <mailto:dvyukov@google.com> wrote:\n> > Now it would be nice if we rewrite\n> > &nbsp;case now <-time.After(timeout):\n> > into\n> > &nbsp;runtime.selecttimeout(timeout, &now):\n> > Because then we just need to choose a minimal timeout and use timed\n> > sleep inside of select. No need to allocate/collect channel,\n> > send/receive values, etc. But it won't pass the review, right?\n> \n> This is a possible direction to go, but it is far\n> from clear that it is a direction we should go.\n> Let's not worry about it in this CL.\n\nOh, I did not mean this CL. That's just some thoughts aloud.\nI suspect that one the common use cases is 2-case select where a first case (non-timeout) is frequently ready. It's a pity that we need to allocate/collect channels, send/receive values when it can be rewritten along the lines of just runtime.chansend(c, elem, timeout). I do not see how it can be done outside of the compiler, however making a language compiler aware of \"time\".\"After\" does not look like the right thing as well.",
+			"disapproval": false,
+			"date": "2011-11-08 08:24:24.271260",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "With these changes all of the tests pass on OpenBSD/amd64 - I can review the change more closely tomorrow, unless you wish to commit before then.\n\nhttp://codereview.appspot.com/5334051/diff/28004/src/pkg/runtime/openbsd/thread.c\nFile src/pkg/runtime/openbsd/thread.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/28004/src/pkg/runtime/openbsd/thread.c#newcode68\nsrc/pkg/runtime/openbsd/thread.c:68: int32 ms;\nUnused.\n\nhttp://codereview.appspot.com/5334051/diff/28004/src/pkg/runtime/openbsd/thread.c#newcode84\nsrc/pkg/runtime/openbsd/thread.c:84: ts.tv_usec = ns%1000000000LL;\ns/usec/nsec/",
+			"disapproval": false,
+			"date": "2011-11-08 16:25:51.605908",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/lock_sema.c\nFile src/pkg/runtime/lock_sema.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/lock_sema.c#newcode190\nsrc/pkg/runtime/lock_sema.c:190: // try to grant us the semaphore when we don't expect it.\nI do not see any correctness issues here, but it looks overly complex. Do we ever want to use a single note for both timed and non-timed waits? They look like a completely different use cases. Can't we just assert the usage along the lines of:\n\nnotetwait(n) {\n  n->timed = true;\n  ...\n}\n\nnotewait(n) {\n  if(n->timed)\n    runtime.throw(...);\n  ...\n}\n\nand then completely remove that rollback part of notetsleep?",
+			"disapproval": false,
+			"date": "2011-11-08 10:09:16.732181",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Mon, Nov 7, 2011 at 17:20, Hector Chu <hectorchu@gmail.com> wrote:\n> That was me :)\n\nApologies.  My editor lost the first draft of that message\nand I reconstructed it quickly from memory instead of\nlooking at the review messages.  Oops.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-07 22:45:16.211982",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg",
+			"disapproval": false,
+			"date": "2011-11-04 19:52:03.425583",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Now it would be nice if we rewrite\n  case now <-time.After(timeout):\ninto\n  runtime.selecttimeout(timeout, &now):\nBecause then we just need to choose a minimal timeout and use timed sleep inside of select. No need to allocate/collect channel, send/receive values, etc. But it won't pass the review, right?",
+			"disapproval": false,
+			"date": "2011-11-07 11:26:10.856926",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> http://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/lock_sema.c#newcode120\n> src/pkg/runtime/lock_sema.c:120: m->waitsema = runtime\u00b7semacreate();\n> I am not sure a waiting goroutine always calls noteclear before\n> notewait. For example, getprofile() seems to not do that.\n\nYou're right, fixed.  I thought there was a race setting the waitsema\nbetween sleep and wakeup, but it's okay because sleep doesn't\nqueue for the wakeup until it has established the semaphore.\n\n> http://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/lock_sema.c#newcode200\n> src/pkg/runtime/lock_sema.c:200: if(runtime\u00b7semasleep(0) < 0)\n> It is not clear as to whether semasleep() can be interrupted (EINTR) or\n> return some other error (few lines above you write \"Interrupted or timed\n> out\"). If yes, then this check is incorrect, because notewake() updates\n> n->waitm first and after that releases the semaphore non-atomically, so\n> it can happen that n->waitm==LOCKED but the semaphore is not yet\n> signaled, so semasleep can legitimately return \"EINTR\".\n\nThanks.  I have changed this to semasleep(-1).\nWe know the semaphore is on its way.\n\n> http://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/time.goc#newcode137\n> src/pkg/runtime/time.goc:137: siftup(i);\n> please surround siftup/siftdown with if(i!=timers.len)\n\nWhy?  They are correct in that case.\n\n> http://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/time.goc#newcode177\n> src/pkg/runtime/time.goc:177: t->f(now, t->arg);\n> It's suspicious that we use t outside of the lock, looks like a recipe\n> for problems. I've failed to compromise it, but may we cache t->f and\n> t->arg in local vars before unlocking the mutex? Just to make it\n> bullet-proof and to not spent any more time trying to prove its\n> correctness or compromise it. For example, if we ever implement your\n> \"runtime\u00b7tsleep as gosched\" idea it will do cause subtle problems.\n\nThe release of the lock was a dreg from trying to make\ntimerproc friendly with the gc.  Now that it's a goroutine\nwe can go back to calling t->f while holding the lock.\n\n> http://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/time.goc#newcode184\n> src/pkg/runtime/time.goc:184: g->waitreason = \"no pending timers\";\n> IMVHO the description can confuse a user. Perhaps something like \"timer\n> goroutine (idle)\" would be more understandable.\n\nDone.\n\n> src/pkg/runtime/lock_sema.c:190: // try to grant us the semaphore when\n> we don't expect it.\n> I do not see any correctness issues here, but it looks overly complex.\n> Do we ever want to use a single note for both timed and non-timed waits?\n> They look like a completely different use cases. Can't we just assert\n> the usage along the lines of:\n> ...\n> and then completely remove that rollback part of notetsleep?\n\nThe timer goroutine calls notetsleep(&timers.waitnote, delta)\nto wait for either delta ns to pass or for an explicit wakeup by\naddtimer.  The rollback is trying to handle that situation.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-08 13:55:28.936249",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/freebsd/thread.c\nFile src/pkg/runtime/freebsd/thread.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/freebsd/thread.c#newcode15\nsrc/pkg/runtime/freebsd/thread.c:15: typedef struct Timespec Timespec;\nAny reason not to add this to defs.[ch]?\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/freebsd/thread.c#newcode30\nsrc/pkg/runtime/freebsd/thread.c:30: sec = ns / 1000000000LL;\ns/sec/ts.sec/\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/freebsd/thread.c#newcode31\nsrc/pkg/runtime/freebsd/thread.c:31: usec = ns % 1000000000LL;\ns/usec/ts.nsec/\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/linux/thread.c\nFile src/pkg/runtime/linux/thread.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/linux/thread.c#newcode41\nsrc/pkg/runtime/linux/thread.c:41: Timespec tv, *tvp;\nWould it be better to use ts and tsp since this is a timespec?\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/openbsd/thread.c\nFile src/pkg/runtime/openbsd/thread.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/openbsd/thread.c#newcode59\nsrc/pkg/runtime/openbsd/thread.c:59: void\ns/void/int32/, plus we presumably want to store and return the result from the thrsleep() call.\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/openbsd/thread.c#newcode78\nsrc/pkg/runtime/openbsd/thread.c:78: goto retry;\nHrmmm... I think we've got an interesting problem here - if we return after a timeout we will goto retry, waitsemacount is likely to still be 0 (unless something called wakeup) and we will then sleep again. This will likely need redesigning in order to sleep with a timeout.",
+			"disapproval": false,
+			"date": "2011-11-06 14:56:29.652499",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/lock_futex.c\nFile src/pkg/runtime/lock_futex.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/lock_futex.c#newcode106\nsrc/pkg/runtime/lock_futex.c:106: runtime\u00b7notesleep(Note *n)\nnotetsleep(n, -1)?\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/lock_sema.c\nFile src/pkg/runtime/lock_sema.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/lock_sema.c#newcode115\nsrc/pkg/runtime/lock_sema.c:115: runtime\u00b7notesleep(Note *n)\nnotetsleep(n, -1)?\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/proc.c#newcode586\nsrc/pkg/runtime/proc.c:586: if(runtime\u00b7sched.grunning == 0 && !runtime\u00b7havetimers())\nNeed to re-check the condition in time.goc when havetimers() becomes false.\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/time.goc\nFile src/pkg/runtime/time.goc (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/time.goc#newcode29\nsrc/pkg/runtime/time.goc:29: g->status = Gwaiting;\nIt's better to set the status in tsleep(). tsleep() is completely senseless w/o the Gwaiting status.\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/time.goc#newcode78\nsrc/pkg/runtime/time.goc:78: if(t.i != -1) {\nHow can this happen?",
+			"disapproval": false,
+			"date": "2011-11-07 10:54:15.428276",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "FYI\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/freebsd/thread.c\nFile src/pkg/runtime/freebsd/thread.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/freebsd/thread.c#newcode17\nsrc/pkg/runtime/freebsd/thread.c:17: uintptr sec;\nOn 2011/11/04 21:00:14, r wrote:\n> why are these uintptr? uintptr might be only 32 bits, too. maybe that's not a\n> problem for nsec since 1b fits in 31.\n\nThis does match what godefs pulls out.  In the FreeBSD sources the sec field is time_t and the nsec field is long.\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/freebsd/thread.c#newcode30\nsrc/pkg/runtime/freebsd/thread.c:30: sec = ns / 1000000000LL;\nI assume you mean \"ts.sec =\" and \"ts.usec =\" here.  The code as written won't even compile.",
+			"disapproval": false,
+			"date": "2011-11-04 21:31:53.936447",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Applied your change to 87b7bdc68d7f+. But this program (simplified http://code.google.com/p/go/issues/detail?id=2190):\n\npackage main\n\nimport (\n\t\"time\"\n)\n\nconst N = 10000\n\nfunc main() {\n\tfor i := 0; i < N; i++ {\n\t\tgo func() {\n\t\t\ttime.Sleep(1e9)\n\t\t}()\n\t}\n\t<-make(chan bool)\n}\n\nstill crashes on windows:\n\nruntime: failed to create new OS thread (have 1181 already; errno=8)\nthrow: runtime.newosproc\n\ngoroutine 1181 [sleep]:\ntime.Sleep(0x3b9aca00, 0x0)\n\t/root/hg/go/src/pkg/runtime/time.c:26 +0x50\nmain._func_001()\n\t/root/t2/test.go:12 +0x2d\ncreated by main.main\n\t/root/t2/test.go:13 +0x34\n\ngoroutine 1 [chan receive]:\nmain.main()\n\t/root/t2/test.go:15 +0x78\n\ngoroutine 2 [sleep]:\ntime.Sleep(0x3b9aca00, 0x0)\n\t/root/hg/go/src/pkg/runtime/time.c:26 +0x50\nmain._func_001()\n\t/root/t2/test.go:12 +0x2d\ncreated by main.main\n\t/root/t2/test.go:13 +0x34\n\ngoroutine 3 [sleep]:\ntime.Sleep(0x3b9aca00, 0x0)\n\t/root/hg/go/src/pkg/runtime/time.c:26 +0x50\nmain._func_001()\n\t/root/t2/test.go:12 +0x2d\ncreated by main.main\n\t/root/t2/test.go:13 +0x34\n\n...\n\nAlex",
+			"disapproval": false,
+			"date": "2011-11-07 01:44:57.986335",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Nice.\n\n\"Fixes Issue nnn\"?  I feel like there is at least one.\n\n\nOn Fri, Nov 4, 2011 at 12:52 PM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg\n>\n>\n> Description:\n> runtime: add timer support, use for package time\n>\n> This looks like it is just moving some code from\n> time to runtime (and translating it to C), but the\n> runtime can do a better job managing the goroutines,\n> and it needs this functionality for its own maintenance\n> (for example, for the garbage collector to hand back\n> unused memory to the OS on a time delay).\n> Might as well have just one copy of the timer logic,\n> and runtime can't depend on time, so vice versa.\n>\n> It also unifies Sleep, NewTicker, and NewTimer behind\n> one mechanism, so that there are no claims that one\n> is more efficient than another.  (For example, today\n> people recommend using time.After instead of time.Sleep\n> to avoid blocking an OS thread.)\n>\n> Please review this at http://codereview.appspot.com/**5334051/<http://codereview.appspot.com/5334051/>\n>\n> Affected files:\n>  M src/pkg/runtime/darwin/os.h\n>  M src/pkg/runtime/darwin/thread.**c\n>  M src/pkg/runtime/freebsd/**thread.c\n>  M src/pkg/runtime/linux/thread.c\n>  M src/pkg/runtime/lock_futex.c\n>  M src/pkg/runtime/lock_sema.c\n>  M src/pkg/runtime/openbsd/**thread.c\n>  M src/pkg/runtime/plan9/thread.c\n>  M src/pkg/runtime/proc.c\n>  M src/pkg/runtime/runtime.h\n>  M src/pkg/runtime/time.goc\n>  M src/pkg/runtime/windows/**thread.c\n>  M src/pkg/time/sleep.go\n>  M src/pkg/time/sys.go\n>  M src/pkg/time/tick.go\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-11-04 19:54:07.826555",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/11/08 13:55:28, rsc wrote:\n\n> http://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/time.goc#newcode137\n> > src/pkg/runtime/time.goc:137: siftup(i);\n> > please surround siftup/siftdown with if(i!=timers.len)\n> \n> Why?  They are correct in that case.\n\nWell, yes, you're right.",
+			"disapproval": false,
+			"date": "2011-11-08 14:14:14.302960",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Nov 4, 2011 at 15:54, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> \"Fixes Issue nnn\"? \u00a0I feel like there is at least one.\n\njust added 3\n",
+			"disapproval": false,
+			"date": "2011-11-04 19:54:36.846213",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/proc.c#newcode725\nsrc/pkg/runtime/proc.c:725: m->procfn();\nI think as of now it will throw if fall through to schedule(). Isn't it better to put explicit return?\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/proc.c#newcode774\nsrc/pkg/runtime/proc.c:774: m->procfn = procfn;\nIt is quite fragile. See newm comment in time.goc.\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/time.goc\nFile src/pkg/runtime/time.goc (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/time.goc#newcode122\nsrc/pkg/runtime/time.goc:122: runtime\u00b7newm(timerproc);\nOne needs to increment mcpu and grunning before starting new M. Otherwise it won't play nicely with stop the world GC.\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/time.goc#newcode170\nsrc/pkg/runtime/time.goc:170: timerproc(void)\nI think the thread does not play nicely with garbage collection. It must not allocate/free any memory and more importantly not touch any GC memory (it seems to shuffle timer pointers).\nit must support the stop the world protocol.",
+			"disapproval": false,
+			"date": "2011-11-07 10:35:02.612901",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM but some comments wouldn't hurt. this is mysterious to most\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/freebsd/thread.c\nFile src/pkg/runtime/freebsd/thread.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/freebsd/thread.c#newcode17\nsrc/pkg/runtime/freebsd/thread.c:17: uintptr sec;\nwhy are these uintptr? uintptr might be only 32 bits, too. maybe that's not a problem for nsec since 1b fits in 31.\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/time.goc\nFile src/pkg/runtime/time.goc (right):\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/time.goc#newcode41\nsrc/pkg/runtime/time.goc:41: static void timerproc(void);\ndoes goc have no comment convention? how about some function comments?",
+			"disapproval": false,
+			"date": "2011-11-04 21:00:14.422822",
+			"approval": true
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "With this change I'm seeing the following on linux amd64:\n\nTEST FAIL crypto/blowfish\nmake[1]: Entering directory `/src/go/src/pkg/crypto/blowfish'\ngotest -test.short -test.timeout=120\nrm -f _test/crypto/blowfish.a\n6g   -p crypto/blowfish -o _gotest_.6 block.go cipher.go const.go  blowfish_test.go\nrm -f _test/crypto/blowfish.a\ngopack grc _test/crypto/blowfish.a _gotest_.6 \npanic: invalid memory address or nil pointer dereference\nthrow: panic during gc\n[signal 0xb code=0x1 addr=0x0 pc=0x408915]\n\ngoroutine 1 [running]:\ntesting.RunTests(0x400c00, 0x50b340, 0x300000003, 0x1, 0x4b353c, ...)\n\t/src/go/src/pkg/testing/testing.go:210 +0x114\ntesting.Main(0x400c00, 0x50b340, 0x300000003, 0x517610, 0x0, ...)\n\t/src/go/src/pkg/testing/testing.go:182 +0x68\nmain.main()\n\t/src/go/src/pkg/crypto/blowfish/_testmain.go:31 +0x91\ngotest: \"./6.out -test.short=true -test.timeout=120\" failed: exit status 2\n\nThis is relatively random and does not always occur doing the same test - pc=0x408915 appears to be a mov (%rdx),%rdx within the ReleaseN() function.",
+			"disapproval": false,
+			"date": "2011-11-06 14:50:50.271818",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Ah I see, thanks for the explanation.  I once lost a long message on a\nweb form too while typing a reply into codereview.  I felt the pain -\nand then I installed Lazarus Form Recovery.\n\nOh, and Windows changes LGTM.\n\nOn 7 November 2011 22:45, Russ Cox <rsc@golang.org> wrote:\n> On Mon, Nov 7, 2011 at 17:20, Hector Chu <hectorchu@gmail.com> wrote:\n>> That was me :)\n>\n> Apologies. \u00a0My editor lost the first draft of that message\n> and I reconstructed it quickly from memory instead of\n> looking at the review messages. \u00a0Oops.\n>\n> Russ\n>\n",
+			"disapproval": false,
+			"date": "2011-11-07 23:00:25.366959",
+			"approval": true
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/windows/thread.c#newcode154\nsrc/pkg/runtime/windows/thread.c:154: // Is it right on 64-bit machines, or is it 0xFFFFFFFF there too?\nI found this in winbase.h:\n#define INFINITE\t0xFFFFFFFF\nMSDN for WaitForSingleObject says it's a DWORD as well.\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/windows/thread.c#newcode161\nsrc/pkg/runtime/windows/thread.c:161: \nZap the tab :) I also noticed this on the nanotime CL after it was submitted.\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/windows/thread.c#newcode164\nsrc/pkg/runtime/windows/thread.c:164: else if(ns/1000 > 0x7fffffffll)\nuppercase LL?\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/windows/thread.c#newcode167\nsrc/pkg/runtime/windows/thread.c:167: ms = ns/1000;\nWaitForSingleObject wants milliseconds, but I think this is microseconds.",
+			"disapproval": false,
+			"date": "2011-11-04 21:13:44.196616",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "FYI\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/darwin/thread.c\nFile src/pkg/runtime/darwin/thread.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/darwin/thread.c#newcode347\nsrc/pkg/runtime/darwin/thread.c:347: int32\nThis interface is a bit confusing.  If the ns parameter is < 0, always return 0.  If ns >= 0, return -1 on timed out or interrupted, or 0 if completed.  The behaviour seems inconsistent if the wait is interrupted (ns < 0, ignore interrupts, ns >= 0, return -1 on interrupt), and it's not clear why.\n\nIt appears that the callers ignore the return value anyhow, and indeed I'm not sure what they would do with it.  Can we just get rid of it?\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/time.goc\nFile src/pkg/runtime/time.goc (right):\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/time.goc#newcode70\nsrc/pkg/runtime/time.goc:70: if(t.i != -1) {\nI found this a little mysterious at first reading.  What guarantees that the timer is complete when gosched returns?  The thing that guarantees it is that the only caller of tsleep has set g->status = Gwaiting.  I think it would be clearer to move the setting of g->status and g->waitreason down to before the call to gosched, rather than in the only caller.\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/time.goc#newcode71\nsrc/pkg/runtime/time.goc:71: // Woke up before alarm.  Turn it off.\nActually, I don't understand how the case of t.i != -1 is even possible here.  What could mark this goroutine as ready other than the timer firing?  If the timer fires, how could t.i != -1?\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/time.goc#newcode72\nsrc/pkg/runtime/time.goc:72: runtime\u00b7lock(&timers);\nWhy not just call deltimer?\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/time.goc#newcode96\nsrc/pkg/runtime/time.goc:96: n = timers.cap * 3/2;\nThe formatting here is not the order in which the operations will be performed.  Suggest \"timers.cap*3 / 2\".\n\nhttp://codereview.appspot.com/5334051/diff/8002/src/pkg/runtime/time.goc#newcode171\nsrc/pkg/runtime/time.goc:171: t->when += t->period * (1 + -delta/t->period);\nThis adjustment is not particularly good if, say, delta is 1/2 t->period.  The resulting wait will be t->period again when it ought to be more like t->period / 2.  Perhaps a bit of scaled arithmetic would be appropriate here, e.g.,\n  (t->period * (100 + -delta * 100 / t->period)) / 100",
+			"disapproval": false,
+			"date": "2011-11-04 22:13:57.523732",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Nov 4, 2011 at 18:13,  <iant@golang.org> wrote:\n> This adjustment is not particularly good if, say, delta is 1/2\n> t->period. \u00a0The resulting wait will be t->period again when it ought to\n> be more like t->period / 2. \u00a0Perhaps a bit of scaled arithmetic would be\n> appropriate here, e.g.,\n> \u00a0(t->period * (100 + -delta * 100 / t->period)) / 100\n\nI am not sure this comment applies.  t->when != now.\nIf delta is 1/2 t->period, then the event is already\n1/2 t->period old, and the next one will happen\n1/2 t->period from now.  Those two will be a little\nclose, but we are behind and it will help keep us\non a regular schedule.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-04 22:19:20.593746",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/5334051/diff/27004/src/pkg/runtime/lock_sema.c\nFile src/pkg/runtime/lock_sema.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/27004/src/pkg/runtime/lock_sema.c#newcode15\nsrc/pkg/runtime/lock_sema.c:15: //\t\tSleep trying to acquire m->waitsema for at most ns nanoseconds.\nThis comment isn't quite what the code does.  How about:\n\nIf ns < 0, acquire m->waitsema and return 0.  If ns >= 0, sleep trying to acquire m->waitsema for at most ns seconds; return 0 if the semaphore was acquired, -1 if interrupted or timed out.\n\nhttp://codereview.appspot.com/5334051/diff/27004/src/pkg/runtime/lock_sema.c#newcode150\nsrc/pkg/runtime/lock_sema.c:150: return;\nFor safety's sake, could we add\n    if(n->waitm != LOCKED)\n        runtime_throw(\"aieeeeee\");\nThis code is probably fine but does not fail safe if somebody makes a mistake.  I think that testing n->waitm non-atomically should be fine here if all is well.\n\nhttp://codereview.appspot.com/5334051/diff/27004/src/pkg/runtime/lock_sema.c#newcode171\nsrc/pkg/runtime/lock_sema.c:171: return;\nCould again double check that n->waitm == LOCKED .",
+			"disapproval": false,
+			"date": "2011-11-08 22:48:14.803493",
+			"approval": true
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Russ Cox <rsc@golang.org> writes:\n\n> On Fri, Nov 4, 2011 at 18:13,  <iant@golang.org> wrote:\n>> This adjustment is not particularly good if, say, delta is 1/2\n>> t->period. \u00a0The resulting wait will be t->period again when it ought to\n>> be more like t->period / 2. \u00a0Perhaps a bit of scaled arithmetic would be\n>> appropriate here, e.g.,\n>> \u00a0(t->period * (100 + -delta * 100 / t->period)) / 100\n>\n> I am not sure this comment applies.  t->when != now.\n> If delta is 1/2 t->period, then the event is already\n> 1/2 t->period old, and the next one will happen\n> 1/2 t->period from now.  Those two will be a little\n> close, but we are behind and it will help keep us\n> on a regular schedule.\n\nOh yeah.  Never mind.\n\nIan\n",
+			"disapproval": false,
+			"date": "2011-11-04 22:27:43.292961",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/openbsd/thread.c\nFile src/pkg/runtime/openbsd/thread.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/openbsd/thread.c#newcode77\nsrc/pkg/runtime/openbsd/thread.c:77: runtime\u00b7thrsleep(&m->waitsemacount, ms, 0, &m->waitsemalock);\nThis will not work as intended - the second argument is a clock identifier and the third argument is an optional pointer to a timespec. This basically needs to match the FreeBSD implementation, however with the clock identifier being CLOCK_REALTIME. I'll send a change that fixes the thrsleep() definition and provides enums for the clock identifiers.",
+			"disapproval": false,
+			"date": "2011-11-05 06:30:03.320228",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/time.goc\nFile src/pkg/runtime/time.goc (right):\n\nhttp://codereview.appspot.com/5334051/diff/5002/src/pkg/runtime/time.goc#newcode122\nsrc/pkg/runtime/time.goc:122: runtime\u00b7newm(timerproc);\ntimers.started = 1;",
+			"disapproval": false,
+			"date": "2011-11-07 09:55:44.898849",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Sun, Nov 6, 2011 at 09:56,  <jsing@google.com> wrote:\n> src/pkg/runtime/freebsd/thread.c:15: typedef struct Timespec Timespec;\n> Any reason not to add this to defs.[ch]?\n\nOnly that I cannot regenerate those files easily.\nIf anyone has access to the necessary FreeBSD machines\nand would like to send a CL, that would be great.\n\nThanks.\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-07 20:40:18.634268",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL\n\nThanks for the great feedback, everyone.\n\nI added comments to time.goc and the top of lock_futex.c and lock_sema.c\nthat should give more context.\n\nDmitriy and Ian pointed out that the test for t.i == -1 in tsleep was strange.\nI had intended tsleep to be like gosched, in that a goroutine could queue\nwaiting for some event and call tsleep instead of gosched to do a timed\nwait.  That part hasn't happened yet and it's not clear if it will be necessary,\nso I removed that part of the API and code.\n\nDmitriy pointed out that the new proc does not play well with the garbage\ncollector.  In my first draft of this, the Timer structs were all allocated on\nC stacks and didn't need to be collected, so it was okay for the proc to run\nindependently of the GC.  Now that package time can create Timer structs\ntoo, that is clearly not okay anymore.  I changed the code so that the\ntimerproc is a normal goroutine, which makes it interact correctly with\nthe garbage collector and also avoids the need for the racy runtime.havetimers.\nThe procfn hack is gone too.\n\nIan and Joel pointed out that the semantics of semasleep were fuzzy at best.\nThe new comment atop lock_sema.c should help.  Another part of the problem\nwas that I realized that semasleep needed to tell the caller whether the\nsemaphore had been acquired in order to avoid confusion about the state\nof the semaphore, but then I forgot to make the callers use this information.\nI have done that now.\n\nAlex pointed out that Windows was storing usec into a variable named ms.\nFixed.\n\nDmitriy, Ian, and Joel, PTAL in particular at lock_sema.c, openbsd/thread.c,\nand lock_futex.c.  All your comments should be addressed.  Dealing with\nsemaphores is so much harder than dealing with futexes.\n\nAlex, please try this CL on Windows again: the many-thread crash should\nbe fixed.  This time for sure!  (OT: The other day someone commented\non my App Engine Go shirt thinking that it was Rocky the Flying Squirrel.)\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-07 21:50:05.476512",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 7 November 2011 21:50, Russ Cox <rsc@golang.org> wrote:\n> Alex pointed out that Windows was storing usec into a variable named ms.\n> Fixed.\n\nThat was me :)\n",
+			"disapproval": false,
+			"date": "2011-11-07 22:21:14.903772",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Mon, Nov 7, 2011 at 21:14,  <alex.brainman@gmail.com> wrote:\n> ns = deadline - now;\n\nFixed, thanks.  Does that happen to fix your time test?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-08 13:47:22.579061",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/11/08 13:47:22, rsc wrote:\n> \n> ...  Does that happen to fix your time test?\n> \n\nIt does indeed.\n\nLGTM.\n\nAlex",
+			"disapproval": false,
+			"date": "2011-11-08 22:34:07.263672",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/11/07 21:50:05, rsc wrote:\n> PTAL\n> \n\nNow tests fail:\n\n$ cd $GOROOT/src/pkg/time\n$ gotest\nrm -f _test/time.a\nrm -f _test/time.a\ngopack grc _test/time.a _gotest_.8\n--- FAIL: time_test.TestAfterTick (1.80 seconds)\n        10 ticks of 1e+08 ns took 1.796852e+09 ns, expected 1e+09\n--- FAIL: time_test.TestAfterQueuing (0.78 seconds)\n        attempt 0 failed: after queue slot 1 arrived at 1.874976e+08, expected [\n7.5e+07,1.25e+08]\n        attempt 1 failed: after queue slot 2 arrived at 2.656216e+08, expected [\n1.75e+08,2.25e+08]\n        attempt 2 failed: after queue slot 3 arrived at 3.281208e+08, expected [\n2.75e+08,3.25e+08]\n        after queue slot 3 arrived at 3.281208e+08, expected [2.75e+08,3.25e+08]\n\nFAIL\ngotest: \"./8.out.exe\" failed: exit status 1\n\nAlex",
+			"disapproval": false,
+			"date": "2011-11-08 00:40:11.226759",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/lock_sema.c\nFile src/pkg/runtime/lock_sema.c (right):\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/lock_sema.c#newcode120\nsrc/pkg/runtime/lock_sema.c:120: m->waitsema = runtime\u00b7semacreate();\nI am not sure a waiting goroutine always calls noteclear before notewait. For example, getprofile() seems to not do that.\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/lock_sema.c#newcode200\nsrc/pkg/runtime/lock_sema.c:200: if(runtime\u00b7semasleep(0) < 0)\nIt is not clear as to whether semasleep() can be interrupted (EINTR) or return some other error (few lines above you write \"Interrupted or timed out\"). If yes, then this check is incorrect, because notewake() updates n->waitm first and after that releases the semaphore non-atomically, so it can happen that n->waitm==LOCKED but the semaphore is not yet signaled, so semasleep can legitimately return \"EINTR\".\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/runtime.h#newcode330\nsrc/pkg/runtime/runtime.h:330: Timer\t**pin;\nremove\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/time.goc\nFile src/pkg/runtime/time.goc (right):\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/time.goc#newcode137\nsrc/pkg/runtime/time.goc:137: siftup(i);\nplease surround siftup/siftdown with if(i!=timers.len)\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/time.goc#newcode177\nsrc/pkg/runtime/time.goc:177: t->f(now, t->arg);\nIt's suspicious that we use t outside of the lock, looks like a recipe for problems. I've failed to compromise it, but may we cache t->f and t->arg in local vars before unlocking the mutex? Just to make it bullet-proof and to not spent any more time trying to prove its correctness or compromise it. For example, if we ever implement your \"runtime\u00b7tsleep as gosched\" idea it will do cause subtle problems.\n\nhttp://codereview.appspot.com/5334051/diff/18003/src/pkg/runtime/time.goc#newcode184\nsrc/pkg/runtime/time.goc:184: g->waitreason = \"no pending timers\";\nIMVHO the description can confuse a user. Perhaps something like \"timer goroutine (idle)\" would be more understandable.",
+			"disapproval": false,
+			"date": "2011-11-08 09:46:45.455920",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2011-11-08 16:57:08.703305",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"hectorchu@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"jsing@google.com",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=784b29af787e ***\n\nruntime: add timer support, use for package time\n\nThis looks like it is just moving some code from\ntime to runtime (and translating it to C), but the\nruntime can do a better job managing the goroutines,\nand it needs this functionality for its own maintenance\n(for example, for the garbage collector to hand back\nunused memory to the OS on a time delay).\nMight as well have just one copy of the timer logic,\nand runtime can't depend on time, so vice versa.\n\nIt also unifies Sleep, NewTicker, and NewTimer behind\none mechanism, so that there are no claims that one\nis more efficient than another.  (For example, today\npeople recommend using time.After instead of time.Sleep\nto avoid blocking an OS thread.)\n\nFixes issue 1644.\nFixes issue 1731.\nFixes issue 2190.\n\nR=golang-dev, r, hectorchu, iant, iant, jsing, alex.brainman, dvyukov\nCC=golang-dev\nhttp://codereview.appspot.com/5334051",
+			"disapproval": false,
+			"date": "2011-11-09 20:17:11.939788",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5334051: runtime: add timer support, use for package time",
+	"created": "2011-11-03 22:06:58.698190",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		11001,
+		8002,
+		5002,
+		14020,
+		18003,
+		28004,
+		8004,
+		27004,
+		31001
+	],
+	"modified": "2011-11-09 20:17:15.038799",
+	"closed": true,
+	"issue": 5334051
+}

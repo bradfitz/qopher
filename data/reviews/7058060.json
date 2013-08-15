@@ -1,0 +1,151 @@
+{
+	"description": "go/types: Moving from *ast.Objects to types.Objects (step 1).\n\nThe existing type checker was relying on augmenting ast.Object\nfields (empty interfaces) for its purposes. While this worked\nfor some time now, it has become increasingly brittle. Also,\nthe need for package information for Fields and Methods would\nhave required a new field in each ast.Object. Rather than making\nthem bigger and the code even more subtle, in this CL we are moving\naway from ast.Objects.\n\nThe types packge now defines its own objects for different\nlanguage entities (Const, Var, TypeName, Func), and they\nimplement the types.Object interface. Imported packages\ncreate a Package object which holds the exported entities\nin a types.Scope of types.Objects.\n\nFor type-checking, the current package is still using ast.Objects\nto make this transition manageable. In a next step, the type-\nchecker will also use types.Objects instead, which opens the door\ndoor to resolving ASTs entirely by the type checker. As a result,\nthe AST and type checker become less entangled, and ASTs can be\nmanipulated \"by hand\" or programmatically w/o having to worry\nabout scope and object invariants that are very hard to maintain.\n\n(As a consequence, a future parser can do less work, and a\nfuture AST will not need to define objects and scopes anymore.\nAlso, object resolution which is now split across the parser,\nthe ast, (ast.NewPackage), and even the type checker (for composite\nliteral keys) can be done in a single place which will be simpler\nand more efficient.)\n\nChange details:\n- Check now takes a []*ast.File instead of a map[string]*ast.File.\nIt's easier to handle (I deleted code at all use sites) and does\nnot suffer from undefined order (which is a pain for testing).\n- ast.Object.Data is now a *types.Package rather then an *ast.Scope\nif the object is a package (obj.Kind == ast.Pkg). Eventually this\nwill go away altogether.\n- Instead of an ast.Importer, Check now uses a types.Importer\n(which returns a *types.Package).\n- types.NamedType has two object fields (Obj Object and obj *ast.Object);\neventually there will be only Obj. The *ast.Object is needed during\nthis transition since a NamedType may refer to either an imported\n(using types.Object) or locally defined (using *ast.Object) type.\n- ast.NewPackage is not used anymore - there's a local copy for\npackage-level resolution of imports.\n- struct fields now take the package origin into account.\n- The GcImporter is now returning a *types.Package. It cannot be\nused with ast.NewPackage anymore. If that functionality is still\nused, a copy of the old GcImporter should be made locally (note\nthat GcImporter was part of exp/types and it's API was not frozen).\n- dot-imports are not handled for the time being (this will come back).",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"adonovan@google.com"
+	],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL. Fixed various types in CL desc.\r\n\r\nOn Thu, Jan 10, 2013 at 5:08 PM,  <gri@golang.org> wrote:\r\n> Reviewers: adonovan,\r\n>\r\n> Message:\r\n> Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> go/types: Moving from *ast.Objects to types.Objects (step 1).\r\n>\r\n> The existing type checker was relying on augmenting ast.Object\r\n> fields (empty interfaces) for its purposes. While this worked\r\n> for some time now, it has become increasingly brittle. Also,\r\n> the need for package information for Fields and Methods would\r\n> have required a new field in each ast.Object. Rather than making\r\n> them bigger and the code even more subtle, in this CL we are moving\r\n> away from ast.Objects.\r\n>\r\n> The types packge now defines its own objects for different\r\n> language entities (Const, Var, TypeName, Func), and they\r\n> implement the types.Object interface. Imported packages\r\n> create a Package object which holds the exported entities\r\n> in a types.Scope of types.Objects.\r\n>\r\n> For type-checking, the current package is still using ast.Objects\r\n> to make this transition manageable. In a next step, the type-\r\n> checker will also use types.Objects instead, which opens the door\r\n> door to resolving ASTs entirely by the type checker. As a result,\r\n> the AST and type checker become less entangled, and ASTs can be\r\n> manipulated \"by hand\" or programmatically w/o having to worry\r\n> about scope and object invariants that are very hard to maintain.\r\n>\r\n> (As a consequence, a future parser will have to less work, and a\r\n> future AST will not need to define objects and scopes anymore.\r\n> Also, object resolution which is not split across the parser,\r\n> the ast, (ast.NewPackage), and even the type checker (for composite\r\n> literal keys) can be done in a single place which will be simpler\r\n> and more efficient.)\r\n>\r\n> Change details:\r\n> - Check now takes a []*ast.File instead of map[string]*ast.File.\r\n> It's easier to handle (I deleted code at all use sites) and does\r\n> suffer from undefined order (which is a pain for testing).\r\n> - ast.Object.Data is now a *types.Package rather then an *ast.Scope\r\n> if the object is a package (obj.Kind == ast.Pkg). Eventially this\r\n> will go away altogether.\r\n> - Instead of an ast.Importer, Check now uses a types.Importer\r\n> (which returns *types.Packages).\r\n> - types.NamedType has two object fields (Obj Object and obj\r\n> *ast.Object);\r\n> eventually there will be only Obj. The *ast.Object is needed during\r\n> this transition since a NamedType may refer to either an imported\r\n> (using types.Object) or locally defined (using *ast.Object) type.\r\n> - ast.NewPackage is not used anymore - there's a local copy for\r\n> package-level resolution of imports.\r\n> - struct fields now take the package origin into account\r\n> (missing: the same checks for methods)\r\n> - The GcImporter is now returning a types.Package. It cannot be\r\n> used with ast.NewPackage anymore. If that functionality is still\r\n> used, a copy of the old GcImporter should be made locally (note\r\n> that GcImporter was part of exp/types and it's API was not frozen).\r\n> - dot-imports are not handled anymore for the time being\r\n>\r\n> Please review this at https://codereview.appspot.com/7058060/\r\n>\r\n> Affected files:\r\n>   M src/pkg/exp/gotype/gotype.go\r\n>   M src/pkg/go/ast/scope.go\r\n>   M src/pkg/go/types/api.go\r\n>   M src/pkg/go/types/check.go\r\n>   M src/pkg/go/types/check_test.go\r\n>   M src/pkg/go/types/conversions.go\r\n>   M src/pkg/go/types/errors.go\r\n>   M src/pkg/go/types/expr.go\r\n>   M src/pkg/go/types/gcimporter.go\r\n>   M src/pkg/go/types/gcimporter_test.go\r\n>   A src/pkg/go/types/objects.go\r\n>   M src/pkg/go/types/operand.go\r\n>   M src/pkg/go/types/predicates.go\r\n>   A src/pkg/go/types/resolve.go\r\n>   M src/pkg/go/types/resolver_test.go\r\n>   M src/pkg/go/types/types.go\r\n>   M src/pkg/go/types/types_test.go\r\n>   M src/pkg/go/types/universe.go\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-11 01:15:45.301500",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-01-11 01:08:51.523580",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nStill cleaning up the debris on my end though. :)",
+			"disapproval": false,
+			"date": "2013-01-11 21:48:05.047760",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Jan 11, 2013 at 11:39 AM,  <adonovan@google.com> wrote:\r\n> - The implementsObject unexported field of types.Var makes composite\r\n> literals using positional parameters impossible; a slight nuisance.\r\n> - Object.name() needs to be exported since clients need it, but the\r\n> identifier Name is taken by the field. GetName()\r\n\r\nwill fix\r\n\r\n> - Q. is the Pkg field of Field and Method non-nil always, or only if the\r\n> field is un-exported?  It might be slightly more convenient if sometimes\r\n> nil.\r\n\r\ntrivial to change\r\n\r\n> - Perhaps this would be useful:\r\n>     type Id struct { Pkg *types.Package; Name string }\r\n>   func (Id) String()\r\n>   If Pkg is nil when Name is unexported, then this\r\n>   is a valid map key type.  You could embed it in\r\n>   types.Method and types.Field.\r\n\r\nyes - there's already a TODO\r\n\r\n>\r\n> - Methods don't implement types.Object.   I think they should.\r\n\r\nwhy? (they are not in a scope - alternative is to put them into a\r\nscope for both interfaces and named types)\r\n\r\n>\r\n> - I assume that all implementations of types.Object returned by the\r\n> typechecker are canonical, i.e. ptr equivalent.  This needs to be\r\n> stated.\r\n\r\nas before\r\n\r\n> - NamedType.obj is private, so I can't create them in my client, but I\r\n> do need to (e.g. in order to fake out the reflect package.)  Please\r\n> choose a capitalized name.\r\n\r\nok\r\n\r\n> - types.Check() must return the *types.Package too since there's no way\r\n> to get at it from the client---yet it is needed so that I can perform\r\n> the unexported-name equivalence check when I encounter an expression\r\n> 'expr.name'.\r\n\r\ndone\r\n\r\n> - Check should not discard the Imports map; this was returned in the\r\n> ast.Package.Imports, but since it has a new types it will need to be in\r\n> the types.Package that Check should be returning too.\r\n\r\ndone\r\n",
+			"disapproval": false,
+			"date": "2013-01-11 19:57:22.008150",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=e088d9c306df ***\n\ngo/types: Moving from *ast.Objects to types.Objects (step 1).\n\nThe existing type checker was relying on augmenting ast.Object\nfields (empty interfaces) for its purposes. While this worked\nfor some time now, it has become increasingly brittle. Also,\nthe need for package information for Fields and Methods would\nhave required a new field in each ast.Object. Rather than making\nthem bigger and the code even more subtle, in this CL we are moving\naway from ast.Objects.\n\nThe types packge now defines its own objects for different\nlanguage entities (Const, Var, TypeName, Func), and they\nimplement the types.Object interface. Imported packages\ncreate a Package object which holds the exported entities\nin a types.Scope of types.Objects.\n\nFor type-checking, the current package is still using ast.Objects\nto make this transition manageable. In a next step, the type-\nchecker will also use types.Objects instead, which opens the door\ndoor to resolving ASTs entirely by the type checker. As a result,\nthe AST and type checker become less entangled, and ASTs can be\nmanipulated \"by hand\" or programmatically w/o having to worry\nabout scope and object invariants that are very hard to maintain.\n\n(As a consequence, a future parser can do less work, and a\nfuture AST will not need to define objects and scopes anymore.\nAlso, object resolution which is now split across the parser,\nthe ast, (ast.NewPackage), and even the type checker (for composite\nliteral keys) can be done in a single place which will be simpler\nand more efficient.)\n\nChange details:\n- Check now takes a []*ast.File instead of a map[string]*ast.File.\nIt's easier to handle (I deleted code at all use sites) and does\nnot suffer from undefined order (which is a pain for testing).\n- ast.Object.Data is now a *types.Package rather then an *ast.Scope\nif the object is a package (obj.Kind == ast.Pkg). Eventually this\nwill go away altogether.\n- Instead of an ast.Importer, Check now uses a types.Importer\n(which returns a *types.Package).\n- types.NamedType has two object fields (Obj Object and obj *ast.Object);\neventually there will be only Obj. The *ast.Object is needed during\nthis transition since a NamedType may refer to either an imported\n(using types.Object) or locally defined (using *ast.Object) type.\n- ast.NewPackage is not used anymore - there's a local copy for\npackage-level resolution of imports.\n- struct fields now take the package origin into account.\n- The GcImporter is now returning a *types.Package. It cannot be\nused with ast.NewPackage anymore. If that functionality is still\nused, a copy of the old GcImporter should be made locally (note\nthat GcImporter was part of exp/types and it's API was not frozen).\n- dot-imports are not handled for the time being (this will come back).\n\nR=adonovan\nCC=golang-dev\nhttps://codereview.appspot.com/7058060",
+			"disapproval": false,
+			"date": "2013-01-11 21:53:44.952120",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Very brief comments so far:\n\n- The implementsObject unexported field of types.Var makes composite literals using positional parameters impossible; a slight nuisance.\n- Object.name() needs to be exported since clients need it, but the identifier Name is taken by the field. GetName()\n- Q. is the Pkg field of Field and Method non-nil always, or only if the field is un-exported?  It might be slightly more convenient if sometimes nil.\n- Perhaps this would be useful:\n    type Id struct { Pkg *types.Package; Name string }\n  func (Id) String()\n  If Pkg is nil when Name is unexported, then this \n  is a valid map key type.  You could embed it in\n  types.Method and types.Field.\n\n- Methods don't implement types.Object.   I think they should.\n\n- I assume that all implementations of types.Object returned by the typechecker are canonical, i.e. ptr equivalent.  This needs to be stated.\n- NamedType.obj is private, so I can't create them in my client, but I do need to (e.g. in order to fake out the reflect package.)  Please choose a capitalized name.\n- types.Check() must return the *types.Package too since there's no way to get at it from the client---yet it is needed so that I can perform the unexported-name equivalence check when I encounter an expression 'expr.name'.\n- Check should not discard the Imports map; this was returned in the ast.Package.Imports, but since it has a new types it will need to be in the types.Package that Check should be returning too.",
+			"disapproval": false,
+			"date": "2013-01-11 19:39:26.992400",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-11 21:34:34.535790",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7058060/diff/31057/src/pkg/go/types/types.go\nFile src/pkg/go/types/types.go (right):\n\nhttps://codereview.appspot.com/7058060/diff/31057/src/pkg/go/types/types.go#newcode95\nsrc/pkg/go/types/types.go:95: type QualifiedName struct {\nWould be good to document the (logical) equivalence relation here, and explain that Pkg is never nil.",
+			"disapproval": false,
+			"date": "2013-01-11 22:00:03.339850",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 7058060: go/types: Moving from *ast.Objects to types.Objects (st...",
+	"created": "2013-01-09 00:44:20.103370",
+	"patchsets": [
+		1,
+		2001,
+		1002,
+		3007,
+		8001,
+		4007,
+		6008,
+		10031,
+		1018,
+		6009,
+		2018,
+		2019,
+		1082,
+		13001,
+		11032,
+		9016,
+		13002,
+		9017,
+		15001,
+		16001,
+		19001,
+		3040,
+		22001,
+		24001,
+		27001,
+		30001,
+		31019,
+		30002,
+		36001,
+		31057,
+		36022
+	],
+	"modified": "2013-01-11 22:00:03.730950",
+	"closed": true,
+	"issue": 7058060
+}

@@ -1,0 +1,58 @@
+{
+	"description": "doc/play: sync playground.js with go-playground repo\n\nAlso add style for \"Program exited.\" message.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Wed, Dec 12, 2012 at 4:13 PM, <adg@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> doc/play: sync playground.js with go-playground repo\r\n>\r\n> Also add style for \"Program exited.\" message.\r\n>\r\n> Please review this at https://codereview.appspot.**com/6934047/<https://codereview.appspot.com/6934047/>\r\n>\r\n> Affected files:\r\n>   M doc/play/playground.js\r\n>   M doc/style.css\r\n>\r\n>\r\n> Index: doc/play/playground.js\r\n> ==============================**==============================**=======\r\n> --- a/doc/play/playground.js\r\n> +++ b/doc/play/playground.js\r\n> @@ -83,18 +83,73 @@\r\n>                         '<div class=\"loading\">Waiting for remote\r\n> server...</div>'\r\n>                 );\r\n>         }\r\n> -       function setOutput(text, error) {\r\n> +       var playbackTimeout;\r\n> +       function playback(pre, events) {\r\n> +               function show(msg) {\r\n> +                       // ^L clears the screen.\r\n> +                       var msgs = msg.split(\"\\x0c\");\r\n> +                       if (msgs.length == 1) {\r\n> +                               pre.text(pre.text() + msg);\r\n> +                               return;\r\n> +                       }\r\n> +                       pre.text(msgs.pop());\r\n> +               }\r\n> +               function next() {\r\n> +                       if (events.length == 0) {\r\n> +                               var exit = $('<span class=\"exit\"/>');\r\n> +                               exit.text(\"\\nProgram exited.\");\r\n> +                               exit.appendTo(pre);\r\n> +                               return;\r\n> +                       }\r\n> +                       var e = events.shift();\r\n> +                       if (e.Delay == 0) {\r\n> +                               show(e.Message);\r\n> +                               next();\r\n> +                       } else {\r\n> +                               playbackTimeout = setTimeout(function() {\r\n> +                                       show(e.Message);\r\n> +                                       next();\r\n> +                               }, e.Delay / 1000000);\r\n> +                       }\r\n> +               }\r\n> +               next();\r\n> +       }\r\n> +       function stopPlayback() {\r\n> +               clearTimeout(playbackTimeout);\r\n> +       }\r\n> +       function setOutput(events, error) {\r\n> +               stopPlayback();\r\n>                 output.empty();\r\n>                 $(\".lineerror\").removeClass(\"**lineerror\");\r\n> +\r\n> +               // Display errors.\r\n>                 if (error) {\r\n>                         output.addClass(\"error\");\r\n>                         var regex = /prog.go:([0-9]+)/g;\r\n>                         var r;\r\n> -                       while (r = regex.exec(text)) {\r\n> +                       while (r = regex.exec(error)) {\r\n>                                 $(\".lines div\").eq(r[1]-1).addClass(\"**\r\n> lineerror\");\r\n>                         }\r\n> +                       $(\"<pre/>\").text(error).**appendTo(output);\r\n> +                       return;\r\n>                 }\r\n> -               $(\"<pre/>\").text(text).**appendTo(output);\r\n> +\r\n> +               // Display image output.\r\n> +               if (events.length > 0 && events[0].Message.indexOf(\"**IMAGE:\")\r\n> == 0) {\r\n> +                       var out = \"\";\r\n> +                       for (var i = 0; i < events.length; i++) {\r\n> +                               out += events[i].Message;\r\n> +                       }\r\n> +                       var url = \"data:image/png;base64,\" + out.substr(6);\r\n> +                       $(\"<img/>\").attr(\"src\", url).appendTo(output);\r\n> +                       return;\r\n> +               }\r\n> +\r\n> +               // Play back events.\r\n> +               if (events !== null) {\r\n> +                       var pre = $(\"<pre/>\").appendTo(output);\r\n> +                       playback(pre, events);\r\n> +               }\r\n>         }\r\n>\r\n>         var pushedEmpty = (window.location.pathname == \"/\");\r\n> @@ -134,7 +189,10 @@\r\n>                 loading();\r\n>                 seq++;\r\n>                 var cur = seq;\r\n> -               var data = {\"body\": body()};\r\n> +               var data = {\r\n> +                       \"version\": 2,\r\n> +                       \"body\": body()\r\n> +               };\r\n>                 $.ajax(\"/compile\", {\r\n>                         data: data,\r\n>                         type: \"POST\",\r\n> @@ -146,20 +204,11 @@\r\n>                                 if (!data) {\r\n>                                         return;\r\n>                                 }\r\n> -                               if (data.compile_errors != \"\") {\r\n> -                                       setOutput(data.compile_errors,\r\n> true);\r\n> +                               if (data.Errors) {\r\n> +                                       setOutput(null, data.Errors);\r\n>                                         return;\r\n>                                 }\r\n> -                               var out = \"\"+data.output;\r\n> -                               if (out.indexOf(\"IMAGE:\") == 0) {\r\n> -                                       var img = $(\"<img/>\");\r\n> -                                       var url = \"data:image/png;base64,\";\r\n> -                                       url += out.substr(6)\r\n> -                                       img.attr(\"src\", url);\r\n> -                                       output.empty().append(img);\r\n> -                                       return;\r\n> -                               }\r\n> -                               setOutput(out, false);\r\n> +                               setOutput(data.Events, false);\r\n>                         },\r\n>                         error: function() {\r\n>                                 output.addClass(\"error\").text(\r\n> @@ -178,11 +227,11 @@\r\n>                         dataType: \"json\",\r\n>                         success: function(data) {\r\n>                                 if (data.Error) {\r\n> -                                       setOutput(data.Error, true);\r\n> +                                       setOutput(null, data.Error);\r\n>                                         return;\r\n>                                 }\r\n>                                 setBody(data.Body);\r\n> -                               setOutput(\"\", false);\r\n> +                               setOutput(null);\r\n>                         }\r\n>                 });\r\n>         });\r\n> Index: doc/style.css\r\n> ==============================**==============================**=======\r\n> --- a/doc/style.css\r\n> +++ b/doc/style.css\r\n> @@ -486,6 +486,9 @@\r\n>         padding: 10px;\r\n>         cursor: pointer;\r\n>  }\r\n> +div.play .output .exit {\r\n> +       color: #999;\r\n> +}\r\n>\r\n>  /* drop-down playground */\r\n>  #playgroundButton,\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 01:09:54.955300",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-12-13 00:13:44.936080",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=003718e4b036 ***\n\ndoc/play: sync playground.js with go-playground repo\n\nAlso add style for \"Program exited.\" message.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/6934047",
+			"disapproval": false,
+			"date": "2012-12-13 03:32:18.224160",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 6934047: doc/play: sync playground.js with go-playground repo",
+	"created": "2012-12-13 00:13:36.665300",
+	"patchsets": [
+		1,
+		3001
+	],
+	"modified": "2012-12-13 03:32:20.537850",
+	"closed": true,
+	"issue": 6934047
+}

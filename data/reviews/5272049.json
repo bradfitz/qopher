@@ -1,0 +1,274 @@
+{
+	"description": "textproto: prevent long lines in HTTP headers from causing HTTP 400 responses.\n\nThis fixes the issue without an extra copy in the average case.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "You can avoid the nesting by doing this instead:\n\nfunc (r *Reader) readLineSlice() ([]byte, os.Error) {\n\tr.closeDot()\n\tvar line []byte\n\tfor {\n\t\tl, more, err := r.R.ReadLine()\n\t\tif err != nil {\n\t\t\treturn line, err\n\t\t}\n\t\t// Avoid the copy if the first call produced a full line.\n\t\tif line == nil && !more {\n\t\t\treturn l, nil\n\t\t}\n\t\tline = append(line, l...)\n\t\tif !more {\n\t\t\tbreak\n\t\t}\n\t}\n\treturn line, nil\n}\n\nI found myself writing a very simliar function\nso many times and eventually factored it out\ninto my personal utility library (calling it\nutil.Getline).\n\nCheers,\n  Anthony\n",
+			"disapproval": false,
+			"date": "2011-10-15 07:58:12.092994",
+			"approval": false
+		},
+		{
+			"sender": "msolo@gmail.com",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: bradfitz@golang.org, golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-15 06:12:31.100502",
+			"approval": false
+		},
+		{
+			"sender": "msolo@gmail.com",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, ality@pbrane.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-18 18:51:55.138329",
+			"approval": false
+		},
+		{
+			"sender": "msolo@gmail.com",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, ality@pbrane.org (cc: bradfitz@golang.org, golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-18 06:51:12.922068",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "bradfitz@golang.org once said:\n> src/pkg/net/textproto/reader.go:57: return line, err\n> bufio.Reader.ReadLine is documented to say:\n> \n> \"ReadLine either returns a non-nil line or it returns\n> an error, never both.\"\n> \n> In the old code, readLineSlice also had this property.\n> \n> In the new code, line might be non-nil from a previous\n> call to ReadLine + append.\n> \n> You should probably just:\n> \n> return nil, err\n\nIf you do that, you'll also need to test for os.EOF.\n\n  Anthony\n",
+			"disapproval": false,
+			"date": "2011-10-18 21:13:20.846579",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5272049/diff/6001/src/pkg/net/textproto/reader_test.go\nFile src/pkg/net/textproto/reader_test.go (right):\n\nhttp://codereview.appspot.com/5272049/diff/6001/src/pkg/net/textproto/reader_test.go#newcode154\nsrc/pkg/net/textproto/reader_test.go:154: t.Fatalf(\"ReadMIMEHeader: %v, %v; want %v\", m, err, want)\nthis won't fail with a pretty or useful error message. we'll get scores of exes.  as fun as that is, it should probably just print the lengths of the fields.  I guess that'd involve not using DeepEqual and instead comparing the len(map) and len(m[\"Cookie\"]) first before comparing the cookie value.",
+			"disapproval": false,
+			"date": "2011-10-18 13:33:09.610381",
+			"approval": false
+		},
+		{
+			"sender": "msolo@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Any further comment or is this good to go?\n\nOn Tue, Oct 18, 2011 at 3:54 PM, Mike Solomon <msolo@gmail.com> wrote:\n> On Tue, Oct 18, 2011 at 2:13 PM, Anthony Martin <ality@pbrane.org> wrote:\n>> bradfitz@golang.org once said:\n>>> src/pkg/net/textproto/reader.go:57: return line, err\n>>> bufio.Reader.ReadLine is documented to say:\n>>>\n>>> \"ReadLine either returns a non-nil line or it returns\n>>> an error, never both.\"\n>\n> I think this documentation is actually wrong - I get an empty byte\n> array and os.EOF when I reach the end using the bufio code. I remember\n> hitting this once before.\n>\n> Actually, I think the code I have here in textproto conforms to the\n> intent of the documentation in bufio more than the reference API.\n>\n>>>\n>>> In the old code, readLineSlice also had this property.\n>>>\n>>> In the new code, line might be non-nil from a previous\n>>> call to ReadLine + append.\n>>>\n>>> You should probably just:\n>>>\n>>> return nil, err\n>>\n>> If you do that, you'll also need to test for os.EOF.\n>>\n>> \u00a0Anthony\n>>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-19 21:49:21.836827",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2011-10-18 13:35:32.780272",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5272049/diff/13001/src/pkg/net/textproto/reader_test.go\nFile src/pkg/net/textproto/reader_test.go (right):\n\nhttp://codereview.appspot.com/5272049/diff/13001/src/pkg/net/textproto/reader_test.go#newcode151\nsrc/pkg/net/textproto/reader_test.go:151: t.Fatalf(\"ReadMIMEHeader: failed with err %v\", err)\nyou could remove \"failed with err\" here.  it'll be obvious from context.\n\nhttp://codereview.appspot.com/5272049/diff/13001/src/pkg/net/textproto/reader_test.go#newcode155\nsrc/pkg/net/textproto/reader_test.go:155: t.Fatalf(\"ReadMIMEHeader: %v bytes, %v; want %v bytes\", len(cookie), len(sdata))\nthree %v but 2 values",
+			"disapproval": false,
+			"date": "2011-10-18 19:01:33.253317",
+			"approval": false
+		},
+		{
+			"sender": "msolo@gmail.com",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, ality@pbrane.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-18 20:32:57.261085",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5272049/diff/13001/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttp://codereview.appspot.com/5272049/diff/13001/src/pkg/net/textproto/reader.go#newcode57\nsrc/pkg/net/textproto/reader.go:57: return line, err\nbufio.Reader.ReadLine is documented to say:\n\n\"ReadLine either returns a non-nil line or it returns an error, never both.\"\n\nIn the old code, readLineSlice also had this property.\n\nIn the new code, line might be non-nil from a previous call to ReadLine + append.\n\nYou should probably just:\n\nreturn nil, err",
+			"disapproval": false,
+			"date": "2011-10-18 19:29:04.634122",
+			"approval": false
+		},
+		{
+			"sender": "msolo@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Tue, Oct 18, 2011 at 2:13 PM, Anthony Martin <ality@pbrane.org> wrote:\n> bradfitz@golang.org once said:\n>> src/pkg/net/textproto/reader.go:57: return line, err\n>> bufio.Reader.ReadLine is documented to say:\n>>\n>> \"ReadLine either returns a non-nil line or it returns\n>> an error, never both.\"\n\nI think this documentation is actually wrong - I get an empty byte\narray and os.EOF when I reach the end using the bufio code. I remember\nhitting this once before.\n\nActually, I think the code I have here in textproto conforms to the\nintent of the documentation in bufio more than the reference API.\n\n>>\n>> In the old code, readLineSlice also had this property.\n>>\n>> In the new code, line might be non-nil from a previous\n>> call to ReadLine + append.\n>>\n>> You should probably just:\n>>\n>> return nil, err\n>\n> If you do that, you'll also need to test for os.EOF.\n>\n> \u00a0Anthony\n>\n",
+			"disapproval": false,
+			"date": "2011-10-18 22:54:39.981174",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I was going to look into the claimed bufio doc bug first before I was\nconfident.\n\nDid you want to document / test that first?\nOn Oct 19, 2011 2:49 PM, \"Mike Solomon\" <msolo@gmail.com> wrote:\n\n> Any further comment or is this good to go?\n>\n> On Tue, Oct 18, 2011 at 3:54 PM, Mike Solomon <msolo@gmail.com> wrote:\n> > On Tue, Oct 18, 2011 at 2:13 PM, Anthony Martin <ality@pbrane.org>\n> wrote:\n> >> bradfitz@golang.org once said:\n> >>> src/pkg/net/textproto/reader.go:57: return line, err\n> >>> bufio.Reader.ReadLine is documented to say:\n> >>>\n> >>> \"ReadLine either returns a non-nil line or it returns\n> >>> an error, never both.\"\n> >\n> > I think this documentation is actually wrong - I get an empty byte\n> > array and os.EOF when I reach the end using the bufio code. I remember\n> > hitting this once before.\n> >\n> > Actually, I think the code I have here in textproto conforms to the\n> > intent of the documentation in bufio more than the reference API.\n> >\n> >>>\n> >>> In the old code, readLineSlice also had this property.\n> >>>\n> >>> In the new code, line might be non-nil from a previous\n> >>> call to ReadLine + append.\n> >>>\n> >>> You should probably just:\n> >>>\n> >>> return nil, err\n> >>\n> >> If you do that, you'll also need to test for os.EOF.\n> >>\n> >>  Anthony\n> >>\n> >\n>\n",
+			"disapproval": false,
+			"date": "2011-10-19 22:29:25.831862",
+			"approval": false
+		},
+		{
+			"sender": "msolo@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Got a little side tracked so just picking this back up now.\n\nThis test demonstrates the issue with the bufio ReadLine function docs.\n\nfunc TestReadLineDocs(t *testing.T) {\n  r := bufio.NewReader(strings.NewReader(\"\"))\n  l, _, err := r.ReadLine()\n  if l != nil && err != nil {\n    t.Fatalf(\"ReadLine either returns a non-nil line or it returns an\nerror, never both, but it does... l: %v err:%v\", l, err)\n  }\n}\n\nThis always errors out and my reading of that phrase in the docs makes\nme expect this should pass.\n\nIn terms of the original patch, I'm confident it works as intended.\n\nOn Wed, Oct 19, 2011 at 3:29 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> I was going to look into the claimed bufio doc bug first before I was\n> confident.\n>\n> Did you want to document / test that first?\n>\n> On Oct 19, 2011 2:49 PM, \"Mike Solomon\" <msolo@gmail.com> wrote:\n>>\n>> Any further comment or is this good to go?\n>>\n>> On Tue, Oct 18, 2011 at 3:54 PM, Mike Solomon <msolo@gmail.com> wrote:\n>> > On Tue, Oct 18, 2011 at 2:13 PM, Anthony Martin <ality@pbrane.org>\n>> > wrote:\n>> >> bradfitz@golang.org once said:\n>> >>> src/pkg/net/textproto/reader.go:57: return line, err\n>> >>> bufio.Reader.ReadLine is documented to say:\n>> >>>\n>> >>> \"ReadLine either returns a non-nil line or it returns\n>> >>> an error, never both.\"\n>> >\n>> > I think this documentation is actually wrong - I get an empty byte\n>> > array and os.EOF when I reach the end using the bufio code. I remember\n>> > hitting this once before.\n>> >\n>> > Actually, I think the code I have here in textproto conforms to the\n>> > intent of the documentation in bufio more than the reference API.\n>> >\n>> >>>\n>> >>> In the old code, readLineSlice also had this property.\n>> >>>\n>> >>> In the new code, line might be non-nil from a previous\n>> >>> call to ReadLine + append.\n>> >>>\n>> >>> You should probably just:\n>> >>>\n>> >>> return nil, err\n>> >>\n>> >> If you do that, you'll also need to test for os.EOF.\n>> >>\n>> >> \u00a0Anthony\n>> >>\n>> >\n>\n",
+			"disapproval": false,
+			"date": "2011-11-01 07:05:55.838551",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM (on original patch) and thanks for the bufio test.  Sent out a little\nfix for that.\n\nOn Tue, Nov 1, 2011 at 12:05 AM, Mike Solomon <msolo@gmail.com> wrote:\n\n> Got a little side tracked so just picking this back up now.\n>\n> This test demonstrates the issue with the bufio ReadLine function docs.\n>\n> func TestReadLineDocs(t *testing.T) {\n>  r := bufio.NewReader(strings.NewReader(\"\"))\n>  l, _, err := r.ReadLine()\n>  if l != nil && err != nil {\n>    t.Fatalf(\"ReadLine either returns a non-nil line or it returns an\n> error, never both, but it does... l: %v err:%v\", l, err)\n>  }\n> }\n>\n> This always errors out and my reading of that phrase in the docs makes\n> me expect this should pass.\n>\n> In terms of the original patch, I'm confident it works as intended.\n>\n> On Wed, Oct 19, 2011 at 3:29 PM, Brad Fitzpatrick <bradfitz@golang.org>\n> wrote:\n> > I was going to look into the claimed bufio doc bug first before I was\n> > confident.\n> >\n> > Did you want to document / test that first?\n> >\n> > On Oct 19, 2011 2:49 PM, \"Mike Solomon\" <msolo@gmail.com> wrote:\n> >>\n> >> Any further comment or is this good to go?\n> >>\n> >> On Tue, Oct 18, 2011 at 3:54 PM, Mike Solomon <msolo@gmail.com> wrote:\n> >> > On Tue, Oct 18, 2011 at 2:13 PM, Anthony Martin <ality@pbrane.org>\n> >> > wrote:\n> >> >> bradfitz@golang.org once said:\n> >> >>> src/pkg/net/textproto/reader.go:57: return line, err\n> >> >>> bufio.Reader.ReadLine is documented to say:\n> >> >>>\n> >> >>> \"ReadLine either returns a non-nil line or it returns\n> >> >>> an error, never both.\"\n> >> >\n> >> > I think this documentation is actually wrong - I get an empty byte\n> >> > array and os.EOF when I reach the end using the bufio code. I remember\n> >> > hitting this once before.\n> >> >\n> >> > Actually, I think the code I have here in textproto conforms to the\n> >> > intent of the documentation in bufio more than the reference API.\n> >> >\n> >> >>>\n> >> >>> In the old code, readLineSlice also had this property.\n> >> >>>\n> >> >>> In the new code, line might be non-nil from a previous\n> >> >>> call to ReadLine + append.\n> >> >>>\n> >> >>> You should probably just:\n> >> >>>\n> >> >>> return nil, err\n> >> >>\n> >> >> If you do that, you'll also need to test for os.EOF.\n> >> >>\n> >> >>  Anthony\n> >> >>\n> >> >\n> >\n>\n",
+			"disapproval": false,
+			"date": "2011-11-01 17:29:26.682421",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=e953a63b7014 ***\n\ntextproto: prevent long lines in HTTP headers from causing HTTP 400 responses.\n\nThis fixes the issue without an extra copy in the average case.\n\nR=golang-dev, ality, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5272049\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2011-11-01 17:31:42.017635",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"msolo@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hey Mike, can you please hg sync so this can\nbe closed on the codereview server and removed\nfrom everyone's \"Issues CCd to me\" list?\n\nThanks,\n  Anthony",
+			"disapproval": false,
+			"date": "2011-12-11 11:09:10.502128",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Dec 11, 2011 at 06:09,  <ality@pbrane.org> wrote:\n> Hey Mike, can you please hg sync so this can\n> be closed on the codereview server and removed\n> from everyone's \"Issues CCd to me\" list?\n\nthe way to do this w/o mike is to reply via\nthe code review interface and edit the r/cc list\nin the process.  i usually just set CC=golang-dev.\n",
+			"disapproval": false,
+			"date": "2011-12-12 21:15:56.915148",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"msolo@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2011-12-12 21:16:16.391826",
+			"approval": false
+		},
+		{
+			"sender": "msolo@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I ran the sync this morning, hopefully that cleaned it up.\n\nOn Mon, Dec 12, 2011 at 1:16 PM,  <rsc@golang.org> wrote:\n> https://codereview.appspot.com/5272049/\n",
+			"disapproval": false,
+			"date": "2011-12-12 23:46:21.204609",
+			"approval": false
+		}
+	],
+	"owner_email": "msolo@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "msolo",
+	"subject": "code review 5272049: textproto: prevent long lines in HTTP headers from caus...",
+	"created": "2011-10-15 06:09:35.629119",
+	"patchsets": [
+		1,
+		2001,
+		6001,
+		13001,
+		18001
+	],
+	"modified": "2011-12-12 21:16:16.499642",
+	"closed": true,
+	"issue": 5272049
+}

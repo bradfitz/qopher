@@ -1,0 +1,105 @@
+{
+	"description": "runtime: run goroutines during init\n\nFixes issue 583.\nFixes issue 1776.\nFixes issue 2001.\nFixes issue 2112.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"r@golang.org",
+		"gri@golang.org"
+	],
+	"reviewers": [
+		"rogpeppe@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"gri@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n(spec change)\n\nhttp://codereview.appspot.com/5265044/diff/4001/doc/go_spec.html\nFile doc/go_spec.html (right):\n\nhttp://codereview.appspot.com/5265044/diff/4001/doc/go_spec.html#newcode2\ndoc/go_spec.html:2: <!-- subtitle Version of September 29, 2011 -->\nI assume the date will self-correct once the previous CL is submitted/synced.",
+			"disapproval": false,
+			"date": "2011-10-13 19:14:54.377223",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nI liked the predawn variable name, though.\n\nOn Thu, Oct 13, 2011 at 9:45 AM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> runtime: run goroutines during init\n>\n> Fixes issue 583.\n> Fixes issue 1776.\n> Fixes issue 2001.\n> Fixes issue 2112.\n>\n> Please review this at http://codereview.appspot.com/**5265044/<http://codereview.appspot.com/5265044/>\n>\n> Affected files:\n>  M doc/go_spec.html\n>  M src/pkg/runtime/386/asm.s\n>  M src/pkg/runtime/amd64/asm.s\n>  M src/pkg/runtime/arm/asm.s\n>  M src/pkg/runtime/proc.c\n>  A test/init1.go\n>\n>\n> Index: doc/go_spec.html\n> ==============================**==============================**=======\n> --- a/doc/go_spec.html\n> +++ b/doc/go_spec.html\n> @@ -5091,12 +5091,6 @@\n>  in another package that refers to <code>B</code>.\n>  </p>\n>  <p>\n> -Initialization code may contain \"go\" statements, but the functions\n> -they invoke do not begin execution until initialization of the entire\n> -program is complete. Therefore, all initialization code is run in a single\n> -goroutine.\n> -</p>\n> -<p>\n>  An <code>init</code> function cannot be referred to from anywhere\n>  in a program. In particular, <code>init</code> cannot be called\n> explicitly,\n>  nor can a pointer to <code>init</code> be assigned to a function variable.\n> Index: src/pkg/runtime/386/asm.s\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/386/asm.s\n> +++ b/src/pkg/runtime/386/asm.s\n> @@ -92,7 +92,6 @@\n>\n>  TEXT runtime\u00b7mainstart(SB),7,$0\n>        CALL    main\u00b7init(SB)\n> -       CALL    runtime\u00b7initdone(SB)\n>        CALL    main\u00b7main(SB)\n>        PUSHL   $0\n>        CALL    runtime\u00b7exit(SB)\n> Index: src/pkg/runtime/amd64/asm.s\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/amd64/asm.s\n> +++ b/src/pkg/runtime/amd64/asm.s\n> @@ -74,7 +74,6 @@\n>\n>  TEXT runtime\u00b7mainstart(SB),7,$0\n>        CALL    main\u00b7init(SB)\n> -       CALL    runtime\u00b7initdone(SB)\n>        CALL    main\u00b7main(SB)\n>        PUSHQ   $0\n>        CALL    runtime\u00b7exit(SB)\n> Index: src/pkg/runtime/arm/asm.s\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/arm/asm.s\n> +++ b/src/pkg/runtime/arm/asm.s\n> @@ -63,7 +63,6 @@\n>\n>  TEXT runtime\u00b7mainstart(SB),7,$4\n>        BL      main\u00b7init(SB)\n> -       BL      runtime\u00b7initdone(SB)\n>        EOR     R0, R0\n>        MOVW    R0, 0(R13)\n>        BL      main\u00b7main(SB)\n> Index: src/pkg/runtime/proc.c\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/proc.c\n> +++ b/src/pkg/runtime/proc.c\n> @@ -71,7 +71,6 @@\n>\n>        volatile uint32 atomic; // atomic scheduling word (see below)\n>\n> -       int32 predawn;          // running initialization, don't run new\n> g's.\n>        int32 profilehz;        // cpu profiling rate\n>\n>        Note    stopped;        // one g can set waitstop and wait here for\n> m's to stop\n> @@ -202,8 +201,8 @@\n>        }\n>        setmcpumax(runtime\u00b7gomaxprocs)**;\n>        runtime\u00b7singleproc = runtime\u00b7gomaxprocs == 1;\n> -       runtime\u00b7sched.predawn = 1;\n>\n> +       mstats.enablegc = 1;\n>        m->nomemprof--;\n>  }\n>\n> @@ -227,22 +226,6 @@\n>                runtime\u00b7notewakeup(&m->**havenextg);\n>  }\n>\n> -// Called after main\u00b7init_function; main\u00b7main will be called on return.\n> -void\n> -runtime\u00b7initdone(void)\n> -{\n> -       // Let's go.\n> -       runtime\u00b7sched.predawn = 0;\n> -       mstats.enablegc = 1;\n> -\n> -       // If main\u00b7init_function started other goroutines,\n> -       // kick off new m's to handle them, like ready\n> -       // would have, had it not been pre-dawn.\n> -       schedlock();\n> -       matchmg();\n> -       schedunlock();\n> -}\n> -\n>  void\n>  runtime\u00b7goexit(void)\n>  {\n> @@ -467,8 +450,7 @@\n>        g->status = Grunnable;\n>\n>        gput(g);\n> -       if(!runtime\u00b7sched.predawn)\n> -               matchmg();\n> +       matchmg();\n>  }\n>\n>  static void\n> @@ -793,9 +775,6 @@\n>\n>        schedlock();\n>        if(gp != nil) {\n> -               if(runtime\u00b7sched.predawn)\n> -                       runtime\u00b7throw(\"init rescheduling\");\n> -\n>                // Just finished running gp.\n>                gp->m = nil;\n>                runtime\u00b7sched.grunning--;\n> @@ -893,9 +872,6 @@\n>  {\n>        uint32 v;\n>\n> -       if(runtime\u00b7sched.predawn)\n> -               return;\n> -\n>        // Leave SP around for gc and traceback.\n>        runtime\u00b7gosave(&g->sched);\n>        g->gcsp = g->sched.sp;\n> @@ -947,9 +923,6 @@\n>  {\n>        uint32 v;\n>\n> -       if(runtime\u00b7sched.predawn)\n> -               return;\n> -\n>        // Fast path.\n>        // If we can do the mcpu++ bookkeeping and\n>        // find that we still have mcpu <= mcpumax, then we can\n> @@ -1513,8 +1486,6 @@\n>  void\n>  runtime\u00b7LockOSThread(void)\n>  {\n> -       if(runtime\u00b7sched.predawn)\n> -               runtime\u00b7throw(\"cannot wire during init\");\n>        m->lockedg = g;\n>        g->lockedm = m;\n>  }\n> Index: test/init1.go\n> ==============================**==============================**=======\n> new file mode 100644\n> --- /dev/null\n> +++ b/test/init1.go\n> @@ -0,0 +1,44 @@\n> +// $G $D/$F.go && $L $F.$A && ./$A.out\n> +\n> +// Copyright 2011 The Go Authors.  All rights reserved.\n> +// Use of this source code is governed by a BSD-style\n> +// license that can be found in the LICENSE file.\n> +\n> +// Test that goroutines and garbage collection run during init.\n> +\n> +package main\n> +\n> +import \"runtime\"\n> +\n> +var x []byte\n> +\n> +func init() {\n> +       c := make(chan int)\n> +       go send(c)\n> +       <-c\n> +\n> +       const chunk = 1<<20\n> +       runtime.UpdateMemStats()\n> +       sys := runtime.MemStats.Sys\n> +       b := make([]byte, chunk)\n> +       for i := range b {\n> +               b[i] = byte(i%10 + '0')\n> +       }\n> +       s := string(b)\n> +       for i := 0; i < 1000; i++ {\n> +               x = []byte(s)\n> +       }\n> +       runtime.UpdateMemStats()\n> +       sys1 := runtime.MemStats.Sys\n> +       if sys1-sys > chunk*50 {\n> +               println(\"allocated 1000 chunks of\", chunk, \"and used \",\n> sys1-sys, \"memory\")\n> +       }\n> +}\n> +\n> +func send(c chan int) {\n> +       c <- 1\n> +}\n> +\n> +func main() {\n> +}\n> +\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-13 16:49:37.221995",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-13 16:45:12.757035",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\nnice spec change",
+			"disapproval": false,
+			"date": "2011-10-13 19:07:06.179797",
+			"approval": true
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "i'm really happy about this.\ni hope it works out.\n\nOn 13 October 2011 20:54,  <rsc@golang.org> wrote:\n> *** Submitted as\n> http://code.google.com/p/go/source/detail?r=962818141467 ***\n>\n> runtime: run goroutines during init\n>\n> Fixes issue 583.\n> Fixes issue 1776.\n> Fixes issue 2001.\n> Fixes issue 2112.\n>\n> R=golang-dev, bradfitz, r, gri\n> CC=golang-dev\n> http://codereview.appspot.com/5265044\n>\n>\n> http://codereview.appspot.com/5265044/\n>\n",
+			"disapproval": false,
+			"date": "2011-10-14 06:44:33.153816",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"gri@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=962818141467 ***\n\nruntime: run goroutines during init\n\nFixes issue 583.\nFixes issue 1776.\nFixes issue 2001.\nFixes issue 2112.\n\nR=golang-dev, bradfitz, r, gri\nCC=golang-dev\nhttp://codereview.appspot.com/5265044",
+			"disapproval": false,
+			"date": "2011-10-13 19:54:27.691956",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5265044: runtime: run goroutines during init",
+	"created": "2011-10-13 16:44:49.020769",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		10001
+	],
+	"modified": "2011-10-14 06:44:33.279156",
+	"closed": true,
+	"issue": 5265044
+}

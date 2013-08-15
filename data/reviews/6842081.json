@@ -1,0 +1,123 @@
+{
+	"description": "runtime: implement SysUnused for netbsd",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"minux.ma@gmail.com",
+		"dave@cheney.net"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n On Nov 24, 2012 8:58 AM, <jsing@google.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> runtime: implement SysUnused for netbsd\r\n>\r\n> Please review this at http://codereview.appspot.com/**6842081/<http://codereview.appspot.com/6842081/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/defs_netbsd.go\r\n>   M src/pkg/runtime/defs_netbsd_**386.h\r\n>   M src/pkg/runtime/defs_netbsd_**amd64.h\r\n>   M src/pkg/runtime/mem_netbsd.c\r\n>   M src/pkg/runtime/sys_netbsd_**386.s\r\n>   M src/pkg/runtime/sys_netbsd_**amd64.s\r\n>\r\n>\r\n> Index: src/pkg/runtime/defs_netbsd.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/defs_netbsd.**go\r\n> +++ b/src/pkg/runtime/defs_netbsd.**go\r\n> @@ -37,6 +37,9 @@\r\n>         MAP_PRIVATE = C.MAP_PRIVATE\r\n>         MAP_FIXED   = C.MAP_FIXED\r\n>\r\n> +       MADV_DONTNEED = C.MADV_DONTNEED\r\n> +       MADV_FREE     = C.MADV_FREE\r\n> +\r\n>         SA_SIGINFO = C.SA_SIGINFO\r\n>         SA_RESTART = C.SA_RESTART\r\n>         SA_ONSTACK = C.SA_ONSTACK\r\n> Index: src/pkg/runtime/defs_netbsd_**386.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/defs_netbsd_**386.h\r\n> +++ b/src/pkg/runtime/defs_netbsd_**386.h\r\n> @@ -12,6 +12,9 @@\r\n>         MAP_PRIVATE     = 0x2,\r\n>         MAP_FIXED       = 0x10,\r\n>\r\n> +       MADV_DONTNEED   = 0x4,\r\n> +       MADV_FREE       = 0x6,\r\n> +\r\n>         SA_SIGINFO      = 0x40,\r\n>         SA_RESTART      = 0x2,\r\n>         SA_ONSTACK      = 0x1,\r\n> Index: src/pkg/runtime/defs_netbsd_**amd64.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/defs_netbsd_**amd64.h\r\n> +++ b/src/pkg/runtime/defs_netbsd_**amd64.h\r\n> @@ -12,6 +12,9 @@\r\n>         MAP_PRIVATE     = 0x2,\r\n>         MAP_FIXED       = 0x10,\r\n>\r\n> +       MADV_DONTNEED   = 0x4,\r\n> +       MADV_FREE       = 0x6,\r\n> +\r\n>         SA_SIGINFO      = 0x40,\r\n>         SA_RESTART      = 0x2,\r\n>         SA_ONSTACK      = 0x1,\r\n> Index: src/pkg/runtime/mem_netbsd.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mem_netbsd.c\r\n> +++ b/src/pkg/runtime/mem_netbsd.c\r\n> @@ -28,9 +28,7 @@\r\n>  void\r\n>  runtime\u00b7SysUnused(void *v, uintptr n)\r\n>  {\r\n> -       USED(v);\r\n> -       USED(n);\r\n> -       // TODO(rsc): call madvise MADV_DONTNEED\r\n> +       runtime\u00b7madvise(v, n, MADV_FREE);\r\n>  }\r\n>\r\n>  void\r\n> Index: src/pkg/runtime/sys_netbsd_**386.s\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/sys_netbsd_**386.s\r\n> +++ b/src/pkg/runtime/sys_netbsd_**386.s\r\n> @@ -83,6 +83,13 @@\r\n>         MOVL    $0xf1, 0xf1             // crash\r\n>         RET\r\n>\r\n> +TEXT runtime\u00b7madvise(SB),7,$-4\r\n> +       MOVL    $75, AX                 // sys_madvise\r\n> +       INT     $0x80\r\n> +       JAE     2(PC)\r\n> +       MOVL    $0xf1, 0xf1             // crash\r\n> +       RET\r\n> +\r\n>  TEXT runtime\u00b7setitimer(SB),7,$-4\r\n>         MOVL    $425, AX                // sys_setitimer\r\n>         INT     $0x80\r\n> @@ -180,7 +187,7 @@\r\n>         CMPL    BX, $0\r\n>         JNE     5(PC)\r\n>         MOVL    signo+0(FP), BX\r\n> -       MOVL    BX, 0(SP)\r\n> +       MOVL    BX, 0(SP)\r\n>         CALL    runtime\u00b7badsignal(SB)\r\n>         RET\r\n>\r\n> Index: src/pkg/runtime/sys_netbsd_**amd64.s\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/sys_netbsd_**amd64.s\r\n> +++ b/src/pkg/runtime/sys_netbsd_**amd64.s\r\n> @@ -10,7 +10,6 @@\r\n>\r\n>  // int32 lwp_create(void *context, uintptr flags, void *lwpid)\r\n>  TEXT runtime\u00b7lwp_create(SB),7,$0\r\n> -\r\n>         MOVQ    context+0(FP), DI\r\n>         MOVQ    flags+8(FP), SI\r\n>         MOVQ    lwpid+16(FP), DX\r\n> @@ -248,6 +247,18 @@\r\n>         MOVL    $0xf1, 0xf1             // crash\r\n>         RET\r\n>\r\n> +\r\n> +TEXT runtime\u00b7madvise(SB),7,$0\r\n> +       MOVQ    addr+0(FP), DI          // arg 1 - addr\r\n> +       MOVQ    len+8(FP), SI           // arg 2 - len\r\n> +       MOVQ    behav+16(FP), DX        // arg 3 - behav\r\n> +       MOVQ    $75, AX                 // sys_madvise\r\n> +       SYSCALL\r\n> +       CMPQ    AX, $0xfffffffffffff001\r\n> +       JLS     2(PC)\r\n> +       MOVL    $0xf1, 0xf1             // crash\r\n> +       RET\r\n> +\r\n>  TEXT runtime\u00b7sigaltstack(SB),7,$-8\r\n>         MOVQ    new+8(SP), DI           // arg 1 - nss\r\n>         MOVQ    old+16(SP), SI          // arg 2 - oss\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-24 17:27:38.239150",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6842081/diff/7001/src/pkg/runtime/sys_netbsd_amd64.s\nFile src/pkg/runtime/sys_netbsd_amd64.s (right):\n\nhttps://codereview.appspot.com/6842081/diff/7001/src/pkg/runtime/sys_netbsd_amd64.s#newcode257\nsrc/pkg/runtime/sys_netbsd_amd64.s:257: CMPQ\tAX, $0xfffffffffffff001\nthis is wrong.\nyou should use JCC 2(PC)\n\nfor one thing, madvise returns an int, not long.",
+			"disapproval": false,
+			"date": "2012-11-24 17:59:12.665580",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d202aa686554 ***\n\nruntime: implement SysUnused for netbsd\n\nR=golang-dev, bradfitz, minux.ma, dave\nCC=golang-dev\nhttp://codereview.appspot.com/6842081",
+			"disapproval": false,
+			"date": "2012-11-26 11:34:08.474660",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-24 16:58:22.552330",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for fixing this, the asm for madvise should closely follow munmap.",
+			"disapproval": false,
+			"date": "2012-11-25 12:01:40.883940",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.",
+			"disapproval": false,
+			"date": "2012-11-25 12:22:40.999250",
+			"approval": true
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/24 17:59:12, minux wrote:\n> https://codereview.appspot.com/6842081/diff/7001/src/pkg/runtime/sys_netbsd_amd64.s\n> File src/pkg/runtime/sys_netbsd_amd64.s (right):\n> \n> https://codereview.appspot.com/6842081/diff/7001/src/pkg/runtime/sys_netbsd_amd64.s#newcode257\n> src/pkg/runtime/sys_netbsd_amd64.s:257: CMPQ\tAX, $0xfffffffffffff001\n> this is wrong.\n> you should use JCC 2(PC)\n> \n> for one thing, madvise returns an int, not long.\n\nIndeed. Fixed.\n\nPTAL.",
+			"disapproval": false,
+			"date": "2012-11-25 11:55:52.427680",
+			"approval": false
+		}
+	],
+	"owner_email": "jsing@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jsing",
+	"subject": "code review 6842081: runtime: implement SysUnused for netbsd",
+	"created": "2012-11-21 16:42:32.873040",
+	"patchsets": [
+		4001,
+		7001,
+		10001,
+		12001,
+		7002
+	],
+	"modified": "2012-11-26 11:34:10.661300",
+	"closed": true,
+	"issue": 6842081
+}

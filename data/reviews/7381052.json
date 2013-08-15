@@ -1,0 +1,133 @@
+{
+	"description": "go/types: fix type-checking of shift expressions\n\nCompletely rethought shift expression type checking.\nInstead of attempting to type-check them eagerly, now\ndelay the checking of untyped constant lhs in non-\nconstant shifts until the final expression type\nbecomes clear. Once it is clear, update the respective\nexpression tree with the final (not untyped) type and\ncheck respective shift lhs' where necessary.\n\nThis also cleans up another conundrum: How to report\nthe type of untyped constants as it changes from\nuntyped to typed. Now, Context.Expr is only called\nfor an expresion x once x has received its final\n(not untyped) type (for constant initializers, the\nfinal type may still be untyped).\n\nWith this CL all remaining std lib packages that\ndid not typecheck due to shift errors pass now.\n\nTODO: There's a lot of residual stuff that needs\nto be cleaned up but with this CL all tests pass\nnow.",
+	"cc": [
+		"adonovan@google.com",
+		"axwalk@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "axwalk@gmail.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"axwalk@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks! Haven't been through the change in great detail, but I patched and ran my llgo tests and came up with one problem - see my comment.\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go\nFile src/pkg/go/types/expr.go (left):\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go#oldcode304\nsrc/pkg/go/types/expr.go:304: if !x.isNil() && len(t.Methods) > 0 /* empty interfaces are ok */ {\nNow that the final type of an expression is reported through Context.Expr, how can you tell what (dynamic) type to give a constant value that is assigned to interface{}?\n\nI see two options:\n1) Convert the value to defaultType(x.typ), so we can tell what the type is from the value; or\n2) Replace 'target' with defaultType(x.typ) iff x.typ!=Typ[UntypedNil], and report that instead of interface{}. I have been using the latter approach in llgo.",
+			"disapproval": false,
+			"date": "2013-02-28 13:30:00.577260",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-02-28 07:29:07.838850",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"axwalk@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go\nFile src/pkg/go/types/expr.go (left):\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go#oldcode304\nsrc/pkg/go/types/expr.go:304: if !x.isNil() && len(t.Methods) > 0 /* empty interfaces are ok */ {\nOn 2013/02/28 13:30:00, axw wrote:\n> Now that the final type of an expression is reported through Context.Expr, how\n> can you tell what (dynamic) type to give a constant value that is assigned to\n> interface{}?\n> \n> I see two options:\n> 1) Convert the value to defaultType(x.typ), so we can tell what the type is from\n> the value; or\n> 2) Replace 'target' with defaultType(x.typ) iff x.typ!=Typ[UntypedNil], and\n> report that instead of interface{}. I have been using the latter approach in\n> llgo.\n\nGood point. The latter approach seems about right - the exact implementation may be a bit different. I think the rule for Context.Expr(x, typ, val) should be:\n\nIf x is a variable, typ is the static type of the variable (concrete or abstract, i.e. interface type). If x is a value (not a variable), typ should be the concrete (dynamic) type of x.\n\nI'll address that. Thanks.\n- gri",
+			"disapproval": false,
+			"date": "2013-02-28 17:33:59.300520",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"axwalk@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThe two phase bottom-up/top-down approach seems much clearer.\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go\nFile src/pkg/go/types/expr.go (right):\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go#newcode302\nsrc/pkg/go/types/expr.go:302: *ast.BasicLit:\nJoin lines?\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go#newcode480\nsrc/pkg/go/types/expr.go:480: check.invalidOp(y.pos(), \"%s: stupid shift\", y)\nThere are no stupid shifts, only stupid programmers.\n\nBut you probably shouldn't call them that. :)\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go#newcode750\nsrc/pkg/go/types/expr.go:750: check.untyped[x.expr] = typ.(*Basic)\nYou might want to combine these maps into one with a pair as value, to save space and avoid redundant hashtable lookups.\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/stmt.go\nFile src/pkg/go/types/stmt.go (right):\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/stmt.go#newcode29\nsrc/pkg/go/types/stmt.go:29: if x.mode == invalid {\nOr just:\n\nreturn x.mode != invalid && x.isAssignable(...)\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/stmt.go#newcode439\nsrc/pkg/go/types/stmt.go:439: \nRemove blank line.",
+			"disapproval": false,
+			"date": "2013-02-28 19:43:07.317120",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"axwalk@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks.\n\nI will do some more testing (go vet) before submitting.\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go\nFile src/pkg/go/types/expr.go (right):\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go#newcode302\nsrc/pkg/go/types/expr.go:302: *ast.BasicLit:\nOn 2013/02/28 19:43:07, adonovan wrote:\n> Join lines?\n\nDone.\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go#newcode480\nsrc/pkg/go/types/expr.go:480: check.invalidOp(y.pos(), \"%s: stupid shift\", y)\nOn 2013/02/28 19:43:07, adonovan wrote:\n> There are no stupid shifts, only stupid programmers.\n> \n> But you probably shouldn't call them that. :)\n\nacknowledged. just following the lead of gc here\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/stmt.go\nFile src/pkg/go/types/stmt.go (right):\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/stmt.go#newcode29\nsrc/pkg/go/types/stmt.go:29: if x.mode == invalid {\nOn 2013/02/28 19:43:07, adonovan wrote:\n> Or just:\n> \n> return x.mode != invalid && x.isAssignable(...)\n\nDone.\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/stmt.go#newcode439\nsrc/pkg/go/types/stmt.go:439: \nOn 2013/02/28 19:43:07, adonovan wrote:\n> Remove blank line.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-02-28 19:49:28.380450",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"axwalk@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go\nFile src/pkg/go/types/expr.go (right):\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go#newcode480\nsrc/pkg/go/types/expr.go:480: check.invalidOp(y.pos(), \"%s: stupid shift\", y)\nOn 2013/02/28 19:49:28, gri wrote:\n> On 2013/02/28 19:43:07, adonovan wrote:\n> > There are no stupid shifts, only stupid programmers.\n> > \n> > But you probably shouldn't call them that. :)\n> \n> acknowledged. just following the lead of gc here\n\nDoing what you are suggesting for now.\n\nhttps://codereview.appspot.com/7381052/diff/14015/src/pkg/go/types/expr.go#newcode750\nsrc/pkg/go/types/expr.go:750: check.untyped[x.expr] = typ.(*Basic)\nOn 2013/02/28 19:43:07, adonovan wrote:\n> You might want to combine these maps into one with a pair as value, to save\n> space and avoid redundant hashtable lookups.\n\nNote that the way the type checker now works, non-constant expressions can have untyped types (temporarily): for c << s, where c is an untyped constant and s is not, c << s has an untyped type.\n\nSo it may make sense to keep the two maps separate. I added a TODO to measure this at some point.",
+			"disapproval": false,
+			"date": "2013-02-28 22:32:04.638540",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"axwalk@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=f10ff2e7c9bd ***\n\ngo/types: fix type-checking of shift expressions\n\nCompletely rethought shift expression type checking.\nInstead of attempting to type-check them eagerly, now\ndelay the checking of untyped constant lhs in non-\nconstant shifts until the final expression type\nbecomes clear. Once it is clear, update the respective\nexpression tree with the final (not untyped) type and\ncheck respective shift lhs' where necessary.\n\nThis also cleans up another conundrum: How to report\nthe type of untyped constants as it changes from\nuntyped to typed. Now, Context.Expr is only called\nfor an expresion x once x has received its final\n(not untyped) type (for constant initializers, the\nfinal type may still be untyped).\n\nWith this CL all remaining std lib packages that\ndid not typecheck due to shift errors pass now.\n\nTODO: There's a lot of residual stuff that needs\nto be cleaned up but with this CL all tests pass\nnow.\n\nR=adonovan, axwalk\nCC=golang-dev\nhttps://codereview.appspot.com/7381052",
+			"disapproval": false,
+			"date": "2013-02-28 23:27:55.522450",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 7381052: go/types: fix type-checking of shift expressions",
+	"created": "2013-02-23 01:12:35.893110",
+	"patchsets": [
+		1,
+		2001,
+		3,
+		7001,
+		9001,
+		12001,
+		14001,
+		16001,
+		18001,
+		14015,
+		25001,
+		9002,
+		25003,
+		30001
+	],
+	"modified": "2013-02-28 23:27:57.018830",
+	"closed": true,
+	"issue": 7381052
+}

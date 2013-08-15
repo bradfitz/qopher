@@ -1,0 +1,261 @@
+{
+	"description": "runtime: add lr, ctxt, ret to Gobuf\n\nAdd gostartcall and gostartcallfn.\nThe old gogocall = gostartcall + gogo.\nThe old gogocallfn = gostartcallfn + gogo.",
+	"cc": [
+		"dvyukov@google.com",
+		"minux.ma@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c#newcode281\nsrc/pkg/runtime/stack.c:281: runtime\u00b7gostartcall(&label, m->morepc, nil);\nthe context argument here must be m->cret\nafter changing it to:\n\n\tlabel.ret = 0;\n\tlabel.ctxt = nil;\n\tif(reflectcall)\n\t\truntime\u00b7gostartcallfn(&label, (FuncVal*)m->morepc);\n\telse\n\t\truntime\u00b7gostartcall(&label, m->morepc, (void*)m->cret);\n\tm->morepc = nil;\n\tm->cret = 0;\n\truntime\u00b7gogo(&label);\n\nit seems to work fine",
+			"disapproval": false,
+			"date": "2013-06-06 09:36:50.542790",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/asm_386.s\nFile src/pkg/runtime/asm_386.s (right):\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/asm_386.s#newcode385\nsrc/pkg/runtime/asm_386.s:385: TEXT runtime\u00b7atomicstorep(SB), 7, $0\nI am getting a weird compilation failure here:\n./asm_386.s:385 syntax error, last name: runtime\nIf I insert /**/ before this line, it works\nIf I change runtime\u00b7atomicstorep to \u00b7atomicstorep, it works\nI am not sure it is related\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/mgc0.c#newcode1405\nsrc/pkg/runtime/mgc0.c:1405: if(pc == (byte*)f->entry) {\nThe idea behind my CL that adds 'started' parameter to addframeroots (https://codereview.appspot.com/9873045)\nis to not let all this platform-dependent mess into GC code.\nI want it to be situated in traceback code, and provide slightly higher-level interface to GC code.\n\nPreempted functions will have *not* adjusted SP, but PC != f->entry (PC points to the point after morestack call).\nSo this condition will need to be updated in 2 places -- traceback and GC.\n\nYou wrote:\n>This CL will need to be revised if Dmitriy cleans up my CL tweaking the\n> goroutine representation. In that CL there is no longer a concept of \n> a non-started > goroutine. There are just functions on the stack that\n> haven't yet bumped the SP to allocate a frame (those are identified by pc == f->entry).\n\nMy 'started' parameter means exactly that -- whether SP is adjusted or not. If it does not adjust SP yet, it's not started in some sense. Probably it's a bad name.\nA better option may be to pass properly adjusted SP and FP to addframeroots.\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c#newcode138\nsrc/pkg/runtime/stack.c:138: if(0) {\ndrop {} ;)\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/sys_x86.c\nFile src/pkg/runtime/sys_x86.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/sys_x86.c#newcode28\nsrc/pkg/runtime/sys_x86.c:28: runtime\u00b7gostartcall(gobuf, fv->fn, fv);\nCan we just do this call inplace?",
+			"disapproval": false,
+			"date": "2013-06-06 09:57:02.435390",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/mgc0.c#newcode1405\nsrc/pkg/runtime/mgc0.c:1405: if(pc == (byte*)f->entry) {\nOn 2013/06/06 09:57:02, dvyukov wrote:\n> The idea behind my CL that adds 'started' parameter to addframeroots\n> (https://codereview.appspot.com/9873045)\n> is to not let all this platform-dependent mess into GC code.\n> I want it to be situated in traceback code, and provide slightly higher-level\n> interface to GC code.\n> \n> Preempted functions will have *not* adjusted SP, but PC != f->entry (PC points\n> to the point after morestack call).\n> So this condition will need to be updated in 2 places -- traceback and GC.\n> \n> You wrote:\n> >This CL will need to be revised if Dmitriy cleans up my CL tweaking the\n> > goroutine representation. In that CL there is no longer a concept of \n> > a non-started > goroutine. There are just functions on the stack that\n> > haven't yet bumped the SP to allocate a frame (those are identified by pc ==\n> f->entry).\n> \n> My 'started' parameter means exactly that -- whether SP is adjusted or not. If\n> it does not adjust SP yet, it's not started in some sense. Probably it's a bad\n> name.\n> A better option may be to pass properly adjusted SP and FP to addframeroots.\n\nI am in favor of a cleaner fix, but I think it should be done in a separate CL.\nI agree that perhaps passing in separate sp fp is best.\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c#newcode138\nsrc/pkg/runtime/stack.c:138: if(0) {\nOn 2013/06/06 09:57:02, dvyukov wrote:\n> drop {} ;)\n\nDone.\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c#newcode281\nsrc/pkg/runtime/stack.c:281: runtime\u00b7gostartcall(&label, m->morepc, nil);\nOn 2013/06/06 09:36:50, dvyukov wrote:\n> the context argument here must be m->cret\n> after changing it to:\n> \n> \tlabel.ret = 0;\n> \tlabel.ctxt = nil;\n> \tif(reflectcall)\n> \t\truntime\u00b7gostartcallfn(&label, (FuncVal*)m->morepc);\n> \telse\n> \t\truntime\u00b7gostartcall(&label, m->morepc, (void*)m->cret);\n> \tm->morepc = nil;\n> \tm->cret = 0;\n> \truntime\u00b7gogo(&label);\n> \n> it seems to work fine\n\nUgh. Thanks. I added a comment too.\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/sys_x86.c\nFile src/pkg/runtime/sys_x86.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/sys_x86.c#newcode28\nsrc/pkg/runtime/sys_x86.c:28: runtime\u00b7gostartcall(gobuf, fv->fn, fv);\nOn 2013/06/06 09:57:02, dvyukov wrote:\n> Can we just do this call inplace?\n\nI guess, but then there are two copies. Does it matter? This doesn't run very often.",
+			"disapproval": false,
+			"date": "2013-06-10 19:03:46.367050",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/10 19:03:46, rsc wrote:\n> https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/mgc0.c\n> File src/pkg/runtime/mgc0.c (right):\n> \n> https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/mgc0.c#newcode1405\n> src/pkg/runtime/mgc0.c:1405: if(pc == (byte*)f->entry) {\n> On 2013/06/06 09:57:02, dvyukov wrote:\n> > The idea behind my CL that adds 'started' parameter to addframeroots\n> > (https://codereview.appspot.com/9873045)\n> > is to not let all this platform-dependent mess into GC code.\n> > I want it to be situated in traceback code, and provide slightly higher-level\n> > interface to GC code.\n> > \n> > Preempted functions will have *not* adjusted SP, but PC != f->entry (PC points\n> > to the point after morestack call).\n> > So this condition will need to be updated in 2 places -- traceback and GC.\n> > \n> > You wrote:\n> > >This CL will need to be revised if Dmitriy cleans up my CL tweaking the\n> > > goroutine representation. In that CL there is no longer a concept of \n> > > a non-started > goroutine. There are just functions on the stack that\n> > > haven't yet bumped the SP to allocate a frame (those are identified by pc ==\n> > f->entry).\n> > \n> > My 'started' parameter means exactly that -- whether SP is adjusted or not. If\n> > it does not adjust SP yet, it's not started in some sense. Probably it's a bad\n> > name.\n> > A better option may be to pass properly adjusted SP and FP to addframeroots.\n> \n> I am in favor of a cleaner fix, but I think it should be done in a separate CL.\n> I agree that perhaps passing in separate sp fp is best.\n> \n> https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c\n> File src/pkg/runtime/stack.c (right):\n> \n> https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c#newcode138\n> src/pkg/runtime/stack.c:138: if(0) {\n> On 2013/06/06 09:57:02, dvyukov wrote:\n> > drop {} ;)\n> \n> Done.\n> \n> https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/stack.c#newcode281\n> src/pkg/runtime/stack.c:281: runtime\u00b7gostartcall(&label, m->morepc, nil);\n> On 2013/06/06 09:36:50, dvyukov wrote:\n> > the context argument here must be m->cret\n> > after changing it to:\n> > \n> > \tlabel.ret = 0;\n> > \tlabel.ctxt = nil;\n> > \tif(reflectcall)\n> > \t\truntime\u00b7gostartcallfn(&label, (FuncVal*)m->morepc);\n> > \telse\n> > \t\truntime\u00b7gostartcall(&label, m->morepc, (void*)m->cret);\n> > \tm->morepc = nil;\n> > \tm->cret = 0;\n> > \truntime\u00b7gogo(&label);\n> > \n> > it seems to work fine\n> \n> Ugh. Thanks. I added a comment too.\n> \n> https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/sys_x86.c\n> File src/pkg/runtime/sys_x86.c (right):\n> \n> https://codereview.appspot.com/10036044/diff/5001/src/pkg/runtime/sys_x86.c#newcode28\n> src/pkg/runtime/sys_x86.c:28: runtime\u00b7gostartcall(gobuf, fv->fn, fv);\n> On 2013/06/06 09:57:02, dvyukov wrote:\n> > Can we just do this call inplace?\n> \n> I guess, but then there are two copies. Does it matter? This doesn't run very\n> often.\n\nIt does not matter too much.\n\nThe changes are not uploaded yet, right?\n\nI think Ian must take a look as well.",
+			"disapproval": false,
+			"date": "2013-06-10 19:21:41.160740",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nOn 386, all.bash compiles and passes (thanks to CL 10167043).\n\nOn amd64, all.bash almost passes. It fails at fixedbugs/issue5493.go with not all finalizers called (8 of 10). I can't tell if this is the CL's fault or the test is just flaky.\n\nI have not tested ARM.",
+			"disapproval": false,
+			"date": "2013-06-10 20:16:06.004060",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Russ,\nafter fixing these superficial errors on ARM, i got this from go_bootstrap:\nreleasep: m=0x329490 m->p=0x10612000 p->m=0x329490 m->mcache=0x400c9000 p->mcache=0x400c9000 p->status=3\nfatal error: releasep: invalid p state\n\ngoroutine 1 [runnable]:\n\ngoroutine 2 [runnable]:\n\nif you don't have time, i will take a closer look after i get some sleep.\n\nhttps://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s\nFile src/pkg/runtime/asm_arm.s (right):\n\nhttps://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s#newcode104\nsrc/pkg/runtime/asm_arm.s:104: MOVW\t$0, gobuf_lr(R0)\nplease use a temporary register to assign 0 to memory (I used R11).\n\nhttps://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s#newcode122\nsrc/pkg/runtime/asm_arm.s:122: MOVQ\tgobuf_ret(R0), R0\ns/MOVQ/MOVW/\n\nhttps://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/sys_arm.c\nFile src/pkg/runtime/sys_arm.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/sys_arm.c#newcode16\nsrc/pkg/runtime/sys_arm.c:16: gobuf->pc = (uintptr)fn;\ns/(uintptr)/(byte *)/",
+			"disapproval": false,
+			"date": "2013-06-10 21:09:46.640700",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/10 20:16:06, rsc wrote:\n> PTAL\n> \n> On 386, all.bash compiles and passes (thanks to CL 10167043).\n> \n> On amd64, all.bash almost passes. It fails at fixedbugs/issue5493.go with not\n> all finalizers called (8 of 10). I can't tell if this is the CL's fault or the\n> test is just flaky.\n\nI think you need to zeroize gp->sched.ctxt in mcall or in gogo (or probably runtime.goexit will do for now).\nctxt is void*, so when GC scans runtime.allg, it sees that pointer. Even if you make it uintptr, G can be reached from other places and be scanned conservatively, and then the closure will be leaked again.",
+			"disapproval": false,
+			"date": "2013-06-10 21:16:54.694620",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jun 11, 2013 at 1:09 AM,  <minux.ma@gmail.com> wrote:\r\n> Hi Russ,\r\n> after fixing these superficial errors on ARM, i got this from\r\n> go_bootstrap:\r\n> releasep: m=0x329490 m->p=0x10612000 p->m=0x329490 m->mcache=0x400c9000\r\n> p->mcache=0x400c9000 p->status=3\r\n> fatal error: releasep: invalid p state\r\n\r\nThis is Pgcstop.\r\nCan you get a stacktrace somehow? I usually traceback from runtime.startpanic.\r\n\r\n>\r\n> goroutine 1 [runnable]:\r\n>\r\n> goroutine 2 [runnable]:\r\n>\r\n> if you don't have time, i will take a closer look after i get some\r\n> sleep.\r\n>\r\n>\r\n> https://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s\r\n> File src/pkg/runtime/asm_arm.s (right):\r\n>\r\n> https://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s#newcode104\r\n> src/pkg/runtime/asm_arm.s:104: MOVW     $0, gobuf_lr(R0)\r\n> please use a temporary register to assign 0 to memory (I used R11).\r\n>\r\n> https://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s#newcode122\r\n> src/pkg/runtime/asm_arm.s:122: MOVQ     gobuf_ret(R0), R0\r\n> s/MOVQ/MOVW/\r\n>\r\n> https://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/sys_arm.c\r\n> File src/pkg/runtime/sys_arm.c (right):\r\n>\r\n> https://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/sys_arm.c#newcode16\r\n> src/pkg/runtime/sys_arm.c:16: gobuf->pc = (uintptr)fn;\r\n> s/(uintptr)/(byte *)/\r\n>\r\n> https://codereview.appspot.com/10036044/\r\n",
+			"disapproval": false,
+			"date": "2013-06-10 21:19:26.132930",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s\nFile src/pkg/runtime/asm_arm.s (right):\n\nhttps://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s#newcode104\nsrc/pkg/runtime/asm_arm.s:104: MOVW\t$0, gobuf_lr(R0)\nOn 2013/06/10 21:09:46, minux wrote:\n> please use a temporary register to assign 0 to memory (I used R11).\n\nDone, but doesn't 5l do that for me?\n\nhttps://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s#newcode122\nsrc/pkg/runtime/asm_arm.s:122: MOVQ\tgobuf_ret(R0), R0\nOn 2013/06/10 21:09:46, minux wrote:\n> s/MOVQ/MOVW/\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-11 01:41:36.088870",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm pretty sure that the new code and the stack frame walker are not\r\ngetting along: if I turn the stack frame-based gc off, all is well. I'm\r\nworking on simplifying the stack frame walker a bit, which should help.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-06-11 18:52:41.534410",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\r\n\r\namd64 and 386 are happy. arm is happy with the stack switches but seems to\r\ncollect some non-garbage, causing crashes.\r\n",
+			"disapproval": false,
+			"date": "2013-06-11 04:14:24.431520",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jun 11, 2013 at 9:41 AM, <rsc@golang.org> wrote:\r\n\r\n> https://codereview.appspot.**com/10036044/diff/16001/src/**\r\n> pkg/runtime/asm_arm.s#**newcode104<https://codereview.appspot.com/10036044/diff/16001/src/pkg/runtime/asm_arm.s#newcode104>\r\n> src/pkg/runtime/asm_arm.s:104: MOVW     $0, gobuf_lr(R0)\r\n> On 2013/06/10 21:09:46, minux wrote:\r\n>\r\n>> please use a temporary register to assign 0 to memory (I used R11).\r\n>>\r\n>\r\n> Done, but doesn't 5l do that for me?\r\n\r\nat least 5l doesn't do that now. Do you want it to be implemented?\r\n",
+			"disapproval": false,
+			"date": "2013-06-11 18:16:15.756690",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jun 11, 2013 at 12:14 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> amd64 and 386 are happy. arm is happy with the stack switches but seems to\r\n> collect some non-garbage, causing crashes.\r\n>\r\nwith Patch Set 7:\r\n\r\n$ GOTRACEBACK=2 ../pkg/tool/linux_arm/go_bootstrap\r\nfatal error: malloc/free - deadlock\r\n[signal 0xb code=0x1 addr=0x24 pc=0x74144]\r\n\r\ngoroutine 1 [running]:\r\n[fp=0x4029ab1c] runtime.throw(0x323470)\r\n/home/minux/go.hg/src/pkg/runtime/panic.c:475 +0x50\r\n[fp=0x4029ab50] runtime.mallocgc(0x8, 0x0, 0x1, 0x1)\r\n/home/minux/go.hg/src/pkg/runtime/zmalloc_linux_arm.c:34 +0x54\r\n[fp=0x4029ab64] runtime.mal(0x8)\r\n /home/minux/go.hg/src/pkg/runtime/zmalloc_linux_arm.c:658 +0x3c\r\n[fp=0x4029ab80] copyin(0x1bbc78, 0x4029aba4, 0x4029abb0)\r\n/home/minux/go.hg/src/pkg/runtime/iface.c:152 +0x60\r\n[fp=0x4029ab9c] runtime.convT2E()\r\n/home/minux/go.hg/src/pkg/runtime/iface.c:220 +0x44\r\n[fp=0x4029abb4] runtime.newErrorString(0x322b08, 0x31, 0x4029abcc)\r\n /home/minux/go.hg/src/pkg/runtime/error.go:74 +0x38\r\n[fp=0x4029abd4] runtime.panicstring(0x322b08)\r\n/home/minux/go.hg/src/pkg/runtime/panic.c:488 +0x78\r\n[fp=0x4029abe0] runtime.sigpanic()\r\n/home/minux/go.hg/src/pkg/runtime/os_linux.c:237 +0x114\r\n[fp=0x4029ac18] runtime.mallocgc(0x20, 0x0, 0x1, 0x1)\r\n /home/minux/go.hg/src/pkg/runtime/zmalloc_linux_arm.c:54 +0xd8\r\n[fp=0x4029ac30] runtime.new()\r\n/home/minux/go.hg/src/pkg/runtime/zmalloc_linux_arm.c:675 +0x50\r\n[fp=0x4029ac84] text/template/parse.(*Tree).textOrAction(0x10612930, 0x12,\r\n0x0)\r\n/home/minux/go.hg/src/pkg/text/template/parse/parse.go:346 +0xd8\r\n[fp=0x4029ad7c] text/template/parse.(*Tree).parse(0x10612930, 0x10622fe0,\r\n0x0, 0x0)\r\n/home/minux/go.hg/src/pkg/text/template/parse/parse.go:294 +0x330\r\n[fp=0x4029adc4] text/template/parse.(*Tree).Parse(0x10612930, 0x2269f8,\r\n0x8fc, 0x0, 0x0, ...)\r\n/home/minux/go.hg/src/pkg/text/template/parse/parse.go:233 +0x198\r\n[fp=0x4029ae00] text/template/parse.Parse(0x1dbe00, 0x4, 0x2269f8, 0x8fc,\r\n0x0, ...)\r\n/home/minux/go.hg/src/pkg/text/template/parse/parse.go:42 +0xe0\r\n[fp=0x4029ae94] text/template.(*Template).Parse(0x10622f60, 0x2269f8,\r\n0x8fc, 0x106234b0, 0x1d66a0, ...)\r\n/home/minux/go.hg/src/pkg/text/template/template.go:171 +0x1a8\r\n[fp=0x4029afac] main.init()\r\n/home/minux/go.hg/src/cmd/go/vet.go:-4958 +0xfa8\r\n[fp=0x4029afc4] runtime.main()\r\n/home/minux/go.hg/src/pkg/runtime/proc.c:180 +0x70\r\n[fp=0x4029afc8] runtime.goexit()\r\n/home/minux/go.hg/src/pkg/runtime/proc.c:1237\r\n\r\ngoroutine 2 [syscall]:\r\nruntime.entersyscallblock()\r\n /home/minux/go.hg/src/pkg/runtime/proc.c:1347 +0xc0\r\nruntime.MHeap_Scavenger()\r\n/home/minux/go.hg/src/pkg/runtime/mheap.c:470 +0xf8\r\nruntime.goexit()\r\n/home/minux/go.hg/src/pkg/runtime/proc.c:1237\r\ncreated by runtime.main\r\n/home/minux/go.hg/src/pkg/runtime/proc.c:166\r\n\r\ngoroutine 3 [syscall]:\r\nruntime.entersyscallblock()\r\n/home/minux/go.hg/src/pkg/runtime/proc.c:1347 +0xc0\r\ncreated by os/signal.init\u00b71\r\n /home/minux/go.hg/src/pkg/os/signal/signal_unix.go:27 +0x44\r\n\r\ngoroutine 4 [chan send]:\r\nruntime.park(0x5f2d8, 0x1062353c, 0x3228a0)\r\n /home/minux/go.hg/src/pkg/runtime/proc.c:1185 +0x40\r\nruntime.chansend(0x18fac0, 0x10623510, 0x402a7f6c, 0x0, 0x16e65c, ...)\r\n/home/minux/go.hg/src/pkg/runtime/chan.c:227 +0x224\r\nruntime.chansend1()\r\n/home/minux/go.hg/src/pkg/runtime/chan.c:444 +0x44\r\ntext/template/parse.lexLeftDelim(0x10641600, 0x220a7c)\r\n /home/minux/go.hg/src/pkg/text/template/parse/lex.go:238 +0x1d8\r\ntext/template/parse.(*lexer).run(0x10641600)\r\n/home/minux/go.hg/src/pkg/text/template/parse/lex.go:198 +0x44\r\nruntime.goexit()\r\n/home/minux/go.hg/src/pkg/runtime/proc.c:1237\r\ncreated by text/template/parse.lex\r\n/home/minux/go.hg/src/pkg/text/template/parse/lex.go:191 +0x118\r\n\r\nThe signal received is a SIGSEGV at pkg/runtime/malloc.goc:63,\r\nand v = 0x24\r\n\r\nDmitry, do you have any ideas?\r\n",
+			"disapproval": false,
+			"date": "2013-06-11 18:37:16.654670",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\r\n\r\nall.bash passes on arm, amd64, and 386, so I think this is ready to go in.\r\n",
+			"disapproval": false,
+			"date": "2013-06-12 18:00:05.874620",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for the review.\n\nhttps://codereview.appspot.com/10036044/diff/69001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/10036044/diff/69001/src/pkg/runtime/runtime.h#newcode212\nsrc/pkg/runtime/runtime.h:212: // The offsets of these fields are known to (hard-coded in) libmach.\nOn 2013/06/12 19:10:48, minux wrote:\n> update this comment (only offsets of the first three is hardcoded in libmach)?\n\nDone.\n\n> btw, after cmd/prof and cmd/cov is removed, i think much of libmach is not\n> used anymore, should we remove them?\n\nI would rather keep it for now. It still has functionality that we don't have a replacement for, such as disassembly. Also we will always need it for 'go tool nm' and the like.\n\nhttps://codereview.appspot.com/10036044/diff/69001/src/pkg/runtime/sys_x86.c\nFile src/pkg/runtime/sys_x86.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/69001/src/pkg/runtime/sys_x86.c#newcode26\nsrc/pkg/runtime/sys_x86.c:26: runtime\u00b7gostartcallfn(Gobuf *gobuf, FuncVal *fv)\nOn 2013/06/12 19:10:48, minux wrote:\n> should we move this function to a portable file?\n\nDone. I've probably broken the arm now, but we'll see...",
+			"disapproval": false,
+			"date": "2013-06-12 19:15:07.957400",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\nhttps://codereview.appspot.com/10036044/diff/69001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/10036044/diff/69001/src/pkg/runtime/runtime.h#newcode212\nsrc/pkg/runtime/runtime.h:212: // The offsets of these fields are known to (hard-coded in) libmach.\nupdate this comment (only offsets of the first three is hardcoded in libmach)?\n\nbtw, after cmd/prof and cmd/cov is removed, i think much of libmach is not\nused anymore, should we remove them?\n\nhttps://codereview.appspot.com/10036044/diff/69001/src/pkg/runtime/sys_x86.c\nFile src/pkg/runtime/sys_x86.c (right):\n\nhttps://codereview.appspot.com/10036044/diff/69001/src/pkg/runtime/sys_x86.c#newcode26\nsrc/pkg/runtime/sys_x86.c:26: runtime\u00b7gostartcallfn(Gobuf *gobuf, FuncVal *fv)\nshould we move this function to a portable file?",
+			"disapproval": false,
+			"date": "2013-06-12 19:10:47.917640",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com, minux.ma@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-06-12 19:22:22.204580",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=916cb45c0d5f ***\n\nruntime: add lr, ctxt, ret to Gobuf\n\nAdd gostartcall and gostartcallfn.\nThe old gogocall = gostartcall + gogo.\nThe old gogocallfn = gostartcallfn + gogo.\n\nR=dvyukov, minux.ma\nCC=golang-dev\nhttps://codereview.appspot.com/10036044",
+			"disapproval": false,
+			"date": "2013-06-12 19:22:29.334480",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 10036044: runtime: add lr, ctxt, ret to Gobuf",
+	"created": "2013-06-05 14:32:31.049670",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		16001,
+		25002,
+		28001,
+		31001,
+		45001,
+		48001,
+		47014,
+		40002,
+		2003,
+		60001,
+		62001,
+		49010,
+		66001,
+		69001,
+		75001
+	],
+	"modified": "2013-06-18 18:31:59.153950",
+	"closed": true,
+	"issue": 10036044
+}

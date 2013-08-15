@@ -1,0 +1,126 @@
+{
+	"description": "runtime: fix SetBlockProfileRate\nIt doughtily misses all possible corner cases.\nIn particular on machines with <1GHz processors,\nSetBlockProfileRate(1) disables profiling.\nFixes issue 6114.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-14 17:02:43.823780",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/14 18:37:19, bradfitz wrote:\n> why special case rate == 1 instead of just seeing if r == 0 after the\n> float64 -> int64 conversion?\n\nI should sleep more...\n\n... or converting integers is hard, let's go write GC",
+			"disapproval": false,
+			"date": "2013-08-14 19:39:21.865790",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Russ, Brad, please take a look, its small and should reduce flakiness on\r\nbuilders.\r\nOn Aug 14, 2013 9:02 PM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: fix SetBlockProfileRate\r\n> It doughtily misses all possible corver cases.\r\n> In particular on machines with <1GHz processors,\r\n> SetBlockProfileRate(1) disables profiling.\r\n> Fixes issue 6114.\r\n>\r\n> Please review this at https://codereview.appspot.**com/12936043/<https://codereview.appspot.com/12936043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/mprof.goc\r\n>\r\n>\r\n> Index: src/pkg/runtime/mprof.goc\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mprof.goc\r\n> +++ b/src/pkg/runtime/mprof.goc\r\n> @@ -295,7 +295,17 @@\r\n>  void\r\n>  runtime\u00b7SetBlockProfileRate(**intgo rate)\r\n>  {\r\n> -       runtime\u00b7atomicstore64((uint64***)&runtime\u00b7blockprofilerate, rate\r\n> * runtime\u00b7tickspersecond() / (1000*1000*1000));\r\n> +       int64 r;\r\n> +\r\n> +       if(rate <= 0)\r\n> +               r = 0;  // disable profiling\r\n> +       else if(rate == 1)\r\n> +               r = 1;  // record all blocking events\r\n> +       else {\r\n> +               // convert ns to cycles, use float64 to prevent overflow\r\n> during multiplication\r\n> +               r = (float64)rate*runtime\u00b7**tickspersecond()/(1000*1000***\r\n> 1000);\r\n> +       }\r\n> +       runtime\u00b7atomicstore64((uint64***)&runtime\u00b7blockprofilerate, r);\r\n>  }\r\n>\r\n>  void\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 18:28:48.216540",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "why special case rate == 1 instead of just seeing if r == 0 after the\r\nfloat64 -> int64 conversion?\r\n\r\n\r\n\r\n\r\nOn Wed, Aug 14, 2013 at 10:02 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: fix SetBlockProfileRate\r\n> It doughtily misses all possible corver cases.\r\n> In particular on machines with <1GHz processors,\r\n> SetBlockProfileRate(1) disables profiling.\r\n> Fixes issue 6114.\r\n>\r\n> Please review this at https://codereview.appspot.**com/12936043/<https://codereview.appspot.com/12936043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/mprof.goc\r\n>\r\n>\r\n> Index: src/pkg/runtime/mprof.goc\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mprof.goc\r\n> +++ b/src/pkg/runtime/mprof.goc\r\n> @@ -295,7 +295,17 @@\r\n>  void\r\n>  runtime\u00b7SetBlockProfileRate(**intgo rate)\r\n>  {\r\n> -       runtime\u00b7atomicstore64((uint64***)&runtime\u00b7blockprofilerate, rate\r\n> * runtime\u00b7tickspersecond() / (1000*1000*1000));\r\n> +       int64 r;\r\n> +\r\n> +       if(rate <= 0)\r\n> +               r = 0;  // disable profiling\r\n> +       else if(rate == 1)\r\n> +               r = 1;  // record all blocking events\r\n> +       else {\r\n> +               // convert ns to cycles, use float64 to prevent overflow\r\n> during multiplication\r\n> +               r = (float64)rate*runtime\u00b7**tickspersecond()/(1000*1000***\r\n> 1000);\r\n> +       }\r\n> +       runtime\u00b7atomicstore64((uint64***)&runtime\u00b7blockprofilerate, r);\r\n>  }\r\n>\r\n>  void\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 18:37:19.373630",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 18:44:37.579230",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/14 19:39:21, dvyukov wrote:\n> On 2013/08/14 18:37:19, bradfitz wrote:\n> > why special case rate == 1 instead of just seeing if r == 0 after the\n> > float64 -> int64 conversion?\n> \n> I should sleep more...\n> \n> ... or converting integers is hard, let's go write GC\n\nIf you SetBlockProfileRate(2) on a processor <500MHz, it would still disable profiling.\nPTAL",
+			"disapproval": false,
+			"date": "2013-08-14 19:43:27.568990",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-08-14 19:47:54.982200",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=219bcd5db770 ***\n\nruntime: fix SetBlockProfileRate\nIt doughtily misses all possible corner cases.\nIn particular on machines with <1GHz processors,\nSetBlockProfileRate(1) disables profiling.\nFixes issue 6114.\n\nR=golang-dev, bradfitz, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/12936043",
+			"disapproval": false,
+			"date": "2013-08-14 20:20:44.456830",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 12936043: runtime: fix SetBlockProfileRate",
+	"created": "2013-08-14 17:01:51.053900",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		9002,
+		15001,
+		17001
+	],
+	"modified": "2013-08-14 20:20:46.448680",
+	"closed": true,
+	"issue": 12936043
+}

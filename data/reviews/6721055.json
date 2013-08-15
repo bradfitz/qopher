@@ -1,0 +1,408 @@
+{
+	"description": "net/textproto: faster header canonicalization with fewer allocations\n\nBy keeping a single copy of the strings that commonly show up\nin headers, we can avoid one string allocation per header.\n\nbenchmark                  old ns/op    new ns/op    delta\nBenchmarkReadMIMEHeader        19590        10824  -44.75%\nBenchmarkUncommon               3168         1861  -41.26%\n\nbenchmark                 old allocs   new allocs    delta\nBenchmarkReadMIMEHeader           32           25  -21.88%\nBenchmarkUncommon                  5            5    0.00%",
+	"cc": [
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"rsc@golang.org",
+		"jra@nella.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-10-17 21:03:27.680400",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for this proposal. I think with a bit of work we could recover that 3% elsewhere.\n\nhttps://codereview.appspot.com/6721055/diff/5001/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/5001/src/pkg/net/textproto/reader.go#newcode512\nsrc/pkg/net/textproto/reader.go:512: // So try this first, before doing the proper canonicalization.\nGo style tends towards the terse, possibly drop the last line of this comment.\n\nhttps://codereview.appspot.com/6721055/diff/5001/src/pkg/net/textproto/reader_test.go\nFile src/pkg/net/textproto/reader_test.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/5001/src/pkg/net/textproto/reader_test.go#newcode255\nsrc/pkg/net/textproto/reader_test.go:255: `, \"\\n\", \"\\r\\n\", -1)\nnice trick.",
+			"disapproval": false,
+			"date": "2012-10-18 07:17:36.211740",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6721055/diff/5001/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/5001/src/pkg/net/textproto/reader.go#newcode567\nsrc/pkg/net/textproto/reader.go:567: \"Content-MD5\",\nreally? common? this is some S3 thing I thought.\n\nhttps://codereview.appspot.com/6721055/diff/5001/src/pkg/net/textproto/reader.go#newcode626\nsrc/pkg/net/textproto/reader.go:626: func init() {\nPer http://code.google.com/p/go/issues/detail?id=2297 , there's a general movement to reduce the amount of work done in init.\n\nThis could be done on first use with a sync.Once inside parsing.\n\nhttps://codereview.appspot.com/6721055/diff/5001/src/pkg/net/textproto/reader.go#newcode632\nsrc/pkg/net/textproto/reader.go:632: h = CanonicalMIMEHeaderKey(h)\nrather than keying from the canonical key, which won't trigger on \"ETag\", \"WWW-Authenticate\", \"MIME-Version\", etc, I would instead use a 27-alphabet trie ('a' to 'z' and '-') and map to the canonical string.  Then we catch all case forms too.\n\nI surprised you're losing 3%. What's profiling say?",
+			"disapproval": false,
+			"date": "2012-10-22 22:02:46.962690",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think the lost 3% simply comes from the hash lookup, which is one more vote for your trie proposal. I don't know when I'm going to have time to learn how to do it, do it, and then re-measure it.\n\nFor the list of common headers, it would be helpful to find a study of the top-N headers seen in real life on the Internet. I'm wondering if you could find such a thing inside of Google, since you have some webservers there. :)",
+			"disapproval": false,
+			"date": "2012-10-23 10:38:12.252630",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I got the trie working. With the giant list of headers from my first patch, the trie takes up 41000 bytes (yuck). On the other hand, the time for BenchmarkReadMIMEHeader goes down by 8% due to using the trie, which is really nice.\n\nI think the key to getting the right tradeoff in space and time here is to have a small list of headers built-in to textproto, and to decide on what those should be, I need to find a good publicly available HTTP trace and analyze it.",
+			"disapproval": false,
+			"date": "2012-10-25 12:14:29.549390",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What if you use binary search instead of a trie?\r\n",
+			"disapproval": false,
+			"date": "2012-10-25 21:20:06.690790",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-09 08:36:04.962420",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Per email from Jeff, submitting with the doc change.\r\n\r\nOn Mon, Nov 12, 2012 at 12:40 PM, <rsc@golang.org> wrote:\r\n\r\n> looks good; leaving for brad\r\n>\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/6721055/diff/19009/src/**\r\n> pkg/net/textproto/reader.go<https://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader.go>\r\n> File src/pkg/net/textproto/reader.**go (right):\r\n>\r\n> https://codereview.appspot.**com/6721055/diff/19009/src/**\r\n> pkg/net/textproto/reader.go#**newcode489<https://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader.go#newcode489>\r\n> src/pkg/net/textproto/reader.**go:489: // MIME headers should be ASCII\r\n> only; Unicode runes are passed through\r\n> On 2012/11/09 09:15:54, bradfitz wrote:\r\n>\r\n>> were these docs requested earlier?  If not, I'd just remove them and\r\n>>\r\n> let this be\r\n>\r\n>> an optimization-only CL.\r\n>>\r\n>\r\n> // MIME header keys are assumed to be ASCII only.\r\n>\r\n> https://codereview.appspot.**com/6721055/<https://codereview.appspot.com/6721055/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-12 23:30:39.705860",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"jra@nella.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d465db6441bc ***\n\nnet/textproto: faster header canonicalization with fewer allocations\n\nBy keeping a single copy of the strings that commonly show up\nin headers, we can avoid one string allocation per header.\n\nbenchmark                  old ns/op    new ns/op    delta\nBenchmarkReadMIMEHeader        19590        10824  -44.75%\nBenchmarkUncommon               3168         1861  -41.26%\n\nbenchmark                 old allocs   new allocs    delta\nBenchmarkReadMIMEHeader           32           25  -21.88%\nBenchmarkUncommon                  5            5    0.00%\n\nR=bradfitz, golang-dev, dave, rsc, jra\nCC=golang-dev\nhttp://codereview.appspot.com/6721055\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2012-11-12 23:31:45.784500",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please take another look. This now feels like really the right way to go; it is faster, uses a minimal amount of extra space in RAM and delivers the original goal of avoiding allocations on common headers.",
+			"disapproval": false,
+			"date": "2012-11-07 16:08:53.633060",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/07 16:08:53, jeff.allen wrote:\n> Please take another look. This now feels like really the right way to go; it is\n> faster, uses a minimal amount of extra space in RAM and delivers the original\n> goal of avoiding allocations on common headers.\n\nI think you can squeeze a little more out \n\nbenchmark                  old ns/op    new ns/op    delta\nBenchmarkReadMIMEHeader         8395         8335   -0.71%\nBenchmarkUncommon               1408         1394   -0.99%\n\n        for i := 0; i < len(a); i++ {\n                // Canonicalize: first letter upper case\n                // and upper case after each dash.\n                // (Host, User-Agent, If-Modified-Since).\n                // MIME headers are ASCII only, so no Unicode issues.\n                if a[i] == ' ' {\n                        a[i] = '-'\n                        upper = true\n                        continue\n                }\n                c := a[i]\n                if upper && 'a' <= c && c <= 'z' {\n                        c -= toLower\n                } else if !upper && 'A' <= c && c <= 'Z' {\n                        c += toLower\n                }\n                a[i] = c\n                upper = c == '-' // for next time\n\n                if lo < hi {\n                        for lo < hi && (len(commonHeaders[lo]) <= i || commonHeaders[lo][i] < c) {\n                                lo++\n                        }\n                        for hi > lo && commonHeaders[hi-1][i] > c {\n                                hi--\n                        }\n                }\n        }",
+			"disapproval": false,
+			"date": "2012-11-08 00:38:12.909400",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-08 15:26:59.306540",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-10-30 16:02:42.888520",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttp://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go#newcode511\nsrc/pkg/net/textproto/reader.go:511: if false {\nI think this is an accident. Was it part of your benchmarking?\n\nalso: how did this pass gofmt ?",
+			"disapproval": false,
+			"date": "2012-10-30 16:28:14.975210",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looking nice.\n\nhttps://codereview.appspot.com/6721055/diff/28003/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/28003/src/pkg/net/textproto/reader.go#newcode552\nsrc/pkg/net/textproto/reader.go:552: var commonHeaders = []string{\nadd:\n\n\"If-Modified-Since\"\n\"If-None-Match\"",
+			"disapproval": false,
+			"date": "2012-11-08 16:47:46.985650",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go#newcode512\nsrc/pkg/net/textproto/reader.go:512: if h, ok := searchHeaderTrie(a); ok {\nthis could be used for common header values too (\"close\", \"keep-alive\", etc), but might not be a win.\n\nhttps://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go#newcode541\nsrc/pkg/net/textproto/reader.go:541: func byteToKey(b byte) (int, bool) {\ndoes this get inlined?\n\nhttps://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go#newcode558\nsrc/pkg/net/textproto/reader.go:558: if !ok || headerTrie[cur].keys[k] == 0 {\neliminate the duplicate expression two lines below? might be faster:\n\nif !ok {\n   return \"\", false\n}\ncur = headerTrie[cur].keys[k]\nif cur == 0 {\n   return \"\", false\n}\n\nit's at least less code.",
+			"disapproval": false,
+			"date": "2012-10-30 16:09:27.737610",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The latest numbers in the CL description are accurate?\r\n\r\nOn Tue, Oct 30, 2012 at 5:02 PM, <jeff.allen@gmail.com> wrote:\r\n\r\n> Hello bradfitz@golang.org, golang-dev@googlegroups.com, dave@cheney.net,\r\n> rsc@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> Please take another look.\r\n>\r\n>\r\n> http://codereview.appspot.com/**6721055/<http://codereview.appspot.com/6721055/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-30 16:09:40.125410",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"jra@nella.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "looks good; leaving for brad\n\nhttps://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader.go#newcode489\nsrc/pkg/net/textproto/reader.go:489: // MIME headers should be ASCII only; Unicode runes are passed through\nOn 2012/11/09 09:15:54, bradfitz wrote:\n> were these docs requested earlier?  If not, I'd just remove them and let this be\n> an optimization-only CL.\n\n// MIME header keys are assumed to be ASCII only.",
+			"disapproval": false,
+			"date": "2012-11-12 20:40:15.368700",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I realized I could reduce the headerTrie memory consumption from 20k down to 8k. Yay!\n\nThe performance measurement in the CL message is up to date.\n\nhttps://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go#newcode511\nsrc/pkg/net/textproto/reader.go:511: if false {\nFixed. As for gofmt, no idea. hg gofmt said it processed that file... mysterious.\n\nhttps://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go#newcode512\nsrc/pkg/net/textproto/reader.go:512: if h, ok := searchHeaderTrie(a); ok {\nLet's benchmark that separately once this is checked in. Also, the headerTrie's leaves MUST be canonical, so a search for \"keep-alive\" would return \"Keep-Alive\", which might not be what we really want. Though it would let us drop the strings.ToLower from a line like \"if !strings.Contains(strings.ToLower(header.get(\"Connection\")), \"keep-alive\")\".\n\nhttps://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go#newcode541\nsrc/pkg/net/textproto/reader.go:541: func byteToKey(b byte) (int, bool) {\n-m says: ./reader.go:555: inlining call to byteToKey\n\nWhoo hoo!\n\nhttps://codereview.appspot.com/6721055/diff/18001/src/pkg/net/textproto/reader.go#newcode558\nsrc/pkg/net/textproto/reader.go:558: if !ok || headerTrie[cur].keys[k] == 0 {\nOn 2012/10/30 16:09:27, bradfitz wrote:\n> eliminate the duplicate expression two lines below? might be faster:\n> \n> if !ok {\n>    return \"\", false\n> }\n> cur = headerTrie[cur].keys[k]\n> if cur == 0 {\n>    return \"\", false\n> }\n> \n> it's at least less code.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-10-31 14:27:33.158180",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please add a test that loops over commonHeaders making sure that each entry is its own CanonicalHeaderKey.\n\nhttps://codereview.appspot.com/6721055/diff/28001/src/pkg/net/textproto/reader_test.go\nFile src/pkg/net/textproto/reader_test.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/28001/src/pkg/net/textproto/reader_test.go#newcode276\nsrc/pkg/net/textproto/reader_test.go:276: if (i & 1) == 1 {\nDrop ()",
+			"disapproval": false,
+			"date": "2012-11-08 14:41:30.551130",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I am not convinced that a trie is necessary. I understand that it is enjoyable to write programs to write programs, and to work on getting complex data structures like this right. But if the goal is just to reduce garbage, it seems like a much simpler scan would reap the same results, without requiring an 8 kB table, and without needing to maintain another mechanically generated source file.\n\nPlease try adapting http://play.golang.org/p/UxqhCGgy2c and see if you get similar performance improvements. If so, let's do that instead of a trie.\n\nThanks.\nRuss",
+			"disapproval": false,
+			"date": "2012-11-01 18:24:32.017370",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Got it, thanks for the idea. I experimented with something like this, but I was having trouble seeing the nice way to include the canonicalization and the search together.",
+			"disapproval": false,
+			"date": "2012-11-02 09:02:34.521550",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-08 07:06:33.643430",
+			"approval": false
+		},
+		{
+			"sender": "jra@nella.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I added the sentence because the behavior was a surprise to me.\r\nLe 9 nov. 2012 10:15, <bradfitz@golang.org> a \u00e9crit :\r\n\r\n> LGTM after the docs are simplified, unless that was requested.\r\n>\r\n> Russ, any comments?\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/6721055/diff/19009/src/**\r\n> pkg/net/textproto/reader.go<https://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader.go>\r\n> File src/pkg/net/textproto/reader.**go (right):\r\n>\r\n> https://codereview.appspot.**com/6721055/diff/19009/src/**\r\n> pkg/net/textproto/reader.go#**newcode489<https://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader.go#newcode489>\r\n> src/pkg/net/textproto/reader.**go:489: // MIME headers should be ASCII\r\n> only; Unicode runes are passed through\r\n> were these docs requested earlier?  If not, I'd just remove them and let\r\n> this be an optimization-only CL.\r\n>\r\n> https://codereview.appspot.**com/6721055/diff/19009/src/**\r\n> pkg/net/textproto/reader_test.**go<https://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader_test.go>\r\n> File src/pkg/net/textproto/reader_**test.go (right):\r\n>\r\n> https://codereview.appspot.**com/6721055/diff/19009/src/**\r\n> pkg/net/textproto/reader_test.**go#newcode27<https://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader_test.go#newcode27>\r\n> src/pkg/net/textproto/reader_**test.go:27: // what if some UTF-8 gets in\r\n> by mistake? It is passed unchanged, even\r\n> little verbose.  could also just say, one one line:\r\n>\r\n> {\"\u00fcser-agenT\", \"\u00fcser-Agent\"}, // non-ASCII unchanged\r\n>\r\n> https://codereview.appspot.**com/6721055/<https://codereview.appspot.com/6721055/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-09 15:43:58.975990",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM after the docs are simplified, unless that was requested.\n\nRuss, any comments?\n\nhttps://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader.go#newcode489\nsrc/pkg/net/textproto/reader.go:489: // MIME headers should be ASCII only; Unicode runes are passed through\nwere these docs requested earlier?  If not, I'd just remove them and let this be an optimization-only CL.\n\nhttps://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader_test.go\nFile src/pkg/net/textproto/reader_test.go (right):\n\nhttps://codereview.appspot.com/6721055/diff/19009/src/pkg/net/textproto/reader_test.go#newcode27\nsrc/pkg/net/textproto/reader_test.go:27: // what if some UTF-8 gets in by mistake? It is passed unchanged, even\nlittle verbose.  could also just say, one one line:\n\n{\"\u00fcser-agenT\", \"\u00fcser-Agent\"}, // non-ASCII unchanged",
+			"disapproval": false,
+			"date": "2012-11-09 09:15:54.265210",
+			"approval": true
+		}
+	],
+	"owner_email": "jeff.allen@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jeff.allen",
+	"subject": "code review 6721055: net/textproto: faster header canonicalization with fewe...",
+	"created": "2012-10-17 21:00:00.175850",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		15001,
+		18001,
+		22001,
+		26001,
+		27001,
+		28001,
+		16008,
+		28003,
+		15004,
+		19009
+	],
+	"modified": "2012-11-13 12:05:26.658480",
+	"closed": true,
+	"issue": 6721055
+}

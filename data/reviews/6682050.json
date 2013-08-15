@@ -1,0 +1,101 @@
+{
+	"description": "runtime: fix spurious deadlock crashes\nFixes issue 4243.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"iant@google.com",
+		"sebastien.paolacci@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sebastien.paolacci@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: sebastien.paolacci@gmail.com),\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-10-15 11:20:59.151230",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sebastien.paolacci@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I do not want to touch the deadlock detection logic, so I moved GC from the scavenger.",
+			"disapproval": false,
+			"date": "2012-10-15 11:22:09.790830",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Mon, Oct 15, 2012 at 4:20 AM,  <dvyukov@google.com> wrote:\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: sebastien.paolacci@gmail.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: fix spurious deadlock crashes\r\n> Fixes issue 4243.\r\n>\r\n> Please review this at http://codereview.appspot.com/6682050/\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/mheap.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/mheap.c\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/mheap.c\r\n> +++ b/src/pkg/runtime/mheap.c\r\n> @@ -343,6 +343,13 @@\r\n>                 runtime\u00b7MSpanList_Insert(&h->large, s);\r\n>  }\r\n>\r\n> +static void\r\n> +forcegchelper(Note *note)\r\n> +{\r\n> +       runtime\u00b7gc(1);\r\n> +       runtime\u00b7notewakeup(note);\r\n> +}\r\n> +\r\n>  // Release (part of) unused memory to OS.\r\n>  // Goroutine created at startup.\r\n>  // Loop forever.\r\n> @@ -356,7 +363,7 @@\r\n>         uintptr released, sumreleased;\r\n>         byte *env;\r\n>         bool trace;\r\n> -       Note note;\r\n> +       Note note, *notep;\r\n>\r\n>         // If we go two minutes without a garbage collection, force one to\r\n> run.\r\n>         forcegc = 2*60*1e9;\r\n> @@ -385,7 +392,15 @@\r\n>                 now = runtime\u00b7nanotime();\r\n>                 if(now - mstats.last_gc > forcegc) {\r\n>                         runtime\u00b7unlock(h);\r\n> -                       runtime\u00b7gc(1);\r\n> +                       // The scavenger can not block other goroutines,\r\n> +                       // otherwise deadlock detector can fire spuriously.\r\n> +                       // GC blocks other goroutines via the\r\n> runtime\u00b7worldsema.\r\n> +                       runtime\u00b7noteclear(&note);\r\n> +                       notep = &note;\r\n> +                       runtime\u00b7newproc1((byte*)forcegchelper,\r\n> (byte*)&notep, sizeof(notep), 0, runtime\u00b7MHeap_Scavenger);\r\n> +                       runtime\u00b7entersyscall();\r\n> +                       runtime\u00b7notesleep(&note);\r\n> +                       runtime\u00b7exitsyscall();\r\n>                         runtime\u00b7lock(h);\r\n>                         now = runtime\u00b7nanotime();\r\n>                         if (trace)\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-15 16:49:18.455970",
+			"approval": true
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. I can't think I've never thought about that one, nor observed\r\nany crash (and I'm having long running processes..), but the deadlock\r\ndetection logic was definitely wrong by not expecting that the\r\nscavenger could block (/unblock) other goroutines.\r\n\r\nThanks.\r\n\r\nSebastien\r\n\r\nOn Mon, Oct 15, 2012 at 1:22 PM,  <dvyukov@google.com> wrote:\r\n> I do not want to touch the deadlock detection logic, so I moved GC from\r\n> the scavenger.\r\n>\r\n> https://codereview.appspot.com/6682050/\r\n",
+			"disapproval": false,
+			"date": "2012-10-15 18:59:15.783480",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@google.com",
+				"sebastien.paolacci@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/15 18:59:15, Sebastien Paolacci wrote:\n> LGTM. I can't think I've never thought about that one, nor observed\n> any crash (and I'm having long running processes..)\n\nProbability of the crash is highly dependent on type of work you do. E.g. if you have periodic GCs, then the scavenger won't trigger any GCs, I think that's your case. If your program may not trigger GC for several minutes then the crash can happen. If your program trigger GCs very episodically and you call ReadMemStats frequently, then it will crash on a daily basis.\n\n\n\n, but the deadlock\n> detection logic was definitely wrong by not expecting that the\n> scavenger could block (/unblock) other goroutines.\n> \n> Thanks.\n> \n> Sebastien\n> \n> On Mon, Oct 15, 2012 at 1:22 PM,  <mailto:dvyukov@google.com> wrote:\n> > I do not want to touch the deadlock detection logic, so I moved GC from\n> > the scavenger.\n> >\n> > https://codereview.appspot.com/6682050/",
+			"disapproval": false,
+			"date": "2012-10-16 10:41:18.780200",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@google.com",
+				"sebastien.paolacci@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=c99bbf5b161f ***\n\nruntime: fix spurious deadlock crashes\nFixes issue 4243.\n\nR=golang-dev, iant\nCC=golang-dev, sebastien.paolacci\nhttp://codereview.appspot.com/6682050",
+			"disapproval": false,
+			"date": "2012-10-16 10:41:47.505300",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 6682050: runtime: fix spurious deadlock crashes",
+	"created": "2012-10-15 11:16:25.394030",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		7001,
+		12001
+	],
+	"modified": "2012-10-16 10:41:48.783990",
+	"closed": true,
+	"issue": 6682050
+}

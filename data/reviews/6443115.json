@@ -1,0 +1,997 @@
+{
+	"description": "pprof: add goroutine blocking profiling\nThe profiler collects goroutine blocking information similar to Google Perf Tools.\nYou may see an example of the profile (converted to svg) attached to\nhttp://code.google.com/p/go/issues/detail?id=3946\nThe public API changes are:\n+pkg runtime, func BlockProfile([]BlockProfileRecord) (int, bool)\n+pkg runtime, func SetBlockProfileRate(int)\n+pkg runtime, method (*BlockProfileRecord) Stack() []uintptr\n+pkg runtime, type BlockProfileRecord struct\n+pkg runtime, type BlockProfileRecord struct, Count int64\n+pkg runtime, type BlockProfileRecord struct, Cycles int64\n+pkg runtime, type BlockProfileRecord struct, embedded StackRecord",
+	"cc": [
+		"rsc@golang.org",
+		"dave@cheney.net",
+		"minux.ma@gmail.com",
+		"r@golang.org",
+		"gobot@golang.org",
+		"golang-dev@googlegroups.com",
+		"remyoudompheng@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This change is causing me to salivate. Do you have any measurements of any performance overhead on semacquire/release when profiling is idle ?\n\nhttp://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/debug.go#newcode70\nsrc/pkg/runtime/debug.go:70: return r.Stack0[0:]\nreturn r.Stack0 // no need to reslice.\n\nhttp://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/pprof/pprof.go\nFile src/pkg/runtime/pprof/pprof.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/pprof/pprof.go#newcode477\nsrc/pkg/runtime/pprof/pprof.go:477: for i := range p {\nfor _, r := range p {",
+			"disapproval": false,
+			"date": "2012-08-13 07:55:37.013290",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks good. Some minor comments.\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/debug.go#newcode159\nsrc/pkg/runtime/debug.go:159: // a prefix of r.Stack0.\nOn 2012/08/15 09:55:45, dvyukov wrote:\n> On 2012/08/15 07:15:53, dfc wrote:\n> > Then you can remove this\n> \n> Done.\n\nI'm both surprised and pleased that this worked.\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/mprof.goc\nFile src/pkg/runtime/mprof.goc (right):\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/mprof.goc#newcode281\nsrc/pkg/runtime/mprof.goc:281: runtime\u00b7contentionevent(int64 cycles)\nDoes this method show up in profiling (I understand this is a bit hard to test).\n\nThe stack allocation is pretty big, so I think it would stand a fair chance of causing a stack split. I guess that is unavoidable.\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/pprof/sys_other.go\nFile src/pkg/runtime/pprof/sys_other.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/pprof/sys_other.go#newcode10\nsrc/pkg/runtime/pprof/sys_other.go:10: // TODO(dvyukov): not implemented.\nOT: From experience the clock speed of devices I have seen Go deployed on runs from 700mhz to 3.2ghz. What are the implications of this value being 50% wrong sometimes ?\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/runtime.h#newcode632\nsrc/pkg/runtime/runtime.h:632: extern int32 runtime\u00b7ContentionProfileRate;\nnit: still misaligned, this might be a code review issue.",
+			"disapproval": false,
+			"date": "2012-08-15 10:17:27.924380",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Added a fix that removes uninteresting users of semaphores from the profile. In particular I've seen stoptheworld semaphore (GC) in profiles, it confuses.",
+			"disapproval": false,
+			"date": "2012-08-19 08:58:52.707560",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/19 08:58:52, dvyukov wrote:\n> Added a fix that removes uninteresting users of semaphores from the profile. In\n> particular I've seen stoptheworld semaphore (GC) in profiles, it confuses.\n\nAre you sure it is a good idea? having a comparison between wait times due to GC pauses and lock contention seems valuable to me. I could be reluctant to optimizing lock contention if I discover the GC pauses 2 seconds every 20 seconds and causes most of the inefficiencies. What do you think?",
+			"disapproval": false,
+			"date": "2012-08-19 09:26:18.352870",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Aug 19, 2012 at 1:26 PM, <remyoudompheng@gmail.com> wrote:\r\n\r\n> On 2012/08/19 08:58:52, dvyukov wrote:\r\n>\r\n>> Added a fix that removes uninteresting users of semaphores from the\r\n>>\r\n> profile. In\r\n>\r\n>> particular I've seen stoptheworld semaphore (GC) in profiles, it\r\n>>\r\n> confuses.\r\n>\r\n> Are you sure it is a good idea? having a comparison between wait times\r\n> due to GC pauses and lock contention seems valuable to me. I could be\r\n> reluctant to optimizing lock contention if I discover the GC pauses 2\r\n> seconds every 20 seconds and causes most of the inefficiencies. What do\r\n> you think?\r\n>\r\n\r\n\r\nContention profiling is useful mostly to track down CPU underutilization\r\nproblems (not enough runnable goroutines to occupy all CPUs), GC is\r\nsufficiently parallel itself and so it does not add to CPU underutilization.\r\nI can imagine cases where contention profiling is used to track down\r\nlatency issues (all CPUs are busy, but some requests take too long to\r\ncomplete). In this case GC indeed adds. There are 2 points. First, there\r\nare already some profiling capabilities for GC (that have beed successfully\r\nusing for latency issues). Second, if it's integrated into contention\r\nprofiling, then single semacquire won't do, because it's called only on\r\nsome paths for some goroutines. The support must be more fundamental, for\r\nnow it's better to just disable that single call.\r\n",
+			"disapproval": false,
+			"date": "2012-08-19 09:54:47.345850",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Aug 13, 2012 at 10:55 AM, <dave@cheney.net> wrote:\r\n\r\n> This change is causing me to salivate\r\n\r\n\r\n:)\r\nVote for acceptance on the public list.\r\n\r\n\r\n\r\n> Do you have any measurements of\r\n> any performance overhead on semacquire/release when profiling is idle ?\r\n>\r\n\r\nNo, I don't, but that only few untaken if's on slow-paths (when goroutine\r\nblocking is involved anyway). So I don't think it's a problem.\r\nI have some doubts about performance impact when profiling is enabled,\r\nperhaps I need to do something similar to MemProfileRate.\r\n\r\n\r\nhttp://codereview.appspot.com/**6443115/diff/1002/src/pkg/**runtime/debug.go<http://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/debug.go>\r\n> File src/pkg/runtime/debug.go (right):\r\n>\r\n> http://codereview.appspot.com/**6443115/diff/1002/src/pkg/**\r\n> runtime/debug.go#newcode70<http://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/debug.go#newcode70>\r\n> src/pkg/runtime/debug.go:70: return r.Stack0[0:]\r\n> return r.Stack0 // no need to reslice.\r\n>\r\n\r\nIs the array automatically converted to slice?\r\n\r\n\r\n>\r\n> http://codereview.appspot.com/**6443115/diff/1002/src/pkg/**\r\n> runtime/pprof/pprof.go<http://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/pprof/pprof.go>\r\n> File src/pkg/runtime/pprof/pprof.go (right):\r\n>\r\n> http://codereview.appspot.com/**6443115/diff/1002/src/pkg/**\r\n> runtime/pprof/pprof.go#**newcode477<http://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/pprof/pprof.go#newcode477>\r\n> src/pkg/runtime/pprof/pprof.**go:477: for i := range p {\r\n> for _, r := range p {\r\n>\r\n\r\nDoesn't this involve struct copy?\r\n\r\n\r\nThe code is very dirty and must be rewritten, I just wanted to get a result\r\nquickly while tracking down scalability problems in rpc/http while working\r\non the scheduler.\r\nBut I believe the ones you pointed out was copy-pasted from memprofiling.\r\n",
+			"disapproval": false,
+			"date": "2012-08-13 08:06:59.225080",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Doesn't this involve struct copy?\n\nIn this case yes. As I was suggesting using the two arg form to avoid the bounds check, it probably doesn't pay its way over copying 32 * uintptr.",
+			"disapproval": false,
+			"date": "2012-08-13 08:13:47.224780",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Added chan blocking profiling.",
+			"disapproval": false,
+			"date": "2012-08-19 09:19:11.752980",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ignore all my comments, you were correct.\n\nhttp://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/1002/src/pkg/runtime/debug.go#newcode70\nsrc/pkg/runtime/debug.go:70: return r.Stack0[0:]\nOn 2012/08/13 07:55:37, dfc wrote:\n> return r.Stack0 // no need to reslice.\n\nNo they are not, your code is correct, but you can use r.Stack0[:].",
+			"disapproval": false,
+			"date": "2012-08-13 08:14:03.403040",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Updated API diff:\r\n\r\n+pkg net/http/pprof, func ContentionProfileRate(http.ResponseWriter,\r\n*http.Request)\r\n+pkg runtime, func ContentionProfile([]ContentionProfileRecord) (int, bool)\r\n+pkg runtime, method (*ContentionProfileRecord) Stack() []uintptr\r\n+pkg runtime, type ContentionProfileRecord struct\r\n+pkg runtime, type ContentionProfileRecord struct, Count int64\r\n+pkg runtime, type ContentionProfileRecord struct, Cycles int64\r\n+pkg runtime, type ContentionProfileRecord struct, embedded StackRecord\r\n+pkg runtime, var ContentionProfileRate int\r\n",
+			"disapproval": false,
+			"date": "2012-08-15 09:52:36.714900",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttp://codereview.appspot.com/6443115/diff/5/src/cmd/go/test.go\nFile src/cmd/go/test.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/5/src/cmd/go/test.go#newcode114\nsrc/cmd/go/test.go:114: are complete.\nOn 2012/08/15 07:15:53, dfc wrote:\n> nit: the name of the flag is a bit of a mouthful, but I can't think of anything\n> pithier off hand.\n\nI can't think of a better name. It's not intended for everyday use, so I think this name is OK (at least it is consistent with other names).\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/debug.go#newcode155\nsrc/pkg/runtime/debug.go:155: Stack0 [32]uintptr\nOn 2012/08/15 07:15:53, dfc wrote:\n> -Stack0 [32]uintptr\n> +StackRecord\n\nDone.\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/debug.go#newcode159\nsrc/pkg/runtime/debug.go:159: // a prefix of r.Stack0.\nOn 2012/08/15 07:15:53, dfc wrote:\n> Then you can remove this\n\nDone.\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/runtime.h#newcode632\nsrc/pkg/runtime/runtime.h:632: extern int32 runtime\u00b7ContentionProfileRate;\nOn 2012/08/15 07:15:53, dfc wrote:\n> nit: formatting \n\nIt seems to be how vars are formatted here.\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/sema.goc\nFile src/pkg/runtime/sema.goc (right):\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/sema.goc#newcode29\nsrc/pkg/runtime/sema.goc:29: int64 releasetime;\nOn 2012/08/15 07:15:53, dfc wrote:\n> nit: formatting\n\nDone.\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/sema.goc#newcode123\nsrc/pkg/runtime/sema.goc:123: }\nOn 2012/08/15 07:15:53, dfc wrote:\n> spaces/tabs\n\nThese are tabs. It seems that codereview does not show tabs in new lines.",
+			"disapproval": false,
+			"date": "2012-08-15 09:55:45.765110",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you. I'm super excited to see this feature committed. Please review the comments below, most are tab/space formatting issues.\n\nhttp://codereview.appspot.com/6443115/diff/5/src/cmd/go/test.go\nFile src/cmd/go/test.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/5/src/cmd/go/test.go#newcode114\nsrc/cmd/go/test.go:114: are complete.\nnit: the name of the flag is a bit of a mouthful, but I can't think of anything pithier off hand.\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/debug.go#newcode155\nsrc/pkg/runtime/debug.go:155: Stack0 [32]uintptr\n-Stack0 [32]uintptr\n+StackRecord\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/debug.go#newcode159\nsrc/pkg/runtime/debug.go:159: // a prefix of r.Stack0.\nThen you can remove this\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/runtime.h#newcode632\nsrc/pkg/runtime/runtime.h:632: extern int32 runtime\u00b7ContentionProfileRate;\nnit: formatting\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/sema.goc\nFile src/pkg/runtime/sema.goc (right):\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/sema.goc#newcode29\nsrc/pkg/runtime/sema.goc:29: int64 releasetime;\nnit: formatting\n\nhttp://codereview.appspot.com/6443115/diff/5/src/pkg/runtime/sema.goc#newcode123\nsrc/pkg/runtime/sema.goc:123: }\nspaces/tabs",
+			"disapproval": false,
+			"date": "2012-08-15 07:15:53.591890",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-08-14 21:10:19.371670",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/mprof.goc\nFile src/pkg/runtime/mprof.goc (right):\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/mprof.goc#newcode281\nsrc/pkg/runtime/mprof.goc:281: runtime\u00b7contentionevent(int64 cycles)\nOn 2012/08/15 10:17:28, dfc wrote:\n> Does this method show up in profiling (I understand this is a bit hard to test).\n\nNo, it does not. Bottom frames are sync.Mutex.Lock() or sync.WaitGroup.Wait().\n\n> The stack allocation is pretty big, so I think it would stand a fair chance of\n> causing a stack split. I guess that is unavoidable.\n\nIt's copied from mem profile. Theoretically the buffer can be moved to M, but I think the way to control overhead is ContentionProfileRate.\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/pprof/sys_other.go\nFile src/pkg/runtime/pprof/sys_other.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/pprof/sys_other.go#newcode10\nsrc/pkg/runtime/pprof/sys_other.go:10: // TODO(dvyukov): not implemented.\nOn 2012/08/15 10:17:28, dfc wrote:\n> OT: From experience the clock speed of devices I have seen Go deployed on runs\n> from 700mhz to 3.2ghz. What are the implications of this value being 50% wrong\n> sometimes ?\n\nIt is used merely to scale results.\nThe resulting profile (after pprof) says that this stack traces causes X seconds of blocking. If the value is 50% wrong than X is 50% wrong.\nHowever, the profiler measures blocking time in \"goroutine time\". So on net/http tests that run for 5 seconds, some stack traces cause 300 seconds of blocking. I mean that absolute values do not make a lot of sense anyway.\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/runtime.h#newcode632\nsrc/pkg/runtime/runtime.h:632: extern int32 runtime\u00b7ContentionProfileRate;\nOn 2012/08/15 10:17:28, dfc wrote:\n> nit: still misaligned, this might be a code review issue.\n\nsee the runtime\u00b7worldsema below.",
+			"disapproval": false,
+			"date": "2012-08-15 10:48:54.940690",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/19 09:19:11, dvyukov wrote:\n> Added chan blocking profiling.\n\nno select's for now",
+			"disapproval": false,
+			"date": "2012-08-19 10:28:10.503550",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6443115/diff/2006/src/pkg/net/http/pprof/pprof.go\nFile src/pkg/net/http/pprof/pprof.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/net/http/pprof/pprof.go#newcode145\nsrc/pkg/net/http/pprof/pprof.go:145: func ContentionProfileRate(w http.ResponseWriter, r *http.Request) {\nThis is somewhat questionable.\nThe contention profiling is turned off be default (as opposed to mem profile), so /debug/pprof/contention is useless as is. A user may provide own machinery to control ContentionProfileRate, but that diminishes the purpose of net/http/pprof.\nAlternatively this handler can be made more general to control MemProfileRate as well (and maybe something else).\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/2006/src/pkg/runtime/debug.go#newcode148\nsrc/pkg/runtime/debug.go:148: var ContentionProfileRate int = 0\nI am not 100% sure about this.\nint32 in cycles allows to set max 1 event/sec. Since contention profiling is in \"goroutine time\", 1 event/per may be still too frequent (e.g. each 1microsec of real time).\nWe may change it to int64, but that somewhat inconsistent (and e.g. flags works with ints).\nAlternative we may measure rate in 1000cycles or microseconds.",
+			"disapproval": false,
+			"date": "2012-08-15 10:03:32.318150",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 15, 2012 at 2:52 AM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n> Updated API diff:\r\n>\r\n> +pkg net/http/pprof, func ContentionProfileRate(http.ResponseWriter,\r\n> *http.Request)\r\n> +pkg runtime, func ContentionProfile([]ContentionProfileRecord) (int, bool)\r\n> +pkg runtime, method (*ContentionProfileRecord) Stack() []uintptr\r\n> +pkg runtime, type ContentionProfileRecord struct\r\n> +pkg runtime, type ContentionProfileRecord struct, Count int64\r\n> +pkg runtime, type ContentionProfileRecord struct, Cycles int64\r\n> +pkg runtime, type ContentionProfileRecord struct, embedded StackRecord\r\n> +pkg runtime, var ContentionProfileRate int\r\n\r\nI suggest not including this particular change in the CL. It's not a\r\nproblem to have a few functions appear in the all.bash output, plus it\r\nmay take a little time to converge on exactly what the changes should\r\nbe, even if/after this CL is committed.\r\n\r\nAlso, it's mostly an idiosyncrasy of mine, but I'd like the API tool\r\nto be maintained by a separate, coarser process. If we bury all the\r\nAPI changes in the CLs that create them, we're less aware of what's\r\nchanging.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-08-15 16:15:43.047100",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/15 16:15:43, r wrote:\n> On Wed, Aug 15, 2012 at 2:52 AM, Dmitry Vyukov <mailto:dvyukov@google.com> wrote:\n> > Updated API diff:\n> >\n> > +pkg net/http/pprof, func ContentionProfileRate(http.ResponseWriter,\n> > *http.Request)\n> > +pkg runtime, func ContentionProfile([]ContentionProfileRecord) (int, bool)\n> > +pkg runtime, method (*ContentionProfileRecord) Stack() []uintptr\n> > +pkg runtime, type ContentionProfileRecord struct\n> > +pkg runtime, type ContentionProfileRecord struct, Count int64\n> > +pkg runtime, type ContentionProfileRecord struct, Cycles int64\n> > +pkg runtime, type ContentionProfileRecord struct, embedded StackRecord\n> > +pkg runtime, var ContentionProfileRate int\n> \n> I suggest not including this particular change in the CL. It's not a\n> problem to have a few functions appear in the all.bash output, plus it\n> may take a little time to converge on exactly what the changes should\n> be, even if/after this CL is committed.\n> \n> Also, it's mostly an idiosyncrasy of mine, but I'd like the API tool\n> to be maintained by a separate, coarser process. If we bury all the\n> API changes in the CLs that create them, we're less aware of what's\n> changing.\n\nOK.",
+			"disapproval": false,
+			"date": "2012-08-15 16:27:16.755660",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Added ContentionProfileRate support.",
+			"disapproval": false,
+			"date": "2012-08-19 10:27:56.291410",
+			"approval": false
+		},
+		{
+			"sender": "gobot@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=rsc (assigned by rsc)",
+			"disapproval": false,
+			"date": "2012-08-31 20:01:07.990170",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping.",
+			"disapproval": false,
+			"date": "2012-09-11 00:49:59.086600",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Overall seems okay but there are things to clean up.\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/cmd/go/test.go\nFile src/cmd/go/test.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/cmd/go/test.go#newcode112\nsrc/cmd/go/test.go:112: -test.contentionprofile cont.out\nCan we shorten contention to something? We write mem not memory. You have to invoke the binary by hand to get these so you're talking about a 23-byte flag.\n\nlockprofile?\nblockprofile?\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/mprof.goc\nFile src/pkg/runtime/mprof.goc (right):\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/mprof.goc#newcode290\nsrc/pkg/runtime/mprof.goc:290: if(rate > cycles && runtime\u00b7fastrand1()%rate > cycles)\nIs this correct sampling?\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/pprof/sys_linux.go\nFile src/pkg/runtime/pprof/sys_linux.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/pprof/sys_linux.go#newcode13\nsrc/pkg/runtime/pprof/sys_linux.go:13: c = 2e9 // wild guess\nThis needs to be fixed before submit.\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/pprof/sys_other.go\nFile src/pkg/runtime/pprof/sys_other.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/pprof/sys_other.go#newcode10\nsrc/pkg/runtime/pprof/sys_other.go:10: // TODO(dvyukov): not implemented.\nThis needs to be fixed before submit.\nMaybe it should be cpu-specific code instead of OS-specific code.\nI would expect a cputickfreq function to live next to cputicks so that\nthey are in sync.\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/sema.goc\nFile src/pkg/runtime/sema.goc (right):\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/sema.goc#newcode27\nsrc/pkg/runtime/sema.goc:27: uint32 volatile*\taddr;\nYou don't have to undo these, but in the future please avoid spacing changes like this. They clutter the diffs.",
+			"disapproval": false,
+			"date": "2012-09-17 21:08:07.072520",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you please remail this, it doesn't apply cleanly any more.\n\nAlso, there may be a problem with an additional dependency (io/ioutil), which causes pkg/go/build/deps_test.go to fail.",
+			"disapproval": false,
+			"date": "2012-09-18 17:19:49.445300",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/mprof.goc\nFile src/pkg/runtime/mprof.goc (right):\n\nhttp://codereview.appspot.com/6443115/diff/7026/src/pkg/runtime/mprof.goc#newcode290\nsrc/pkg/runtime/mprof.goc:290: if(rate > cycles && runtime\u00b7fastrand1()%rate > cycles)\nOn 2012/09/17 21:08:07, rsc wrote:\n> Is this correct sampling?\n\nWell, there may be better sampling techniques. But this is simple enough and filters proportionally to blocking time.",
+			"disapproval": false,
+			"date": "2012-09-18 20:27:23.112200",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I would expect TSC to tick with constant freq regardless of TurboBoost and\r\nC states.\r\n\r\n\r\nOn Tue, Sep 18, 2012 at 2:33 PM, <dave@cheney.net> wrote:\r\n\r\n> I don't know if that will be reliable enough. Even with the performance\r\n> governor enabled, the CPU freq on my i5 shifts between 2.5 and 3.0 Ghz\r\n> depending on thermal load. Additionally for some systems C state\r\n> sleeping may not be optional, which will throw this computation off as\r\n> well.\r\n>\r\n> http://codereview.appspot.com/**6443115/<http://codereview.appspot.com/6443115/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-09-18 21:34:48.000460",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Sep 17, 2012 at 2:08 PM, <rsc@golang.org> wrote:\r\n\r\n> Overall seems okay but there are things to clean up.\r\n>\r\n> http://codereview.appspot.com/**6443115/diff/7026/src/cmd/go/**test.go<http://codereview.appspot.com/6443115/diff/7026/src/cmd/go/test.go>\r\n> File src/cmd/go/test.go (right):\r\n>\r\n> http://codereview.appspot.com/**6443115/diff/7026/src/cmd/go/**\r\n> test.go#newcode112<http://codereview.appspot.com/6443115/diff/7026/src/cmd/go/test.go#newcode112>\r\n> src/cmd/go/test.go:112: -test.contentionprofile cont.out\r\n> Can we shorten contention to something? We write mem not memory. You\r\n> have to invoke the binary by hand to get these so you're talking about a\r\n> 23-byte flag.\r\n>\r\n> lockprofile?\r\n> blockprofile?\r\n>\r\n\r\nI like blockprofile.\r\nDo you mean I replace contention->block everywhere, or just the flag name?\r\n",
+			"disapproval": false,
+			"date": "2012-09-18 19:49:10.946940",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't know if that will be reliable enough. Even with the performance governor enabled, the CPU freq on my i5 shifts between 2.5 and 3.0 Ghz depending on thermal load. Additionally for some systems C state sleeping may not be optional, which will throw this computation off as well.",
+			"disapproval": false,
+			"date": "2012-09-18 21:32:59.805500",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I meant just the flag name but probably the other API names should match.\r\n",
+			"disapproval": false,
+			"date": "2012-09-18 19:54:25.719860",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Otherwise I would prefer to drop this at all, pprof assumes 2GHz by default\r\nwhich should be enough.\r\n\r\n\r\nOn Tue, Sep 18, 2012 at 2:34 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> I would expect TSC to tick with constant freq regardless of TurboBoost and\r\n> C states.\r\n>\r\n>\r\n>\r\n> On Tue, Sep 18, 2012 at 2:33 PM, <dave@cheney.net> wrote:\r\n>\r\n>> I don't know if that will be reliable enough. Even with the performance\r\n>> governor enabled, the CPU freq on my i5 shifts between 2.5 and 3.0 Ghz\r\n>> depending on thermal load. Additionally for some systems C state\r\n>> sleeping may not be optional, which will throw this computation off as\r\n>> well.\r\n>>\r\n>> http://codereview.appspot.com/**6443115/<http://codereview.appspot.com/6443115/>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-09-18 21:36:08.827190",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/18 17:19:49, dfc wrote:\n> Can you please remail this, it doesn't apply cleanly any more.\n\nDone\nDo you use it? What is your experience?",
+			"disapproval": false,
+			"date": "2012-09-18 21:06:39.779160",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I haven't had a case to use it apart from the issues that you raised\r\nfor the net and http packages. I would like to try it on the\r\ngo.crypto/ssh package and the tls pacakges, to see if contention (as\r\nopposed to crypto) is a significant % of the runtime.\r\n\r\nOn Wed, Sep 19, 2012 at 7:06 AM,  <dvyukov@google.com> wrote:\r\n> On 2012/09/18 17:19:49, dfc wrote:\r\n>>\r\n>> Can you please remail this, it doesn't apply cleanly any more.\r\n>\r\n>\r\n> Done\r\n> Do you use it? What is your experience?\r\n>\r\n>\r\n> http://codereview.appspot.com/6443115/\r\n",
+			"disapproval": false,
+			"date": "2012-09-18 21:10:28.530320",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6443115/diff/27013/src/pkg/runtime/runtime.c\nFile src/pkg/runtime/runtime.c (right):\n\nhttp://codereview.appspot.com/6443115/diff/27013/src/pkg/runtime/runtime.c#newcode363\nsrc/pkg/runtime/runtime.c:363: runtime\u2215pprof\u00b7runtime_cyclesPerSecond(int64 res)\nHow about this?\n\nOn my machine where /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq says 2395000000, this method says:\n2393915609\n2393927695\n2393923912\n\nIt is portable and allows to remove that pprof/sys_* files, and removes the additional dependency between runtime/pprof->io/ioutil as well.\n\nThe more precise method would require either to examine CPUID output (it's quite tricky, works since Pentium4 and I am not sure about AMD). I have no idea how to do it on ARM. Or alternatively, OS-dependent method is to read it from system registry on Windows, and I don't know about other OSes.",
+			"disapproval": false,
+			"date": "2012-09-18 21:28:41.809540",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6443115/diff/27013/src/pkg/runtime/runtime.c\nFile src/pkg/runtime/runtime.c (right):\n\nhttp://codereview.appspot.com/6443115/diff/27013/src/pkg/runtime/runtime.c#newcode363\nsrc/pkg/runtime/runtime.c:363: runtime\u2215pprof\u00b7runtime_cyclesPerSecond(int64 res)\nOn 2012/09/18 21:28:42, dvyukov wrote:\n> How about this?\nwon't work on ARM.\nLinux/ARM doesn't allow user space access to the cycle counter.\n\nso runtime.cputicks() on ARM actually returns a random number\n(for seeding our hash map)\n\n> The more precise method would require either to examine CPUID output (it's quite\n> tricky, works since Pentium4 and I am not sure about AMD). I have no idea how to\n> do it on ARM. Or alternatively, OS-dependent method is to read it from system\n> registry on Windows, and I don't know about other OSes.\nI think the best way is to get it from the OS.",
+			"disapproval": false,
+			"date": "2012-09-19 09:25:59.686720",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/18 19:54:25, rsc wrote:\n> I meant just the flag name but probably the other API names should match.\n\nRenamed Contention->Block everywhere.\nNew API diff:\n+pkg net/http/pprof, func BlockProfileRate(http.ResponseWriter, *http.Request)\n+pkg runtime, func BlockProfile([]BlockProfileRecord) (int, bool)\n+pkg runtime, method (*BlockProfileRecord) Stack() []uintptr\n+pkg runtime, type BlockProfileRecord struct\n+pkg runtime, type BlockProfileRecord struct, Count int64\n+pkg runtime, type BlockProfileRecord struct, Cycles int64\n+pkg runtime, type BlockProfileRecord struct, embedded StackRecord\n+pkg runtime, var BlockProfileRate int\nPTAL",
+			"disapproval": false,
+			"date": "2012-09-18 22:16:59.991560",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nPlease wait for r to take a look at the new API + testing flags too.",
+			"disapproval": false,
+			"date": "2012-09-20 18:47:36.040820",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> potentially BlockProfileRace may be measured in nanoseconds, but then I\r\n> need to convert ns to cycles somewhere... I think it can be easily done\r\n> in runtime\u00b7blockevent() (mprof.goc).\r\n\r\nThat's fine, but given that we can't even agree on how well to define\r\ncycles, they should be an internal detail. The API exposed by package\r\nruntime should talk about nanoseconds.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-20 20:12:52.393170",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Sep 20, 2012 at 1:12 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> > potentially BlockProfileRace may be measured in nanoseconds, but then I\r\n> > need to convert ns to cycles somewhere... I think it can be easily done\r\n> > in runtime\u00b7blockevent() (mprof.goc).\r\n>\r\n> That's fine, but given that we can't even agree on how well to define\r\n> cycles, they should be an internal detail. The API exposed by package\r\n> runtime should talk about nanoseconds.\r\n>\r\n\r\nOK, I will change it to ns.\r\n",
+			"disapproval": false,
+			"date": "2012-09-20 20:14:02.376290",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6443115/diff/36001/src/cmd/go/test.go\nFile src/cmd/go/test.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/36001/src/cmd/go/test.go#newcode119\nsrc/cmd/go/test.go:119: aims to sample an average of one blocking event per that many\ns/that many/n/\nor else i don't understand this comment\n\nhttp://codereview.appspot.com/6443115/diff/36001/src/cmd/go/test.go#newcode120\nsrc/cmd/go/test.go:120: CPU cycles.  By default all blocking events are recorded.\nby default, what is the value of n?\ni guess i don't understand this comment.\n\nhttp://codereview.appspot.com/6443115/diff/36001/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttp://codereview.appspot.com/6443115/diff/36001/src/pkg/runtime/debug.go#newcode144\nsrc/pkg/runtime/debug.go:144: // one blocking event per BlockProfileRate CPU cycles.\ni'm still confused. i don't see how blocking events and CPU cycles are related. sorry to be so dim.\n\nhttp://codereview.appspot.com/6443115/diff/36001/src/pkg/runtime/debug.go#newcode148\nsrc/pkg/runtime/debug.go:148: var BlockProfileRate int = 0\nan int with the value of 0 or 1 sounds like a bool to me.",
+			"disapproval": false,
+			"date": "2012-09-20 18:57:57.787660",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "time spent blocking is measured in cpu cycles (perhaps confusingly)\r\nif the rate is set to 1000 then it tries to sample one blocking event\r\nper 1000 cpu cycles spent blocked.\r\n\r\nprobably the rate and the output should be in nanoseconds or something\r\nmore portable.\r\n",
+			"disapproval": false,
+			"date": "2012-09-20 19:47:15.981020",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6443115/diff/36001/src/cmd/go/test.go\nFile src/cmd/go/test.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/36001/src/cmd/go/test.go#newcode120\nsrc/cmd/go/test.go:120: CPU cycles.  By default all blocking events are recorded.\nOn 2012/09/20 18:57:58, r wrote:\n> by default, what is the value of n?\n> i guess i don't understand this comment.\n\nThe default value of n is 1.\n\nhttps://codereview.appspot.com/6443115/diff/36001/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/36001/src/pkg/runtime/debug.go#newcode148\nsrc/pkg/runtime/debug.go:148: var BlockProfileRate int = 0\nOn 2012/09/20 18:57:58, r wrote:\n> an int with the value of 0 or 1 sounds like a bool to me.\n\nThe intention is the same as with MemProfileRate:\n\nn<=0 - turn off the profiler\nn=1 - record every blocking event\nn>1 - sample some fraction of events: if we have a blocking event of duration x CPU cycles, then it's sampled with probability min(1, x/n). So on average it's one blocking event per n CPU cycles of... total blocking events.\n\nI think the process will be faster, if you propose your wording (if I succeed in explaining the intention).",
+			"disapproval": false,
+			"date": "2012-09-20 20:01:29.146150",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/20 19:47:15, rsc wrote:\n> time spent blocking is measured in cpu cycles (perhaps confusingly)\n> if the rate is set to 1000 then it tries to sample one blocking event\n> per 1000 cpu cycles spent blocked.\n> \n> probably the rate and the output should be in nanoseconds or something\n> more portable.\n\npprof expects input in cycles, pprof output is in seconds. This part looks fine.\n\npotentially BlockProfileRace may be measured in nanoseconds, but then I need to convert ns to cycles somewhere... I think it can be easily done in runtime\u00b7blockevent() (mprof.goc).",
+			"disapproval": false,
+			"date": "2012-09-20 20:11:07.316450",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6443115/diff/37006/src/cmd/go/test.go\nFile src/cmd/go/test.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/37006/src/cmd/go/test.go#newcode120\nsrc/cmd/go/test.go:120: spent blocked.  By default all blocking events are recorded.\nControl the detail provided in goroutine blocking profiles by setting\nruntime.BlockProfileRate to n. See 'godoc runtime BlockProfileRate'.\nThe profiler aims to sample, on average, one blocking event every\nn nanoseconds the program (or is it a goroutine??) spends blocked. By\ndefault, if -test.blockprofile is set without this flag, all blocking events\nare recorded, equivalent to -testblockprofile=1.\n\nhttps://codereview.appspot.com/6443115/diff/37006/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/37006/src/pkg/runtime/debug.go#newcode142\nsrc/pkg/runtime/debug.go:142: // that are recorded and reported in the blocking profile.\ns/recorded and// (it's redundant)\n\nhttps://codereview.appspot.com/6443115/diff/37006/src/pkg/runtime/debug.go#newcode144\nsrc/pkg/runtime/debug.go:144: // one blocking event per BlockProfileRate nanoseconds spent blocked.\nwhat does blocked mean? is it global, goroutine, mutex, channel...?",
+			"disapproval": false,
+			"date": "2012-09-21 04:57:37.308570",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nNow BlockProfileRate is in ns.\nFixed comments.\nAdded runtime\u00b7tickspersecond(void), it caches the value so it is stable during execution.",
+			"disapproval": false,
+			"date": "2012-09-20 22:31:10.980120",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> src/pkg/runtime/debug.go:144: // one blocking event per BlockProfileRate\r\n> nanoseconds spent blocked.\r\n> what does blocked mean? is it global, goroutine, mutex, channel...?\r\n\r\nit's a random sampling rate, so it's not per-anything.\r\neach time something gets blocked there is a chance\r\nit will be sampled.\r\n",
+			"disapproval": false,
+			"date": "2012-09-21 05:06:12.969930",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Now I'm bothered by the idea of a rate being measure in units of time rather than frequency. Sorry. I know it's analogous with the memory one but that didn't have units of time, so the rate/time thing didn't stick out.\n\nBut I don't have a better idea, so maybe this will stand. Wording will help. I'll work on that.",
+			"disapproval": false,
+			"date": "2012-09-21 04:50:02.632020",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/6443115/diff/37006/src/cmd/go/test.go\nFile src/cmd/go/test.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/37006/src/cmd/go/test.go#newcode120\nsrc/cmd/go/test.go:120: spent blocked.  By default all blocking events are recorded.\nOn 2012/09/21 04:57:37, r wrote:\n> Control the detail provided in goroutine blocking profiles by setting\n> runtime.BlockProfileRate to n. See 'godoc runtime BlockProfileRate'.\n> The profiler aims to sample, on average, one blocking event every\n> n nanoseconds the program (or is it a goroutine??)\n\nIt is per program.\n\n> spends blocked. By\n> default, if -test.blockprofile is set without this flag, all blocking events\n> are recorded, equivalent to -testblockprofile=1.\n\nDone.\n\nhttps://codereview.appspot.com/6443115/diff/37006/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/37006/src/pkg/runtime/debug.go#newcode142\nsrc/pkg/runtime/debug.go:142: // that are recorded and reported in the blocking profile.\nOn 2012/09/21 04:57:37, r wrote:\n> s/recorded and// (it's redundant)\n\nDone.\n\nhttps://codereview.appspot.com/6443115/diff/37006/src/pkg/runtime/debug.go#newcode144\nsrc/pkg/runtime/debug.go:144: // one blocking event per BlockProfileRate nanoseconds spent blocked.\nOn 2012/09/21 04:57:37, r wrote:\n> what does blocked mean? is it global, goroutine, mutex, channel...?\n\nBlocking event is when a goroutine blocks on mutex/channel/waitgroup/etc.",
+			"disapproval": false,
+			"date": "2012-09-22 03:51:57.760990",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Is it OK to submit now?\n\nOn 2012/09/22 03:51:57, dvyukov wrote:\n> PTAL\n> \n> https://codereview.appspot.com/6443115/diff/37006/src/cmd/go/test.go\n> File src/cmd/go/test.go (right):\n> \n> https://codereview.appspot.com/6443115/diff/37006/src/cmd/go/test.go#newcode120\n> src/cmd/go/test.go:120: spent blocked.  By default all blocking events are\n> recorded.\n> On 2012/09/21 04:57:37, r wrote:\n> > Control the detail provided in goroutine blocking profiles by setting\n> > runtime.BlockProfileRate to n. See 'godoc runtime BlockProfileRate'.\n> > The profiler aims to sample, on average, one blocking event every\n> > n nanoseconds the program (or is it a goroutine??)\n> \n> It is per program.\n> \n> > spends blocked. By\n> > default, if -test.blockprofile is set without this flag, all blocking events\n> > are recorded, equivalent to -testblockprofile=1.\n> \n> Done.\n> \n> https://codereview.appspot.com/6443115/diff/37006/src/pkg/runtime/debug.go\n> File src/pkg/runtime/debug.go (right):\n> \n> https://codereview.appspot.com/6443115/diff/37006/src/pkg/runtime/debug.go#newcode142\n> src/pkg/runtime/debug.go:142: // that are recorded and reported in the blocking\n> profile.\n> On 2012/09/21 04:57:37, r wrote:\n> > s/recorded and// (it's redundant)\n> \n> Done.\n> \n> https://codereview.appspot.com/6443115/diff/37006/src/pkg/runtime/debug.go#newcode144\n> src/pkg/runtime/debug.go:144: // one blocking event per BlockProfileRate\n> nanoseconds spent blocked.\n> On 2012/09/21 04:57:37, r wrote:\n> > what does blocked mean? is it global, goroutine, mutex, channel...?\n> \n> Blocking event is when a goroutine blocks on mutex/channel/waitgroup/etc.",
+			"disapproval": false,
+			"date": "2012-09-26 21:49:28.253870",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/26 21:49:28, dvyukov wrote:\n> Is it OK to submit now?\nThe only problem is that this feature is completely unusable\non ARM due to lack of correct runtime.cputicks().\n\nI suggest you document this as a known BUG.",
+			"disapproval": false,
+			"date": "2012-09-27 09:39:30.260950",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can't we use nanotime() or something like that on ARM? It may be slower,\r\nbut still better than nothing. The profiler does not care too much that the\r\ncpu ticks are actually cpu ticks, it just needs some relatively precise\r\ntime source.\r\n\r\n\r\n\r\nOn Thu, Sep 27, 2012 at 2:39 AM, <minux.ma@gmail.com> wrote:\r\n\r\n> On 2012/09/26 21:49:28, dvyukov wrote:\r\n>\r\n>> Is it OK to submit now?\r\n>>\r\n> The only problem is that this feature is completely unusable\r\n> on ARM due to lack of correct runtime.cputicks().\r\n>\r\n> I suggest you document this as a known BUG.\r\n>\r\n> https://codereview.appspot.**com/6443115/<https://codereview.appspot.com/6443115/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-09-27 18:53:32.458970",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Let's try with nanotime() on arm in the spirit of getting this in.",
+			"disapproval": false,
+			"date": "2012-09-29 04:32:23.475110",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/01 15:50:32, minux wrote:\n> LGTM. (seems Chrome already foreseen this and sent one earlier.)\n\nOK, let's wait for one more Russ LGTM.",
+			"disapproval": false,
+			"date": "2012-10-01 15:52:25.173980",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6443115/diff/61005/src/pkg/net/http/pprof/pprof.go\nFile src/pkg/net/http/pprof/pprof.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/61005/src/pkg/net/http/pprof/pprof.go#newcode151\nsrc/pkg/net/http/pprof/pprof.go:151: // BlockProfileRate gets or sets runtime.BlockProfileRate.\nI don't think this belongs here. We don't have http handlers to set the other profiling rates. We might want to do that, but it should be a designed approach and not piecemeal. Please remove this handler.\n\nhttps://codereview.appspot.com/6443115/diff/61005/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/61005/src/pkg/runtime/debug.go#newcode147\nsrc/pkg/runtime/debug.go:147: var BlockProfileRate int = 0\nShould this be just SetBlockProfileRate, like we have SetCPUProfileRate above?",
+			"disapproval": false,
+			"date": "2012-10-01 20:11:20.400580",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/01 16:01:43, minux wrote:\n> Please update CL description (roughly s/Contention/Block(ing)/).\n\nDone.",
+			"disapproval": false,
+			"date": "2012-10-02 05:54:20.202700",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.",
+			"disapproval": false,
+			"date": "2012-10-01 15:30:23.105510",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/6443115/diff/61005/src/pkg/net/http/pprof/pprof.go\nFile src/pkg/net/http/pprof/pprof.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/61005/src/pkg/net/http/pprof/pprof.go#newcode151\nsrc/pkg/net/http/pprof/pprof.go:151: // BlockProfileRate gets or sets runtime.BlockProfileRate.\nOn 2012/10/01 20:11:20, rsc wrote:\n> I don't think this belongs here. We don't have http handlers to set the other\n> profiling rates. We might want to do that, but it should be a designed approach\n> and not piecemeal. Please remove this handler.\n> \n\nDone.\n\nhttps://codereview.appspot.com/6443115/diff/61005/src/pkg/runtime/debug.go\nFile src/pkg/runtime/debug.go (right):\n\nhttps://codereview.appspot.com/6443115/diff/61005/src/pkg/runtime/debug.go#newcode147\nsrc/pkg/runtime/debug.go:147: var BlockProfileRate int = 0\nOn 2012/10/01 20:11:20, rsc wrote:\n> Should this be just SetBlockProfileRate, like we have SetCPUProfileRate above?\n\nDone.",
+			"disapproval": false,
+			"date": "2012-10-02 05:57:56.874060",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/6443115/diff/54001/src/pkg/runtime/signal_linux_arm.c\nFile src/pkg/runtime/signal_linux_arm.c (right):\n\nhttps://codereview.appspot.com/6443115/diff/54001/src/pkg/runtime/signal_linux_arm.c#newcode208\nsrc/pkg/runtime/signal_linux_arm.c:208: runtime\u00b7cputicks() {\nOn 2012/10/01 15:30:07, minux wrote:\n> could you please add some comments here to explain why this function does this?\n> \n> I think this approach is good, but might confuse future readers.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-10-01 15:46:45.825170",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\nI've made cputicks() use nanotime() on arm.\n\nhttps://codereview.appspot.com/6443115/diff/54001/src/pkg/runtime/signal_linux_arm.c\nFile src/pkg/runtime/signal_linux_arm.c (right):\n\nhttps://codereview.appspot.com/6443115/diff/54001/src/pkg/runtime/signal_linux_arm.c#newcode209\nsrc/pkg/runtime/signal_linux_arm.c:209: return runtime\u00b7nanotime() + runtime\u00b7randomNumber;\nDoes it look fine?\nIt replaces pseudo-random sequence with nanotime(). It is not worse for seeding fastrand1, because the pseudo-random sequence is easily predictable as well.",
+			"disapproval": false,
+			"date": "2012-10-01 13:18:10.215280",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\nhttps://codereview.appspot.com/6443115/diff/54001/src/pkg/runtime/signal_linux_arm.c\nFile src/pkg/runtime/signal_linux_arm.c (right):\n\nhttps://codereview.appspot.com/6443115/diff/54001/src/pkg/runtime/signal_linux_arm.c#newcode208\nsrc/pkg/runtime/signal_linux_arm.c:208: runtime\u00b7cputicks() {\ncould you please add some comments here to explain why this function does this?\n\nI think this approach is good, but might confuse future readers.",
+			"disapproval": false,
+			"date": "2012-10-01 15:30:07.677010",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please update CL description (roughly s/Contention/Block(ing)/).",
+			"disapproval": false,
+			"date": "2012-10-01 16:01:43.009540",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. (seems Chrome already foreseen this and sent one earlier.)",
+			"disapproval": false,
+			"date": "2012-10-01 15:50:32.187750",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"gobot@golang.org",
+				"golang-dev@googlegroups.com",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=b19c6b32c8da ***\n\npprof: add goroutine blocking profiling\nThe profiler collects goroutine blocking information similar to Google Perf Tools.\nYou may see an example of the profile (converted to svg) attached to\nhttp://code.google.com/p/go/issues/detail?id=3946\nThe public API changes are:\n+pkg runtime, func BlockProfile([]BlockProfileRecord) (int, bool)\n+pkg runtime, func SetBlockProfileRate(int)\n+pkg runtime, method (*BlockProfileRecord) Stack() []uintptr\n+pkg runtime, type BlockProfileRecord struct\n+pkg runtime, type BlockProfileRecord struct, Count int64\n+pkg runtime, type BlockProfileRecord struct, Cycles int64\n+pkg runtime, type BlockProfileRecord struct, embedded StackRecord\n\nR=rsc, dave, minux.ma, r\nCC=gobot, golang-dev, r, remyoudompheng\nhttp://codereview.appspot.com/6443115",
+			"disapproval": false,
+			"date": "2012-10-06 08:56:45.158700",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks for your patience.",
+			"disapproval": false,
+			"date": "2012-10-05 20:16:00.132100",
+			"approval": true
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 6443115: pprof: add contention profiling",
+	"created": "2012-08-12 20:21:19.709840",
+	"patchsets": [
+		1,
+		1002,
+		1003,
+		8001,
+		8002,
+		5,
+		2006,
+		2007,
+		7025,
+		13002,
+		7026,
+		25001,
+		27013,
+		31001,
+		36001,
+		40002,
+		37006,
+		37007,
+		54001,
+		61005,
+		65013,
+		54007,
+		76001
+	],
+	"modified": "2012-10-06 08:56:46.726250",
+	"closed": true,
+	"issue": 6443115
+}

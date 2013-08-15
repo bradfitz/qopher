@@ -1,0 +1,562 @@
+{
+	"description": "runtime: faster hashmap implementation.\n\nHashtable is arranged as an array of\n8-entry buckets with chained overflow.\nEach bucket has 8 extra hash bits\nper key to provide quick lookup within\na bucket.  Table is grown incrementally.\n\nUpdate issue 3885\nGo time drops from 0.51s to 0.34s.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"taj.khattra@gmail.com",
+		"minux.ma@gmail.com",
+		"khr@google.com"
+	],
+	"messages": [
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 19, 2013 at 1:46 PM, <rsc@golang.org> wrote:\r\n\r\n> LGTM\r\n>\r\n> I read a printout. It looks good. Some general notes that apply\r\n> throughout. I'm happy after the minor fixes below. Thanks very much.\r\n>\r\n> 1. Some shifts say (uintptr)1 << B and others say 1 << B. Probably they\r\n> should all have the cast, just to be sure. Grep for cast-less shifts.\r\n>\r\nDone.\r\n\r\n> 2. There's a TODO about checking whether it's too expensive to do the\r\n> big allocation in one chunk. It seems fine to me. If the allocation\r\n> triggers a collection, that will be more expensive than the zeroing for\r\n> sure.\r\n\r\nDeleted.\r\n\r\n>\r\n> 3. It would be nice to use the CanFree flags in a followup CL. The main\r\n> reason they exist is to avoid leaving them around as possible sources of\r\n> leaks, if something happens to point into them accidentally due to the\r\n> imprecise collection.\r\n>\r\nYes, I'm planning on that as a next step.\r\n\r\n>\r\n> 4. Please pick up the changes in https://codereview.appspot.**com/7913043<https://codereview.appspot.com/7913043>\r\n> if they are relevant (seems like they would be).\r\n>\r\n> That is relevant, but not a problem for my implementation.  During insert\r\nI make sure to update tophash[i] last, which atomically (with respect to GC)\r\nmarks the entry as present.  The fact that an empty (tophash[i]==0) entry\r\nhas\r\nits key and value slots in a partially updated state doesn't affect the GC.\r\n(That\r\nwould be another way to fix 7913043 - do both mallocs before writing\r\nanything\r\ninto the data structure.)\r\n\r\nIt can be tricky, though.  Because the pointers are being written to empty\r\nentries which won't be scanned by the GC, you need to make sure the code\r\ndoesn't drop the pointer to the newly allocated key & value until after the\r\nallocations are done.\r\n\r\n5. growWork is not named consistently with everything else. grow_work?\r\n>\r\n> Ok.\r\n\r\n> 6. A few small style things. I apologize for nitpicking but it does help\r\n> make the code easier to skim if it looks like the surrounding code.\r\n>   - Please declare variables separately from initialization, and almost\r\n> always at the top of the function. That way I can skip over the\r\n> declaration blocks without missing actual computation.\r\n>   - Please always put the body of a compound statement on its own line.\r\n> Egrep '(if|while).*\\) [^{]'.\r\n>\r\n> Fixed.\r\n\r\n>\r\n> https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 00:06:36.290550",
+			"approval": false
+		},
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello r@golang.org, rsc@golang.org, m3b@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-18 23:37:02.082920",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Wonderful. Can you please add some benchmark data to the issue description.",
+			"disapproval": false,
+			"date": "2013-03-18 23:39:27.614750",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "hasmap_fast looks like C, but isn't named *.c.  Is it built?  or leftover\r\ndebugging?\r\n\r\nOn Mon, Mar 18, 2013 at 4:37 PM, <khr@golang.org> wrote:\r\n\r\n> Reviewers: r, rsc, m3b_google.com,\r\n>\r\n> Message:\r\n> Hello r@golang.org, rsc@golang.org, m3b@google.com (cc:\r\n> golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: faster hashmap implementation.\r\n>\r\n> Hashtable is arranged as an array of\r\n> 8-entry buckets with chained overflow.\r\n> Each bucket has 8 extra hash bits\r\n> per key to provide quick lookup within\r\n> a bucket.  Table is grown incrementally.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/gc/builtin.c\r\n>   M src/cmd/gc/range.c\r\n>   M src/cmd/gc/walk.c\r\n>   M src/cmd/ld/dwarf.c\r\n>   M src/pkg/runtime/hashmap.c\r\n>   M src/pkg/runtime/hashmap.h\r\n>   A src/pkg/runtime/hashmap_fast\r\n>   A src/pkg/runtime/map_test.go\r\n>   M src/pkg/runtime/runtime.c\r\n>   M src/pkg/runtime/runtime.h\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-18 23:45:45.903530",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It is #included multiple times from hashmap.c using different macro\r\nsettings.  I'd like to name it hashmap_fast.c but then the build tries to\r\ncompile it naked and it fails.\r\n\r\n\r\nOn Mon, Mar 18, 2013 at 4:45 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> hasmap_fast looks like C, but isn't named *.c.  Is it built?  or leftover\r\n> debugging?\r\n>\r\n> On Mon, Mar 18, 2013 at 4:37 PM, <khr@golang.org> wrote:\r\n>\r\n>> Reviewers: r, rsc, m3b_google.com,\r\n>>\r\n>> Message:\r\n>> Hello r@golang.org, rsc@golang.org, m3b@google.com (cc:\r\n>> golang-dev@googlegroups.com),\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://code.google.com/p/go/\r\n>>\r\n>>\r\n>> Description:\r\n>> runtime: faster hashmap implementation.\r\n>>\r\n>> Hashtable is arranged as an array of\r\n>> 8-entry buckets with chained overflow.\r\n>> Each bucket has 8 extra hash bits\r\n>> per key to provide quick lookup within\r\n>> a bucket.  Table is grown incrementally.\r\n>>\r\n>> Please review this at https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>>\r\n>> Affected files:\r\n>>   M src/cmd/gc/builtin.c\r\n>>   M src/cmd/gc/range.c\r\n>>   M src/cmd/gc/walk.c\r\n>>   M src/cmd/ld/dwarf.c\r\n>>   M src/pkg/runtime/hashmap.c\r\n>>   M src/pkg/runtime/hashmap.h\r\n>>   A src/pkg/runtime/hashmap_fast\r\n>>   A src/pkg/runtime/map_test.go\r\n>>   M src/pkg/runtime/runtime.c\r\n>>   M src/pkg/runtime/runtime.h\r\n>>\r\n>>\r\n>>\r\n>> --\r\n>>\r\n>> ---You received this message because you are subscribed to the Google\r\n>> Groups \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an\r\n>> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n>> .\r\n>> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n>> .\r\n>>\r\n>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-18 23:49:34.762330",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ah, secret sauce.  Fixed.\r\n\r\n\r\nOn Mon, Mar 18, 2013 at 4:52 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> Did you try\r\n>\r\n> // +build ignore\r\n>\r\n> near the top of the file?\r\n>\r\n>\r\n> On Mon, Mar 18, 2013 at 4:49 PM, Keith Randall <khr@google.com> wrote:\r\n>\r\n>> It is #included multiple times from hashmap.c using different macro\r\n>> settings.  I'd like to name it hashmap_fast.c but then the build tries to\r\n>> compile it naked and it fails.\r\n>>\r\n>>\r\n>> On Mon, Mar 18, 2013 at 4:45 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n>>\r\n>>> hasmap_fast looks like C, but isn't named *.c.  Is it built?  or\r\n>>> leftover debugging?\r\n>>>\r\n>>> On Mon, Mar 18, 2013 at 4:37 PM, <khr@golang.org> wrote:\r\n>>>\r\n>>>> Reviewers: r, rsc, m3b_google.com,\r\n>>>>\r\n>>>> Message:\r\n>>>> Hello r@golang.org, rsc@golang.org, m3b@google.com (cc:\r\n>>>> golang-dev@googlegroups.com),\r\n>>>>\r\n>>>> I'd like you to review this change to\r\n>>>> https://code.google.com/p/go/\r\n>>>>\r\n>>>>\r\n>>>> Description:\r\n>>>> runtime: faster hashmap implementation.\r\n>>>>\r\n>>>> Hashtable is arranged as an array of\r\n>>>> 8-entry buckets with chained overflow.\r\n>>>> Each bucket has 8 extra hash bits\r\n>>>> per key to provide quick lookup within\r\n>>>> a bucket.  Table is grown incrementally.\r\n>>>>\r\n>>>> Please review this at https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>>>>\r\n>>>> Affected files:\r\n>>>>   M src/cmd/gc/builtin.c\r\n>>>>   M src/cmd/gc/range.c\r\n>>>>   M src/cmd/gc/walk.c\r\n>>>>   M src/cmd/ld/dwarf.c\r\n>>>>   M src/pkg/runtime/hashmap.c\r\n>>>>   M src/pkg/runtime/hashmap.h\r\n>>>>   A src/pkg/runtime/hashmap_fast\r\n>>>>   A src/pkg/runtime/map_test.go\r\n>>>>   M src/pkg/runtime/runtime.c\r\n>>>>   M src/pkg/runtime/runtime.h\r\n>>>>\r\n>>>>\r\n>>>>\r\n>>>> --\r\n>>>>\r\n>>>> ---You received this message because you are subscribed to the Google\r\n>>>> Groups \"golang-dev\" group.\r\n>>>> To unsubscribe from this group and stop receiving emails from it, send\r\n>>>> an email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n>>>> .\r\n>>>> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n>>>> .\r\n>>>>\r\n>>>>\r\n>>>>\r\n>>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-18 23:56:30.656240",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You're triggering mapaccess2, I've only optimized mapaccess1.  Try \"_ =\r\nm[x]\" instead of \"_, _ = m[x]\" and it's a lot faster.\r\n\r\nmapaccess2 shouldn't be hard to include as well.\r\n\r\n\r\nOn Mon, Mar 18, 2013 at 5:12 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> I wrote up some quick benchmarks, but at least the random ones I picked\r\n> don't seem faster:\r\n>\r\n> bradfitz@bradfitzlap:~/mapbench$ ~/go/misc/benchcmp before after\r\n> benchmark               old ns/op    new ns/op    delta\r\n> BenchmarkMegMap            299663       299978   +0.11%\r\n> BenchmarkMegEmpty          298985       300747   +0.59%\r\n> BenchmarkSmallStrMap           50           52   +3.98%\r\n> BenchmarkIntMap                54           60  +10.24%\r\n>\r\n> bradfitz@bradfitzlap:~/mapbench$ cat map_test.go\r\n> package main\r\n>\r\n> import (\r\n> \"fmt\"\r\n>  \"strings\"\r\n> \"testing\"\r\n> )\r\n>\r\n> func BenchmarkMegMap(b *testing.B) {\r\n>  m := make(map[string]bool)\r\n> for suffix := 'A'; suffix <= 'G'; suffix++ {\r\n>  m[strings.Repeat(\"X\", 1<<20-1) + fmt.Sprint(suffix)] = true\r\n> }\r\n>  key := strings.Repeat(\"X\", 1<<20-1) + \"k\"\r\n> b.ResetTimer()\r\n>  for i := 0; i < b.N; i++ {\r\n> _, _ = m[key]\r\n> }\r\n> }\r\n>\r\n> func BenchmarkMegEmpty(b *testing.B) {\r\n> m := make(map[string]bool)\r\n> key := strings.Repeat(\"X\", 1<<20-1) + \"k\"\r\n>  b.ResetTimer()\r\n> for i := 0; i < b.N; i++ {\r\n> _, _ = m[key]\r\n>  }\r\n> }\r\n>\r\n> func BenchmarkSmallStrMap(b *testing.B) {\r\n> m := make(map[string]bool)\r\n>  for suffix := 'A'; suffix <= 'G'; suffix++ {\r\n> m[fmt.Sprint(suffix)] = true\r\n>  }\r\n> key := \"k\"\r\n> b.ResetTimer()\r\n>  for i := 0; i < b.N; i++ {\r\n> _, _ = m[key]\r\n> }\r\n> }\r\n> func BenchmarkIntMap(b *testing.B) {\r\n> m := make(map[int]bool)\r\n> for i := 0; i < 8; i++ {\r\n>  m[i] = true\r\n> }\r\n> b.ResetTimer()\r\n>  for i := 0; i < b.N; i++ {\r\n> _, _ = m[7]\r\n> }\r\n> }\r\n>\r\n>\r\n> On Mon, Mar 18, 2013 at 4:37 PM, <khr@golang.org> wrote:\r\n>\r\n>> Reviewers: r, rsc, m3b_google.com,\r\n>>\r\n>> Message:\r\n>> Hello r@golang.org, rsc@golang.org, m3b@google.com (cc:\r\n>> golang-dev@googlegroups.com),\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://code.google.com/p/go/\r\n>>\r\n>>\r\n>> Description:\r\n>> runtime: faster hashmap implementation.\r\n>>\r\n>> Hashtable is arranged as an array of\r\n>> 8-entry buckets with chained overflow.\r\n>> Each bucket has 8 extra hash bits\r\n>> per key to provide quick lookup within\r\n>> a bucket.  Table is grown incrementally.\r\n>>\r\n>> Please review this at https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>>\r\n>> Affected files:\r\n>>   M src/cmd/gc/builtin.c\r\n>>   M src/cmd/gc/range.c\r\n>>   M src/cmd/gc/walk.c\r\n>>   M src/cmd/ld/dwarf.c\r\n>>   M src/pkg/runtime/hashmap.c\r\n>>   M src/pkg/runtime/hashmap.h\r\n>>   A src/pkg/runtime/hashmap_fast\r\n>>   A src/pkg/runtime/map_test.go\r\n>>   M src/pkg/runtime/runtime.c\r\n>>   M src/pkg/runtime/runtime.h\r\n>>\r\n>>\r\n>>\r\n>> --\r\n>>\r\n>> ---You received this message because you are subscribed to the Google\r\n>> Groups \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an\r\n>> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n>> .\r\n>> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n>> .\r\n>>\r\n>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-19 00:29:22.747260",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7504044/diff/13012/src/cmd/gc/walk.c\nFile src/cmd/gc/walk.c (right):\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/cmd/gc/walk.c#newcode1022\nsrc/cmd/gc/walk.c:1022: (widthptr == 8 && (t->down->etype == TINT || t->down->etype == TUINT || t->down->etype == TUINTPTR))) {\nDoes etype TUINTPTR include pointers like map[*MyType]T or only explicit uintptr?",
+			"disapproval": false,
+			"date": "2013-03-18 23:48:52.002370",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Did you try\r\n\r\n// +build ignore\r\n\r\nnear the top of the file?\r\n\r\n\r\nOn Mon, Mar 18, 2013 at 4:49 PM, Keith Randall <khr@google.com> wrote:\r\n\r\n> It is #included multiple times from hashmap.c using different macro\r\n> settings.  I'd like to name it hashmap_fast.c but then the build tries to\r\n> compile it naked and it fails.\r\n>\r\n>\r\n> On Mon, Mar 18, 2013 at 4:45 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n>\r\n>> hasmap_fast looks like C, but isn't named *.c.  Is it built?  or leftover\r\n>> debugging?\r\n>>\r\n>> On Mon, Mar 18, 2013 at 4:37 PM, <khr@golang.org> wrote:\r\n>>\r\n>>> Reviewers: r, rsc, m3b_google.com,\r\n>>>\r\n>>> Message:\r\n>>> Hello r@golang.org, rsc@golang.org, m3b@google.com (cc:\r\n>>> golang-dev@googlegroups.com),\r\n>>>\r\n>>> I'd like you to review this change to\r\n>>> https://code.google.com/p/go/\r\n>>>\r\n>>>\r\n>>> Description:\r\n>>> runtime: faster hashmap implementation.\r\n>>>\r\n>>> Hashtable is arranged as an array of\r\n>>> 8-entry buckets with chained overflow.\r\n>>> Each bucket has 8 extra hash bits\r\n>>> per key to provide quick lookup within\r\n>>> a bucket.  Table is grown incrementally.\r\n>>>\r\n>>> Please review this at https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>>>\r\n>>> Affected files:\r\n>>>   M src/cmd/gc/builtin.c\r\n>>>   M src/cmd/gc/range.c\r\n>>>   M src/cmd/gc/walk.c\r\n>>>   M src/cmd/ld/dwarf.c\r\n>>>   M src/pkg/runtime/hashmap.c\r\n>>>   M src/pkg/runtime/hashmap.h\r\n>>>   A src/pkg/runtime/hashmap_fast\r\n>>>   A src/pkg/runtime/map_test.go\r\n>>>   M src/pkg/runtime/runtime.c\r\n>>>   M src/pkg/runtime/runtime.h\r\n>>>\r\n>>>\r\n>>>\r\n>>> --\r\n>>>\r\n>>> ---You received this message because you are subscribed to the Google\r\n>>> Groups \"golang-dev\" group.\r\n>>> To unsubscribe from this group and stop receiving emails from it, send\r\n>>> an email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n>>> .\r\n>>> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n>>> .\r\n>>>\r\n>>>\r\n>>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-18 23:52:02.290580",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"khr@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "a small start.\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast\nFile src/pkg/runtime/hashmap_fast (right):\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast#newcode1\nsrc/pkg/runtime/hashmap_fast:1: // Copyright 2013 The Go Authors. All rights reserved.\ni'd prefer this file's name to have a suffix, either .c or .h. among other things, this means code search tools will scan it.\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast#newcode28\nsrc/pkg/runtime/hashmap_fast:28: runtime\u00b7prints(\"; key=\");\nwhy not use runtime\u00b7printf?\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast#newcode56\nsrc/pkg/runtime/hashmap_fast:56: if(h->oldbuckets != nil) growWork(t, h, bucket);\ntwo lines please\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast#newcode59\nsrc/pkg/runtime/hashmap_fast:59: if(top == 0) top = 1;\ntwo lines please\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go\nFile src/pkg/runtime/map_test.go (right):\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode141\nsrc/pkg/runtime/map_test.go:141: if (v & 16) == 0 {\nparens unnecessary\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode145\nsrc/pkg/runtime/map_test.go:145: s |= (v & 15)\nparens unnecessary\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode147\nsrc/pkg/runtime/map_test.go:147: if (v & 16) == 16 {\nparens unnecessary\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode195\nsrc/pkg/runtime/map_test.go:195: if (k & 1) == 1 {\nparens unnecessary\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode225\nsrc/pkg/runtime/map_test.go:225: if bitmask != (1<<16)-1 {\nparens unnecessary\n\nhttps://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode252\nsrc/pkg/runtime/map_test.go:252: t.Error(\"missing key\", keys[i])\ninclude the index of the loop in these error prints\nt.Errorf(\"#%d: missing key: %v\", i, keys[i])",
+			"disapproval": false,
+			"date": "2013-03-18 23:55:03.708730",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think it is only explicit uintptr.  There are separate TPTR32 and TPTR64\r\netypes.  Maybe I should add those also.\r\n\r\n\r\nOn Mon, Mar 18, 2013 at 4:48 PM, <bradfitz@golang.org> wrote:\r\n\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**cmd/gc/walk.c<https://codereview.appspot.com/7504044/diff/13012/src/cmd/gc/walk.c>\r\n> File src/cmd/gc/walk.c (right):\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> cmd/gc/walk.c#newcode1022<https://codereview.appspot.com/7504044/diff/13012/src/cmd/gc/walk.c#newcode1022>\r\n> src/cmd/gc/walk.c:1022: (widthptr == 8 && (t->down->etype == TINT ||\r\n> t->down->etype == TUINT || t->down->etype == TUINTPTR))) {\r\n> Does etype TUINTPTR include pointers like map[*MyType]T or only explicit\r\n> uintptr?\r\n>\r\n> https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-18 23:56:00.721380",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I wrote up some quick benchmarks, but at least the random ones I picked\r\ndon't seem faster:\r\n\r\nbradfitz@bradfitzlap:~/mapbench$ ~/go/misc/benchcmp before after\r\nbenchmark               old ns/op    new ns/op    delta\r\nBenchmarkMegMap            299663       299978   +0.11%\r\nBenchmarkMegEmpty          298985       300747   +0.59%\r\nBenchmarkSmallStrMap           50           52   +3.98%\r\nBenchmarkIntMap                54           60  +10.24%\r\n\r\nbradfitz@bradfitzlap:~/mapbench$ cat map_test.go\r\npackage main\r\n\r\nimport (\r\n\"fmt\"\r\n\"strings\"\r\n\"testing\"\r\n)\r\n\r\nfunc BenchmarkMegMap(b *testing.B) {\r\nm := make(map[string]bool)\r\nfor suffix := 'A'; suffix <= 'G'; suffix++ {\r\nm[strings.Repeat(\"X\", 1<<20-1) + fmt.Sprint(suffix)] = true\r\n}\r\nkey := strings.Repeat(\"X\", 1<<20-1) + \"k\"\r\nb.ResetTimer()\r\nfor i := 0; i < b.N; i++ {\r\n_, _ = m[key]\r\n}\r\n}\r\n\r\nfunc BenchmarkMegEmpty(b *testing.B) {\r\nm := make(map[string]bool)\r\nkey := strings.Repeat(\"X\", 1<<20-1) + \"k\"\r\nb.ResetTimer()\r\nfor i := 0; i < b.N; i++ {\r\n_, _ = m[key]\r\n}\r\n}\r\n\r\nfunc BenchmarkSmallStrMap(b *testing.B) {\r\nm := make(map[string]bool)\r\nfor suffix := 'A'; suffix <= 'G'; suffix++ {\r\nm[fmt.Sprint(suffix)] = true\r\n}\r\nkey := \"k\"\r\nb.ResetTimer()\r\nfor i := 0; i < b.N; i++ {\r\n_, _ = m[key]\r\n}\r\n}\r\nfunc BenchmarkIntMap(b *testing.B) {\r\nm := make(map[int]bool)\r\nfor i := 0; i < 8; i++ {\r\nm[i] = true\r\n}\r\nb.ResetTimer()\r\nfor i := 0; i < b.N; i++ {\r\n_, _ = m[7]\r\n}\r\n}\r\n\r\n\r\nOn Mon, Mar 18, 2013 at 4:37 PM, <khr@golang.org> wrote:\r\n\r\n> Reviewers: r, rsc, m3b_google.com,\r\n>\r\n> Message:\r\n> Hello r@golang.org, rsc@golang.org, m3b@google.com (cc:\r\n> golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: faster hashmap implementation.\r\n>\r\n> Hashtable is arranged as an array of\r\n> 8-entry buckets with chained overflow.\r\n> Each bucket has 8 extra hash bits\r\n> per key to provide quick lookup within\r\n> a bucket.  Table is grown incrementally.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/gc/builtin.c\r\n>   M src/cmd/gc/range.c\r\n>   M src/cmd/gc/walk.c\r\n>   M src/cmd/ld/dwarf.c\r\n>   M src/pkg/runtime/hashmap.c\r\n>   M src/pkg/runtime/hashmap.h\r\n>   A src/pkg/runtime/hashmap_fast\r\n>   A src/pkg/runtime/map_test.go\r\n>   M src/pkg/runtime/runtime.c\r\n>   M src/pkg/runtime/runtime.h\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-19 00:12:40.436310",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Mar 18, 2013 at 5:29 PM, Keith Randall <khr@google.com> wrote:\r\n\r\n> You're triggering mapaccess2, I've only optimized mapaccess1.  Try \"_ =\r\n> m[x]\" instead of \"_, _ = m[x]\" and it's a lot faster.\r\n>\r\n\r\nAh, indeed.\r\n\r\n$ ~/go/misc/benchcmp before after\r\nbenchmark               old ns/op    new ns/op    delta\r\nBenchmarkMegMap            251565       253182   +0.64%\r\nBenchmarkMegEmpty          251516       253086   +0.62%\r\nBenchmarkSmallStrMap           41           21  -48.18%\r\nBenchmarkIntMap                48           14  -69.85%\r\n\r\nSeems like mapaccess (1 or 2) on an empty map should be a little quicker.\r\n",
+			"disapproval": false,
+			"date": "2013-03-19 00:35:15.402590",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Mar 18, 2013 at 5:35 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> On Mon, Mar 18, 2013 at 5:29 PM, Keith Randall <khr@google.com> wrote:\r\n>\r\n>> You're triggering mapaccess2, I've only optimized mapaccess1.  Try \"_ =\r\n>> m[x]\" instead of \"_, _ = m[x]\" and it's a lot faster.\r\n>>\r\n>\r\n> Ah, indeed.\r\n>\r\n> $ ~/go/misc/benchcmp before after\r\n> benchmark               old ns/op    new ns/op    delta\r\n> BenchmarkMegMap            251565       253182   +0.64%\r\n> BenchmarkMegEmpty          251516       253086   +0.62%\r\n> BenchmarkSmallStrMap           41           21  -48.18%\r\n> BenchmarkIntMap                48           14  -69.85%\r\n>\r\n> Seems like mapaccess (1 or 2) on an empty map should be a little quicker.\r\n>\r\n\r\nUpdated benchmarks:  (benchmark code attached to\r\nhttps://code.google.com/p/go/issues/detail?id=3885#c18)\r\n\r\n$ ~/go/misc/benchcmp before after\r\nbenchmark                  old ns/op    new ns/op    delta\r\nBenchmarkBigStr_0             251329       251929   +0.24%\r\nBenchmarkBigStr_4             255585       252836   -1.08%\r\nBenchmarkBigStr_8             253203       252005   -0.47%\r\nBenchmarkBigStr_16            256934       251436   -2.14%\r\nBenchmarkBigStr_32            260725       252255   -3.25%\r\nBenchmarkBigStr_64            251684       251478   -0.08%\r\nBenchmarkBigStr_512           252046       250445   -0.64%\r\nBenchmarkBigStr2_0            251376       254504   +1.24%\r\nBenchmarkBigStr2_4            273891       251535   -8.16%\r\nBenchmarkBigStr2_8            252239       251404   -0.33%\r\nBenchmarkBigStr2_16           250466       251354   +0.35%\r\nBenchmarkBigStr2_32           250904       255760   +1.94%\r\nBenchmarkBigStr2_64           251077       253722   +1.05%\r\nBenchmarkBigStr2_512          252529       251344   -0.47%\r\nBenchmarkSmallStr_0               37           19  -47.20%\r\nBenchmarkSmallStr_4               36           38   +5.75%\r\nBenchmarkSmallStr_8               37           60  +61.29%\r\nBenchmarkSmallStr_16              44           33  -26.34%\r\nBenchmarkSmallStr_32              36           33   -8.82%\r\nBenchmarkSmallStr_64              43           33  -23.62%\r\nBenchmarkSmallStr_512             41           33  -20.86%\r\nBenchmarkSmallStr_1024            42           32  -22.59%\r\nBenchmarkSmallStr_1M              52           33  -36.76%\r\nBenchmarkSmallStr2_0              37           44  +19.79%\r\nBenchmarkSmallStr2_4              37           44  +19.62%\r\nBenchmarkSmallStr2_8              42           44   +5.15%\r\nBenchmarkSmallStr2_16             45           45   -1.53%\r\nBenchmarkSmallStr2_32             40           46  +14.00%\r\nBenchmarkSmallStr2_64             40           47  +16.79%\r\nBenchmarkSmallStr2_512            37           56  +50.67%\r\nBenchmarkSmallStr2_1024           38           46  +21.05%\r\nBenchmarkSmallStr2_1M             46           44   -5.76%\r\nBenchmarkInt_0                    32           19  -40.43%\r\nBenchmarkInt_4                    33           17  -49.10%\r\nBenchmarkInt_8                    37           16  -55.91%\r\nBenchmarkInt_16                   33           25  -23.03%\r\nBenchmarkInt_32                   39           25  -36.02%\r\nBenchmarkInt_64                   48           25  -46.58%\r\nBenchmarkInt_512                  36           25  -31.34%\r\nBenchmarkInt_1024                 36           25  -30.00%\r\nBenchmarkInt_1M                   41           25  -39.86%\r\nBenchmarkInt2_0                   34           40  +17.89%\r\nBenchmarkInt2_4                   35           40  +12.26%\r\nBenchmarkInt2_8                   42           40   -4.93%\r\nBenchmarkInt2_16                  34           40  +18.82%\r\nBenchmarkInt2_32                  37           40   +7.77%\r\nBenchmarkInt2_64                  39           40   +1.25%\r\nBenchmarkInt2_512                 34           40  +18.71%\r\nBenchmarkInt2_1024                37           40   +8.36%\r\nBenchmarkInt2_1M                  46           40  -13.33%\r\nBenchmarkPtr_32                   41           37  -10.31%\r\nBenchmarkPtr2_32                  33           40  +21.02%\r\n",
+			"disapproval": false,
+			"date": "2013-03-19 18:41:04.296860",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "We could all just use C. It's a bit more of a pain in the ass than Go, and\r\nuglier in lots of places, but it can be faster.\r\n\r\nI'll drop it.\r\n\r\nOn Wed, Mar 20, 2013 at 11:17 AM, Rob Pike <r@golang.org> wrote:\r\n\r\n> That seems a fine situation to me.\r\n>\r\n> -rob\r\n> On Mar 20, 2013 11:12 AM, \"Brad Fitzpatrick\" <bradfitz@golang.org> wrote:\r\n>\r\n>> Bit of a catch-22. People won't use map[byte]T if it's slow, and we won't\r\n>> make it fast if people don't use it.\r\n>>\r\n>> On Wed, Mar 20, 2013 at 11:10 AM, Russ Cox <rsc@golang.org> wrote:\r\n>>\r\n>>> I don't believe it is worth the bloat for 1 and 2 byte keys, at least\r\n>>> not without data showing that they happen all the time as opposed to just\r\n>>> in one program.\r\n>>>\r\n>>> Russ\r\n>>>\r\n>>>\r\n>>\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 18:19:19.265340",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"khr@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have not read the C code yet.\n\nhttps://codereview.appspot.com/7504044/diff/23001/src/cmd/gc/walk.c\nFile src/cmd/gc/walk.c (right):\n\nhttps://codereview.appspot.com/7504044/diff/23001/src/cmd/gc/walk.c#newcode1015\nsrc/cmd/gc/walk.c:1015: } else if(t->down->etype == TINT32 || t->down->etype == TUINT32 ||\nif(t->type->width > 128) {\n   n = ...\n   goto ret;\n}\n\n(now we don't need the giant else chain)\n\nswitch(simtype[t->down->etype]) {\ncase TINT32:\ncase TUINT32:\n    ...\ncase TINT64:\ncase TUINT64:\n    ...\ndefault:\n    ...\n}\ngoto ret;\n\nAlso, you seem to be excluding pointer keys from the fast routines. Why?  If pointers are okay (and I don't see why not), then you can switch on simsimtype(t->down) instead of simtype[t->down->etype].\n\nhttps://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/hashmap.c\nFile src/pkg/runtime/hashmap.c (right):\n\nhttps://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/hashmap.c#newcode1\nsrc/pkg/runtime/hashmap.c:1: // Copyright 2013 The Go Authors. All rights reserved.\nDon't bother updating copyright years.\n\nhttps://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/hashmap.h\nFile src/pkg/runtime/hashmap.h (right):\n\nhttps://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/hashmap.h#newcode1\nsrc/pkg/runtime/hashmap.h:1: // Copyright 2013 The Go Authors. All rights reserved.\nDon't bother updating copyright years.\n\nhttps://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/map_test.go\nFile src/pkg/runtime/map_test.go (right):\n\nhttps://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/map_test.go#newcode1\nsrc/pkg/runtime/map_test.go:1: package runtime_test\ninsert standard copyright block here, followed by a blank line so it's not a doc comment.",
+			"disapproval": false,
+			"date": "2013-03-19 18:59:17.788020",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"khr@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI read a printout. It looks good. Some general notes that apply throughout. I'm happy after the minor fixes below. Thanks very much.\n\n1. Some shifts say (uintptr)1 << B and others say 1 << B. Probably they should all have the cast, just to be sure. Grep for cast-less shifts.\n\n2. There's a TODO about checking whether it's too expensive to do the big allocation in one chunk. It seems fine to me. If the allocation triggers a collection, that will be more expensive than the zeroing for sure.\n\n3. It would be nice to use the CanFree flags in a followup CL. The main reason they exist is to avoid leaving them around as possible sources of leaks, if something happens to point into them accidentally due to the imprecise collection.\n\n4. Please pick up the changes in https://codereview.appspot.com/7913043 if they are relevant (seems like they would be).\n\n5. growWork is not named consistently with everything else. grow_work?\n\n6. A few small style things. I apologize for nitpicking but it does help make the code easier to skim if it looks like the surrounding code.\n  - Please declare variables separately from initialization, and almost always at the top of the function. That way I can skip over the declaration blocks without missing actual computation.\n  - Please always put the body of a compound statement on its own line. Egrep '(if|while).*\\) [^{]'.",
+			"disapproval": false,
+			"date": "2013-03-19 20:46:38.135460",
+			"approval": true
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Mar 18, 2013 at 4:55 PM, <r@golang.org> wrote:\r\n\r\n> a small start.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/hashmap_fast<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast>\r\n> File src/pkg/runtime/hashmap_fast (right):\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/hashmap_fast#**newcode1<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast#newcode1>\r\n> src/pkg/runtime/hashmap_fast:**1: // Copyright 2013 The Go Authors. All\r\n> rights reserved.\r\n> i'd prefer this file's name to have a suffix, either .c or .h. among\r\n> other things, this means code search tools will scan it.\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/hashmap_fast#**newcode28<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast#newcode28>\r\n> src/pkg/runtime/hashmap_fast:**28: runtime\u00b7prints(\"; key=\");\r\n> why not use runtime\u00b7printf?\r\n>\r\n> No reason.  This just matches the rest of the debug prints in hashmap.c.\r\n\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/hashmap_fast#**newcode56<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast#newcode56>\r\n> src/pkg/runtime/hashmap_fast:**56: if(h->oldbuckets != nil) growWork(t, h,\r\n> bucket);\r\n> two lines please\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/hashmap_fast#**newcode59<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/hashmap_fast#newcode59>\r\n> src/pkg/runtime/hashmap_fast:**59: if(top == 0) top = 1;\r\n> two lines please\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/map_test.go<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go>\r\n> File src/pkg/runtime/map_test.go (right):\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/map_test.go#**newcode141<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode141>\r\n> src/pkg/runtime/map_test.go:**141: if (v & 16) == 0 {\r\n> parens unnecessary\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/map_test.go#**newcode145<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode145>\r\n> src/pkg/runtime/map_test.go:**145: s |= (v & 15)\r\n> parens unnecessary\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/map_test.go#**newcode147<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode147>\r\n> src/pkg/runtime/map_test.go:**147: if (v & 16) == 16 {\r\n> parens unnecessary\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/map_test.go#**newcode195<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode195>\r\n> src/pkg/runtime/map_test.go:**195: if (k & 1) == 1 {\r\n> parens unnecessary\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/map_test.go#**newcode225<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode225>\r\n> src/pkg/runtime/map_test.go:**225: if bitmask != (1<<16)-1 {\r\n> parens unnecessary\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/13012/src/**\r\n> pkg/runtime/map_test.go#**newcode252<https://codereview.appspot.com/7504044/diff/13012/src/pkg/runtime/map_test.go#newcode252>\r\n> src/pkg/runtime/map_test.go:**252: t.Error(\"missing key\", keys[i])\r\n> include the index of the loop in these error prints\r\n> t.Errorf(\"#%d: missing key: %v\", i, keys[i])\r\n>\r\n> All fixed.\r\n\r\n> https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 00:06:20.757450",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've added an empty map check, plus a check to not call hash for a\r\none-entry map (because equals will be at least as fast as hash, and in this\r\ncase much faster):\r\n\r\nfunc BenchmarkMegOne(b *testing.B) {\r\n        m := make(map[string]bool)\r\n        m[strings.Repeat(\"X\", 1<<20)] = true\r\n        key := strings.Repeat(\"Y\", 1<<20)\r\n        b.ResetTimer()\r\n        for i := 0; i < b.N; i++ {\r\n                _ = m[key]\r\n        }\r\n}\r\n\r\nI'll add all of your benchmarks plus this one to mapspeed_test.go\r\n\r\nI've also added fast assign2 functions.\r\n\r\n\r\n\r\nOn Mon, Mar 18, 2013 at 5:35 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> On Mon, Mar 18, 2013 at 5:29 PM, Keith Randall <khr@google.com> wrote:\r\n>\r\n>> You're triggering mapaccess2, I've only optimized mapaccess1.  Try \"_ =\r\n>> m[x]\" instead of \"_, _ = m[x]\" and it's a lot faster.\r\n>>\r\n>\r\n> Ah, indeed.\r\n>\r\n> $ ~/go/misc/benchcmp before after\r\n> benchmark               old ns/op    new ns/op    delta\r\n> BenchmarkMegMap            251565       253182   +0.64%\r\n> BenchmarkMegEmpty          251516       253086   +0.62%\r\n> BenchmarkSmallStrMap           41           21  -48.18%\r\n> BenchmarkIntMap                48           14  -69.85%\r\n>\r\n> Seems like mapaccess (1 or 2) on an empty map should be a little quicker.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 00:06:25.301610",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 19, 2013 at 11:59 AM, <rsc@golang.org> wrote:\r\n\r\n> I have not read the C code yet.\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/23001/src/**cmd/gc/walk.c<https://codereview.appspot.com/7504044/diff/23001/src/cmd/gc/walk.c>\r\n> File src/cmd/gc/walk.c (right):\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/23001/src/**\r\n> cmd/gc/walk.c#newcode1015<https://codereview.appspot.com/7504044/diff/23001/src/cmd/gc/walk.c#newcode1015>\r\n> src/cmd/gc/walk.c:1015: } else if(t->down->etype == TINT32 ||\r\n> t->down->etype == TUINT32 ||\r\n> if(t->type->width > 128) {\r\n>    n = ...\r\n>    goto ret;\r\n> }\r\n>\r\n> (now we don't need the giant else chain)\r\n>\r\n> switch(simtype[t->down->etype]**) {\r\n> case TINT32:\r\n> case TUINT32:\r\n>     ...\r\n> case TINT64:\r\n> case TUINT64:\r\n>     ...\r\n> default:\r\n>     ...\r\n> }\r\n> goto ret;\r\n>\r\n> Also, you seem to be excluding pointer keys from the fast routines. Why?\r\n>  If pointers are okay (and I don't see why not), then you can switch on\r\n> simsimtype(t->down) instead of simtype[t->down->etype].\r\n>\r\n>\r\nSure, I'll do that.\r\n\r\n\r\n> https://codereview.appspot.**com/7504044/diff/23001/src/**\r\n> pkg/runtime/hashmap.c<https://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/hashmap.c>\r\n> File src/pkg/runtime/hashmap.c (right):\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/23001/src/**\r\n> pkg/runtime/hashmap.c#newcode1<https://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/hashmap.c#newcode1>\r\n> src/pkg/runtime/hashmap.c:1: // Copyright 2013 The Go Authors. All\r\n> rights reserved.\r\n> Don't bother updating copyright years.\r\n>\r\n\r\nDone\r\n\r\n\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/23001/src/**\r\n> pkg/runtime/hashmap.h<https://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/hashmap.h>\r\n> File src/pkg/runtime/hashmap.h (right):\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/23001/src/**\r\n> pkg/runtime/hashmap.h#newcode1<https://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/hashmap.h#newcode1>\r\n> src/pkg/runtime/hashmap.h:1: // Copyright 2013 The Go Authors. All\r\n> rights reserved.\r\n> Don't bother updating copyright years.\r\n>\r\n\r\nDone\r\n\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/23001/src/**\r\n> pkg/runtime/map_test.go<https://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/map_test.go>\r\n> File src/pkg/runtime/map_test.go (right):\r\n>\r\n> https://codereview.appspot.**com/7504044/diff/23001/src/**\r\n> pkg/runtime/map_test.go#**newcode1<https://codereview.appspot.com/7504044/diff/23001/src/pkg/runtime/map_test.go#newcode1>\r\n> src/pkg/runtime/map_test.go:1: package runtime_test\r\n> insert standard copyright block here, followed by a blank line so it's\r\n> not a doc comment.\r\n>\r\n\r\nDone\r\n\r\n>\r\n> https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>\r\n\r\nCould you recheck walk.c, in particular the access2 stuff I just added?\r\n I'm very unsure I did that part correctly.\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 00:06:29.492190",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 19, 2013 at 5:06 PM, Keith Randall <khr@google.com> wrote:\r\n\r\n> I've added an empty map check, plus a check to not call hash for a\r\n> one-entry map (because equals will be at least as fast as hash, and in this\r\n> case much faster):\r\n>\r\n> func BenchmarkMegOne(b *testing.B) {\r\n>         m := make(map[string]bool)\r\n>         m[strings.Repeat(\"X\", 1<<20)] = true\r\n>         key := strings.Repeat(\"Y\", 1<<20)\r\n>         b.ResetTimer()\r\n>         for i := 0; i < b.N; i++ {\r\n>                 _ = m[key]\r\n>         }\r\n> }\r\n>\r\n> I'll add all of your benchmarks plus this one to mapspeed_test.go\r\n>\r\n>  I've also added fast assign2 functions.\r\n>\r\n\r\nAwesome, thanks.\r\n\r\nI also see that with string keys, you could defer computing the hash until\r\nyou encounter the first existing key with the same length as the lookup\r\nkey.  These benchmarks (with a bunch of small of map keys, but either a 1M\r\nkey or a tiny key) could be the same speed:\r\n\r\nBenchmarkStrMapManySmall_BigKey   10000    250190 ns/op\r\nBenchmarkStrMapManySmall_SmallKey 50000000        33.2 ns/op\r\n\r\nFrom:\r\n\r\nfunc BenchmarkStrMapManySmall_BigKey(b *testing.B) { benchmarkStrMapMany(b,\r\nstrings.Repeat(\"X\", 1<<20)) }\r\nfunc BenchmarkStrMapManySmall_SmallKey(b *testing.B) {\r\nbenchmarkStrMapMany(b, \"small\") }\r\n\r\nfunc benchmarkStrMapMany(b *testing.B, key string) {\r\n        m := make(map[string]bool)\r\n        for i := 0; i < 1<<20; i++ {\r\n                m[fmt.Sprint(i)] = true\r\n        }\r\n        b.ResetTimer()\r\n        for i := 0; i < b.N; i++ {\r\n                _ = m[key]\r\n        }\r\n}\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 15:40:59.287510",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can't you use a (256)T array to map 1-byte integers to things? It\r\nseems more efficient.\r\n\r\nR\u00e9my.\r\n\r\n\r\n2013/3/20, ugorji@gmail.com <ugorji@gmail.com>:\r\n> On 2013/03/18 23:37:02, khr wrote:\r\n>> Hello mailto:r@golang.org, mailto:rsc@golang.org,\r\n> mailto:m3b@google.com (cc:\r\n>> mailto:golang-dev@googlegroups.com),\r\n>\r\n>> I'd like you to review this change to\r\n>> https://code.google.com/p/go/\r\n>\r\n> Hi,\r\n>\r\n> You included fast paths for 4-byte and 8-byte integers. Can we also\r\n> include for 1 and 2-byte integers? I have code that maps bytes to\r\n> functions, and they could take advantage of this fast path.\r\n>\r\n> I couldn't really make out performance of Interface keys (e.g.\r\n> reflect.Type). Does this help somewhat with interfaces, especially those\r\n> like reflect.Type who have concrete types that already define a hash\r\n> value?\r\n>\r\n> Also, while testing, I got the error below:\r\n> ----------------------------------------------\r\n> fatal error: value align bigger than size\r\n>\r\n> goroutine 1 [running]:\r\n> [fp=0x7f6ef4e6edd8] runtime.throw(0x7f14ca)\r\n> \t/opt/go-contrib/src/pkg/runtime/panic.c:473 +0x67\r\n> [fp=0x7f6ef4e6ee40] hash_init(0x5cafe0, 0xc2000d7120, 0x7f6e0000000b)\r\n> \t/opt/go-contrib/src/pkg/runtime/hashmap.c:-207 +0x117\r\n> [fp=0x7f6ef4e6ee88] runtime.makemap_c(0x5cafe0, 0xb)\r\n> \t/opt/go-contrib/src/pkg/runtime/hashmap.c:971 +0xaf\r\n> [fp=0x7f6ef4e6eea0] runtime.makemap(0x5cafe0, 0xb, 0xb)\r\n> \t/opt/go-contrib/src/pkg/runtime/hashmap.c:988 +0x2f\r\n> [fp=0x7f6ef4e6ef28] ugorji.net/scratch.init\u00b71()\r\n> \t/home/ugorji/depot/golang/src/ugorji.net/scratch/map_vs_slice_test.go:113\r\n> +0x1ca\r\n> <<snip>>\r\n> ----------------------------------------------\r\n>\r\n> This error was got from making a map with value type: struct{}\r\n> i.e. make(map[int]struct{}, 4)\r\n>\r\n> Seems error came from hash_init function, where it did:\r\n> \tif(t->elem->align > t->elem->size)\r\n> \t\truntime\u00b7throw(\"value align bigger than size\");\r\n>\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.com/7504044/\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 17:53:08.285150",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't believe it is worth the bloat for 1 and 2 byte keys, at least not\r\nwithout data showing that they happen all the time as opposed to just in\r\none program.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 18:10:52.499810",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"khr@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/7504044/diff/36001/src/cmd/gc/walk.c\nFile src/cmd/gc/walk.c (right):\n\nhttps://codereview.appspot.com/7504044/diff/36001/src/cmd/gc/walk.c#newcode678\nsrc/cmd/gc/walk.c:678: } else {\ndrop else {, unindent block.\ni thought there was a missing final break on first reading.",
+			"disapproval": false,
+			"date": "2013-03-20 16:07:31.512790",
+			"approval": true
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"khr@google.com",
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/18 23:37:02, khr wrote:\n> Hello mailto:r@golang.org, mailto:rsc@golang.org, mailto:m3b@google.com (cc:\n> mailto:golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://code.google.com/p/go/\n\nHi,\n\nYou included fast paths for 4-byte and 8-byte integers. Can we also include for 1 and 2-byte integers? I have code that maps bytes to functions, and they could take advantage of this fast path. \n\nI couldn't really make out performance of Interface keys (e.g. reflect.Type). Does this help somewhat with interfaces, especially those like reflect.Type who have concrete types that already define a hash value?\n\nAlso, while testing, I got the error below:\n----------------------------------------------\nfatal error: value align bigger than size\n\ngoroutine 1 [running]:\n[fp=0x7f6ef4e6edd8] runtime.throw(0x7f14ca)\n\t/opt/go-contrib/src/pkg/runtime/panic.c:473 +0x67\n[fp=0x7f6ef4e6ee40] hash_init(0x5cafe0, 0xc2000d7120, 0x7f6e0000000b)\n\t/opt/go-contrib/src/pkg/runtime/hashmap.c:-207 +0x117\n[fp=0x7f6ef4e6ee88] runtime.makemap_c(0x5cafe0, 0xb)\n\t/opt/go-contrib/src/pkg/runtime/hashmap.c:971 +0xaf\n[fp=0x7f6ef4e6eea0] runtime.makemap(0x5cafe0, 0xb, 0xb)\n\t/opt/go-contrib/src/pkg/runtime/hashmap.c:988 +0x2f\n[fp=0x7f6ef4e6ef28] ugorji.net/scratch.init\u00b71()\n\t/home/ugorji/depot/golang/src/ugorji.net/scratch/map_vs_slice_test.go:113 +0x1ca\n<<snip>>\n----------------------------------------------\n\nThis error was got from making a map with value type: struct{}\ni.e. make(map[int]struct{}, 4)\n\nSeems error came from hash_init function, where it did:\n\tif(t->elem->align > t->elem->size)\n\t\truntime\u00b7throw(\"value align bigger than size\");",
+			"disapproval": false,
+			"date": "2013-03-20 17:50:51.326130",
+			"approval": false
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"khr@google.com",
+				"ugorji@gmail.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The thing is that only a few bytes may be mapped. Currently, I do a \nlinear search. However, the library will soon expand these tags to \ninclude 2-byte integers (up to MaxInt16), and a map would be perfect there. \n\nI could always wrap it in a int32 as my key, but that requires \nimplementation knowledge. It would be nice if the rule is simply that \nmap access with integer keys are fastest, and string keys are optimized. \n\nOn 2013/03/20 17:53:08, remyoudompheng wrote:\n> Can't you use a (256)T array to map 1-byte integers to things? It\n> seems more efficient.\n> \n> R\u00e9my.\n> \n> \n> 2013/3/20, mailto:ugorji@gmail.com <ugorji@gmail.com>:\n> > On 2013/03/18 23:37:02, khr wrote:\n> >> Hello mailto:r@golang.org, mailto:rsc@golang.org,\n> > mailto:m3b@google.com (cc:\n> >> mailto:golang-dev@googlegroups.com),\n> >\n> >> I'd like you to review this change to\n> >> https://code.google.com/p/go/\n> >\n> > Hi,\n> >\n> > You included fast paths for 4-byte and 8-byte integers. Can we also\n> > include for 1 and 2-byte integers? I have code that maps bytes to\n> > functions, and they could take advantage of this fast path.\n> >\n> > I couldn't really make out performance of Interface keys (e.g.\n> > reflect.Type). Does this help somewhat with interfaces, especially those\n> > like reflect.Type who have concrete types that already define a hash\n> > value?\n> >\n> > Also, while testing, I got the error below:\n> > ----------------------------------------------\n> > fatal error: value align bigger than size\n> >\n> > goroutine 1 [running]:\n> > [fp=0x7f6ef4e6edd8] runtime.throw(0x7f14ca)\n> > \t/opt/go-contrib/src/pkg/runtime/panic.c:473 +0x67\n> > [fp=0x7f6ef4e6ee40] hash_init(0x5cafe0, 0xc2000d7120, 0x7f6e0000000b)\n> > \t/opt/go-contrib/src/pkg/runtime/hashmap.c:-207 +0x117\n> > [fp=0x7f6ef4e6ee88] runtime.makemap_c(0x5cafe0, 0xb)\n> > \t/opt/go-contrib/src/pkg/runtime/hashmap.c:971 +0xaf\n> > [fp=0x7f6ef4e6eea0] runtime.makemap(0x5cafe0, 0xb, 0xb)\n> > \t/opt/go-contrib/src/pkg/runtime/hashmap.c:988 +0x2f\n> > [fp=0x7f6ef4e6ef28] ugorji.net/scratch.init\u00b71()\n> > \t/home/ugorji/depot/golang/src/ugorji.net/scratch/map_vs_slice_test.go:113\n> > +0x1ca\n> > <<snip>>\n> > ----------------------------------------------\n> >\n> > This error was got from making a map with value type: struct{}\n> > i.e. make(map[int]struct{}, 4)\n> >\n> > Seems error came from hash_init function, where it did:\n> > \tif(t->elem->align > t->elem->size)\n> > \t\truntime\u00b7throw(\"value align bigger than size\");\n> >\n> >\n> >\n> >\n> > https://codereview.appspot.com/7504044/\n> >\n> > --\n> >\n> > ---\n> > You received this message because you are subscribed to the Google Groups\n> > \"golang-dev\" group.\n> > To unsubscribe from this group and stop receiving emails from it, send an\n> > email to mailto:golang-dev+unsubscribe@googlegroups.com.\n> > For more options, visit https://groups.google.com/groups/opt_out.\n> >\n> >\n> >",
+			"disapproval": false,
+			"date": "2013-03-20 18:03:55.994430",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Mar 20, 2013 at 10:53 AM, R\u00e9my Oudompheng\r\n<remyoudompheng@gmail.com>wrote:\r\n\r\n> Can't you use a (256)T array to map 1-byte integers to things? It\r\n> seems more efficient.\r\n>\r\n\r\nThat was my knee-jerk reaction too, but then I realized maps should be fast\r\nfor almost all cases.  If people are always second-guessing the map\r\nimplementation and rolling their own, well.. that's kinda where we're\r\nalready at.\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 18:07:25.150670",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Bit of a catch-22. People won't use map[byte]T if it's slow, and we won't\r\nmake it fast if people don't use it.\r\n\r\nOn Wed, Mar 20, 2013 at 11:10 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> I don't believe it is worth the bloat for 1 and 2 byte keys, at least not\r\n> without data showing that they happen all the time as opposed to just in\r\n> one program.\r\n>\r\n> Russ\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 18:12:35.716950",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "That seems a fine situation to me.\r\n\r\n-rob\r\nOn Mar 20, 2013 11:12 AM, \"Brad Fitzpatrick\" <bradfitz@golang.org> wrote:\r\n\r\n> Bit of a catch-22. People won't use map[byte]T if it's slow, and we won't\r\n> make it fast if people don't use it.\r\n>\r\n> On Wed, Mar 20, 2013 at 11:10 AM, Russ Cox <rsc@golang.org> wrote:\r\n>\r\n>> I don't believe it is worth the bloat for 1 and 2 byte keys, at least not\r\n>> without data showing that they happen all the time as opposed to just in\r\n>> one program.\r\n>>\r\n>> Russ\r\n>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 18:17:26.086680",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Mar 20, 2013 at 2:07 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> That was my knee-jerk reaction too, but then I realized maps should be\r\n> fast for almost all cases.  If people are always second-guessing the map\r\n> implementation and rolling their own, well.. that's kinda where we're\r\n> already at.\r\n>\r\n\r\nIf we generate a custom implementation for every possible key, C++ is where\r\nwe'll be at.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 18:20:39.718440",
+			"approval": false
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"khr@google.com",
+				"ugorji@gmail.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm with Brad here.\n\nLooking at the code, it's about 120 lines each for 2 more specific integer \ntypes to close it out, macro-included (about 240 lines altogether). \nIt seems like a fair price to pay for having fast maps with integer keys of any type. \n\nWithout this, in my code (and I envision others), they'd create a \nmap[uint32]T when they need a map[int16]T, and always convert back and forth, \nand they'd only know to do this if they know the implementation fast-paths that type.\n\nIn this case, I think the contained relatively small cost is justified.\n\nOn 2013/03/20 18:19:19, bradfitz wrote:\n> We could all just use C. It's a bit more of a pain in the ass than Go, and\n> uglier in lots of places, but it can be faster.\n> \n> I'll drop it.\n> \n> On Wed, Mar 20, 2013 at 11:17 AM, Rob Pike <mailto:r@golang.org> wrote:\n> \n> > That seems a fine situation to me.\n> >\n> > -rob\n> > On Mar 20, 2013 11:12 AM, \"Brad Fitzpatrick\" <mailto:bradfitz@golang.org> wrote:\n> >\n> >> Bit of a catch-22. People won't use map[byte]T if it's slow, and we won't\n> >> make it fast if people don't use it.\n> >>\n> >> On Wed, Mar 20, 2013 at 11:10 AM, Russ Cox <mailto:rsc@golang.org> wrote:\n> >>\n> >>> I don't believe it is worth the bloat for 1 and 2 byte keys, at least\n> >>> not without data showing that they happen all the time as opposed to just\n> >>> in one program.\n> >>>\n> >>> Russ\n> >>>\n> >>>\n> >>",
+			"disapproval": false,
+			"date": "2013-03-20 18:29:31.126880",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Let's start with just 4 and 8 please.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 18:46:44.622900",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Here's some speed and size graphs.  The speed graphs are for lookups.\r\n\r\n\r\nOn Wed, Mar 20, 2013 at 11:46 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Let's start with just 4 and 8 please.\r\n>\r\n> Russ\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 20:23:33.895180",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Mar 20, 2013 at 10:50 AM, <ugorji@gmail.com> wrote:\r\n\r\n> On 2013/03/18 23:37:02, khr wrote:\r\n>\r\n>> Hello mailto:r@golang.org, mailto:rsc@golang.org,\r\n>>\r\n> mailto:m3b@google.com (cc:\r\n>\r\n>> mailto:golang-dev@**googlegroups.com <golang-dev@googlegroups.com>),\r\n>>\r\n>\r\n>  I'd like you to review this change to\r\n>> https://code.google.com/p/go/\r\n>>\r\n>\r\n> Hi,\r\n>\r\n> You included fast paths for 4-byte and 8-byte integers. Can we also\r\n> include for 1 and 2-byte integers? I have code that maps bytes to\r\n> functions, and they could take advantage of this fast path.\r\n>\r\n> I couldn't really make out performance of Interface keys (e.g.\r\n> reflect.Type). Does this help somewhat with interfaces, especially those\r\n> like reflect.Type who have concrete types that already define a hash\r\n> value?\r\n>\r\n\r\nThe map code should be ~20% faster even without the fast path.  I don't\r\nknow what the overhead of interface hashing is, but maybe that's swamping\r\nthe improvements in the map proper.\r\n\r\n\r\n>\r\n> Also, while testing, I got the error below:\r\n> ------------------------------**----------------\r\n> fatal error: value align bigger than size\r\n>\r\n> goroutine 1 [running]:\r\n> [fp=0x7f6ef4e6edd8] runtime.throw(0x7f14ca)\r\n>         /opt/go-contrib/src/pkg/**runtime/panic.c:473 +0x67\r\n> [fp=0x7f6ef4e6ee40] hash_init(0x5cafe0, 0xc2000d7120, 0x7f6e0000000b)\r\n>         /opt/go-contrib/src/pkg/**runtime/hashmap.c:-207 +0x117\r\n> [fp=0x7f6ef4e6ee88] runtime.makemap_c(0x5cafe0, 0xb)\r\n>         /opt/go-contrib/src/pkg/**runtime/hashmap.c:971 +0xaf\r\n> [fp=0x7f6ef4e6eea0] runtime.makemap(0x5cafe0, 0xb, 0xb)\r\n>         /opt/go-contrib/src/pkg/**runtime/hashmap.c:988 +0x2f\r\n> [fp=0x7f6ef4e6ef28] ugorji.net/scratch.init\u00b71()<http://ugorji.net/scratch.init%C2%B71()>\r\n>         /home/ugorji/depot/golang/src/**ugorji.net/scratch/map_vs_**\r\n> slice_test.go:113 <http://ugorji.net/scratch/map_vs_slice_test.go:113>\r\n> +0x1ca\r\n> <<snip>>\r\n> ------------------------------**----------------\r\n>\r\n> This error was got from making a map with value type: struct{}\r\n> i.e. make(map[int]struct{}, 4)\r\n>\r\n> Seems error came from hash_init function, where it did:\r\n>         if(t->elem->align > t->elem->size)\r\n>                 runtime\u00b7throw(\"value align bigger than size\");\r\n>\r\n>\r\nI've fixed zero-sized keys and values.  Thanks for the bug report.\r\n\r\n\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 20:48:27.167240",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2013-03-20 20:50:20.902700",
+			"approval": true
+		},
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"m3b@google.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"khr@google.com",
+				"ugorji@gmail.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=0fce55d10d18 ***\n\nruntime: faster hashmap implementation.\n\nHashtable is arranged as an array of\n8-entry buckets with chained overflow.\nEach bucket has 8 extra hash bits\nper key to provide quick lookup within\na bucket.  Table is grown incrementally.\n\nUpdate issue 3885\nGo time drops from 0.51s to 0.34s.\n\nR=r, rsc, m3b, dave, bradfitz, khr, ugorji, remyoudompheng\nCC=golang-dev\nhttps://codereview.appspot.com/7504044",
+			"disapproval": false,
+			"date": "2013-03-20 20:51:34.644300",
+			"approval": false
+		},
+		{
+			"sender": "taj.khattra@gmail.com",
+			"recipients": [
+				"khr@golang.org",
+				"taj.khattra@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7504044/diff/59001/src/pkg/runtime/hashmap.c\nFile src/pkg/runtime/hashmap.c (right):\n\nhttps://codereview.appspot.com/7504044/diff/59001/src/pkg/runtime/hashmap.c#newcode225\nsrc/pkg/runtime/hashmap.c:225: if(valuesize >= MAXVALUESIZE) {\nshould this be \">\" instead of \">=\"?",
+			"disapproval": false,
+			"date": "2013-03-21 19:04:25.916220",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"khr@golang.org",
+				"taj.khattra@gmail.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "cmd/ld/dwarf.c reverted Russ' last DWARFv2 change, why?",
+			"disapproval": false,
+			"date": "2013-03-21 19:35:32.980110",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "runtime-gdb.py is broken after this change, please see\r\nhttps://code.google.com/p/go/issues/detail?id=5098.\r\n",
+			"disapproval": false,
+			"date": "2013-03-21 19:51:23.793900",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Whoops, that was not intentional.  Something sync'd strangely.  I will fix.\r\n\r\n\r\nOn Thu, Mar 21, 2013 at 12:35 PM, <minux.ma@gmail.com> wrote:\r\n\r\n> cmd/ld/dwarf.c reverted Russ' last DWARFv2 change, why?\r\n>\r\n> https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-21 20:26:06.320250",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, the internal format of maps has changed.  I will work on the\r\nappropriate change to runtime-gdb.py.\r\n\r\n\r\nOn Thu, Mar 21, 2013 at 12:51 PM, minux <minux.ma@gmail.com> wrote:\r\n\r\n> runtime-gdb.py is broken after this change, please see\r\n> https://code.google.com/p/go/issues/detail?id=5098.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-21 20:27:26.600230",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Mar 22, 2013 at 4:27 AM, Keith Randall <khr@google.com> wrote:\r\n> Yes, the internal format of maps has changed.  I will work on the\r\n> appropriate change to runtime-gdb.py.\r\nThank you.\r\n",
+			"disapproval": false,
+			"date": "2013-03-21 20:30:11.260060",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ah, I see you fixed it already.\r\n\r\nhttps://code.google.com/p/go/source/detail?r=decec27a013432a3c00bb4928ce2316b8b8acbca\r\n\r\n\r\nOn Thu, Mar 21, 2013 at 1:26 PM, Keith Randall <khr@google.com> wrote:\r\n\r\n> Whoops, that was not intentional.  Something sync'd strangely.  I will fix.\r\n>\r\n>\r\n> On Thu, Mar 21, 2013 at 12:35 PM, <minux.ma@gmail.com> wrote:\r\n>\r\n>> cmd/ld/dwarf.c reverted Russ' last DWARFv2 change, why?\r\n>>\r\n>> https://codereview.appspot.**com/7504044/<https://codereview.appspot.com/7504044/>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-21 20:51:14.792480",
+			"approval": false
+		}
+	],
+	"owner_email": "khr@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "khr",
+	"subject": "code review 7504044: runtime: faster hashmap implementation.",
+	"created": "2013-03-14 21:51:49.698160",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		7001,
+		10001,
+		2006,
+		13011,
+		13012,
+		23001,
+		36001,
+		55001,
+		59001
+	],
+	"modified": "2013-03-21 20:26:06.392940",
+	"closed": true,
+	"issue": 7504044
+}

@@ -1,0 +1,151 @@
+{
+	"description": "exp/types: configurable types.Check API\n\n- added Context type for configuration of type checker\n- type check all function and method bodies\n- (partial) fixes to shift hinting (still not complete)\n- revamped test harness - does not rely on specific position\n  representation anymore, just a standard (compiler) error\n  message\n- lots of bug fixes",
+	"cc": [
+		"adonovan@google.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks good.\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go\nFile src/pkg/exp/types/api.go (right):\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go#newcode32\nsrc/pkg/exp/types/api.go:32: // The first token.Pos or token.Position value in the args slice is the error position;\nCan the caller assume args[0] is one of token.Pos or token.Position?  What are the types and interpretation of the other args?\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go#newcode37\nsrc/pkg/exp/types/api.go:37: Err(format string, args ...interface{})\n\"Error\"?\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go#newcode42\nsrc/pkg/exp/types/api.go:42: // is constant (or nil).\n\"(or nil)\" is  ambiguous.  Do you mean \"if x is constant or nil\" or \"...or nil if the expression value is not constant\"?\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go#newcode53\nsrc/pkg/exp/types/api.go:53: // an int64 because it can be represented accurately as an int64.\nI assume we expect callbacks even for ast.Idents, despite the redundancy of typ w.r.t. x.(*ast.Ident).Obj.Type.(types.Type).  \n\nIf not, be explicit.",
+			"disapproval": false,
+			"date": "2012-12-19 23:17:02.162820",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FYI\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go\nFile src/pkg/exp/types/api.go (right):\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go#newcode32\nsrc/pkg/exp/types/api.go:32: // The first token.Pos or token.Position value in the args slice is the error position;\nOn 2012/12/19 23:17:02, adonovan wrote:\n> Can the caller assume args[0] is one of token.Pos or token.Position?  What are\n> the types and interpretation of the other args?\n\nwill simplify - this is too complicated\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go#newcode37\nsrc/pkg/exp/types/api.go:37: Err(format string, args ...interface{})\nOn 2012/12/19 23:17:02, adonovan wrote:\n> \"Error\"?\n\nI am leaning against Error because it may not be uncommon for an ErrHandler to want to implement the error interface which requires a different Error method.\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go#newcode42\nsrc/pkg/exp/types/api.go:42: // is constant (or nil).\nOn 2012/12/19 23:17:02, adonovan wrote:\n> \"(or nil)\" is  ambiguous.  Do you mean \"if x is constant or nil\" or \"...or nil\n> if the expression value is not constant\"?\n\nDone.\n\nhttps://codereview.appspot.com/6948071/diff/8001/src/pkg/exp/types/api.go#newcode53\nsrc/pkg/exp/types/api.go:53: // an int64 because it can be represented accurately as an int64.\nOn 2012/12/19 23:17:02, adonovan wrote:\n> I assume we expect callbacks even for ast.Idents, despite the redundancy of typ\n> w.r.t. x.(*ast.Ident).Obj.Type.(types.Type).  \n> \n> If not, be explicit.\n\nyes (for all expressions)",
+			"disapproval": false,
+			"date": "2012-12-20 00:47:47.826900",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Until Go 1.1 happens we can always tweak this, so I don't think we need quite as much extensibility as there is here right now. See below for concrete suggestions.\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go\nFile src/pkg/exp/types/api.go (right):\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode15\nsrc/pkg/exp/types/api.go:15: type Config struct {\nslight preference to call this Context and make the default thing be var DefaultContext (not func), just to mimic what go/build already does. i expect that many programs will need to use both - go/build's context to select the files and then this one to set up the type checking context - so it would help if they had parallel structure.\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode28\nsrc/pkg/exp/types/api.go:28: // A Mode value is a set of flags (or 0); they control the type checker.\nIt doesn't seem like we need both Context and Mode. \n\nIn fact, perhaps the handlers should be part of the Context too, the same way that in go/build the various functions you can override are listed explicitly in the Context structure. That has the benefit of type-checking what you're setting instead of being implicit like interface{}.\n\nIf everything moves into context then it can be just\n\nfunc (ctxt *Context) Check(fset *token.FileSet, files map[string]*ast.File) (*ast.Package, error)\n\nThen if ctxt.ErrHandler == nil, you get the 'stop and return first error' behavior.\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode40\nsrc/pkg/exp/types/api.go:40: func (cfg *Config) Check(fset *token.FileSet, files map[string]*ast.File, handlers interface{}, mode Mode) (*ast.Package, error) {\ns/handlers/handler/\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode49\nsrc/pkg/exp/types/api.go:49: // If Check is called with an ErrHandler, Err is called with each error encountered.\nis called with a handler implementing ErrHandler, it calls Err for each error encountered.\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode55\nsrc/pkg/exp/types/api.go:55: // If Check is called with an ExprHandler, Expr is called for each expression x that\nis called with a handler implementing ExprHandler, it calls Expr for each ...",
+			"disapproval": false,
+			"date": "2012-12-20 20:38:17.259810",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Done.\n\nI had added the Config type after the handlers (because I still needed a mechanism to set int size, etc.). Anyway, the Context (old Config) object is indeed the better approach - the new API is simpler and cleaner, and so are the call sites.\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go\nFile src/pkg/exp/types/api.go (right):\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode15\nsrc/pkg/exp/types/api.go:15: type Config struct {\nOn 2012/12/20 20:38:17, rsc wrote:\n> slight preference to call this Context and make the default thing be var\n> DefaultContext (not func), just to mimic what go/build already does. i expect\n> that many programs will need to use both - go/build's context to select the\n> files and then this one to set up the type checking context - so it would help\n> if they had parallel structure.\n\nDone.\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode28\nsrc/pkg/exp/types/api.go:28: // A Mode value is a set of flags (or 0); they control the type checker.\nOn 2012/12/20 20:38:17, rsc wrote:\n> It doesn't seem like we need both Context and Mode. \n> \n> In fact, perhaps the handlers should be part of the Context too, the same way\n> that in go/build the various functions you can override are listed explicitly in\n> the Context structure. That has the benefit of type-checking what you're setting\n> instead of being implicit like interface{}.\n> \n> If everything moves into context then it can be just\n> \n> func (ctxt *Context) Check(fset *token.FileSet, files map[string]*ast.File)\n> (*ast.Package, error)\n> \n> Then if ctxt.ErrHandler == nil, you get the 'stop and return first error'\n> behavior.\n> \n\nDone.\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode40\nsrc/pkg/exp/types/api.go:40: func (cfg *Config) Check(fset *token.FileSet, files map[string]*ast.File, handlers interface{}, mode Mode) (*ast.Package, error) {\nOn 2012/12/20 20:38:17, rsc wrote:\n> s/handlers/handler/\n\nDone.\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode40\nsrc/pkg/exp/types/api.go:40: func (cfg *Config) Check(fset *token.FileSet, files map[string]*ast.File, handlers interface{}, mode Mode) (*ast.Package, error) {\nOn 2012/12/20 20:38:17, rsc wrote:\n> s/handlers/handler/\n\nn/a anymore\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode49\nsrc/pkg/exp/types/api.go:49: // If Check is called with an ErrHandler, Err is called with each error encountered.\nOn 2012/12/20 20:38:17, rsc wrote:\n> is called with a handler implementing ErrHandler, it calls Err for each error\n> encountered.\n\nn/a anymore\n\nhttps://codereview.appspot.com/6948071/diff/22001/src/pkg/exp/types/api.go#newcode55\nsrc/pkg/exp/types/api.go:55: // If Check is called with an ExprHandler, Expr is called for each expression x that\nOn 2012/12/20 20:38:17, rsc wrote:\n> is called with a handler implementing ExprHandler, it calls Expr for each ...\n\nn/a anymore",
+			"disapproval": false,
+			"date": "2012-12-21 01:14:19.782590",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-12-21 02:01:11.460150",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks for exposing Complex and NilType and fixing the gaps in copy() and method bodies.\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/gotype/gotype_test.go\nFile src/pkg/exp/gotype/gotype_test.go (right):\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/gotype/gotype_test.go#newcode55\nsrc/pkg/exp/gotype/gotype_test.go:55: // Unless there is comment next to the commented out packages,\n\"a comment\"\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/gotype/gotype_test.go#newcode56\nsrc/pkg/exp/gotype/gotype_test.go:56: // the package does't typecheck due to errors in the shift\n\"doesn't\".\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/gotype/gotype_test.go#newcode57\nsrc/pkg/exp/gotype/gotype_test.go:57: // expression checker.\nI wonder if there's a way that this test can find gaps in the typechecker's coverage, as we've noticed a few times now that the absence of error messages doesn't imply that a type has actually been inferred for all expressions.   Perhaps an AST walker could ensure every expression has a type (or is constant)?\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/types/check.go\nFile src/pkg/exp/types/check.go (left):\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/types/check.go#oldcode116\nsrc/pkg/exp/types/check.go:116: check.functypes = check.functypes[0 : len(check.functypes)-1]\nSmall nitpick: this way of implementing a stack leaves non-nil values in the \"cap-len\" portion of the slice where the GC still finds them.\n\nProbably not a big deal here since the traversal is short-lived, but consider a linked stack instead.",
+			"disapproval": false,
+			"date": "2012-12-26 20:37:33.908500",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=2e40253cdd9b ***\n\nexp/types: configurable types.Check API\n\n- added Context type for configuration of type checker\n- type check all function and method bodies\n- (partial) fixes to shift hinting (still not complete)\n- revamped test harness - does not rely on specific position\n  representation anymore, just a standard (compiler) error\n  message\n- lots of bug fixes\n\nR=adonovan, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/6948071",
+			"disapproval": false,
+			"date": "2012-12-26 20:48:33.045110",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks.\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/gotype/gotype_test.go\nFile src/pkg/exp/gotype/gotype_test.go (right):\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/gotype/gotype_test.go#newcode55\nsrc/pkg/exp/gotype/gotype_test.go:55: // Unless there is comment next to the commented out packages,\nOn 2012/12/26 20:37:33, adonovan wrote:\n> \"a comment\"\n\nDone.\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/gotype/gotype_test.go#newcode56\nsrc/pkg/exp/gotype/gotype_test.go:56: // the package does't typecheck due to errors in the shift\nOn 2012/12/26 20:37:33, adonovan wrote:\n> \"doesn't\".\n\nDone.\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/gotype/gotype_test.go#newcode57\nsrc/pkg/exp/gotype/gotype_test.go:57: // expression checker.\nOn 2012/12/26 20:37:33, adonovan wrote:\n> I wonder if there's a way that this test can find gaps in the typechecker's\n> coverage, as we've noticed a few times now that the absence of error messages\n> doesn't imply that a type has actually been inferred for all expressions.  \n> Perhaps an AST walker could ensure every expression has a type (or is constant)?\n\nThere's a few things: The unimplemented() calls need to actually panic in the typechecker - I will enable that soon. Also, I need to do a test that actually traverses the AST and verifies it.\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/types/check.go\nFile src/pkg/exp/types/check.go (left):\n\nhttps://codereview.appspot.com/6948071/diff/41001/src/pkg/exp/types/check.go#oldcode116\nsrc/pkg/exp/types/check.go:116: check.functypes = check.functypes[0 : len(check.functypes)-1]\nOn 2012/12/26 20:37:33, adonovan wrote:\n> Small nitpick: this way of implementing a stack leaves non-nil values in the\n> \"cap-len\" portion of the slice where the GC still finds them.\n> \n> Probably not a big deal here since the traversal is short-lived, but consider a\n> linked stack instead.\n\nThis code is gone...",
+			"disapproval": false,
+			"date": "2012-12-26 20:42:09.528190",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 6948071: exp/types: configurable types.Check API",
+	"created": "2012-12-17 22:54:45.905340",
+	"patchsets": [
+		1,
+		1002,
+		3001,
+		5001,
+		8001,
+		18002,
+		6012,
+		12002,
+		22001,
+		26001,
+		29001,
+		32001,
+		28016,
+		37001,
+		35016,
+		39016,
+		33031,
+		33032,
+		27016,
+		33033,
+		37017,
+		41001,
+		46001
+	],
+	"modified": "2012-12-26 20:48:34.868320",
+	"closed": true,
+	"issue": 6948071
+}

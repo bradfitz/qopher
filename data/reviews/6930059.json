@@ -1,0 +1,311 @@
+{
+	"description": "math/big: add Rat.{,Set}Float64 methods for IEEE 754 conversions.\n\nAdded tests, using input data from strconv.ParseFloat.\nThanks to rsc for most of the test code.\n\nmath/big could use some good package-level documentation.",
+	"cc": [
+		"remyoudompheng@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@google.com",
+				"rsc@google.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Haven't thought through this is detail yet, but here some prelim. feedback.\n\nPlease pay attention particularly to the re-use of the underlying slices by using the appropriate set functions. We have gone through a lot of pain to get meth/big to where it is. The reason for re-using the underlying memory is performance (the first implementation didn't do it and was _much_ slower overall). It may not matter for a single function, but it does matter overall when the function is used in a larger algorithm.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode35\nsrc/pkg/math/big/rat.go:35: panic(\"SetFloat requires finite value\")\nSetFloat64\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode35\nsrc/pkg/math/big/rat.go:35: panic(\"SetFloat requires finite value\")\non that note, I am wondering if this is a good choice. alternatively, one might return nil. as it is, a client will have to check anyway, so why not provide the result? also, if the client doesn't pay attention, it will die with a null ptr exception when the result is used. about the same.\n\nso: return nil ?\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode37\nsrc/pkg/math/big/rat.go:37: if f == 0.0 {\nf == 0\n\nseems good enough - we are in Go after all\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode38\nsrc/pkg/math/big/rat.go:38: z.a, z.b = Int{}, *intOne\nthat's not how we do this in this package - you throw away whatever memory is hanging of z by doing this\n\nuse the appropriate Set function\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode43\nsrc/pkg/math/big/rat.go:43: const SmallestNormal = 2.2250738585072014e-308 // 2**-1022\nthis code is also in math/bits.go - should at least mention this in a comment\n(even better if we can find a way some of this can be shared) - it's subtle enough that we don't want to have random copies all over the place\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode52\nsrc/pkg/math/big/rat.go:52: mantissa := (1 << 52) | (bits & 0xFFFFFFFFFFFFF)\nThe constants 52, 1023, etc. should be at least declared as constants (or perhaps computed from other constants) if we can't import them. same for 0x7ff.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode57\nsrc/pkg/math/big/rat.go:57: z.b = *intOne\nuse Set function so we don't throw away underlying memory\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode60\nsrc/pkg/math/big/rat.go:60: z.b.abs = z.b.abs.shl(z.b.abs, uint(shift))\nuse set functions\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode69\nsrc/pkg/math/big/rat.go:69: // Preconditions: b is nonzero; a and b have no common factors.\ns/nonzero/non-zero/\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode97\nsrc/pkg/math/big/rat.go:97: expt := alen - blen\ns/expt/exp/ please\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode117\nsrc/pkg/math/big/rat.go:117: if expt > 1024 {\nswitch {\ncase expt > 1024:\n   ...\ncase expt < -1023:\n   if neg {\n      return -1\n   }\n   return 0\n}\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode148\nsrc/pkg/math/big/rat.go:148: (uint64((expt+1023)&0x7FF) << 52) | mantissa)\none line please\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode165\nsrc/pkg/math/big/rat.go:165: exact = false\njust return\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode172\nsrc/pkg/math/big/rat.go:172: exact = z2.Cmp(z) == 0\nI'd do:\n\nif z2.Cmp(z) == 0 {\n   exact = true\n}\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/bits.go\nFile src/pkg/math/bits.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/bits.go#newcode40\nsrc/pkg/math/bits.go:40: func IsFinite(f float64) bool {\nwhy not use IsInf?",
+			"disapproval": false,
+			"date": "2012-12-13 01:52:05.852870",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@google.com",
+				"rsc@google.com",
+				"gri@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode53\nsrc/pkg/math/big/rat.go:53: exp := int((bits>>52)&0x7FF) - 1023\nmantissa := bits & (1<<52-1) (counting these F's is crazy)\nexp := int(bits>>52 & 0x7ff)\nswitch exp {\ncase 0x7ff:\n   // NaN or infinite\n   ...\ncase 0:\n   // denormal\n   exp -= 1023\ndefault:\n   mantissa |= 1<<52\n   exp -= 1023\n}\n\nand remove the special cases above, and no need to change math package interface.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode82\nsrc/pkg/math/big/rat.go:82: // The result contains mantissa A/B and exponent e.\nSorry but this algorithm is incorrect. It breaks at the simplest testcase:\n\nfunc TestFloat64(t *testing.T) {\n\tconst U = 1<<60 - 1\n\tz := new(Rat).SetInt64(U)\n\tv, _ := z.Float64()\n\tif v != 1<<60 {\n\t\tt.Errorf(\"got %b, expected %b\", v, float64(1<<60))\n\t}\n}\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode146\nsrc/pkg/math/big/rat.go:146: mantissa := uint64(q[0] & 0xfffffffffffff) // 52 bits\nThis line doesn't compile at all.\nHere Word is 32 bit.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat_test.go\nFile src/pkg/math/big/rat_test.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat_test.go#newcode508\nsrc/pkg/math/big/rat_test.go:508: // TODO(adonovan): is this ok?  Or should I copy the file, or even\nI'm not sure testfp.txt is a good input file for tests.\n\nA table driven test + use testing/quick to check\n\n* z.SetFloat64(f).Float64() == f\n* x := z.Float64, x1, x2 = prevFloat64(x), nextFloat64(x)\n  // use SetFloat64 and big.Rat arithmetic to check that x is closest to z as specified.",
+			"disapproval": false,
+			"date": "2012-12-13 07:37:38.134200",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I am a little worried about the double rounding. I think it would be more clearly correct to tweak the algorithm a little bit.\n\nThe state you care about for rounding floating point numbers accurately is:\n\n1) The bits of computed mantissa.\n2) The first bit of the remainder fraction.\n3) Whether any of the rest of the bits in the remainder are zero.\n\nMy suggestion is to generate 54 bits of mantissa, a combination of 1+2.\n(That is, the low bit of the quotient is going to be used for rounding and\nthen thrown away.)\n\nChoose q, r, exp such that\n\t(q + r/b) * 2^(exp-1) = a/b\n\tq in [1<<53, 1<<54)\n\n// Handle denormal loss of precision by moving more into remainder.\nhaveR := r > 0\nif denormal {\n\tn := bits to drop\n\thaveR = haveR || (q & (1<<n-1)) != 0\n\tq >>= n\n}\n\n// Round q, dropping the low bit we've been carrying.\nif q&1 != 0 && haveR || q&2 == 0 {\n\tq++\n}\nq >>= 1\n\nf := math.Ldexp(float64(q), exp)\nif neg {\n\tf = -f\n}\nreturn f\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode94\nsrc/pkg/math/big/rat.go:94: switch {\nOn 2012/12/15 00:17:48, remyoudompheng wrote:\n> It's really not clear why you shift twice.\n> \n> // Determine A' and B', such A'/B' = A/B * (1<<shift)\n> // is in the interval [1<<52, 1<<53).\n\nThe first shift makes it possible to use cmp directly.\nOtherwise we'd need a custom compare function.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode122\nsrc/pkg/math/big/rat.go:122: // REVIEWERS: what's the recommended memory discipline here?\nThis is fine for now.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode193\nsrc/pkg/math/big/rat.go:193: // exact is true iff no approximation was involved.\nwe tend not to use iff in docs.\n// If z is exactly representable as a float64, Float64 returns exact=true.",
+			"disapproval": false,
+			"date": "2012-12-17 17:00:33.452990",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@google.com",
+				"rsc@google.com",
+				"gri@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode82\nsrc/pkg/math/big/rat.go:82: // The result contains mantissa A/B and exponent e.\nAfter correcting please check that your function rounds correctly:\n\n1<<253 - 1<<199 + 1 -> 1<<253\n1<<253 - 1<<199 - 1 -> previous float64 before 1<<253\n(1<<253 - 1<<200 I guess).\n\nAnd you should specify what happens when the rat is halfway.",
+			"disapproval": false,
+			"date": "2012-12-13 07:44:05.031670",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks again for the great review comments, and apologies for the lack of\r\npolish.  If it wasn't obvious, f.p. code is not my comfort zone and I was\r\njust trying to solicit an extra round of review feedback before checking\r\nout for the weekend.\r\n\r\n\r\nOn 14 December 2012 21:49, <rsc@golang.org> wrote:\r\n\r\n> Once Remy is happy I'll be happy. :-)\r\n>\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/6930059/diff/2001/src/pkg/**math/bits.go<https://codereview.appspot.com/6930059/diff/2001/src/pkg/math/bits.go>\r\n> File src/pkg/math/bits.go (right):\r\n>\r\n> https://codereview.appspot.**com/6930059/diff/2001/src/pkg/**\r\n> math/bits.go#newcode40<https://codereview.appspot.com/6930059/diff/2001/src/pkg/math/bits.go#newcode40>\r\n> src/pkg/math/bits.go:40: func IsFinite(f float64) bool {\r\n> To add new API we need more widespread use cases than just one package.\r\n> Please put this in your new code (unexported) instead of here.\r\n>\r\n>\r\n> https://codereview.appspot.**com/6930059/diff/11001/src/**\r\n> pkg/math/big/rat.go<https://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go>\r\n> File src/pkg/math/big/rat.go (right):\r\n>\r\n> https://codereview.appspot.**com/6930059/diff/11001/src/**\r\n> pkg/math/big/rat.go#newcode171<https://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode171>\r\n> src/pkg/math/big/rat.go:171: if mantissa == 0x10000000000000 {\r\n> 1<<52\r\n>\r\n> https://codereview.appspot.**com/6930059/<https://codereview.appspot.com/6930059/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-15 20:43:46.883500",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@google.com",
+				"rsc@google.com",
+				"gri@golang.org",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat_test.go\nFile src/pkg/math/big/rat_test.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat_test.go#newcode508\nsrc/pkg/math/big/rat_test.go:508: // TODO(adonovan): is this ok?  Or should I copy the file, or even\nYou can read the file directly, that's fine. As for using it, what I had intended (but not expressed well) was to use the decimal -> binary conversions as rat -> binary conversions by building fractions with appropriate denominators. For example the file contains\n\n# Table 1: Stress Inputs for Conversion to 53-bit Binary, < 1/2 ULP\nfloat64 %b 5e+125 6653062250012735p+365\nfloat64 %b 69e+267 4705683757438170p+841\nfloat64 %b 999e-026 6798841691080350p-129\n\nIn the strconv package that says to try strconv.ParseFloat(\"5e+125\", 64) and make sure you get the 6653062250012735*2\u00b3\u2076\u2075. Here, though, you could create the fraction 5*10\u00b9\u00b2\u2075 / 1 and call .Float64 on it and make sure you get 5e+125 out (you can trust ParseFloat64, you don't need to look at the final field at all).\n\nSimilarly, a few lines later, you could create the fraction 836168422905420598437 / 10\u00b2\u00b3\u2074 and call .Float64 on it and make sure you get what ParseFloat says for 836168422905420598437e-234.\n\nDo the same with the strings in the table in src/pkg/strconv/atof_test.go. \n\nIf the code can pass both of those sets of cases, then I'll be pretty confident it's right.",
+			"disapproval": false,
+			"date": "2012-12-13 14:41:58.621940",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "3) should say ... are nonzero.",
+			"disapproval": false,
+			"date": "2012-12-17 17:00:54.590270",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@google.com",
+				"rsc@google.com",
+				"gri@golang.org",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for the helpful review comments---there were indeed a number of corner cases the tests hadn't touched.\n\nStill one testcase fails, for the exact same reason described in the Java blog post referenced.  Suggestions welcome.\n\nReady for another look.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode35\nsrc/pkg/math/big/rat.go:35: panic(\"SetFloat requires finite value\")\nOn 2012/12/13 01:52:06, gri wrote:\n> SetFloat64\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode35\nsrc/pkg/math/big/rat.go:35: panic(\"SetFloat requires finite value\")\nOn 2012/12/13 01:52:06, gri wrote:\n> on that note, I am wondering if this is a good choice. alternatively, one might\n> return nil. as it is, a client will have to check anyway, so why not provide the\n> result? also, if the client doesn't pay attention, it will die with a null ptr\n> exception when the result is used. about the same.\n> \n> so: return nil ?\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode37\nsrc/pkg/math/big/rat.go:37: if f == 0.0 {\nOn 2012/12/13 01:52:06, gri wrote:\n> f == 0\n> \n> seems good enough - we are in Go after all\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode38\nsrc/pkg/math/big/rat.go:38: z.a, z.b = Int{}, *intOne\nOn 2012/12/13 01:52:06, gri wrote:\n> that's not how we do this in this package - you throw away whatever memory is\n> hanging of z by doing this\n> \n> use the appropriate Set function\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode43\nsrc/pkg/math/big/rat.go:43: const SmallestNormal = 2.2250738585072014e-308 // 2**-1022\nPer Remy's suggestion, this is gone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode52\nsrc/pkg/math/big/rat.go:52: mantissa := (1 << 52) | (bits & 0xFFFFFFFFFFFFF)\nI tried that but it looked awful: long names everywhere, obscuring the meaning.  11, 52 and 1023 need no explanation.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode53\nsrc/pkg/math/big/rat.go:53: exp := int((bits>>52)&0x7FF) - 1023\nVery nice.  Done.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode57\nsrc/pkg/math/big/rat.go:57: z.b = *intOne\nOn 2012/12/13 01:52:06, gri wrote:\n> use Set function so we don't throw away underlying memory\n\nDone.\n\nThis package could use some documentation explaining the proper use.  I found I had to think quite hard about aliasing to avoid making even more mistakes.  That you have to mention a value up to four times in a binary operation z = z.op(z, z) can be a cause for some head-scratching.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode60\nsrc/pkg/math/big/rat.go:60: z.b.abs = z.b.abs.shl(z.b.abs, uint(shift))\nOn 2012/12/13 01:52:06, gri wrote:\n> use set functions\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode69\nsrc/pkg/math/big/rat.go:69: // Preconditions: b is nonzero; a and b have no common factors.\nOn 2012/12/13 01:52:06, gri wrote:\n> s/nonzero/non-zero/\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode82\nsrc/pkg/math/big/rat.go:82: // The result contains mantissa A/B and exponent e.\nYou're right, it was always finding a value of equal or smaller magnitude, not the nearest.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode97\nsrc/pkg/math/big/rat.go:97: expt := alen - blen\nOn 2012/12/13 01:52:06, gri wrote:\n> s/expt/exp/ please\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode117\nsrc/pkg/math/big/rat.go:117: if expt > 1024 {\nDone.  (FWIW, that's \"return -0.0\" in effect.)\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode146\nsrc/pkg/math/big/rat.go:146: mantissa := uint64(q[0] & 0xfffffffffffff) // 52 bits\nOn 2012/12/13 07:37:38, remyoudompheng wrote:\n> This line doesn't compile at all.\n> Here Word is 32 bit.\n\nGood catch; I'm testing on 64 bits.  Fixed.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode148\nsrc/pkg/math/big/rat.go:148: (uint64((expt+1023)&0x7FF) << 52) | mantissa)\nOn 2012/12/13 01:52:06, gri wrote:\n> one line please\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode165\nsrc/pkg/math/big/rat.go:165: exact = false\nOn 2012/12/13 01:52:06, gri wrote:\n> just return\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat.go#newcode172\nsrc/pkg/math/big/rat.go:172: exact = z2.Cmp(z) == 0\nOn 2012/12/13 01:52:06, gri wrote:\n> I'd do:\n> \n> if z2.Cmp(z) == 0 {\n>    exact = true\n> }\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat_test.go\nFile src/pkg/math/big/rat_test.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/big/rat_test.go#newcode508\nsrc/pkg/math/big/rat_test.go:508: // TODO(adonovan): is this ok?  Or should I copy the file, or even\nOn 2012/12/13 14:41:58, rsc wrote:\n> You can read the file directly, that's fine. As for using it, what I had\n> intended (but not expressed well) was to use the decimal -> binary conversions\n> as rat -> binary conversions by building fractions with appropriate\n> denominators. For example the file contains\n> \n> # Table 1: Stress Inputs for Conversion to 53-bit Binary, < 1/2 ULP\n> float64 %b 5e+125 6653062250012735p+365\n> float64 %b 69e+267 4705683757438170p+841\n> float64 %b 999e-026 6798841691080350p-129\n> \n> In the strconv package that says to try strconv.ParseFloat(\"5e+125\", 64) and\n> make sure you get the 6653062250012735*2\u00b3\u2076\u2075. Here, though, you could create the\n> fraction 5*10\u00b9\u00b2\u2075 / 1 and call .Float64 on it and make sure you get 5e+125 out\n> (you can trust ParseFloat64, you don't need to look at the final field at all).\n> \n> Similarly, a few lines later, you could create the fraction\n> 836168422905420598437 / 10\u00b2\u00b3\u2074 and call .Float64 on it and make sure you get what\n> ParseFloat says for 836168422905420598437e-234.\n> \n> Do the same with the strings in the table in src/pkg/strconv/atof_test.go. \n> \n> If the code can pass both of those sets of cases, then I'll be pretty confident\n> it's right.\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/bits.go\nFile src/pkg/math/bits.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/bits.go#newcode40\nsrc/pkg/math/bits.go:40: func IsFinite(f float64) bool {\nOn 2012/12/13 01:52:06, gri wrote:\n> why not use IsInf?\n\nThis predicate is equivalent to !(IsNaN(f) || IsInf(f,0)) but faster than either arm.  I've clarified this in the docstring.",
+			"disapproval": false,
+			"date": "2012-12-14 23:22:43.060000",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@google.com",
+				"rsc@google.com",
+				"gri@golang.org",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/nat.go\nFile src/pkg/math/big/nat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/nat.go#newcode116\nsrc/pkg/math/big/nat.go:116: return uint64(z[1]<<32 | z[0])\non 32 bits, z[1]<<32 is identically zero.\n\nCan you test your code with GOARCH=386 ?\n\nAlso, from a very low-level point of view, adding a private method grows the method table of nat for no particular reason.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode94\nsrc/pkg/math/big/rat.go:94: switch {\nIt's really not clear why you shift twice.\n\n// Determine A' and B', such A'/B' = A/B * (1<<shift)\n// is in the interval [1<<52, 1<<53).\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode105\nsrc/pkg/math/big/rat.go:105: default:\n// First we determine \u03b1/\u03b2 where \u03b1 and \u03b2 are shifted values\n// of A and B such that 1 <= \u03b1/\u03b2 < 2.\n\n// Here we only get 1/2 <= A/B*2^-exp < 2.\n// If this is less than 1, decrement exp by 1 to get\n// back in interval [1, 2)\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode112\nsrc/pkg/math/big/rat.go:112: // Shift and divide.\n// Now we use A'/B' = \u03b1/\u03b2 * 2^52 = A/B * 2^(52-exp).\n// A'/B' is in the interval [2^52, 2^53).\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode114\nsrc/pkg/math/big/rat.go:114: var a2, b2 nat\nplease reuse a2, b2 from above.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode127\nsrc/pkg/math/big/rat.go:127: if mantissa&^(1<<52-1) != 1<<52 {\nYou want to check that mantissa>>52 == 1.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode139\nsrc/pkg/math/big/rat.go:139: if mantissa == 0x20000000000000 {\n1<<53. I really don't want to count the zeroes.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode144\nsrc/pkg/math/big/rat.go:144: \n// After rounding, q*2^-52 * 2^exp is a good approximation of A/B\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode151\nsrc/pkg/math/big/rat.go:151: \nI would write:\n\nswitch {\ncase exp > 1023:\n  // infinity\ncase exp >= -1022:\n  // finite\ncase exp < -1022-53:\n  // zero\ndefault:\n  // denormal or zero\n  // q*2^(exp-52) = q*2^(exp+1022)*2^(-1022-52)\n  shift := uint(-1022-exp)\n  lostbits := mantissa & (1<<shift - 1)\n  mantissa >>= shift\n  switch {\n  case lostbits == 1<<(shift-1):\n    // halfway\n    mantissa &^= 1\n  case lostbits>>(shift-1) != 0:\n    // round up\n    mantissa++\n  default:\n    // nothing to do\n  }\n  // Now mantissa is in [0, 1<<52]\n  f = math.Float64frombits(mantissa) // valid even if mantissa == 1<<52\n  if neg {\n    f = -f \n  } \n  return f\n}\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode176\nsrc/pkg/math/big/rat.go:176: // can we tell which is closer?\nI'm not sure why it would oscillate.\n\nDenormalized/zero numbers are n * 2^(-1022-52) where n is an integer in [0, 1<<52). The case n==1<<52 is exactly the next float64 so you just have to multiply by 1<<1074 and round to the nearest integer (even if the nearest is 1<<52).\n\nAnd the closest float64 is well defined.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat_test.go\nFile src/pkg/math/big/rat_test.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat_test.go#newcode645\nsrc/pkg/math/big/rat_test.go:645: // smallest denormal\nPlease add:\n* the exact half of smallest denormal (1p-1075) -> round to zero\n* a little more than the exact half of smallest denormal (let's say 1p-1075 + 1p-1100), rounding to 1p-1074\n* the exact halfway between smallest normal and largest denormal: 1p-1022 - 1p-1075, rounding to 1p-1022\n\nThe decimal representation might be a bit long to write.",
+			"disapproval": false,
+			"date": "2012-12-15 00:17:48.412390",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Once Remy is happy I'll be happy. :-)\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/bits.go\nFile src/pkg/math/bits.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/2001/src/pkg/math/bits.go#newcode40\nsrc/pkg/math/bits.go:40: func IsFinite(f float64) bool {\nTo add new API we need more widespread use cases than just one package. Please put this in your new code (unexported) instead of here.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode171\nsrc/pkg/math/big/rat.go:171: if mantissa == 0x10000000000000 {\n1<<52",
+			"disapproval": false,
+			"date": "2012-12-15 02:49:06.914870",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-01-25 21:08:45.979080",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/nat.go\nFile src/pkg/math/big/nat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/nat.go#newcode116\nsrc/pkg/math/big/nat.go:116: return uint64(z[1]<<32 | z[0])\nOn 2012/12/15 00:17:48, remyoudompheng wrote:\n> on 32 bits, z[1]<<32 is identically zero.\n> \n> Can you test your code with GOARCH=386 ?\n> \n> Also, from a very low-level point of view, adding a private method grows the\n> method table of nat for no particular reason.\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode105\nsrc/pkg/math/big/rat.go:105: default:\nOn 2012/12/15 00:17:48, remyoudompheng wrote:\n> // First we determine \u03b1/\u03b2 where \u03b1 and \u03b2 are shifted values\n> // of A and B such that 1 <= \u03b1/\u03b2 < 2.\n> \n> // Here we only get 1/2 <= A/B*2^-exp < 2.\n> // If this is less than 1, decrement exp by 1 to get\n> // back in interval [1, 2)\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode139\nsrc/pkg/math/big/rat.go:139: if mantissa == 0x20000000000000 {\nOn 2012/12/15 00:17:48, remyoudompheng wrote:\n> 1<<53. I really don't want to count the zeroes.\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/11001/src/pkg/math/big/rat.go#newcode144\nsrc/pkg/math/big/rat.go:144: \nOn 2012/12/15 00:17:48, remyoudompheng wrote:\n> // After rounding, q*2^-52 * 2^exp is a good approximation of A/B\n\nDone.",
+			"disapproval": false,
+			"date": "2013-01-25 21:09:39.437910",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-01-28 22:54:23.779950",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks correct to me!\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode32\nsrc/pkg/math/big/rat.go:32: // If f is not finite, SetFloat simply returns nil.\ns/simply //\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode34\nsrc/pkg/math/big/rat.go:34: const expMask = (1 << 11) - 1\ndrop ( )\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode36\nsrc/pkg/math/big/rat.go:36: mantissa := bits & ((1 << 52) - 1)\ndrop inner ( )\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode47\nsrc/pkg/math/big/rat.go:47: z.a.SetUint64(mantissa)\nBefore this, I would suggest\n\nfor mantissa&1 == 0 && shift < 0 {\n    mantissa >>= 1\n    shift++\n}\n\nThen things like 1.0 will give 1/1 instead of 2^52/2^52.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode52\nsrc/pkg/math/big/rat.go:52: // REVIEWERS: what's the correct memory discipline here?\nThis is fine but you can also let the Int routines worry about it.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode53\nsrc/pkg/math/big/rat.go:53: z.b.abs = z.b.abs.shl(z.b.abs, uint(shift))\nz.b.Lsh(&z.b, uint(shift))\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode55\nsrc/pkg/math/big/rat.go:55: z.a.abs = z.a.abs.shl(z.a.abs, uint(-shift))\nz.a.Lsh(&z.a, uint(shift))\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode60\nsrc/pkg/math/big/rat.go:60: // isFinite returns whether f represents a finite rational value.\ns/returns/reports/\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode127\nsrc/pkg/math/big/rat.go:127: haveRem := len(r) > 0 // m[0]&1 && !haveRem => remainder is exactly half\nIf you move this up after the mantissa := low64(q) at line 113, then you can change the r = r.add(r, b2) at line 119 to haveRem = true\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode139\nsrc/pkg/math/big/rat.go:139: if mantissa&1 != 0 && haveRem || mantissa&2 != 0 {\nPerhaps you meant\n   if mantissa&1 != 0 && (haveRem || mantissa&2 != 0) {\n\nThe condition you've got triggers for mantissa&1 == 0 && mantissa&2 != 0. Luckily, in that case the ++ only touches the low bit, which is about to be shifted away, so it's actually correct, just probably not what you meant.\n\nIf you track exactness the bug goes away because you have to split the expression anyway:\n\nexact := !haveRem\nif mantissa&1 != 0 {\n    exact = false\n    if haveRem || mantissa&2 != 0 {\n        if mantissa++; mantissa >= 1<<54 {\n            // Complete rollover 11...1 => 100...0, so shift is safe.\n            mantissa >>= 1\n            exp++\n        }\n    }\n}\nmantissa >>= 1\n\nif exp > 1023 {\n    exact = false\n    if neg {\n        f = math.Inf(-1)\n    }\n    f = math.Inf(+1)\n} else {\n    f = math.Ldexp(float64(mantissa), exp-53)\n}\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode140\nsrc/pkg/math/big/rat.go:140: mantissa++ // may carry into exponent\nI know what you mean, but there's no exponent in a mantissa.\n// may create 55-bit number\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode142\nsrc/pkg/math/big/rat.go:142: mantissa >>= 1 // discard extra rounding bit.  53 bits left.\n// discard rounding bit. Mantissa now scaled by 2^53.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode164\nsrc/pkg/math/big/rat.go:164: // Inefficient!\nYou might as well figure this out in quotToFloat. See comment above.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go\nFile src/pkg/math/big/rat_test.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode503\nsrc/pkg/math/big/rat_test.go:503: var inputs = []string{\nfloat64inputs\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode695\nsrc/pkg/math/big/rat_test.go:695: if expected != x {\nx != expected\n\nThe same way you'd write x != nil.\nNot the same way xUnit programmers write 0 != f().\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode696\nsrc/pkg/math/big/rat_test.go:696: t.Errorf(\"string -> Rat -> float64 yielded wrong value; input=%s expected=%g actual=%g error=%g\", input, expected, x, (x-expected)/expected)\nUse Go syntax to describe values; show x first, like in x != expected.\nThe general form is:\n  expression = value, want expected-value\n\nAlso, %b will print a float64 using 1p+4 notation, which is usually helpful:\n\nt.Errorf(\"Rat.SetString(%s).Float64() = %g (%b), want %g (%b); delta=%b\", input, x, x, expected, expected, x-expected)\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode712\nsrc/pkg/math/big/rat_test.go:712: t.Error(\"SetFloat64 returned nil for a finite value\", f)\nt.Errorf(\"Rat.SetFloat64(%g) = nil\", f)\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode716\nsrc/pkg/math/big/rat_test.go:716: if f != f2 {\nf2 != f \nBut really you can do both here:\n\nif f2 != f || exact != true {\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode717\nsrc/pkg/math/big/rat_test.go:717: t.Error(\"float64->Rat->float64 roundtrip was lossy\", f, f2, (f2-f)/f)\nt.Errorf(\"Rat.SetFloat64(%g).Float64() = %g (%b), %v, want %g (%b), %v; delta=%b\", f, f2, f2, exact, f, f, true, f2-f)\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode719\nsrc/pkg/math/big/rat_test.go:719: if !exact {\nCan drop (now handled above)\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode730\nsrc/pkg/math/big/rat_test.go:730: t.Errorf(\"SetFloat64(%g) returned non-nil value: %v\", f, r2)\nRat.SetFloat64(%g) = %v, want nil\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode745\nsrc/pkg/math/big/rat_test.go:745: {\"1.23456788e-1234\", 0.0},\ns/.0//\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode746\nsrc/pkg/math/big/rat_test.go:746: {\"-1.23456788e-1234\", 0.0}, // -0.0, actually\ns/0.0/math.Copysign(0, -1)/\nand then drop the comment\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode747\nsrc/pkg/math/big/rat_test.go:747: {\"1152921504606846975\", float64(1<<60 - 1)},\nThe conversions here should be unnecessary.\n1<<60 - 1\n-(1<<60 -1)\nand so on\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode759\nsrc/pkg/math/big/rat_test.go:759: if s.expected != f {\nif f != s.expected\n\nAlthough here I think you should probably do\n\nif !sameFloat(f, s.expected) || exact != false {\n\nAnd define\n\n// f1==f2 but treats -0, +0 as distinct.\nfunc sameFloat(f1, f2 float64) {\n    return math.Float64bits(f1) == math.Float64bits(f2)\n}\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode760\nsrc/pkg/math/big/rat_test.go:760: t.Errorf(\"Rat.Float64() returned incorrect value; literal=%v value=%b expected=%b delta=%g\", s.rat, f, s.expected, f-s.expected)\nRat.SetString(%s).Float64() = %g (%b), %v, want %g (%b), %v; delta=%b\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode829\nsrc/pkg/math/big/rat_test.go:829: if r.Cmp(rf0) <= 0 || r.Cmp(rf1) >= 0 {\nMaybe you can drop this entirely. The closeness checks will handle this (and arguably give better messages).\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode836\nsrc/pkg/math/big/rat_test.go:836: df0 := new(Rat).Sub(r, rf0) // known > 0\n.Abs(new(Rat)) and drop comment\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode837\nsrc/pkg/math/big/rat_test.go:837: df1 := new(Rat).Sub(rf1, r) // known > 0\nsame\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode839\nsrc/pkg/math/big/rat_test.go:839: t.Errorf(\"%b (approx. of %v) is not as close as previous float %b\", f, r, f0)\n\"Rat(%v).Float64() = %g (%b), but previous float64 %g (%b) is closer\"\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode847\nsrc/pkg/math/big/rat_test.go:847: t.Errorf(\"%b (approx. of %v) should round halfway to previous (even) float %b \", f, r, f0)\n\"Rat(%v).Float64() = %g (%b); halfway should have rounded to %g (%b) instead\"\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode861\nsrc/pkg/math/big/rat_test.go:861: 1 / 3,\n1.0 / 3 maybe\n(1/3 = 0)",
+			"disapproval": false,
+			"date": "2013-01-25 22:23:50.672030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think you should decide whether you want the Float64 method to ever return -0. If so, you should test for it. If not, you should test for its absence. I believe reasonable arguments can be made either way, and as long as you define the answer, I'm happy.\n\nIt is true that +0 and -0 behave mostly the same in floating point arithmetic, but they are not completely identical. For example: http://play.golang.org/p/eb6pInQoyH. And of course they print differently.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode47\nsrc/pkg/math/big/rat.go:47: z.a.SetUint64(mantissa)\nOn 2013/01/28 18:05:46, adonovan wrote:\n> On 2013/01/25 22:23:50, rsc wrote:\n> > Before this, I would suggest\n> > \n> > for mantissa&1 == 0 && shift < 0 {\n> >     mantissa >>= 1\n> >     shift++\n> > }\n> > \n> > Then things like 1.0 will give 1/1 instead of 2^52/2^52.\n> \n> Done.  (I think you had the sense of < and ++ backwards.)\n> \n> It's not clear to me that 52 iterations of this loop is saving us much in the\n> common case of 1.0.  Is there a good Go definition of ntz(uint64) somewhere? \n> Hacker's Delight has four candidates but none is a one-liner, and I don't think\n> it merits an inline implementation.\n\n52 loop iterations is nothing compared to the rest of the stuff going on.  I missed the z.norm at the end, though, so maybe it's not actually interesting. Does this function handle 0 correctly now?",
+			"disapproval": false,
+			"date": "2013-01-28 18:15:07.931500",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nRuss, thanks again for the patient and thorough review during which you effectively wrote the entire change (production code and tests) much better than I was evidently doing.\n\n\nP.S. One discovery I made is that 'apt-get install gnome-genius' gives you a nice infinite-precision calculator: what I wish bc(1) had been.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode32\nsrc/pkg/math/big/rat.go:32: // If f is not finite, SetFloat simply returns nil.\nOn 2013/01/25 22:23:50, rsc wrote:\n> s/simply //\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode34\nsrc/pkg/math/big/rat.go:34: const expMask = (1 << 11) - 1\nOn 2013/01/25 22:23:50, rsc wrote:\n> drop ( )\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode36\nsrc/pkg/math/big/rat.go:36: mantissa := bits & ((1 << 52) - 1)\nOn 2013/01/25 22:23:50, rsc wrote:\n> drop inner ( )\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode47\nsrc/pkg/math/big/rat.go:47: z.a.SetUint64(mantissa)\nOn 2013/01/25 22:23:50, rsc wrote:\n> Before this, I would suggest\n> \n> for mantissa&1 == 0 && shift < 0 {\n>     mantissa >>= 1\n>     shift++\n> }\n> \n> Then things like 1.0 will give 1/1 instead of 2^52/2^52.\n\nDone.  (I think you had the sense of < and ++ backwards.)\n\nIt's not clear to me that 52 iterations of this loop is saving us much in the common case of 1.0.  Is there a good Go definition of ntz(uint64) somewhere?  Hacker's Delight has four candidates but none is a one-liner, and I don't think it merits an inline implementation.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode52\nsrc/pkg/math/big/rat.go:52: // REVIEWERS: what's the correct memory discipline here?\nOn 2013/01/25 22:23:50, rsc wrote:\n> This is fine but you can also let the Int routines worry about it.\n\nRight.  Sorry for the dumb question---by the time of this review iteration I has already discovered the answer.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode53\nsrc/pkg/math/big/rat.go:53: z.b.abs = z.b.abs.shl(z.b.abs, uint(shift))\nOn 2013/01/25 22:23:50, rsc wrote:\n> z.b.Lsh(&z.b, uint(shift))\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode55\nsrc/pkg/math/big/rat.go:55: z.a.abs = z.a.abs.shl(z.a.abs, uint(-shift))\nOn 2013/01/25 22:23:50, rsc wrote:\n> z.a.Lsh(&z.a, uint(shift))\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode60\nsrc/pkg/math/big/rat.go:60: // isFinite returns whether f represents a finite rational value.\nOn 2013/01/25 22:23:50, rsc wrote:\n> s/returns/reports/\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode127\nsrc/pkg/math/big/rat.go:127: haveRem := len(r) > 0 // m[0]&1 && !haveRem => remainder is exactly half\nOn 2013/01/25 22:23:50, rsc wrote:\n> If you move this up after the mantissa := low64(q) at line 113, then you can\n> change the r = r.add(r, b2) at line 119 to haveRem = true\n\nThat's better.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode139\nsrc/pkg/math/big/rat.go:139: if mantissa&1 != 0 && haveRem || mantissa&2 != 0 {\nOn 2013/01/25 22:23:50, rsc wrote:\n> Perhaps you meant\n>    if mantissa&1 != 0 && (haveRem || mantissa&2 != 0) {\n> \n> The condition you've got triggers for mantissa&1 == 0 && mantissa&2 != 0.\n> Luckily, in that case the ++ only touches the low bit, which is about to be\n> shifted away, so it's actually correct, just probably not what you meant.\n\nYou're absolutely right, I misassociated the expression.\n\n\n> If you track exactness the bug goes away because you have to split the\n> expression anyway:\n> \n> exact := !haveRem\n> if mantissa&1 != 0 {\n>     exact = false\n>     if haveRem || mantissa&2 != 0 {\n>         if mantissa++; mantissa >= 1<<54 {\n>             // Complete rollover 11...1 => 100...0, so shift is safe.\n>             mantissa >>= 1\n>             exp++\n>         }\n>     }\n> }\n> mantissa >>= 1\n> \n> if exp > 1023 {\n>     exact = false\n>     if neg {\n>         f = math.Inf(-1)\n>     }\n>     f = math.Inf(+1)\n> } else {\n>     f = math.Ldexp(float64(mantissa), exp-53)\n> }\n> \n\nMuch better; this saves the expensive exactness check.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go\nFile src/pkg/math/big/rat_test.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode503\nsrc/pkg/math/big/rat_test.go:503: var inputs = []string{\nOn 2013/01/25 22:23:50, rsc wrote:\n> float64inputs\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode695\nsrc/pkg/math/big/rat_test.go:695: if expected != x {\nOn 2013/01/25 22:23:50, rsc wrote:\n> x != expected\n> \n> The same way you'd write x != nil.\n> Not the same way xUnit programmers write 0 != f().\n> \n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode696\nsrc/pkg/math/big/rat_test.go:696: t.Errorf(\"string -> Rat -> float64 yielded wrong value; input=%s expected=%g actual=%g error=%g\", input, expected, x, (x-expected)/expected)\nOn 2013/01/25 22:23:50, rsc wrote:\n> Use Go syntax to describe values; show x first, like in x != expected.\n> The general form is:\n>   expression = value, want expected-value\n> \n> Also, %b will print a float64 using 1p+4 notation, which is usually helpful:\n> \n> t.Errorf(\"Rat.SetString(%s).Float64() = %g (%b), want %g (%b); delta=%b\", input,\n> x, x, expected, expected, x-expected)\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode712\nsrc/pkg/math/big/rat_test.go:712: t.Error(\"SetFloat64 returned nil for a finite value\", f)\nOn 2013/01/25 22:23:50, rsc wrote:\n> t.Errorf(\"Rat.SetFloat64(%g) = nil\", f)\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode716\nsrc/pkg/math/big/rat_test.go:716: if f != f2 {\nOn 2013/01/25 22:23:50, rsc wrote:\n> f2 != f \n> But really you can do both here:\n> \n> if f2 != f || exact != true {\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode717\nsrc/pkg/math/big/rat_test.go:717: t.Error(\"float64->Rat->float64 roundtrip was lossy\", f, f2, (f2-f)/f)\nOn 2013/01/25 22:23:50, rsc wrote:\n> t.Errorf(\"Rat.SetFloat64(%g).Float64() = %g (%b), %v, want %g (%b), %v;\n> delta=%b\", f, f2, f2, exact, f, f, true, f2-f)\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode719\nsrc/pkg/math/big/rat_test.go:719: if !exact {\nOn 2013/01/25 22:23:50, rsc wrote:\n> Can drop (now handled above)\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode730\nsrc/pkg/math/big/rat_test.go:730: t.Errorf(\"SetFloat64(%g) returned non-nil value: %v\", f, r2)\nOn 2013/01/25 22:23:50, rsc wrote:\n> Rat.SetFloat64(%g) = %v, want nil\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode745\nsrc/pkg/math/big/rat_test.go:745: {\"1.23456788e-1234\", 0.0},\nOn 2013/01/25 22:23:50, rsc wrote:\n> s/.0//\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode746\nsrc/pkg/math/big/rat_test.go:746: {\"-1.23456788e-1234\", 0.0}, // -0.0, actually\nOn 2013/01/25 22:23:50, rsc wrote:\n> s/0.0/math.Copysign(0, -1)/\n> and then drop the comment\n\n+0.0 and -0.0 are equivalent anyway so this was merely documentation; the test is not comparing bitpatterns or signs.\n\nIn any case I realised that all of these testcases (with the exception of \"1/3\") are all subsumed by the existing float64inputs test as recently augumented.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode747\nsrc/pkg/math/big/rat_test.go:747: {\"1152921504606846975\", float64(1<<60 - 1)},\nOn 2013/01/25 22:23:50, rsc wrote:\n> The conversions here should be unnecessary.\n> 1<<60 - 1\n> -(1<<60 -1)\n> and so on\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode747\nsrc/pkg/math/big/rat_test.go:747: {\"1152921504606846975\", float64(1<<60 - 1)},\nOn 2013/01/25 22:23:50, rsc wrote:\n> The conversions here should be unnecessary.\n> 1<<60 - 1\n> -(1<<60 -1)\n> and so on\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode759\nsrc/pkg/math/big/rat_test.go:759: if s.expected != f {\nOn 2013/01/25 22:23:50, rsc wrote:\n> if f != s.expected\n> \n> Although here I think you should probably do\n> \n> if !sameFloat(f, s.expected) || exact != false {\n> \n> And define\n> \n> // f1==f2 but treats -0, +0 as distinct.\n> func sameFloat(f1, f2 float64) {\n>     return math.Float64bits(f1) == math.Float64bits(f2)\n> }\n\nWe need to make a special exception for Rat.SetString(\"-0\"): we can't expect Rat to retain the sign, but we do want to ensure that very small negative rationals map to -0.0.\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode760\nsrc/pkg/math/big/rat_test.go:760: t.Errorf(\"Rat.Float64() returned incorrect value; literal=%v value=%b expected=%b delta=%g\", s.rat, f, s.expected, f-s.expected)\nOn 2013/01/25 22:23:50, rsc wrote:\n> Rat.SetString(%s).Float64() = %g (%b), %v, want %g (%b), %v; delta=%b\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode829\nsrc/pkg/math/big/rat_test.go:829: if r.Cmp(rf0) <= 0 || r.Cmp(rf1) >= 0 {\nOn 2013/01/25 22:23:50, rsc wrote:\n> Maybe you can drop this entirely. The closeness checks will handle this (and\n> arguably give better messages).\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode836\nsrc/pkg/math/big/rat_test.go:836: df0 := new(Rat).Sub(r, rf0) // known > 0\nOn 2013/01/25 22:23:50, rsc wrote:\n> .Abs(new(Rat)) and drop comment\n\nI think you meant:\n  df0 := new(Rat).Sub(r, rf0)\n  df0.Abs(df0)\n\n(This took me a good while to find.  I find this calling convention endlessly burdensome despite being aware of its motivation.  libgmp suffers from a similar affliction.)\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode837\nsrc/pkg/math/big/rat_test.go:837: df1 := new(Rat).Sub(rf1, r) // known > 0\nOn 2013/01/25 22:23:50, rsc wrote:\n> same\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode839\nsrc/pkg/math/big/rat_test.go:839: t.Errorf(\"%b (approx. of %v) is not as close as previous float %b\", f, r, f0)\nOn 2013/01/25 22:23:50, rsc wrote:\n> \"Rat(%v).Float64() = %g (%b), but previous float64 %g (%b) is closer\"\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode847\nsrc/pkg/math/big/rat_test.go:847: t.Errorf(\"%b (approx. of %v) should round halfway to previous (even) float %b \", f, r, f0)\nOn 2013/01/25 22:23:50, rsc wrote:\n> \"Rat(%v).Float64() = %g (%b); halfway should have rounded to %g (%b) instead\"\n\nDone.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat_test.go#newcode861\nsrc/pkg/math/big/rat_test.go:861: 1 / 3,\nOn 2013/01/25 22:23:50, rsc wrote:\n> 1.0 / 3 maybe\n> (1/3 = 0)\n\nOuch.  That is quite a surprise.",
+			"disapproval": false,
+			"date": "2013-01-28 18:05:46.576890",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think Float64() should return -0 in the case of small but nonzero negative numbers, as indeed it does.  All that was lacking was a test case, which I thought was already present but was not (\"-1e-350\").  Added now.\n\n \n> It is true that +0 and -0 behave mostly the same in floating point arithmetic,\n> but they are not completely identical.\n\nYes, no argument there.\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go\nFile src/pkg/math/big/rat.go (right):\n\nhttps://codereview.appspot.com/6930059/diff/18001/src/pkg/math/big/rat.go#newcode47\nsrc/pkg/math/big/rat.go:47: z.a.SetUint64(mantissa)\nOn 2013/01/28 18:15:08, rsc wrote:\n> On 2013/01/28 18:05:46, adonovan wrote:\n> > On 2013/01/25 22:23:50, rsc wrote:\n> > > Before this, I would suggest\n> > > \n> > > for mantissa&1 == 0 && shift < 0 {\n> > >     mantissa >>= 1\n> > >     shift++\n> > > }\n> > > \n> > > Then things like 1.0 will give 1/1 instead of 2^52/2^52.\n> > \n> > Done.  (I think you had the sense of < and ++ backwards.)\n> > \n> > It's not clear to me that 52 iterations of this loop is saving us much in the\n> > common case of 1.0.  Is there a good Go definition of ntz(uint64) somewhere? \n> > Hacker's Delight has four candidates but none is a one-liner, and I don't\n> think\n> > it merits an inline implementation.\n> \n> 52 loop iterations is nothing compared to the rest of the stuff going on.  I\n> missed the z.norm at the end, though, so maybe it's not actually interesting.\n> Does this function handle 0 correctly now?\n\nYes.",
+			"disapproval": false,
+			"date": "2013-01-28 18:54:02.351050",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=ca5e5de48173 ***\n\nmath/big: add Rat.{,Set}Float64 methods for IEEE 754 conversions.\n\nAdded tests, using input data from strconv.ParseFloat.\nThanks to rsc for most of the test code.\n\nmath/big could use some good package-level documentation.\n\nR=remyoudompheng, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/6930059",
+			"disapproval": false,
+			"date": "2013-01-28 23:00:27.993750",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/28 18:15:07, rsc wrote:\n> I think you should decide whether you want the Float64 method to ever return -0.\n> If so, you should test for it.\n\nI think it should return -0 in the case of small but nonzero negative numbers, as indeed it does.  All that was lacking was a test case, which I thought was already present but was not. (\"-1e-350\")\n\nDone.\n\n \n> It is true that +0 and -0 behave mostly the same in floating point arithmetic,\n> but they are not completely identical.\n\nYes, no argument there.",
+			"disapproval": false,
+			"date": "2013-01-28 18:52:00.170980",
+			"approval": false
+		}
+	],
+	"owner_email": "adonovan@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "adonovan",
+	"subject": "code review 6930059: math/big: add Rat.{,Set}Float64 methods for IEEE 754 co...",
+	"created": "2012-12-13 01:17:26.875450",
+	"patchsets": [
+		1,
+		2001,
+		11001,
+		18001,
+		24001,
+		31001,
+		19003,
+		35001,
+		19004,
+		36003
+	],
+	"modified": "2013-01-28 23:00:29.165970",
+	"closed": true,
+	"issue": 6930059
+}

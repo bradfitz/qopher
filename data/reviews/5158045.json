@@ -1,0 +1,114 @@
+{
+	"description": "runtime: fix map memory leak\n\nThe map implementation was using the C idiom of using\na pointer just past the end of its table as a limit pointer.\nUnfortunately, the garbage collector sees that pointer as\npointing at the block adjacent to the map table, pinning\nin memory a block that would otherwise be freed.\n\nFix by making limit pointer point at last valid entry, not\njust past it.\n\nReviewed by Mike Burrows.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"lvd@google.com",
+		"r@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Mike has signed off on the C code.\nLuuk, can you please look at the dwarf/gdb changes?\n\nThanks.\nRuss\n",
+			"disapproval": false,
+			"date": "2011-10-01 16:27:03.378490",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "37,000 feet above Nevada.\n\n-rob\n",
+			"disapproval": false,
+			"date": "2011-10-01 16:54:57.210186",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-01 16:25:17.483685",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I'm not Luuk but Python changes LGTM.  Well within my Python skills.\n\nOn Sat, Oct 1, 2011 at 9:27 AM, Russ Cox <rsc@golang.org> wrote:\n\n> Mike has signed off on the C code.\n> Luuk, can you please look at the dwarf/gdb changes?\n>\n> Thanks.\n> Russ\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-01 16:29:07.299418",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Fun.  How'd you come across this?\n\nOn Sat, Oct 1, 2011 at 9:25 AM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> runtime: fix map memory leak\n>\n> The map implementation was using the C idiom of using\n> a pointer just past the end of its table as a limit pointer.\n> Unfortunately, the garbage collector sees that pointer as\n> pointing at the block adjacent to the map table, pinning\n> in memory a block that would otherwise be freed.\n>\n> Fix by making limit pointer point at last valid entry, not\n> just past it.\n>\n> Reviewed by Mike Burrows.\n>\n> Please review this at http://codereview.appspot.com/**5158045/<http://codereview.appspot.com/5158045/>\n>\n> Affected files:\n>  M src/cmd/ld/dwarf.c\n>  M src/pkg/runtime/hashmap.c\n>  M src/pkg/runtime/hashmap.h\n>  M src/pkg/runtime/runtime-gdb.py\n>\n>\n> Index: src/cmd/ld/dwarf.c\n> ==============================**==============================**=======\n> --- a/src/cmd/ld/dwarf.c\n> +++ b/src/cmd/ld/dwarf.c\n> @@ -1356,7 +1356,7 @@\n>                                getattr(keytype, DW_AT_name)->data,\n>                                getattr(valtype, DW_AT_name)->data));\n>                copychildren(dwhs, hash_subtable);\n> -               substitutetype(dwhs, \"end\", defptrto(dwhe));\n> +               substitutetype(dwhs, \"last\", defptrto(dwhe));\n>                substitutetype(dwhs, \"entry\", dwhe);  // todo: []hash_entry\n> with dynamic size\n>                newattr(dwhs, DW_AT_byte_size, DW_CLS_CONSTANT,\n>                        getattr(hash_subtable, DW_AT_byte_size)->value,\n> nil);\n> Index: src/pkg/runtime/hashmap.c\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/hashmap.c\n> +++ b/src/pkg/runtime/hashmap.c\n> @@ -54,7 +54,7 @@\n>        uint8 datasize;      /* bytes of client data in an entry */\n>        uint8 max_probes;    /* max number of probes when searching */\n>        int16 limit_bytes;         /* max_probes * (datasize+sizeof\n> (hash_hash_t)) */\n> -       struct hash_entry *end;      /* points just past end of entry[] */\n> +       struct hash_entry *last;      /* points to last element of entry[]\n> */\n>        struct hash_entry entry[1];  /* 2**power+max_probes-1 elements of\n> elemsize bytes */\n>  };\n>\n> @@ -101,7 +101,7 @@\n>        st->datasize = h->datasize;\n>        st->max_probes = max_probes;\n>        st->limit_bytes = limit_bytes;\n> -       st->end = HASH_OFFSET (st->entry, bytes);\n> +       st->last = HASH_OFFSET (st->entry, bytes) - 1;\n>        memset (st->entry, HASH_NIL_MEMSET, bytes);\n>        return (st);\n>  }\n> @@ -160,7 +160,7 @@\n>  {\n>        int32 elemsize = st->datasize + offsetof (struct hash_entry,\n> data[0]);\n>        struct hash_entry *src_e = HASH_OFFSET (dst_e, n * elemsize);\n> -       struct hash_entry *end_e = st->end;\n> +       struct hash_entry *last_e = st->last;\n>        int32 shift = HASH_BITS - (st->power + st->used);\n>        int32 index_mask = (((hash_hash_t)1) << st->power) - 1;\n>        int32 dst_i = (((byte *) dst_e) - ((byte *) st->entry)) / elemsize;\n> @@ -170,10 +170,10 @@\n>        int32 bytes;\n>\n>        while (dst_e != src_e) {\n> -               if (src_e != end_e) {\n> +               if (src_e <= last_e) {\n>                        struct hash_entry *cp_e = src_e;\n>                        int32 save_dst_i = dst_i;\n> -                       while (cp_e != end_e && (hash = cp_e->hash) !=\n> HASH_NIL &&\n> +                       while (cp_e <= last_e && (hash = cp_e->hash) !=\n> HASH_NIL &&\n>                             ((hash >> shift) & index_mask) <= dst_i) {\n>                                cp_e = HASH_OFFSET (cp_e, elemsize);\n>                                dst_i++;\n> @@ -183,7 +183,7 @@\n>                        dst_e = HASH_OFFSET (dst_e, bytes);\n>                        src_e = cp_e;\n>                        src_i += dst_i - save_dst_i;\n> -                       if (src_e != end_e && (hash = src_e->hash) !=\n> HASH_NIL) {\n> +                       if (src_e <= last_e && (hash = src_e->hash) !=\n> HASH_NIL) {\n>                                skip = ((hash >> shift) & index_mask) -\n> dst_i;\n>                        } else {\n>                                skip = src_i - dst_i;\n> @@ -224,7 +224,7 @@\n>        }\n>\n>        de = e;\n> -       while (e != st->end &&\n> +       while (e <= st->last &&\n>            (e_hash = e->hash) != HASH_NIL &&\n>            (e_hash & HASH_MASK) != HASH_SUBHASH) {\n>                struct hash_entry *target_e = HASH_OFFSET (st->entry,\n> ((e_hash >> shift) & index_mask) * elemsize);\n> @@ -235,14 +235,14 @@\n>                        de = target_e;\n>                }\n>                if ((hash & prefix_mask) == current ||\n> -                  (ne != st->end && (e_hash = ne->hash) != HASH_NIL &&\n> +                  (ne <= st->last && (e_hash = ne->hash) != HASH_NIL &&\n>                   (e_hash & prefix_mask) == current)) {\n>                        struct hash_subtable *new_st = hash_subtable_new (h,\n> 1, HASH_USED (new_flags));\n>                        int32 rc = hash_insert_internal (&new_st, new_flags,\n> e->hash, h, e->data, &dummy_result);\n>                        assert (rc == 0);\n>                        memcpy(dummy_result, e->data, h->datasize);\n>                        e = ne;\n> -                       while (e != st->end && (e_hash = e->hash) !=\n> HASH_NIL && (e_hash & prefix_mask) == current) {\n> +                       while (e <= st->last && (e_hash = e->hash) !=\n> HASH_NIL && (e_hash & prefix_mask) == current) {\n>                                assert ((e_hash & HASH_MASK) !=\n> HASH_SUBHASH);\n>                                rc = hash_insert_internal (&new_st,\n> new_flags, e_hash, h, e->data, &dummy_result);\n>                                assert (rc == 0);\n> @@ -271,13 +271,13 @@\n>        struct hash_subtable *old_st = *pst;\n>        int32 elemsize = h->datasize + offsetof (struct hash_entry,\n> data[0]);\n>        *pst = hash_subtable_new (h, old_st->power + 1, HASH_USED (flags));\n> -       struct hash_entry *end_e = old_st->end;\n> +       struct hash_entry *last_e = old_st->last;\n>        struct hash_entry *e;\n>        void *dummy_result;\n>        int32 used = 0;\n>\n>        flags |= HASH_REHASH;\n> -       for (e = old_st->entry; e != end_e; e = HASH_OFFSET (e, elemsize))\n> {\n> +       for (e = old_st->entry; e <= last_e; e = HASH_OFFSET (e, elemsize))\n> {\n>                hash_hash_t hash = e->hash;\n>                if (hash != HASH_NIL) {\n>                        int32 rc = hash_insert_internal (pst, flags,\n> e->hash, h, e->data, &dummy_result);\n> @@ -428,13 +428,13 @@\n>                        ins_e_hash = 0;\n>                        /* move ins_e to point at the end of the contiguous\n> block, but\n>                           stop if any element can't be moved by one up */\n> -                       while (ins_e != st->end && (ins_e_hash =\n> ins_e->hash) != HASH_NIL &&\n> +                       while (ins_e <= st->last && (ins_e_hash =\n> ins_e->hash) != HASH_NIL &&\n>                               ins_i + 1 - ((ins_e_hash >> shift) &\n> index_mask) < st->max_probes &&\n>                               (ins_e_hash & HASH_MASK) != HASH_SUBHASH) {\n>                                ins_e = HASH_OFFSET (ins_e, elemsize);\n>                                ins_i++;\n>                        }\n> -                       if (e == end_e || ins_e == st->end || ins_e_hash !=\n> HASH_NIL) {\n> +                       if (e == end_e || ins_e > st->last || ins_e_hash !=\n> HASH_NIL) {\n>                                e = end_e;    /* can't insert; must grow or\n> convert to subtable */\n>                        } else {              /* make space for element */\n>                                memmove (HASH_OFFSET (e, elemsize), e,\n> ((byte *) ins_e) - (byte *) e);\n> @@ -477,17 +477,17 @@\n>        struct hash_entry *e;\n>        hash_hash_t e_hash;\n>        struct hash_iter_sub *sub = &it->subtable_state[it->i];\n> -       struct hash_entry *end;\n> +       struct hash_entry *last;\n>\n>        for (;;) {\n>                int32 shift = HASH_BITS - (st->power + used);\n>                int32 index_mask = (1 << st->power) - 1;\n>                int32 i = (last_hash >> shift) & index_mask;\n>\n> -               end = st->end;\n> +               last = st->last;\n>                e = HASH_OFFSET (st->entry, i * elemsize);\n>                sub->start = st->entry;\n> -               sub->end = end;\n> +               sub->last = last;\n>\n>                if ((e->hash & HASH_MASK) != HASH_SUBHASH) {\n>                        break;\n> @@ -497,7 +497,7 @@\n>                used += st->power;\n>                st = *(struct hash_subtable **)e->data;\n>        }\n> -       while (e != end && ((e_hash = e->hash) == HASH_NIL || e_hash <=\n> last_hash)) {\n> +       while (e <= last && ((e_hash = e->hash) == HASH_NIL || e_hash <=\n> last_hash)) {\n>                e = HASH_OFFSET (e, elemsize);\n>        }\n>        sub->e = e;\n> @@ -509,7 +509,7 @@\n>        int32 elemsize = it->elemsize;\n>        struct hash_iter_sub *sub = &it->subtable_state[it->i];\n>        struct hash_entry *e = sub->e;\n> -       struct hash_entry *end = sub->end;\n> +       struct hash_entry *last = sub->last;\n>        hash_hash_t e_hash = 0;\n>\n>        if (it->changes != it->h->changes) {    /* hash table's structure\n> changed; recompute */\n> @@ -518,7 +518,7 @@\n>                iter_restart (it, it->h->st, 0);\n>                sub = &it->subtable_state[it->i];\n>                e = sub->e;\n> -               end = sub->end;\n> +               last = sub->last;\n>        }\n>        if (e != sub->start && it->last_hash != HASH_OFFSET (e,\n> -elemsize)->hash) {\n>                struct hash_entry *start = HASH_OFFSET (e, -(elemsize *\n> it->h->max_probes));\n> @@ -531,16 +531,16 @@\n>                        e = pe;\n>                        pe = HASH_OFFSET (pe, -elemsize);\n>                }\n> -               while (e != end && ((e_hash = e->hash) == HASH_NIL ||\n> e_hash <= last_hash)) {\n> +               while (e <= last && ((e_hash = e->hash) == HASH_NIL ||\n> e_hash <= last_hash)) {\n>                        e = HASH_OFFSET (e, elemsize);\n>                }\n>        }\n>\n>        for (;;) {\n> -               while (e != end && (e_hash = e->hash) == HASH_NIL) {\n> +               while (e <= last && (e_hash = e->hash) == HASH_NIL) {\n>                        e = HASH_OFFSET (e, elemsize);\n>                }\n> -               if (e == end) {\n> +               if (e > last) {\n>                        if (it->i == 0) {\n>                                it->last_hash = HASH_OFFSET (e,\n> -elemsize)->hash;\n>                                sub->e = e;\n> @@ -549,7 +549,7 @@\n>                                it->i--;\n>                                sub = &it->subtable_state[it->i];\n>                                e = sub->e;\n> -                               end = sub->end;\n> +                               last = sub->last;\n>                        }\n>                } else if ((e_hash & HASH_MASK) != HASH_SUBHASH) {\n>                        it->last_hash = e->hash;\n> @@ -565,7 +565,7 @@\n>                        sub = &it->subtable_state[it->i];\n>                        sub->e = e = st->entry;\n>                        sub->start = st->entry;\n> -                       sub->end = end = st->end;\n> +                       sub->last = last = st->last;\n>                }\n>        }\n>  }\n> @@ -580,7 +580,7 @@\n>        it->last_hash = 0;\n>        it->subtable_state[0].e = h->st->entry;\n>        it->subtable_state[0].start = h->st->entry;\n> -       it->subtable_state[0].end = h->st->end;\n> +       it->subtable_state[0].last = h->st->last;\n>  }\n>\n>  static void\n> @@ -588,11 +588,11 @@\n>  {\n>        int32 elemsize = st->datasize + offsetof (struct hash_entry,\n> data[0]);\n>        struct hash_entry *e = st->entry;\n> -       struct hash_entry *end = st->end;\n> -       int32 lslots = (((byte *) end) - (byte *) e) / elemsize;\n> +       struct hash_entry *last = st->last;\n> +       int32 lslots = (((byte *) (last+1)) - (byte *) e) / elemsize;\n>        int32 lused = 0;\n>\n> -       while (e != end) {\n> +       while (e <= last) {\n>                hash_hash_t hash = e->hash;\n>                if ((hash & HASH_MASK) == HASH_SUBHASH) {\n>                        clean_st (*(struct hash_subtable **)e->data, slots,\n> used);\n> @@ -627,7 +627,7 @@\n>        int32 shift = HASH_BITS - (used + st->power);\n>        int32 i = 0;\n>\n> -       while (e != st->end) {\n> +       while (e <= st->last) {\n>                int32 index = ((e->hash >> (shift - 1)) >> 1) & ((1 <<\n> st->power) - 1);\n>                if ((e->hash & HASH_MASK) == HASH_SUBHASH) {\n>                          (*data_visit) (arg, level, e->data);\n> Index: src/pkg/runtime/hashmap.h\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/hashmap.h\n> +++ b/src/pkg/runtime/hashmap.h\n> @@ -87,7 +87,7 @@\n>        struct hash_iter_sub {\n>                struct hash_entry *e;           /* pointer into subtable */\n>                struct hash_entry *start;       /* start of subtable */\n> -               struct hash_entry *end;         /* end of subtable */\n> +               struct hash_entry *last;                /* last entry in\n> subtable */\n>        } subtable_state[4];    /* Should be large enough unless the hashing\n> is\n>                                   so bad that many distinct data values\n> hash\n>                                   to the same hash value.  */\n> Index: src/pkg/runtime/runtime-gdb.py\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/runtime-gdb.**py\n> +++ b/src/pkg/runtime/runtime-gdb.**py\n> @@ -91,8 +91,8 @@\n>\n>        def traverse_hash(self, stab):\n>                ptr = stab['entry'].address\n> -               end = stab['end']\n> -               while ptr < end:\n> +               last = stab['last']\n> +               while ptr <= last:\n>                        v = ptr.dereference()\n>                        ptr = ptr + 1\n>                        if v['hash'] == 0: continue\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-01 16:27:22.683054",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Sat, Oct 1, 2011 at 09:27, Russ Cox <rsc@golang.org> wrote:\n\n> Mike has signed off on the C code.\n> Luuk, can you please look at the dwarf/gdb changes?\n>\n\nYes, that LGTM!\n\n\n>\n> Thanks.\n> Russ\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-01 16:29:52.899736",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Sat, Oct 1, 2011 at 12:27, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n\n> Fun.  How'd you come across this?\n\n\nTracking down a real leak.\nI went through a trace of every pointer the garbage\ncollector considered while making its incorrect decision.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-10-01 16:30:08.334127",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"lvd@google.com",
+				"r@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=aaf8ddb0c780 ***\n\nruntime: fix map memory leak\n\nThe map implementation was using the C idiom of using\na pointer just past the end of its table as a limit pointer.\nUnfortunately, the garbage collector sees that pointer as\npointing at the block adjacent to the map table, pinning\nin memory a block that would otherwise be freed.\n\nFix by making limit pointer point at last valid entry, not\njust past it.\n\nReviewed by Mike Burrows.\n\nR=golang-dev, bradfitz, lvd, r\nCC=golang-dev\nhttp://codereview.appspot.com/5158045",
+			"disapproval": false,
+			"date": "2011-10-01 17:01:00.082173",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5158045: runtime: fix map memory leak",
+	"created": "2011-09-30 19:04:07.540232",
+	"patchsets": [
+		1,
+		1001,
+		3005,
+		8001
+	],
+	"modified": "2011-10-01 17:01:00.942965",
+	"closed": true,
+	"issue": 5158045
+}

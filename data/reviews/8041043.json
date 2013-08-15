@@ -1,0 +1,162 @@
+{
+	"description": "cmd/gc: fix race instrumentation of append and type switches.\n\nThe remaining issues are about runtime and sync package\ninstrumentation.\n\nUpdate issue 4228",
+	"cc": [
+		"dvyukov@google.com",
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-03-26 23:22:32.307100",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Happy race detecting!",
+			"disapproval": false,
+			"date": "2013-03-26 23:22:56.588880",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks!\r\n\r\nOn Tue, Mar 26, 2013 at 4:22 PM, <remyoudompheng@gmail.com> wrote:\r\n\r\n> Happy race detecting!\r\n>\r\n> https://codereview.appspot.**com/8041043/<https://codereview.appspot.com/8041043/>\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-26 23:23:55.801420",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "There is still one known compiler issue:\nRaceFailingArrayCopy                     FAILED\n\n// Not implemented.\nfunc TestRaceFailingArrayCopy(t *testing.T) {\n\tch := make(chan bool, 1)\n\tvar a [5]int\n\tgo func() {\n\t\ta[3] = 1\n\t\tch <- true\n\t}()\n\ta = [5]int{1, 2, 3, 4, 5}\n\t<-ch\n}\n\nI see that the compiler instruments array assignment, but only the array start address: racewrite(&a)\nI think we need to do similar to TSTRUCT instrumentation thing -- call callinstr() for all array elements (that in turn can be TSTRUCT and so on).\n\nI can imagine such race actually happens in real life for:\n\ntype X struct {\n  ...\n  errs [2]error\n  // or\n  chans [2]chan Y\n  ...\n}\n\nPlease add a TODO to callinstr() for this.",
+			"disapproval": false,
+			"date": "2013-03-27 06:29:33.723060",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c\nFile src/cmd/gc/racewalk.c (right):\n\nhttps://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c#newcode517\nsrc/cmd/gc/racewalk.c:517: if(n->op == OINDEX && isfixedarray(n->type)) {\nWhy have you added this? How does slice indexing look in the tree?\n\nhttps://codereview.appspot.com/8041043/diff/7001/src/pkg/runtime/race/testdata/slice_test.go\nFile src/pkg/runtime/race/testdata/slice_test.go (right):\n\nhttps://codereview.appspot.com/8041043/diff/7001/src/pkg/runtime/race/testdata/slice_test.go#newcode341\nsrc/pkg/runtime/race/testdata/slice_test.go:341: func TestRaceSliceAppend(t *testing.T) {\nI do not understand how the change fixes this.\nYou've only moved OAPPEND into \"can not happen\" section...\n... on the second thought, is it because of \"b->type->etype == TARRAY\" -> \"b->op == OINDEX\"?",
+			"disapproval": false,
+			"date": "2013-03-27 06:42:45.713370",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Added the TODO for arrays.\nDo you agree with my interpretation of basenod? If so, I would add a small comment explaining what this function does/should do.\n\nhttps://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c\nFile src/cmd/gc/racewalk.c (right):\n\nhttps://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c#newcode475\nsrc/cmd/gc/racewalk.c:475: if(isartificial(b))\nThe issue with APPEND is not that it is not instrumented: append is lowered to:\n\nif cap(x) <= len(x) {\n    autotmp = growslice(1, len(s)+1))\n}\nautotmp[len(s)] = newvalue\ns = autotmp\n\nHowever, if basenod(autotmp[i]) == autotmp, we think that the value is artificial and forget to instrument it.\n\nhttps://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c#newcode517\nsrc/cmd/gc/racewalk.c:517: if(n->op == OINDEX && isfixedarray(n->type)) {\nOn 2013/03/27 06:42:45, dvyukov wrote:\n> Why have you added this? How does slice indexing look in the tree?\n\nI might have misunderstood what basenod was meant to do, but I interpret it as \"find the simplest child node of the tree that points to the same memory block\".\n\nhttps://codereview.appspot.com/8041043/diff/7001/src/pkg/runtime/race/testdata/slice_test.go\nFile src/pkg/runtime/race/testdata/slice_test.go (right):\n\nhttps://codereview.appspot.com/8041043/diff/7001/src/pkg/runtime/race/testdata/slice_test.go#newcode341\nsrc/pkg/runtime/race/testdata/slice_test.go:341: func TestRaceSliceAppend(t *testing.T) {\nOn 2013/03/27 06:42:45, dvyukov wrote:\n> I do not understand how the change fixes this.\n> You've only moved OAPPEND into \"can not happen\" section...\n> ... on the second thought, is it because of \"b->type->etype == TARRAY\" -> \"b->op\n> == OINDEX\"?\n\nAs said in my other comments:\n * OAPPEND is lowered so it is not the issue, it can not happen after walk\n * my understanding of basenod is that it should not return \"s\" when given \"s[i]\" and s is a slice.\n * based on this interpretation, we have to instrument whenever b->op is an indirection: IND, DOTPTR, INDEX of a slice. basenod cannot return an index in an array because it reduces it to the array itself.",
+			"disapproval": false,
+			"date": "2013-03-27 06:59:00.327140",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c\nFile src/cmd/gc/racewalk.c (right):\n\nhttps://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c#newcode475\nsrc/cmd/gc/racewalk.c:475: if(isartificial(b))\nOn 2013/03/27 06:59:00, remyoudompheng wrote:\n> The issue with APPEND is not that it is not instrumented: append is lowered to:\n> \n> if cap(x) <= len(x) {\n>     autotmp = growslice(1, len(s)+1))\n> }\n> autotmp[len(s)] = newvalue\n> s = autotmp\n> \n> However, if basenod(autotmp[i]) == autotmp, we think that the value is\n> artificial and forget to instrument it.\n\nAh, I see.",
+			"disapproval": false,
+			"date": "2013-03-27 07:30:40.028580",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn 2013/03/27 06:59:00, remyoudompheng wrote:\n> Added the TODO for arrays.\n> Do you agree with my interpretation of basenod? If so, I would add a small\n> comment explaining what this function does/should do.\n\nAgree.\nThe basenod() is merely to implement the isartificial() check.\nYeah, I think we need to always treat slices as non-artificial (at least in absence of more complex analysis).\n\n\n> https://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c\n> File src/cmd/gc/racewalk.c (right):\n> \n> https://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c#newcode475\n> src/cmd/gc/racewalk.c:475: if(isartificial(b))\n> The issue with APPEND is not that it is not instrumented: append is lowered to:\n> \n> if cap(x) <= len(x) {\n>     autotmp = growslice(1, len(s)+1))\n> }\n> autotmp[len(s)] = newvalue\n> s = autotmp\n> \n> However, if basenod(autotmp[i]) == autotmp, we think that the value is\n> artificial and forget to instrument it.\n> \n> https://codereview.appspot.com/8041043/diff/7001/src/cmd/gc/racewalk.c#newcode517\n> src/cmd/gc/racewalk.c:517: if(n->op == OINDEX && isfixedarray(n->type)) {\n> On 2013/03/27 06:42:45, dvyukov wrote:\n> > Why have you added this? How does slice indexing look in the tree?\n> \n> I might have misunderstood what basenod was meant to do, but I interpret it as\n> \"find the simplest child node of the tree that points to the same memory block\".\n> \n> https://codereview.appspot.com/8041043/diff/7001/src/pkg/runtime/race/testdata/slice_test.go\n> File src/pkg/runtime/race/testdata/slice_test.go (right):\n> \n> https://codereview.appspot.com/8041043/diff/7001/src/pkg/runtime/race/testdata/slice_test.go#newcode341\n> src/pkg/runtime/race/testdata/slice_test.go:341: func TestRaceSliceAppend(t\n> *testing.T) {\n> On 2013/03/27 06:42:45, dvyukov wrote:\n> > I do not understand how the change fixes this.\n> > You've only moved OAPPEND into \"can not happen\" section...\n> > ... on the second thought, is it because of \"b->type->etype == TARRAY\" ->\n> \"b->op\n> > == OINDEX\"?\n> \n> As said in my other comments:\n>  * OAPPEND is lowered so it is not the issue, it can not happen after walk\n>  * my understanding of basenod is that it should not return \"s\" when given\n> \"s[i]\" and s is a slice.\n>  * based on this interpretation, we have to instrument whenever b->op is an\n> indirection: IND, DOTPTR, INDEX of a slice. basenod cannot return an index in an\n> array because it reduces it to the array itself.\n\nOK, I see.",
+			"disapproval": false,
+			"date": "2013-03-27 07:32:41.822140",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=305436090b7d ***\n\ncmd/gc: fix race instrumentation of append and type switches.\n\nThe remaining issues are about runtime and sync package\ninstrumentation.\n\nUpdate issue 4228\n\nR=dvyukov, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/8041043",
+			"disapproval": false,
+			"date": "2013-03-27 19:34:23.031750",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8041043/diff/21001/src/pkg/runtime/race/testdata/mop_test.go\nFile src/pkg/runtime/race/testdata/mop_test.go (right):\n\nhttps://codereview.appspot.com/8041043/diff/21001/src/pkg/runtime/race/testdata/mop_test.go#newcode1480\nsrc/pkg/runtime/race/testdata/mop_test.go:1480: func TestRaceAppendSliceStruct(t *testing.T) {\noops, this went it involuntarily",
+			"disapproval": false,
+			"date": "2013-03-27 19:52:09.694420",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 8041043: cmd/gc: fix race instrumentation of append and type swi...",
+	"created": "2013-03-26 23:20:31.476410",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		7001,
+		15001,
+		21001
+	],
+	"modified": "2013-03-27 19:52:09.880820",
+	"closed": true,
+	"issue": 8041043
+}

@@ -1,0 +1,191 @@
+{
+	"description": "runtime: duplicate code for runtime.nanotime to avoid stack overflow in vDSO clock_gettime\nFixes issue 4402.",
+	"cc": [
+		"remyoudompheng@gmail.com",
+		"shivakumar.gn@gmail.com",
+		"random0x00@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It fixed the issue for me on ArchLinux but I'd like confirmation from the other people who had problems. Notably shivakumar.gn who observed it on CentOS.",
+			"disapproval": false,
+			"date": "2012-11-25 20:47:00.214610",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "gentle ping.",
+			"disapproval": false,
+			"date": "2012-11-25 20:39:47.957510",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 4:50 AM, <remyoudompheng@gmail.com> wrote:\r\n\r\n> Do you think it would be possible to define:\r\n>\r\n> TEXT runtime\u00b7vdso_gettimeofday(SB), 7, $somevalue\r\n>\r\nwe can use this approach if we can determine a suitable `somevalue'.\r\nhowever i can't think of a reliable (future proof) way get that value.\r\n\r\n>     MOVQ runtime\u00b7__vdso_gettimeofday_**sym(SB), AX\r\n>\r\nalso note that you will need to adjust SP here, as the linker will allocate\r\nsomevalue byte of stack for you.\r\n\r\n>     JMP AX\r\n>\r\n> so that the stack check in the linker is effective? $somevalue should be\r\n> set to the appropriate value and it would avoid future problems, WDYT?\r\n>\r\nand the problem with this approach is:\r\nthe linker's check of non-split stack is static, but the binary might run on\r\nany kernel version, and the suitable value for `somevalue' might be larger\r\nthan the one used to compile the binary, and the binary might still fail\r\non that kernel.\r\n\r\nas I pointed out earlier in the issue tracker, i still think this is a\r\nkernel bug,\r\nas vDSO version of \"syscall\" relies on enough space (but we don't know\r\nthe actual requirement! it could be arbitrarily large [for example, maybe\r\na buggy gcc is used to compile the vDSO code]) available on user space\r\nstack.\r\n\r\nall we can do is to use as little stack space as possible in our code (only\r\n16-byte is actually used), and hope the kernel won't use more than 100\r\nbytes of stack.\r\n",
+			"disapproval": false,
+			"date": "2012-11-25 21:28:04.729060",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"shivakumar.gn@gmail.com",
+				"random0x00@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM but please add the comments\n\nThis is awful.\n\nhttps://codereview.appspot.com/6842063/diff/11002/src/pkg/runtime/sys_linux_amd64.s\nFile src/pkg/runtime/sys_linux_amd64.s (right):\n\nhttps://codereview.appspot.com/6842063/diff/11002/src/pkg/runtime/sys_linux_amd64.s#newcode105\nsrc/pkg/runtime/sys_linux_amd64.s:105: MOVQ\truntime\u00b7__vdso_clock_gettime_sym(SB), AX\n// Be careful. We're calling a function with gcc calling convention here.\n// We're guaranteed 128 bytes on entry, and we've taken 16, and the\n// call uses another 8.\n// That leaves 104 for the gettime code to use. Hope that's enough!\n\nhttps://codereview.appspot.com/6842063/diff/11002/src/pkg/runtime/sys_linux_amd64.s#newcode129\nsrc/pkg/runtime/sys_linux_amd64.s:129: MOVQ\truntime\u00b7__vdso_clock_gettime_sym(SB), AX\n// Duplicate time.now here to avoid using up precious stack space.\n// See comment above in time.now.",
+			"disapproval": false,
+			"date": "2012-11-26 17:19:42.111010",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\nOn 2012/11/18 09:15:16, remyoudompheng wrote:\nhttp://codereview.appspot.com/6842063/diff/1002/src/pkg/runtime/sys_linux_amd64.s#newcode150\n> src/pkg/runtime/sys_linux_amd64.s:150: IMULQ\t$1000, DX\n> the exit_nt looks a bit hard to read to me, why not simply\n> insert the IMULQ+ADDQ here ?\nI reverted to the patch set 2.",
+			"disapproval": false,
+			"date": "2012-11-18 09:20:19.655720",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"shivakumar.gn@gmail.com",
+				"random0x00@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/25 20:47:00, remyoudompheng wrote:\n> It fixed the issue for me on ArchLinux but I'd like confirmation from the other\n> people who had problems. Notably shivakumar.gn who observed it on CentOS.\n+CC gns, random0x00.\n\nI've updated my kernel to 3.6.6, however I still can't reproduce the problem.",
+			"disapproval": false,
+			"date": "2012-11-25 21:15:55.739420",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-11-18 09:09:26.031460",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6842063/diff/1002/src/pkg/runtime/sys_linux_amd64.s\nFile src/pkg/runtime/sys_linux_amd64.s (right):\n\nhttp://codereview.appspot.com/6842063/diff/1002/src/pkg/runtime/sys_linux_amd64.s#newcode150\nsrc/pkg/runtime/sys_linux_amd64.s:150: IMULQ\t$1000, DX\nthe exit_nt looks a bit hard to read to me, why not simply\ninsert the IMULQ+ADDQ here ?",
+			"disapproval": false,
+			"date": "2012-11-18 09:15:16.374120",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "By the way, thank you very much for tracking this down.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 17:20:19.335900",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Do you think it would be possible to define:\n\nTEXT runtime\u00b7vdso_gettimeofday(SB), 7, $somevalue\n    MOVQ runtime\u00b7__vdso_gettimeofday_sym(SB), AX\n    JMP AX\n\nso that the stack check in the linker is effective? $somevalue should be set to the appropriate value and it would avoid future problems, WDYT?",
+			"disapproval": false,
+			"date": "2012-11-25 20:50:03.543270",
+			"approval": false
+		},
+		{
+			"sender": "shivakumar.gn@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"shivakumar.gn@gmail.com",
+				"random0x00@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/25 21:15:55, minux wrote:\n> +CC gns, random0x00.\n> \n> I've updated my kernel to 3.6.6, however I still can't reproduce the problem.\n\nWith patch set 5, problem does not occur.\nTest was on CentOS6.3 where problem was consistently reproducible without the patch.",
+			"disapproval": false,
+			"date": "2012-11-26 05:34:09.538930",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"shivakumar.gn@gmail.com",
+				"random0x00@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=3ec963539561 ***\n\nruntime: duplicate code for runtime.nanotime to avoid stack overflow in vDSO clock_gettime\nFixes issue 4402.\n\nR=remyoudompheng, shivakumar.gn, random0x00, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6842063",
+			"disapproval": false,
+			"date": "2012-11-26 17:42:13.910570",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 6842063: runtime: duplicate code for runtime.nanotime to avoid s...",
+	"created": "2012-11-17 21:31:45.536970",
+	"patchsets": [
+		1,
+		2001,
+		1002,
+		8003,
+		11002,
+		15002,
+		15003
+	],
+	"modified": "2012-11-26 17:42:18.906540",
+	"closed": true,
+	"issue": 6842063
+}

@@ -1,0 +1,63 @@
+{
+	"description": "cmd/gc: emit explicit type information for local variables\n\nThe type information is (and for years has been) included\nas an extra field in the address chunk of an instruction.\nUnfortunately, suppose there is a string at a+24(FP) and\nwe have an instruction reading its length. It will say:\n\n        MOVQ x+32(FP), AX\n\nand the type of *that* argument is int (not slice), because\nit is the length being read. This confuses the picture seen\nby debuggers and now, worse, by the garbage collector.\n\nInstead of attaching the type information to all uses,\nemit an explicit list of TYPE instructions with the information.\nThe TYPE instructions are no-ops whose only role is to\nprovide an address to attach type information to.\n\nFor example, this function:\n\n        func f(x, y, z int) (a, b string) {\n                return\n        }\n\nnow compiles into:\n\n        --- prog list \"f\" ---\n        0000 (/Users/rsc/x.go:3) TEXT    f+0(SB),$0-56\n        0001 (/Users/rsc/x.go:3) LOCALS  ,\n        0002 (/Users/rsc/x.go:3) TYPE    x+0(FP){int},$8\n        0003 (/Users/rsc/x.go:3) TYPE    y+8(FP){int},$8\n        0004 (/Users/rsc/x.go:3) TYPE    z+16(FP){int},$8\n        0005 (/Users/rsc/x.go:3) TYPE    a+24(FP){string},$16\n        0006 (/Users/rsc/x.go:3) TYPE    b+40(FP){string},$16\n        0007 (/Users/rsc/x.go:3) MOVQ    $0,b+40(FP)\n        0008 (/Users/rsc/x.go:3) MOVQ    $0,b+48(FP)\n        0009 (/Users/rsc/x.go:3) MOVQ    $0,a+24(FP)\n        0010 (/Users/rsc/x.go:3) MOVQ    $0,a+32(FP)\n        0011 (/Users/rsc/x.go:4) RET     ,\n\nThe { } show the formerly hidden type information.\nThe { } syntax is used when printing from within the gc compiler.\nIt is not accepted by the assemblers.\n\nThe same type information is now included on global variables:\n\n0055 (/Users/rsc/x.go:15) GLOBL   slice+0(SB){[]string},$24(AL*0)\n\nThis more accurate type information fixes a bug in the\ngarbage collector's precise heap collection.\n\nThe linker only cares about globals right now, but having the\nlocal information should make things a little nicer for Carl\nin the future.\n\nFixes issue 4907.",
+	"cc": [
+		"ken@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"daniel.morsing@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello ken2 (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-02-25 17:13:46.104810",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 25, 2013 at 6:13 PM,  <rsc@golang.org> wrote:\r\n> *** Submitted as\r\n> https://code.google.com/p/go/source/detail?r=21524f026a58 ***\r\n\r\nThis change doesn't handle closure variables well.\r\n\r\nvar y int\r\nvar foo = func(){\r\n\ty = 10\r\n}\r\n\r\nturns into\r\n\r\n--- prog list \"func\u00b7001\" ---\r\n0021 (test.go:9) TEXT    func\u00b7001+0(SB),$0-0\r\n0022 (test.go:9) LOCALS  ,$0\r\n0023 (test.go:9) TYPE    &y+-1000000000(SP){*int},$8\r\n0024 (test.go:9) MOVQ    8(DX),BX\r\n0025 (test.go:10) MOVQ    $10,(BX)\r\n0026 (test.go:9) RET     ,\r\n",
+			"disapproval": false,
+			"date": "2013-02-25 17:58:38.667540",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=21524f026a58 ***\n\ncmd/gc: emit explicit type information for local variables\n\nThe type information is (and for years has been) included\nas an extra field in the address chunk of an instruction.\nUnfortunately, suppose there is a string at a+24(FP) and\nwe have an instruction reading its length. It will say:\n\n        MOVQ x+32(FP), AX\n\nand the type of *that* argument is int (not slice), because\nit is the length being read. This confuses the picture seen\nby debuggers and now, worse, by the garbage collector.\n\nInstead of attaching the type information to all uses,\nemit an explicit list of TYPE instructions with the information.\nThe TYPE instructions are no-ops whose only role is to\nprovide an address to attach type information to.\n\nFor example, this function:\n\n        func f(x, y, z int) (a, b string) {\n                return\n        }\n\nnow compiles into:\n\n        --- prog list \"f\" ---\n        0000 (/Users/rsc/x.go:3) TEXT    f+0(SB),$0-56\n        0001 (/Users/rsc/x.go:3) LOCALS  ,\n        0002 (/Users/rsc/x.go:3) TYPE    x+0(FP){int},$8\n        0003 (/Users/rsc/x.go:3) TYPE    y+8(FP){int},$8\n        0004 (/Users/rsc/x.go:3) TYPE    z+16(FP){int},$8\n        0005 (/Users/rsc/x.go:3) TYPE    a+24(FP){string},$16\n        0006 (/Users/rsc/x.go:3) TYPE    b+40(FP){string},$16\n        0007 (/Users/rsc/x.go:3) MOVQ    $0,b+40(FP)\n        0008 (/Users/rsc/x.go:3) MOVQ    $0,b+48(FP)\n        0009 (/Users/rsc/x.go:3) MOVQ    $0,a+24(FP)\n        0010 (/Users/rsc/x.go:3) MOVQ    $0,a+32(FP)\n        0011 (/Users/rsc/x.go:4) RET     ,\n\nThe { } show the formerly hidden type information.\nThe { } syntax is used when printing from within the gc compiler.\nIt is not accepted by the assemblers.\n\nThe same type information is now included on global variables:\n\n0055 (/Users/rsc/x.go:15) GLOBL   slice+0(SB){[]string},$24(AL*0)\n\nThis more accurate type information fixes a bug in the\ngarbage collector's precise heap collection.\n\nThe linker only cares about globals right now, but having the\nlocal information should make things a little nicer for Carl\nin the future.\n\nFixes issue 4907.\n\nR=ken2\nCC=golang-dev\nhttps://codereview.appspot.com/7395056",
+			"disapproval": false,
+			"date": "2013-02-25 17:13:52.405160",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 7395056: cmd/gc: emit explicit type information for local variables",
+	"created": "2013-02-25 16:20:25.749400",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		1002
+	],
+	"modified": "2013-02-25 17:58:38.830110",
+	"closed": true,
+	"issue": 7395056
+}

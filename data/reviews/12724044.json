@@ -1,0 +1,72 @@
+{
+	"description": "runtime: remove unused m->racepc\nThe original plan was to collect allocation stacks\nfor all memory blocks. But it was never implemented\nand it's not in near plans and it's unclear how to do it at all.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-12 08:12:26.866350",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "SGTM. \r\n\r\n\r\n\r\nOn 12/08/2013, at 17:12, dvyukov@google.com wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n> \r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n> \r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@code.google.com/p/go/\r\n> \r\n> \r\n> Description:\r\n> runtime: remove unused m->racepc\r\n> The original plan was to collect allocation stacks\r\n> for all memory blocks. But it was never implemented\r\n> and it's not in near plans and it's unclear how to do it at all.\r\n> \r\n> Please review this at https://codereview.appspot.com/12724044/\r\n> \r\n> Affected files:\r\n>  M src/pkg/runtime/malloc.goc\r\n>  M src/pkg/runtime/race.c\r\n>  M src/pkg/runtime/race.h\r\n>  M src/pkg/runtime/race0.c\r\n>  M src/pkg/runtime/runtime.h\r\n> \r\n> \r\n> Index: src/pkg/runtime/malloc.goc\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/malloc.goc\r\n> +++ b/src/pkg/runtime/malloc.goc\r\n> @@ -141,10 +141,8 @@\r\n>    if(!(flag & FlagNoInvokeGC) && mstats.heap_alloc >= mstats.next_gc)\r\n>        runtime\u00b7gc(0);\r\n> \r\n> -    if(raceenabled) {\r\n> -        runtime\u00b7racemalloc(v, size, m->racepc);\r\n> -        m->racepc = nil;\r\n> -    }\r\n> +    if(raceenabled)\r\n> +        runtime\u00b7racemalloc(v, size);\r\n>    return v;\r\n> }\r\n> \r\n> @@ -702,8 +700,6 @@\r\n> void\r\n> runtime\u00b7new(Type *typ, uint8 *ret)\r\n> {\r\n> -    if(raceenabled)\r\n> -        m->racepc = runtime\u00b7getcallerpc(&typ);\r\n>    ret = runtime\u00b7mallocgc(typ->size, (uintptr)typ | TypeInfo_SingleObject, typ->kind&KindNoPointers ? FlagNoPointers : 0);\r\n>    FLUSH(&ret);\r\n> }\r\n> Index: src/pkg/runtime/race.c\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/race.c\r\n> +++ b/src/pkg/runtime/race.c\r\n> @@ -138,13 +138,13 @@\r\n> }\r\n> \r\n> void\r\n> -runtime\u00b7racemalloc(void *p, uintptr sz, void *pc)\r\n> +runtime\u00b7racemalloc(void *p, uintptr sz)\r\n> {\r\n>    // use m->curg because runtime\u00b7stackalloc() is called from g0\r\n>    if(m->curg == nil)\r\n>        return;\r\n>    m->racecall = true;\r\n> -    runtime/race\u00b7Malloc(m->curg->racectx, p, sz, pc);\r\n> +    runtime/race\u00b7Malloc(m->curg->racectx, p, sz, /* unused pc */ 0);\r\n>    m->racecall = false;\r\n> }\r\n> \r\n> Index: src/pkg/runtime/race.h\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/race.h\r\n> +++ b/src/pkg/runtime/race.h\r\n> @@ -16,7 +16,7 @@\r\n> void    runtime\u00b7racefini(void);\r\n> \r\n> void    runtime\u00b7racemapshadow(void *addr, uintptr size);\r\n> -void    runtime\u00b7racemalloc(void *p, uintptr sz, void *pc);\r\n> +void    runtime\u00b7racemalloc(void *p, uintptr sz);\r\n> void    runtime\u00b7racefree(void *p);\r\n> uintptr    runtime\u00b7racegostart(void *pc);\r\n> void    runtime\u00b7racegoend(void);\r\n> Index: src/pkg/runtime/race0.c\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/race0.c\r\n> +++ b/src/pkg/runtime/race0.c\r\n> @@ -105,11 +105,10 @@\r\n> }\r\n> \r\n> void\r\n> -runtime\u00b7racemalloc(void *p, uintptr sz, void *pc)\r\n> +runtime\u00b7racemalloc(void *p, uintptr sz)\r\n> {\r\n>    USED(p);\r\n>    USED(sz);\r\n> -    USED(pc);\r\n> }\r\n> \r\n> void\r\n> Index: src/pkg/runtime/runtime.h\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/runtime.h\r\n> +++ b/src/pkg/runtime/runtime.h\r\n> @@ -339,7 +339,6 @@\r\n>    GCStats    gcstats;\r\n>    bool    racecall;\r\n>    bool    needextram;\r\n> -    void*    racepc;\r\n>    void    (*waitunlockf)(Lock*);\r\n>    void*    waitlock;\r\n> \r\n> \r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-08-12 10:23:17.105530",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\n\r\n\r\nOn Mon, Aug 12, 2013 at 1:12 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: remove unused m->racepc\r\n> The original plan was to collect allocation stacks\r\n> for all memory blocks. But it was never implemented\r\n> and it's not in near plans and it's unclear how to do it at all.\r\n>\r\n> Please review this at https://codereview.appspot.**com/12724044/<https://codereview.appspot.com/12724044/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/malloc.goc\r\n>   M src/pkg/runtime/race.c\r\n>   M src/pkg/runtime/race.h\r\n>   M src/pkg/runtime/race0.c\r\n>   M src/pkg/runtime/runtime.h\r\n>\r\n>\r\n> Index: src/pkg/runtime/malloc.goc\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/malloc.goc\r\n> +++ b/src/pkg/runtime/malloc.goc\r\n> @@ -141,10 +141,8 @@\r\n>         if(!(flag & FlagNoInvokeGC) && mstats.heap_alloc >= mstats.next_gc)\r\n>                 runtime\u00b7gc(0);\r\n>\r\n> -       if(raceenabled) {\r\n> -               runtime\u00b7racemalloc(v, size, m->racepc);\r\n> -               m->racepc = nil;\r\n> -       }\r\n> +       if(raceenabled)\r\n> +               runtime\u00b7racemalloc(v, size);\r\n>         return v;\r\n>  }\r\n>\r\n> @@ -702,8 +700,6 @@\r\n>  void\r\n>  runtime\u00b7new(Type *typ, uint8 *ret)\r\n>  {\r\n> -       if(raceenabled)\r\n> -               m->racepc = runtime\u00b7getcallerpc(&typ);\r\n>         ret = runtime\u00b7mallocgc(typ->size, (uintptr)typ |\r\n> TypeInfo_SingleObject, typ->kind&KindNoPointers ? FlagNoPointers : 0);\r\n>         FLUSH(&ret);\r\n>  }\r\n> Index: src/pkg/runtime/race.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/race.c\r\n> +++ b/src/pkg/runtime/race.c\r\n> @@ -138,13 +138,13 @@\r\n>  }\r\n>\r\n>  void\r\n> -runtime\u00b7racemalloc(void *p, uintptr sz, void *pc)\r\n> +runtime\u00b7racemalloc(void *p, uintptr sz)\r\n>  {\r\n>         // use m->curg because runtime\u00b7stackalloc() is called from g0\r\n>         if(m->curg == nil)\r\n>                 return;\r\n>         m->racecall = true;\r\n> -       runtime/race\u00b7Malloc(m->curg->**racectx, p, sz, pc);\r\n> +       runtime/race\u00b7Malloc(m->curg->**racectx, p, sz, /* unused pc */ 0);\r\n>         m->racecall = false;\r\n>  }\r\n>\r\n> Index: src/pkg/runtime/race.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/race.h\r\n> +++ b/src/pkg/runtime/race.h\r\n> @@ -16,7 +16,7 @@\r\n>  void   runtime\u00b7racefini(void);\r\n>\r\n>  void   runtime\u00b7racemapshadow(void *addr, uintptr size);\r\n> -void   runtime\u00b7racemalloc(void *p, uintptr sz, void *pc);\r\n> +void   runtime\u00b7racemalloc(void *p, uintptr sz);\r\n>  void   runtime\u00b7racefree(void *p);\r\n>  uintptr        runtime\u00b7racegostart(void *pc);\r\n>  void   runtime\u00b7racegoend(void);\r\n> Index: src/pkg/runtime/race0.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/race0.c\r\n> +++ b/src/pkg/runtime/race0.c\r\n> @@ -105,11 +105,10 @@\r\n>  }\r\n>\r\n>  void\r\n> -runtime\u00b7racemalloc(void *p, uintptr sz, void *pc)\r\n> +runtime\u00b7racemalloc(void *p, uintptr sz)\r\n>  {\r\n>         USED(p);\r\n>         USED(sz);\r\n> -       USED(pc);\r\n>  }\r\n>\r\n>  void\r\n> Index: src/pkg/runtime/runtime.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/runtime.h\r\n> +++ b/src/pkg/runtime/runtime.h\r\n> @@ -339,7 +339,6 @@\r\n>         GCStats gcstats;\r\n>         bool    racecall;\r\n>         bool    needextram;\r\n> -       void*   racepc;\r\n>         void    (*waitunlockf)(Lock*);\r\n>         void*   waitlock;\r\n>\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-12 15:44:56.596580",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=d1188847c1cc ***\n\nruntime: remove unused m->racepc\nThe original plan was to collect allocation stacks\nfor all memory blocks. But it was never implemented\nand it's not in near plans and it's unclear how to do it at all.\n\nR=golang-dev, dave, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/12724044",
+			"disapproval": false,
+			"date": "2013-08-12 17:48:23.304580",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 12724044: runtime: remove unused m->racepc",
+	"created": "2013-08-11 15:10:59.938380",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		11001
+	],
+	"modified": "2013-08-12 17:48:25.177680",
+	"closed": true,
+	"issue": 12724044
+}

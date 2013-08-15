@@ -1,0 +1,147 @@
+{
+	"description": "net/http: Transport socket late binding\n\nImplement what Chrome calls socket \"late binding\". See:\nhttps://insouciant.org/tech/connection-management-in-chromium/\n\nIn a nutshell, if our HTTP client needs a TCP connection to a\nremote host and there's not an idle one available, rather than\nkick off a dial and wait for that specific dial, we instead\nkick off a dial and wait for either our own dial to finish, or\nany other TCP connection to that same host to become\navailable.\n\nThe implementation looks like a classic \"Learning Go\nConcurrency\" slide.\n\nChrome's commit and numbers:\nhttp://src.chromium.org/viewvc/chrome?view=rev&revision=36230",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"daniel.morsing@gmail.com",
+		"adg@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nRemarkable how simple implementing this feature was.\n\nhttps://codereview.appspot.com/7587043/diff/5001/src/pkg/net/http/transport.go\nFile src/pkg/net/http/transport.go (right):\n\nhttps://codereview.appspot.com/7587043/diff/5001/src/pkg/net/http/transport.go#newcode384\nsrc/pkg/net/http/transport.go:384: type persistConnError struct {\nThis name makes me think this is an implementation of the error interface.\n\nhttps://codereview.appspot.com/7587043/diff/5001/src/pkg/net/http/transport.go#newcode391\nsrc/pkg/net/http/transport.go:391: dialc <- persistConnError{pc, err}\nIf you do a non-blocking send here, you can move the body of the idleConnCh select case up here and avoid spawning another goroutine.",
+			"disapproval": false,
+			"date": "2013-03-07 20:58:49.274550",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-03-07 19:40:47.499220",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7587043/diff/5001/src/pkg/net/http/transport.go\nFile src/pkg/net/http/transport.go (right):\n\nhttps://codereview.appspot.com/7587043/diff/5001/src/pkg/net/http/transport.go#newcode384\nsrc/pkg/net/http/transport.go:384: type persistConnError struct {\nOn 2013/03/07 20:58:49, DMorsing wrote:\n> This name makes me think this is an implementation of the error interface.\n\nI'll name it dialRes instead.\n\nhttps://codereview.appspot.com/7587043/diff/5001/src/pkg/net/http/transport.go#newcode391\nsrc/pkg/net/http/transport.go:391: dialc <- persistConnError{pc, err}\nOn 2013/03/07 20:58:49, DMorsing wrote:\n> If you do a non-blocking send here, you can move the body of the idleConnCh\n> select case up here and avoid spawning another goroutine.\n\nThere's a race if you do it that way.\n\nImagine that this were non-blocking and it sent and failed because the receive at line 396 hadn't entered its select yet.  So then it gets put into the free map instead, and then the select at 395 runs forever because neither dialc or idleConnCh will ever receive anything.",
+			"disapproval": false,
+			"date": "2013-03-07 21:01:42.978070",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, daniel.morsing@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-03-07 21:03:02.549250",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7587043/diff/5001/src/pkg/net/http/transport.go\nFile src/pkg/net/http/transport.go (right):\n\nhttps://codereview.appspot.com/7587043/diff/5001/src/pkg/net/http/transport.go#newcode391\nsrc/pkg/net/http/transport.go:391: dialc <- persistConnError{pc, err}\nOn 2013/03/07 21:01:43, bradfitz wrote:\n> On 2013/03/07 20:58:49, DMorsing wrote:\n> > If you do a non-blocking send here, you can move the body of the idleConnCh\n> > select case up here and avoid spawning another goroutine.\n> \n> There's a race if you do it that way.\n> \n> Imagine that this were non-blocking and it sent and failed because the receive\n> at line 396 hadn't entered its select yet.  So then it gets put into the free\n> map instead, and then the select at 395 runs forever because neither dialc or\n> idleConnCh will ever receive anything.\n\nWhoops, You're right. Sorry about that.",
+			"disapproval": false,
+			"date": "2013-03-07 21:05:11.060950",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, daniel.morsing@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-03-07 21:38:19.083720",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL (now with its test)\r\n\r\nOn Thu, Mar 7, 2013 at 1:38 PM, <bradfitz@golang.org> wrote:\r\n\r\n> Hello golang-dev@googlegroups.com, daniel.morsing@gmail.com (cc:\r\n> golang-dev@googlegroups.com),\r\n>\r\n> Please take another look.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7587043/<https://codereview.appspot.com/7587043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 21:40:30.566070",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/7587043/diff/16001/src/pkg/net/http/transport.go\nFile src/pkg/net/http/transport.go (right):\n\nhttps://codereview.appspot.com/7587043/diff/16001/src/pkg/net/http/transport.go#newcode395\nsrc/pkg/net/http/transport.go:395: select {\nthis rules!",
+			"disapproval": false,
+			"date": "2013-03-08 01:38:01.639600",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=0a292c902314 ***\n\nnet/http: Transport socket late binding\n\nImplement what Chrome calls socket \"late binding\". See:\nhttps://insouciant.org/tech/connection-management-in-chromium/\n\nIn a nutshell, if our HTTP client needs a TCP connection to a\nremote host and there's not an idle one available, rather than\nkick off a dial and wait for that specific dial, we instead\nkick off a dial and wait for either our own dial to finish, or\nany other TCP connection to that same host to become\navailable.\n\nThe implementation looks like a classic \"Learning Go\nConcurrency\" slide.\n\nChrome's commit and numbers:\nhttp://src.chromium.org/viewvc/chrome?view=rev&revision=36230\n\nR=golang-dev, daniel.morsing, adg\nCC=golang-dev\nhttps://codereview.appspot.com/7587043",
+			"disapproval": false,
+			"date": "2013-03-08 01:56:08.660950",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 7587043: net/http: Transport socket late binding",
+	"created": "2013-03-07 19:36:40.546590",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		11001,
+		16001,
+		22001
+	],
+	"modified": "2013-03-08 01:56:11.464990",
+	"closed": true,
+	"issue": 7587043
+}

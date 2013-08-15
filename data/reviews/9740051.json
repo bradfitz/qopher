@@ -1,0 +1,114 @@
+{
+	"description": "runtime: disable preemption in several scheduler functions\nRequired for preemptive scheduler, see the comments for details.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"khr@golang.org",
+		"iant@golang.org",
+		"khr@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-30 10:01:38.416550",
+			"approval": false
+		},
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9740051/diff/5001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/9740051/diff/5001/src/pkg/runtime/proc.c#newcode281\nsrc/pkg/runtime/proc.c:281: runqput(m->p, gp);\nrunqput calls both lock and malloc.  Are you sure you want to disable preemption across all that?\n\nIn fact, isn't this already a bug?  If runqput blocks on a lock, might its p change?  And if so, the p it has in a register is stale.",
+			"disapproval": false,
+			"date": "2013-05-30 17:51:52.978680",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9740051/diff/5001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/9740051/diff/5001/src/pkg/runtime/proc.c#newcode281\nsrc/pkg/runtime/proc.c:281: runqput(m->p, gp);\nOn 2013/05/30 17:51:53, khr wrote:\n> runqput calls both lock and malloc.  Are you sure you want to disable preemption\n> across all that?\n\nYes, I am sure.\nBoth locks and malloc disable preemption anyway. And we generally want to preempt in user code, not inside of the scheduler. And then the potential bug that you describe below can indeed become real.\nSuch coarse grained regions w/o preemption should not cause performance/preemption problems (it is still really small). If it will cause problems in future, we can carefully look into making them finer-grained. But now it's really important to make it correct, the potential bugs will be really unpleasant.\n\n\n> In fact, isn't this already a bug?  If runqput blocks on a lock, might its p\n> change?  And if so, the p it has in a register is stale.\n\nCurrently P can change only on explicit calls to gosched. There are not calls to gosched.\nNote that gosched crashes if called with m->locks!=0. So while you are holding a lock, you can be sure that no preemption happens.\nAlso note that runtime lock is not \"cooperative\" and does not do rescheduling of goorutines, it's more like pthread_mutex_t.",
+			"disapproval": false,
+			"date": "2013-05-31 06:53:07.276660",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nPlease wait for khr.",
+			"disapproval": false,
+			"date": "2013-06-01 00:56:58.924200",
+			"approval": true
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, May 30, 2013 at 11:53 PM, <dvyukov@google.com> wrote:\r\n\r\n>\r\n> https://codereview.appspot.**com/9740051/diff/5001/src/pkg/**\r\n> runtime/proc.c<https://codereview.appspot.com/9740051/diff/5001/src/pkg/runtime/proc.c>\r\n> File src/pkg/runtime/proc.c (right):\r\n>\r\n> https://codereview.appspot.**com/9740051/diff/5001/src/pkg/**\r\n> runtime/proc.c#newcode281<https://codereview.appspot.com/9740051/diff/5001/src/pkg/runtime/proc.c#newcode281>\r\n> src/pkg/runtime/proc.c:281: runqput(m->p, gp);\r\n> On 2013/05/30 17:51:53, khr wrote:\r\n>\r\n>> runqput calls both lock and malloc.  Are you sure you want to disable\r\n>>\r\n> preemption\r\n>\r\n>> across all that?\r\n>>\r\n>\r\n> Yes, I am sure.\r\n> Both locks and malloc disable preemption anyway. And we generally want\r\n> to preempt in user code, not inside of the scheduler. And then the\r\n> potential bug that you describe below can indeed become real.\r\n> Such coarse grained regions w/o preemption should not cause\r\n> performance/preemption problems (it is still really small). If it will\r\n> cause problems in future, we can carefully look into making them\r\n> finer-grained. But now it's really important to make it correct, the\r\n> potential bugs will be really unpleasant.\r\n>\r\n>\r\nAgreed.\r\n\r\n\r\n>\r\n>\r\n>  In fact, isn't this already a bug?  If runqput blocks on a lock, might\r\n>>\r\n> its p\r\n>\r\n>> change?  And if so, the p it has in a register is stale.\r\n>>\r\n>\r\n> Currently P can change only on explicit calls to gosched. There are not\r\n> calls to gosched.\r\n> Note that gosched crashes if called with m->locks!=0. So while you are\r\n> holding a lock, you can be sure that no preemption happens.\r\n> Also note that runtime lock is not \"cooperative\" and does not do\r\n> rescheduling of goorutines, it's more like pthread_mutex_t.\r\n>\r\n>\r\nOk, you have convinced me.  LGTM.\r\n\r\n\r\n> https://codereview.appspot.**com/9740051/<https://codereview.appspot.com/9740051/>\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-03 04:56:47.685920",
+			"approval": true
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jun 2, 2013 at 9:56 PM, Keith Randall <khr@google.com> wrote:\r\n\r\n>\r\n>\r\n>\r\n> On Thu, May 30, 2013 at 11:53 PM, <dvyukov@google.com> wrote:\r\n>\r\n>>\r\n>> https://codereview.appspot.**com/9740051/diff/5001/src/pkg/**\r\n>> runtime/proc.c<https://codereview.appspot.com/9740051/diff/5001/src/pkg/runtime/proc.c>\r\n>> File src/pkg/runtime/proc.c (right):\r\n>>\r\n>> https://codereview.appspot.**com/9740051/diff/5001/src/pkg/**\r\n>> runtime/proc.c#newcode281<https://codereview.appspot.com/9740051/diff/5001/src/pkg/runtime/proc.c#newcode281>\r\n>> src/pkg/runtime/proc.c:281: runqput(m->p, gp);\r\n>> On 2013/05/30 17:51:53, khr wrote:\r\n>>\r\n>>> runqput calls both lock and malloc.  Are you sure you want to disable\r\n>>>\r\n>> preemption\r\n>>\r\n>>> across all that?\r\n>>>\r\n>>\r\n>> Yes, I am sure.\r\n>> Both locks and malloc disable preemption anyway. And we generally want\r\n>> to preempt in user code, not inside of the scheduler. And then the\r\n>> potential bug that you describe below can indeed become real.\r\n>> Such coarse grained regions w/o preemption should not cause\r\n>> performance/preemption problems (it is still really small). If it will\r\n>> cause problems in future, we can carefully look into making them\r\n>> finer-grained. But now it's really important to make it correct, the\r\n>> potential bugs will be really unpleasant.\r\n>>\r\n>>\r\n> Agreed.\r\n>\r\n>\r\n>>\r\n>>\r\n>>  In fact, isn't this already a bug?  If runqput blocks on a lock, might\r\n>>>\r\n>> its p\r\n>>\r\n>>> change?  And if so, the p it has in a register is stale.\r\n>>>\r\n>>\r\n>> Currently P can change only on explicit calls to gosched. There are not\r\n>> calls to gosched.\r\n>> Note that gosched crashes if called with m->locks!=0. So while you are\r\n>> holding a lock, you can be sure that no preemption happens.\r\n>> Also note that runtime lock is not \"cooperative\" and does not do\r\n>> rescheduling of goorutines, it's more like pthread_mutex_t.\r\n>>\r\n>>\r\n> Ok, you have convinced me.  LGTM.\r\n>\r\n>\r\n>> https://codereview.appspot.**com/9740051/<https://codereview.appspot.com/9740051/>\r\n>>\r\n>>\r\n>> --\r\n>>\r\n>> ---You received this message because you are subscribed to the Google\r\n>> Groups \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an\r\n>> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n>> .\r\n>> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n>> .\r\n>>\r\n>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-03 04:57:21.131250",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"iant@golang.org",
+				"khr@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=baa90b763ecd ***\n\nruntime: disable preemption in several scheduler functions\nRequired for preemptive scheduler, see the comments for details.\n\nR=golang-dev, khr, iant, khr\nCC=golang-dev\nhttps://codereview.appspot.com/9740051",
+			"disapproval": false,
+			"date": "2013-06-03 10:40:46.787390",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 9740051: runtime: disable preemption in several scheduler functions",
+	"created": "2013-05-30 10:01:27.212850",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		13001
+	],
+	"modified": "2013-06-03 10:40:48.047650",
+	"closed": true,
+	"issue": 9740051
+}

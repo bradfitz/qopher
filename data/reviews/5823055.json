@@ -1,0 +1,252 @@
+{
+	"description": "cmd/ld, cmd/6l, cmd/8l, cmd/5l: fix hidden/local symbol import for ELF systems\n   Introduce a newsym() to cmd/lib.c to add a symbol but don't add\nthem to hash table.\n   Introduce a new bit flag SHIDDEN and bit mask SMASK to handle hidden\nand/or local symbols in ELF symbol tables. Though we still need to order\nthe symbol table entries correctly.\n   Fix for issue 3261 comment #9.\n   For CL 5822049.",
+	"cc": [
+		"iant@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello iant@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-03-15 04:36:57.652405",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5823055/diff/3002/src/cmd/ld/ldelf.c\nFile src/cmd/ld/ldelf.c (right):\n\nhttp://codereview.appspot.com/5823055/diff/3002/src/cmd/ld/ldelf.c#newcode762\nsrc/cmd/ld/ldelf.c:762: // fall through\nYou don't want a STB_GLOBAL symbol to fall through into code that changes the symbol name.\n\nhttp://codereview.appspot.com/5823055/diff/3002/src/cmd/ld/ldelf.c#newcode766\nsrc/cmd/ld/ldelf.c:766: newname = smprint(\"%s_%d\", sym->name, i);\nA local symbol is unique across object files as well as within an object file.  Nothing else is ever going to look up the symbol by name--if it did, presumably this patch would not work.  So I don't think we need to add this symbol to the hash table at all.  I think we should have a variant of lookup that creates the symbol and adds it to the allsym list but does not add it to the hash table.",
+			"disapproval": false,
+			"date": "2012-03-15 19:46:02.770455",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM but wait for iant\n",
+			"disapproval": false,
+			"date": "2012-03-15 18:57:51.274650",
+			"approval": true
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5823055/diff/11010/src/cmd/ld/data.c\nFile src/cmd/ld/data.c (right):\n\nhttp://codereview.appspot.com/5823055/diff/11010/src/cmd/ld/data.c#newcode162\nsrc/cmd/ld/data.c:162: if(r->sym != S && (r->sym->type == 0 || r->sym->type == SXREF) && !(r->sym->type & SHIDDEN)) {\nI don't understand this change.\n\nhttp://codereview.appspot.com/5823055/diff/11010/src/cmd/ld/ldelf.c\nFile src/cmd/ld/ldelf.c (right):\n\nhttp://codereview.appspot.com/5823055/diff/11010/src/cmd/ld/ldelf.c#newcode760\nsrc/cmd/ld/ldelf.c:760: // symbol hash table, but mark them as hidden and dupok\nHidden symbols aren't permitted to be duplicated any more than any other defined symbol is allowed to be duplicated.  Perhaps this approach is OK for now but the comment needs to be fixed.\n\nThe reason that __i686.get_pc_thunk.bx is permitted to be duplicated is that the function is defined in a section group.  The linker keeps only one copy of a section group that has the GRP_COMDAT flag set.  Symbol definitions in a copy that is discarded are treated as undefined symbols.  Thus the linker only ever sees one definition of the symbol.\n\nhttp://codereview.appspot.com/5823055/diff/11010/src/cmd/ld/symtab.c\nFile src/cmd/ld/symtab.c (right):\n\nhttp://codereview.appspot.com/5823055/diff/11010/src/cmd/ld/symtab.c#newcode110\nsrc/cmd/ld/symtab.c:110: bind = (ver || (x->type & SHIDDEN)) ? STB_LOCAL : STB_GLOBAL;\nTecnically ELF requires that all STB_LOCAL symbols precede all STB_GLOBAL and STB_WEAK symbols in the symbol table.  I guess we haven't been doing that so far, though.",
+			"disapproval": false,
+			"date": "2012-03-16 13:55:10.499373",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\nOn 2012/03/16 13:55:10, iant wrote:\n> http://codereview.appspot.com/5823055/diff/11010/src/cmd/ld/data.c#newcode162\n> src/cmd/ld/data.c:162: if(r->sym != S && (r->sym->type == 0 || r->sym->type ==\n> SXREF) && !(r->sym->type & SHIDDEN)) {\n> I don't understand this change.\nSorry, this code is wrong. It's left over of old code.\n> \n> http://codereview.appspot.com/5823055/diff/11010/src/cmd/ld/ldelf.c#newcode760\n> src/cmd/ld/ldelf.c:760: // symbol hash table, but mark them as hidden and dupok\n> Hidden symbols aren't permitted to be duplicated any more than any other defined\n> symbol is allowed to be duplicated.  Perhaps this approach is OK for now but the\n> comment needs to be fixed.\n> \n> The reason that __i686.get_pc_thunk.bx is permitted to be duplicated is that the\n> function is defined in a section group.  The linker keeps only one copy of a\n> section group that has the GRP_COMDAT flag set.  Symbol definitions in a copy\n> that is discarded are treated as undefined symbols.  Thus the linker only ever\n> sees one definition of the symbol.\nFixed the comment.\n \n> http://codereview.appspot.com/5823055/diff/11010/src/cmd/ld/symtab.c#newcode110\n> src/cmd/ld/symtab.c:110: bind = (ver || (x->type & SHIDDEN)) ? STB_LOCAL :\n> STB_GLOBAL;\n> Tecnically ELF requires that all STB_LOCAL symbols precede all STB_GLOBAL and\n> STB_WEAK symbols in the symbol table.  I guess we haven't been doing that so\n> far, though.\nOK, should I just disable the STB_LOCAL generation all together or add a TODO?\n(I've tried to do a two pass symbol table generation, but I think it will change too much\ncode at this stage.)\n\nIf we violate this ELF requirement, will anything bad happen?",
+			"disapproval": false,
+			"date": "2012-03-17 08:52:43.534978",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/03/18 04:24:18, iant wrote:\n> Thanks for bearing with me.\nI'd like to thank you not only for pointing out issues in my code, but also\nproviding so much valuable background information.\n> Violating the ELF requirement that all STB_LOCAL symbols precede\n> STB_GLOBAL/STB_WEAK symbols is not too serious when generating an executable. \n> It may break something but nothing important, and in any case nobody has\n> complained about it so far.\n> \n> Getting it wrong when generating an object file would break linking that object\n> file, but that doesn't apply here.\nOK. Because this is a slightly bigger change on the linker before Go 1, I'd like to\nplay safe and wait for one more green light before submitting.",
+			"disapproval": false,
+			"date": "2012-03-18 07:15:36.294449",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\nOn 2012/03/15 19:46:02, iant wrote:\n> http://codereview.appspot.com/5823055/diff/3002/src/cmd/ld/ldelf.c\n> File src/cmd/ld/ldelf.c (right):\n> \n> http://codereview.appspot.com/5823055/diff/3002/src/cmd/ld/ldelf.c#newcode762\n> src/cmd/ld/ldelf.c:762: // fall through\n> You don't want a STB_GLOBAL symbol to fall through into code that changes the\n> symbol name.\nDone. \n> http://codereview.appspot.com/5823055/diff/3002/src/cmd/ld/ldelf.c#newcode766\n> src/cmd/ld/ldelf.c:766: newname = smprint(\"%s_%d\", sym->name, i);\n> A local symbol is unique across object files as well as within an object file. \n> Nothing else is ever going to look up the symbol by name--if it did, presumably\n> this patch would not work.  So I don't think we need to add this symbol to the\n> hash table at all.  I think we should have a variant of lookup that creates the\n> symbol and adds it to the allsym list but does not add it to the hash table.\nI've added a newsym() to handle this case.\nAlso fix the hidden visibility symbol problem, because on Linux/386, we have to\ndeal with (possible duplicate) __i686.get_pc_thunk.bx.",
+			"disapproval": false,
+			"date": "2012-03-16 10:35:57.163412",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks for bearing with me.\n\nViolating the ELF requirement that all STB_LOCAL symbols precede STB_GLOBAL/STB_WEAK symbols is not too serious when generating an executable.  It may break something but nothing important, and in any case nobody has complained about it so far.\n\nGetting it wrong when generating an object file would break linking that object file, but that doesn't apply here.",
+			"disapproval": false,
+			"date": "2012-03-18 04:24:18.143189",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi,\n\nPlease do not submit this before Go 1.\nIt would have been fine to submit eight days ago,\nand then it would have gotten some use during the\npast week, but now it is too late to make such a\nsubstantial change to the linker.  Sorry.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-03-26 19:35:31.260134",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping.",
+			"disapproval": false,
+			"date": "2012-04-06 07:32:49.925817",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's fine to submit this now.  I did not re-review the code.\n",
+			"disapproval": false,
+			"date": "2012-04-10 20:14:58.601840",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Found a new bug in this approach.\n\nWhen testing this CL on Linux/ARM with the cgo support patches.\nI noticed that the gcc 4.6.1/binutils 2.21.53 I used generate local function symbol\nthat is used by relocations.\n\nDue to our implementation in ldelf(), we first load relocations, which calls readsym()\nto read the respective symbol and then loads sub symbols for each sections which\nagains calls readsym(). In effect, each used local symbol is readsym()'ed twice, for\nnormal symbol, this will be fine, because they are in hash table. But for this CL, they\nwill end up in two Syms that aren't in the symbol hash table, and this leads to trouble\nwhen doing the relocations.\n\nWe have two options here:\n1, always enter function symbols and object symbols into the hash table (we must\nignore ElfSymTypeNone symbols, because of .LC0's)\n2, reverse the order of relocation loading and loading of symbols, and keep a array\nof loaded symbols, so that when loading relocation, we don't need to re-read the\nreferenced symbols.\n\nIMO, both approach are acceptable, any suggestions?",
+			"disapproval": false,
+			"date": "2012-04-21 19:22:30.602555",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nReversed the order of relocation loading and sub-symbol loading.\nTested on Linux/amd64, Linux/386, Linux/ARM and FreeBSD/amd64.",
+			"disapproval": false,
+			"date": "2012-04-21 20:22:32.917197",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/04/21 19:22:30, minux wrote:\n> We have two options here:\n> 1, always enter function symbols and object symbols into the hash table (we must\n> ignore ElfSymTypeNone symbols, because of .LC0's)\nAlso found relocations for .LC0 symbol, so this option is no longer viable.\n> 2, reverse the order of relocation loading and loading of symbols, and keep a array\n> of loaded symbols, so that when loading relocation, we don't need to re-read the\n> referenced symbols.\n\nMaybe the best approach is to revert back to make each local symbol a unique but\ndeterministic name (for example, append symbol index to its name), and always\nadd them into the hash table.",
+			"disapproval": false,
+			"date": "2012-04-21 19:39:15.662737",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-05-02 00:36:31.144612",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=046668c6315e ***\n\ncmd/ld, cmd/6l, cmd/8l, cmd/5l: fix hidden/local symbol import for ELF systems\n   Introduce a newsym() to cmd/lib.c to add a symbol but don't add\nthem to hash table.\n   Introduce a new bit flag SHIDDEN and bit mask SMASK to handle hidden\nand/or local symbols in ELF symbol tables. Though we still need to order\nthe symbol table entries correctly.\n   Fix for issue 3261 comment #9.\n   For CL 5822049.\n\nR=iant, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5823055",
+			"disapproval": false,
+			"date": "2012-05-22 18:32:39.042400",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 5823055: cmd/ld, cmd/6l, cmd/8l: fix hidden/local symbol import for ELF systems",
+	"created": "2012-03-15 04:35:04.767467",
+	"patchsets": [
+		1,
+		2001,
+		3002,
+		7001,
+		7008,
+		9001,
+		13001,
+		12010,
+		11010,
+		11011,
+		11012,
+		18001,
+		27001,
+		33010,
+		31002,
+		41001,
+		45001,
+		47001
+	],
+	"modified": "2012-05-22 18:32:42.890057",
+	"closed": true,
+	"issue": 5823055
+}

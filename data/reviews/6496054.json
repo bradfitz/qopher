@@ -1,0 +1,591 @@
+{
+	"description": "net: spread fd over several pollservers.\n\nLighten contention without preventing further improvements on pollservers.\nConnections are spread over Min(GOMAXPROCS, NumCPU, 8) pollserver instances.\n\nMedian of 10 runs, 4 cores @ 3.4GHz, amd/linux-3.2:\n\nBenchmarkTCPOneShot                171917 ns/op   175194 ns/op      1.91%\nBenchmarkTCPOneShot-2              101413 ns/op   109462 ns/op      7.94%\nBenchmarkTCPOneShot-4               91796 ns/op    35712 ns/op    -61.10%\nBenchmarkTCPOneShot-6               90938 ns/op    30607 ns/op    -66.34%\nBenchmarkTCPOneShot-8               90374 ns/op    29150 ns/op    -67.75%\nBenchmarkTCPOneShot-16             101089 ns/op   111526 ns/op     10.32%\n\nBenchmarkTCPOneShotTimeout         174986 ns/op   178606 ns/op      2.07%\nBenchmarkTCPOneShotTimeout-2       101585 ns/op   110678 ns/op      8.95%\nBenchmarkTCPOneShotTimeout-4        91547 ns/op    35931 ns/op    -60.75%\nBenchmarkTCPOneShotTimeout-6        91496 ns/op    31019 ns/op    -66.10%\nBenchmarkTCPOneShotTimeout-8        90670 ns/op    29531 ns/op    -67.43%\nBenchmarkTCPOneShotTimeout-16      101013 ns/op   106026 ns/op      4.96%\n\nBenchmarkTCPPersistent              51731 ns/op    53324 ns/op      3.08%\nBenchmarkTCPPersistent-2            32888 ns/op    30678 ns/op     -6.72%\nBenchmarkTCPPersistent-4            25751 ns/op    15595 ns/op    -39.44%\nBenchmarkTCPPersistent-6            26737 ns/op     9805 ns/op    -63.33%\nBenchmarkTCPPersistent-8            26850 ns/op     9730 ns/op    -63.76%\nBenchmarkTCPPersistent-16          104449 ns/op   102838 ns/op     -1.54%\n\nBenchmarkTCPPersistentTimeout       51806 ns/op    53281 ns/op      2.85%\nBenchmarkTCPPersistentTimeout-2     32956 ns/op    30895 ns/op     -6.25%\nBenchmarkTCPPersistentTimeout-4     25994 ns/op    18111 ns/op    -30.33%\nBenchmarkTCPPersistentTimeout-6     26679 ns/op     9846 ns/op    -63.09%\nBenchmarkTCPPersistentTimeout-8     26810 ns/op     9727 ns/op    -63.72%\nBenchmarkTCPPersistentTimeout-16   101652 ns/op   104410 ns/op      2.71%",
+	"cc": [
+		"rsc@golang.org",
+		"dvyukov@google.com",
+		"dave@cheney.net",
+		"mikioh.mikioh@gmail.com",
+		"bradfitz@golang.org",
+		"remyoudompheng@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/11 02:58:02, rsc wrote:\n> It would probably be okay to create poll servers on demand up to the max?\n\nA pollServer, despite its name, might not be a so heavy beast. I'll try to measure it tomorrow (out of curiosity), and go for a lazy instantiation unless someone really advocates the opposite.\n\nSebastien",
+			"disapproval": false,
+			"date": "2012-09-11 19:30:26.945850",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It would probably be okay to create poll servers on demand up to the max?\r\n",
+			"disapproval": false,
+			"date": "2012-09-11 02:58:02.163840",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nAs already observed by Dmitry, numbers really get crazy (and stable) for any cpu number greater than 8.\n\nI didn't investigate around the \"Persistent*\" variants being slowed-down for cpu=1, it just seems counter intuitive at first.\n\nSebastien",
+			"disapproval": false,
+			"date": "2012-08-29 06:53:20.590220",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "SGTM\r\n\r\nOn Tue, Sep 11, 2012 at 12:58 PM, Russ Cox <rsc@golang.org> wrote:\r\n> It would probably be okay to create poll servers on demand up to the max?\r\n",
+			"disapproval": false,
+			"date": "2012-09-11 02:59:22.436340",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/11 03:25:12, dvyukov wrote:\n> On 2012/08/29 06:53:20, Sebastien Paolacci wrote:\n> > PTAL.\n> > \n> > As already observed by Dmitry, numbers really get crazy (and stable) for any\n> cpu\n> > number greater than 8.\n> \n> Does anybody have an explanation? It seems to correlate with number of\n> connections. Is it a kernel issue?\nKernel is the easy culprit.. but I honestly first thought about Go's scheduler;) . I have the very same behavior on both 2.6.32 and 3.2 kernels, but didn't found any time to further investigate.\n\n\n> > I didn't investigate around the \"Persistent*\" variants being slowed-down for\n> > cpu=1, it just seems counter intuitive at first.\n> \n> I think it has to do with the fact that now you have 8 additional polling\n> goroutines. It must go away once you limit number of poll servers.\nI think I still don't get it. I'm puzzled about how the connection persistence \"alone\" can affect that patch so much.\nIt obviously must have some explanation, but it is not natural to me. I'll run some more tests (the patch was actually left alone since the initial upload).\n\nSebastien",
+			"disapproval": false,
+			"date": "2012-09-11 19:50:49.061680",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/11 19:30:26, Sebastien Paolacci wrote:\n> On 2012/09/11 02:58:02, rsc wrote:\n> > It would probably be okay to create poll servers on demand up to the max?\n> \n> A pollServer, despite its name, might not be a so heavy beast. I'll try to\n> measure it tomorrow (out of curiosity), and go for a lazy instantiation unless\n> someone really advocates the opposite.\n\nEach pollServer is a dedicated persistent thread + I think it may benefit from some amount of batching.",
+			"disapproval": false,
+			"date": "2012-09-16 05:00:11.605350",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This looks nice, thanks. Is the speedup correlated with number of cores? Should we use runtime.NumCPUs() as the number of poll servers instead of a fixed constant? Dmitriy?\n\nhttp://codereview.appspot.com/6496054/diff/1002/src/pkg/net/fd.go\nFile src/pkg/net/fd.go (right):\n\nhttp://codereview.appspot.com/6496054/diff/1002/src/pkg/net/fd.go#newcode307\nsrc/pkg/net/fd.go:307: if err = pollservers[fd.sysfd%pollN].WaitWrite(fd); err != nil {\nThis calculation seems like it might change over time. Could you please add\n\n\nfunc (fd *netFD) pollServer() *pollServer {\n    return pollservers[fd.sysfd % pollN]\n}\n\nand then use fd.pollServer().WaitWrite(fd) etc, so that the assignment detail is in just one place?",
+			"disapproval": false,
+			"date": "2012-09-11 01:22:15.513600",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/11 01:22:15, rsc wrote:\n> This looks nice, thanks. Is the speedup correlated with number of cores? Should\n> we use runtime.NumCPUs() as the number of poll servers instead of a fixed\n> constant? Dmitriy?\n\nI think you are right. Because on a 64-way machine one will have the same contention as he has now on an 8-way machine.\nIt should be limited by min(GOMAXPROCS, NumCPU), because it makes no sense to have 8 poll servers with GOMAXPROCS=1 (I believe that is what causes slowdown on BenchmarkTCPPersistent-1).",
+			"disapproval": false,
+			"date": "2012-09-11 03:29:55.507460",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm -1 on this change as it stands. Spreading the fds over a number of\r\npollservers will reduce the latency between the fd becoming ready and\r\nthe caller being signaled, but I think it is overkill to spawn N\r\npollservers in the case of a simple program that just wants to do a\r\nhttp get, or respond to a few tcp requests.\r\n\r\nWould it be possible to make the process of spawning (and reaping\r\npollservers) sensitive to the load on the net package ?\r\n\r\nOn Tue, Sep 11, 2012 at 11:22 AM,  <rsc@golang.org> wrote:\r\n> This looks nice, thanks. Is the speedup correlated with number of cores?\r\n> Should we use runtime.NumCPUs() as the number of poll servers instead of\r\n> a fixed constant? Dmitriy?\r\n>\r\n>\r\n>\r\n> http://codereview.appspot.com/6496054/diff/1002/src/pkg/net/fd.go\r\n> File src/pkg/net/fd.go (right):\r\n>\r\n> http://codereview.appspot.com/6496054/diff/1002/src/pkg/net/fd.go#newcode307\r\n> src/pkg/net/fd.go:307: if err =\r\n> pollservers[fd.sysfd%pollN].WaitWrite(fd); err != nil {\r\n> This calculation seems like it might change over time. Could you please\r\n> add\r\n>\r\n>\r\n> func (fd *netFD) pollServer() *pollServer {\r\n>     return pollservers[fd.sysfd % pollN]\r\n> }\r\n>\r\n> and then use fd.pollServer().WaitWrite(fd) etc, so that the assignment\r\n> detail is in just one place?\r\n>\r\n> http://codereview.appspot.com/6496054/\r\n",
+			"disapproval": false,
+			"date": "2012-09-11 01:32:27.058220",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/29 06:53:20, Sebastien Paolacci wrote:\n> PTAL.\n> \n> As already observed by Dmitry, numbers really get crazy (and stable) for any cpu\n> number greater than 8.\n\nDoes anybody have an explanation? It seems to correlate with number of connections. Is it a kernel issue?\n\n\n> I didn't investigate around the \"Persistent*\" variants being slowed-down for\n> cpu=1, it just seems counter intuitive at first.\n\nI think it has to do with the fact that now you have 8 additional polling goroutines. It must go away once you limit number of poll servers.",
+			"disapproval": false,
+			"date": "2012-09-11 03:25:12.971170",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/11 01:22:15, rsc wrote:\n> This looks nice, thanks. Is the speedup correlated with number of cores? \nIt doesn't seems to be. On a 4 cores @ 3.4GHz, amd/linux-3.2.23, I have\n\nBenchmarkTCPOneShot                173950 ns/op   179293 ns/op     3.07% \nBenchmarkTCPOneShot-2              102390 ns/op   107469 ns/op     4.96% \nBenchmarkTCPOneShot-4               92847 ns/op    35918 ns/op   -61.31% \nBenchmarkTCPOneShot-6               92034 ns/op    29586 ns/op   -67.85% \nBenchmarkTCPOneShot-8               91204 ns/op    28002 ns/op   -69.30% \nBenchmarkTCPOneShot-16             101174 ns/op   122650 ns/op    21.23% \n\nBenchmarkTCPOneShotTimeout         177841 ns/op   182579 ns/op     2.66% \nBenchmarkTCPOneShotTimeout-2       103251 ns/op   109657 ns/op     6.20% \nBenchmarkTCPOneShotTimeout-4        93524 ns/op    36019 ns/op   -61.49% \nBenchmarkTCPOneShotTimeout-6        93358 ns/op    30165 ns/op   -67.69% \nBenchmarkTCPOneShotTimeout-8        92107 ns/op    28542 ns/op   -69.01% \nBenchmarkTCPOneShotTimeout-16      106491 ns/op   122996 ns/op    15.50% \n\nBenchmarkTCPPersistent              52489 ns/op    65834 ns/op    25.42% \nBenchmarkTCPPersistent-2            33433 ns/op    34018 ns/op     1.75% \nBenchmarkTCPPersistent-4            26408 ns/op    14033 ns/op   -46.86% \nBenchmarkTCPPersistent-6            28270 ns/op     9917 ns/op   -64.92% \nBenchmarkTCPPersistent-8            27838 ns/op     9671 ns/op   -65.26% \nBenchmarkTCPPersistent-16          110090 ns/op   102760 ns/op    -6.66% \n\nBenchmarkTCPPersistentTimeout       52612 ns/op    65356 ns/op    24.22% \nBenchmarkTCPPersistentTimeout-2     33480 ns/op    33967 ns/op     1.45% \nBenchmarkTCPPersistentTimeout-4     26460 ns/op    11179 ns/op   -57.75% \nBenchmarkTCPPersistentTimeout-6     28208 ns/op     9916 ns/op   -64.85% \nBenchmarkTCPPersistentTimeout-8     27660 ns/op     9696 ns/op   -64.95% \nBenchmarkTCPPersistentTimeout-16   103784 ns/op   103534 ns/op    -0.24%\n\n\n> Should\n> we use runtime.NumCPUs() as the number of poll servers instead of a fixed\n> constant? Dmitriy?\nThat what I used first, but on a 12 core box.. argh 12 is just a weird number. More seriously, there's currently no scalabilty beyond 8 cores, so I arbitrary cut here.\nI would actually vote for min(NumCPU, 8), and then increase when it will make sense.\n\n\n> http://codereview.appspot.com/6496054/diff/1002/src/pkg/net/fd.go\n> File src/pkg/net/fd.go (right):\n> \n> http://codereview.appspot.com/6496054/diff/1002/src/pkg/net/fd.go#newcode307\n> src/pkg/net/fd.go:307: if err = pollservers[fd.sysfd%pollN].WaitWrite(fd); err\n> != nil {\n> This calculation seems like it might change over time. Could you please add\n> \n> func (fd *netFD) pollServer() *pollServer {\n>     return pollservers[fd.sysfd % pollN]\n> }\n> \n> and then use fd.pollServer().WaitWrite(fd) etc, so that the assignment detail is\n> in just one place?\nDone.",
+			"disapproval": false,
+			"date": "2012-09-11 19:23:05.482230",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/11 03:29:55, dvyukov wrote:\n> It should be limited by min(GOMAXPROCS, NumCPU), because it makes no sense to\n> have 8 poll servers with GOMAXPROCS=1 (I believe that is what causes slowdown on\n> BenchmarkTCPPersistent-1).\nI think we should avoid GOMAXPROCS and use something more static. Every process that is playing with GOMAXPROC, e.g `go test', would otherwise miss the point (and I would avoid dynamically reassigning fds).\n\nI would consider that anything beyond NumCPU is useless, that anything smaller is not really damaging, and that anything greater than 8 currently doesn't bring any improvements.\n\nMin(NumCPU, 8) + lazy instantiation as suggested by Dave/Russ ?\n\nSebastien",
+			"disapproval": false,
+			"date": "2012-09-11 20:05:38.740250",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, dvyukov@google.com, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-09-11 20:10:19.074180",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/11 20:05:38, Sebastien Paolacci wrote:\n> On 2012/09/11 03:29:55, dvyukov wrote:\n> > It should be limited by min(GOMAXPROCS, NumCPU), because it makes no sense to\n> > have 8 poll servers with GOMAXPROCS=1 (I believe that is what causes slowdown\n> on\n> > BenchmarkTCPPersistent-1).\n> I think we should avoid GOMAXPROCS and use something more static. Every process\n> that is playing with GOMAXPROC, e.g `go test', would otherwise miss the point\n> (and I would avoid dynamically reassigning fds).\n> \n> I would consider that anything beyond NumCPU is useless, that anything smaller\n> is not really damaging, and that anything greater than 8 currently doesn't bring\n> any improvements.\n> \n> Min(NumCPU, 8) + lazy instantiation as suggested by Dave/Russ ?\n\n25% performance penalty does not look particularly cool. I would experiment with Min(GOMAXPROCS, NumCPU, 8). I think you do not need to re-distribute fds, just grow up to Min(GOMAXPROCS, NumCPU, 8) using current GOMAXPROCS value. I do not care a lot about programs that \"play with GOMAXPROCS\" (especially about go test).",
+			"disapproval": false,
+			"date": "2012-09-16 05:09:07.389290",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/11 19:50:49, Sebastien Paolacci wrote:\n> On 2012/09/11 03:25:12, dvyukov wrote:\n> > On 2012/08/29 06:53:20, Sebastien Paolacci wrote:\n> > > PTAL.\n> > > \n> > > As already observed by Dmitry, numbers really get crazy (and stable) for any\n> > cpu\n> > > number greater than 8.\n> > \n> > Does anybody have an explanation? It seems to correlate with number of\n> > connections. Is it a kernel issue?\n> Kernel is the easy culprit.. but I honestly first thought about Go's scheduler;)\n> . I have the very same behavior on both 2.6.32 and 3.2 kernels, but didn't found\n> any time to further investigate.\n\nI observe it on 3.6.38 with both current and my new scheduler and poll server.\n\n> > > I didn't investigate around the \"Persistent*\" variants being slowed-down for\n> > > cpu=1, it just seems counter intuitive at first.\n> > \n> > I think it has to do with the fact that now you have 8 additional polling\n> > goroutines. It must go away once you limit number of poll servers.\n> I think I still don't get it. I'm puzzled about how the connection persistence\n> \"alone\" can affect that patch so much.\n> It obviously must have some explanation, but it is not natural to me. I'll run\n> some more tests (the patch was actually left alone since the initial upload).\n\nEach pollServer is a separate thread and goroutine. The hypothesis is when you have 8 pollServers with GOMAXPROCS=1, there are additional latencies and penalties caused by constant thread and goroutine switching where each goroutine does very little work.",
+			"disapproval": false,
+			"date": "2012-09-16 05:05:02.834860",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/16 05:09:07, dvyukov wrote:\n> 25% performance penalty does not look particularly cool.\nIndeed it is weird, fixed. The point was more about understanding why it just impacted the \"Persistent\" benchs, but decreasing the number of pollservers does actually fix the situation.\n\n> I would experiment with Min(GOMAXPROCS, NumCPU, 8).\nDone.\n\n>I think you do not need to re-distribute fds, just grow up\n> to Min(GOMAXPROCS, NumCPU, 8) using current GOMAXPROCS ?\n> value.\nI incidentally realized that assignment stability was not required at all, so the various requirements can be met (i.e changing GOMAXPROCS + Dave's lazy instantiation).\n\n>I do not care a lot about programs that \"play with GOMAXPROCS\"?\n>(especially about go test).\nI do care about those programs, I wouldn't even be able to bench that very patch otherwise;)\n\nPlease take another look.\n\nSebastien",
+			"disapproval": false,
+			"date": "2012-09-19 20:39:38.876460",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, dvyukov@google.com, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-09-19 20:40:22.529990",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6496054/diff/13002/src/pkg/net/sendfile_linux.go\nFile src/pkg/net/sendfile_linux.go (right):\n\nhttps://codereview.appspot.com/6496054/diff/13002/src/pkg/net/sendfile_linux.go#newcode62\nsrc/pkg/net/sendfile_linux.go:62: if err1 = c.pollServer().WaitWrite(c); err1 == nil {\nOn 2012/09/19 21:57:11, mikio wrote:\n> sendfile_freebsd.go needs the same change too.\n\nDone, thanks.",
+			"disapproval": false,
+			"date": "2012-09-19 22:13:51.075520",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "CL's description updated, here's last patch set result:\n\nMedian of 10 runs, 4 cores @ 3.4GHz, amd/linux-3.2:\n\nBenchmarkTCPOneShot                171917 ns/op   175194 ns/op      1.91%\nBenchmarkTCPOneShot-2              101413 ns/op   109462 ns/op      7.94%\nBenchmarkTCPOneShot-4               91796 ns/op    35712 ns/op    -61.10%\nBenchmarkTCPOneShot-6               90938 ns/op    30607 ns/op    -66.34%\nBenchmarkTCPOneShot-8               90374 ns/op    29150 ns/op    -67.75%\nBenchmarkTCPOneShot-16             101089 ns/op   111526 ns/op     10.32%\n\nBenchmarkTCPOneShotTimeout         174986 ns/op   178606 ns/op      2.07%\nBenchmarkTCPOneShotTimeout-2       101585 ns/op   110678 ns/op      8.95%\nBenchmarkTCPOneShotTimeout-4        91547 ns/op    35931 ns/op    -60.75%\nBenchmarkTCPOneShotTimeout-6        91496 ns/op    31019 ns/op    -66.10%\nBenchmarkTCPOneShotTimeout-8        90670 ns/op    29531 ns/op    -67.43%\nBenchmarkTCPOneShotTimeout-16      101013 ns/op   106026 ns/op      4.96%\n\nBenchmarkTCPPersistent              51731 ns/op    53324 ns/op      3.08%\nBenchmarkTCPPersistent-2            32888 ns/op    30678 ns/op     -6.72%\nBenchmarkTCPPersistent-4            25751 ns/op    15595 ns/op    -39.44%\nBenchmarkTCPPersistent-6            26737 ns/op     9805 ns/op    -63.33%\nBenchmarkTCPPersistent-8            26850 ns/op     9730 ns/op    -63.76%\nBenchmarkTCPPersistent-16          104449 ns/op   102838 ns/op     -1.54%\n\nBenchmarkTCPPersistentTimeout       51806 ns/op    53281 ns/op      2.85%\nBenchmarkTCPPersistentTimeout-2     32956 ns/op    30895 ns/op     -6.25%\nBenchmarkTCPPersistentTimeout-4     25994 ns/op    18111 ns/op    -30.33%\nBenchmarkTCPPersistentTimeout-6     26679 ns/op     9846 ns/op    -63.09%\nBenchmarkTCPPersistentTimeout-8     26810 ns/op     9727 ns/op    -63.72%\nBenchmarkTCPPersistentTimeout-16   101652 ns/op   104410 ns/op      2.71%",
+			"disapproval": false,
+			"date": "2012-09-19 20:45:44.876730",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-09-19 22:19:52.199330",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-09-19 20:54:47.828620",
+			"approval": true
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6496054/diff/13002/src/pkg/net/sendfile_linux.go\nFile src/pkg/net/sendfile_linux.go (right):\n\nhttps://codereview.appspot.com/6496054/diff/13002/src/pkg/net/sendfile_linux.go#newcode62\nsrc/pkg/net/sendfile_linux.go:62: if err1 = c.pollServer().WaitWrite(c); err1 == nil {\nsendfile_freebsd.go needs the same change too.",
+			"disapproval": false,
+			"date": "2012-09-19 21:57:11.408400",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "So if GOMAXPROCS changes at runtime, the pollServer() accessor can lose its\r\n*pollServer?\r\n\r\nWhy not just store the *pollServer in the *netFD?\r\n\r\nGOMAXPROCS changing at runtime used to sound crazy, but it's not uncommon\r\nnow to adjust the number of VCPUs a VM gets at runtime due to changing\r\ndemand.\r\n\r\nOn Wed, Sep 19, 2012 at 3:19 PM, <mikioh.mikioh@gmail.com> wrote:\r\n\r\n> LGTM\r\n>\r\n> https://codereview.appspot.**com/6496054/<https://codereview.appspot.com/6496054/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-09-19 22:33:57.948300",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello Brad,\n\n> So if GOMAXPROCS changes at runtime, the pollServer() accessor can \n> lose its *pollServer?\nYes and no. A same `*netFD' can indeed get buried in different pollServers over the time, but we don't really care as long as the selected pollServer is maintained for each single {wait,unblock} \nsequence, which always happens in e.g `fd.pollServer().WaitWrite(fd)'. I/O can't also happen concurrently thanks to rio/wio mutexes.\nAll the tests pass, an aborting Close should however be racy if GOMAXPROCS change in the between.\n\n> Why not just store the *pollServer in the *netFD?\nIndeed, seems to be the safest/easiest way to maintain hard coherency at the *netFD level. Thanks.\n\n> GOMAXPROCS changing at runtime used to sound crazy, but it's not\n> uncommon now\nIt's exactly the purpose of the last patch set, the (quite used) benchmark framework relies on that feature too.\n\nSebastien",
+			"disapproval": false,
+			"date": "2012-09-20 08:28:12.467570",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for your proposal, but I remain uncomfortable with it. In return for additional scalability, a lot more code has been added in the hot path of newFD which will impact the latency of every accept and dial operation. I am concerned that this is a price that all users of net have to pay even if they are not interested in handling tens of thousands of active connections.\n\nhttps://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (right):\n\nhttps://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go#newcode285\nsrc/pkg/net/fd_unix.go:285: panic(err)\nif any error from newPollServer is a panic, newPollServer() itself should panic.",
+			"disapproval": false,
+			"date": "2012-09-20 11:12:49.478350",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/21 14:36:13, rsc wrote:\n> > I would consider that anything beyond NumCPU is useless, that anything\n> > smaller is not really damaging, and that anything greater than 8\n> > currently doesn't bring any improvements.\n> >\n> > Min(NumCPU, 8) + lazy instantiation as suggested by Dave/Russ ?\n> \n> This is okay with me but I would like dvyukov to agree.\n> \n> Russ\n\nHello Russ,\n\nJust for the record, last patch round is stabilizing on `Min(GOMAXPROCS, NumCPU, 8)' with lazy instantiation. CL's description also mentions (but does not explain) that choice.\n\nSebastien",
+			"disapproval": false,
+			"date": "2012-09-21 16:43:17.513340",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I eventually manage to make `TestTCPListenClose' fail by injecting a dummy `rand.Int() % pollN' selection code in `pollserver()'. Even if it doesn't make so much sense, it should have worked.\n\nCL updated with Brad's suggestion, please take another look.\n\nThanks,\nSebastien",
+			"disapproval": false,
+			"date": "2012-09-20 11:03:18.549990",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello Dave,\n\nI'm not sure I really got your point. It indeed adds few lines of code in the \"hot\" `newFD()' (not in read and/or write), but if you look at them you'll find:\n - an access to an already burned `Once' (that was already present),   \n - an additional {modulo + test + two slice lookups} sequence.\n\nGiven that anyway going for few syscalls, two/three mutexes, a sleep/wake-up sequence, and hopefully few real bytes of transfer, I can't see that as a major latency impact. Benchmarks, given that few percents are really within the confidence interval for that kind of run, seems decent (to me) even in the cpu=1 situation.\n\nOn the other side, handling few tens of thousands of active connections is honestly not a corner-case.\n\nCheers,\nSebastien",
+			"disapproval": false,
+			"date": "2012-09-20 14:16:15.631090",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (right):\n\nhttps://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go#newcode308\nsrc/pkg/net/fd_unix.go:308: startServersOnce[k]()\nthis line may crash if GOMAXPROCS has increased since the size it was during init(), when startServersOnce was initialized.",
+			"disapproval": false,
+			"date": "2012-09-20 18:43:18.580340",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (right):\n\nhttps://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go#newcode308\nsrc/pkg/net/fd_unix.go:308: startServersOnce[k]()\nOn 2012/09/20 18:43:18, bradfitz wrote:\n> this line may crash if GOMAXPROCS has increased since the size it was during\n> init(), when startServersOnce was initialized.\n\ninit() does not call GOMAXPROCS, it calls NumCPU()",
+			"disapproval": false,
+			"date": "2012-09-20 19:15:11.205390",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I would consider that anything beyond NumCPU is useless, that anything\r\n> smaller is not really damaging, and that anything greater than 8\r\n> currently doesn't bring any improvements.\r\n>\r\n> Min(NumCPU, 8) + lazy instantiation as suggested by Dave/Russ ?\r\n\r\nThis is okay with me but I would like dvyukov to agree.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-21 14:36:13.492050",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (right):\n\nhttps://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go#newcode308\nsrc/pkg/net/fd_unix.go:308: startServersOnce[k]()\nOn 2012/09/20 19:15:11, dvyukov wrote:\n> On 2012/09/20 18:43:18, bradfitz wrote:\n> > this line may crash if GOMAXPROCS has increased since the size it was during\n> > init(), when startServersOnce was initialized.\n> \n> init() does not call GOMAXPROCS, it calls NumCPU()\n\nsorry, I see.  Teaches me to read code on a bus.",
+			"disapproval": false,
+			"date": "2012-09-20 19:18:06.788800",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (right):\n\nhttps://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go#newcode303\nsrc/pkg/net/fd_unix.go:303: pollN := runtime.GOMAXPROCS(0)\nPlease move this out of newFD().\nThis change addresses inefficiency in current pollserver impl. I anticipate that pollserver impl will not only change in future, but also diverge for different OSes. The netFD part of this file implements generic functionality that won't diverge, so please split it from the partitioning logic (most OSes are perfectly able to implement a scalable pollserver, and so won't need it).",
+			"disapproval": false,
+			"date": "2012-09-20 19:22:20.606020",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/20 19:22:20, dvyukov wrote:\nhttps://codereview.appspot.com/6496054/diff/23001/src/pkg/net/fd_unix.go#newcode303\n> src/pkg/net/fd_unix.go:303: pollN := runtime.GOMAXPROCS(0)\n> Please move this out of newFD().\nDone.",
+			"disapproval": false,
+			"date": "2012-09-21 11:13:27.149240",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-09-21 20:16:35.088430",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Is this going to be submitted?",
+			"disapproval": false,
+			"date": "2012-09-26 19:27:42.504490",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=19cf9361902a ***\n\nnet: spread fd over several pollservers.\n\nLighten contention without preventing further improvements on pollservers.\nConnections are spread over Min(GOMAXPROCS, NumCPU, 8) pollserver instances.\n\nMedian of 10 runs, 4 cores @ 3.4GHz, amd/linux-3.2:\n\nBenchmarkTCPOneShot                171917 ns/op   175194 ns/op      1.91%\nBenchmarkTCPOneShot-2              101413 ns/op   109462 ns/op      7.94%\nBenchmarkTCPOneShot-4               91796 ns/op    35712 ns/op    -61.10%\nBenchmarkTCPOneShot-6               90938 ns/op    30607 ns/op    -66.34%\nBenchmarkTCPOneShot-8               90374 ns/op    29150 ns/op    -67.75%\nBenchmarkTCPOneShot-16             101089 ns/op   111526 ns/op     10.32%\n\nBenchmarkTCPOneShotTimeout         174986 ns/op   178606 ns/op      2.07%\nBenchmarkTCPOneShotTimeout-2       101585 ns/op   110678 ns/op      8.95%\nBenchmarkTCPOneShotTimeout-4        91547 ns/op    35931 ns/op    -60.75%\nBenchmarkTCPOneShotTimeout-6        91496 ns/op    31019 ns/op    -66.10%\nBenchmarkTCPOneShotTimeout-8        90670 ns/op    29531 ns/op    -67.43%\nBenchmarkTCPOneShotTimeout-16      101013 ns/op   106026 ns/op      4.96%\n\nBenchmarkTCPPersistent              51731 ns/op    53324 ns/op      3.08%\nBenchmarkTCPPersistent-2            32888 ns/op    30678 ns/op     -6.72%\nBenchmarkTCPPersistent-4            25751 ns/op    15595 ns/op    -39.44%\nBenchmarkTCPPersistent-6            26737 ns/op     9805 ns/op    -63.33%\nBenchmarkTCPPersistent-8            26850 ns/op     9730 ns/op    -63.76%\nBenchmarkTCPPersistent-16          104449 ns/op   102838 ns/op     -1.54%\n\nBenchmarkTCPPersistentTimeout       51806 ns/op    53281 ns/op      2.85%\nBenchmarkTCPPersistentTimeout-2     32956 ns/op    30895 ns/op     -6.25%\nBenchmarkTCPPersistentTimeout-4     25994 ns/op    18111 ns/op    -30.33%\nBenchmarkTCPPersistentTimeout-6     26679 ns/op     9846 ns/op    -63.09%\nBenchmarkTCPPersistentTimeout-8     26810 ns/op     9727 ns/op    -63.72%\nBenchmarkTCPPersistentTimeout-16   101652 ns/op   104410 ns/op      2.71%\n\nR=rsc, dvyukov, dave, mikioh.mikioh, bradfitz, remyoudompheng\nCC=golang-dev\nhttp://codereview.appspot.com/6496054\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2012-09-26 19:33:04.570130",
+			"approval": false
+		}
+	],
+	"owner_email": "sebastien.paolacci@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Sebastien Paolacci",
+	"subject": "code review 6496054: net: spread fd over several pollservers.",
+	"created": "2012-08-29 05:50:45.186560",
+	"patchsets": [
+		1,
+		1002,
+		9001,
+		13002,
+		19001,
+		23001,
+		31001,
+		33001
+	],
+	"modified": "2012-09-29 06:37:03.709900",
+	"closed": true,
+	"issue": 6496054
+}

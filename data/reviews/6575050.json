@@ -1,0 +1,116 @@
+{
+	"description": "net: close dialing fds in DialTimeout\n\nWIP. (Kinda gross) For discussion.\n\nFixes issue 2631",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"rsc@golang.org",
+		"alex.brainman@gmail.com",
+		"paul@vanbrouwershaven.com"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FWIW, I implemented this for somebody who mailed me privately saying this\r\nwas a show-stopped for their application.\r\n\r\nI offered this CL so they can test it out and see if it fixes their\r\nobserved problems.\r\n\r\nI can imagine several different ways to implement this.  Rather than\r\nclosing the socket from another goroutine, we could also integrate with the\r\npollserver and set timeouts there.\r\n\r\nThis also lacks a test to see if the fds go away.\r\n\r\n\r\nOn Wed, Sep 26, 2012 at 10:35 AM, <bradfitz@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> net: close dialing fds in DialTimeout\r\n>\r\n> WIP. (Kinda gross) For discussion.\r\n>\r\n> Fixes issue 2631\r\n>\r\n> Please review this at http://codereview.appspot.com/**6575050/<http://codereview.appspot.com/6575050/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/dial.go\r\n>   M src/pkg/net/iprawsock_posix.go\r\n>   M src/pkg/net/ipsock_posix.go\r\n>   M src/pkg/net/sock_posix.go\r\n>   M src/pkg/net/tcpsock_posix.go\r\n>   M src/pkg/net/udpsock_posix.go\r\n>   M src/pkg/net/unixsock_posix.go\r\n>\r\n>\r\n> Index: src/pkg/net/dial.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/dial.go\r\n> +++ b/src/pkg/net/dial.go\r\n> @@ -93,13 +93,13 @@\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> -       return dialAddr(net, addr, addri)\r\n> +       return dialAddr(net, addr, addri, nil)\r\n>  }\r\n>\r\n> -func dialAddr(net, addr string, addri Addr) (c Conn, err error) {\r\n> +func dialAddr(net, addr string, addri Addr, beforeConnect chan<- *netFD)\r\n> (c Conn, err error) {\r\n>         switch ra := addri.(type) {\r\n>         case *TCPAddr:\r\n> -               c, err = DialTCP(net, nil, ra)\r\n> +               c, err = dialTCP(net, nil, ra, beforeConnect)\r\n>         case *UDPAddr:\r\n>                 c, err = DialUDP(net, nil, ra)\r\n>         case *IPAddr:\r\n> @@ -130,6 +130,7 @@\r\n>         }\r\n>         ch := make(chan pair, 1)\r\n>         resolvedAddr := make(chan Addr, 1)\r\n> +       fdc := make(chan *netFD, 1)\r\n>         go func() {\r\n>                 _, addri, err := resolveNetAddr(\"dial\", net, addr)\r\n>                 if err != nil {\r\n> @@ -137,7 +138,7 @@\r\n>                         return\r\n>                 }\r\n>                 resolvedAddr <- addri // in case we need it for OpError\r\n> -               c, err := dialAddr(net, addr, addri)\r\n> +               c, err := dialAddr(net, addr, addri, fdc)\r\n>                 ch <- pair{c, err}\r\n>         }()\r\n>         select {\r\n> @@ -157,6 +158,14 @@\r\n>                         Addr: addri,\r\n>                         Err:  &timeoutError{},\r\n>                 }\r\n> +\r\n> +               // Try to close the *netFD, if it was sent.\r\n> +               select {\r\n> +               case fd := <-fdc:\r\n> +                       fd.Close()\r\n> +               default:\r\n> +               }\r\n> +\r\n>                 return nil, err\r\n>         case p := <-ch:\r\n>                 return p.Conn, p.error\r\n> Index: src/pkg/net/iprawsock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/iprawsock_posix.**go\r\n> +++ b/src/pkg/net/iprawsock_posix.**go\r\n> @@ -175,7 +175,7 @@\r\n>         if raddr == nil {\r\n>                 return nil, &OpError{\"dial\", netProto, nil,\r\n> errMissingAddress}\r\n>         }\r\n> -       fd, err := internetSocket(net, laddr.toAddr(), raddr.toAddr(),\r\n> syscall.SOCK_RAW, proto, \"dial\", sockaddrToIP)\r\n> +       fd, err := internetSocket(net, laddr.toAddr(), raddr.toAddr(),\r\n> syscall.SOCK_RAW, proto, \"dial\", sockaddrToIP, nil)\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> @@ -196,7 +196,7 @@\r\n>         default:\r\n>                 return nil, UnknownNetworkError(net)\r\n>         }\r\n> -       fd, err := internetSocket(net, laddr.toAddr(), nil,\r\n> syscall.SOCK_RAW, proto, \"listen\", sockaddrToIP)\r\n> +       fd, err := internetSocket(net, laddr.toAddr(), nil,\r\n> syscall.SOCK_RAW, proto, \"listen\", sockaddrToIP, nil)\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> Index: src/pkg/net/ipsock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ipsock_posix.go\r\n> +++ b/src/pkg/net/ipsock_posix.go\r\n> @@ -125,7 +125,7 @@\r\n>         sockaddr(family int) (syscall.Sockaddr, error)\r\n>  }\r\n>\r\n> -func internetSocket(net string, laddr, raddr sockaddr, sotype, proto int,\r\n> mode string, toAddr func(syscall.Sockaddr) Addr) (fd *netFD, err error) {\r\n> +func internetSocket(net string, laddr, raddr sockaddr, sotype, proto int,\r\n> mode string, toAddr func(syscall.Sockaddr) Addr, beforeConnect chan<-\r\n> *netFD) (fd *netFD, err error) {\r\n>         var la, ra syscall.Sockaddr\r\n>         family, ipv6only := favoriteAddrFamily(net, laddr, raddr, mode)\r\n>         if laddr != nil {\r\n> @@ -138,7 +138,7 @@\r\n>                         goto Error\r\n>                 }\r\n>         }\r\n> -       fd, err = socket(net, family, sotype, proto, ipv6only, la, ra,\r\n> toAddr)\r\n> +       fd, err = socket(net, family, sotype, proto, ipv6only, la, ra,\r\n> toAddr, beforeConnect)\r\n>         if err != nil {\r\n>                 goto Error\r\n>         }\r\n> Index: src/pkg/net/sock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/sock_posix.go\r\n> +++ b/src/pkg/net/sock_posix.go\r\n> @@ -16,7 +16,7 @@\r\n>  var listenerBacklog = maxListenerBacklog()\r\n>\r\n>  // Generic socket creation.\r\n> -func socket(net string, f, t, p int, ipv6only bool, ulsa, ursa\r\n> syscall.Sockaddr, toAddr func(syscall.Sockaddr) Addr) (fd *netFD, err\r\n> error) {\r\n> +func socket(net string, f, t, p int, ipv6only bool, ulsa, ursa\r\n> syscall.Sockaddr, toAddr func(syscall.Sockaddr) Addr, beforeConnect chan<-\r\n> *netFD) (fd *netFD, err error) {\r\n>         // See ../syscall/exec_unix.go for description of ForkLock.\r\n>         syscall.ForkLock.RLock()\r\n>         s, err := syscall.Socket(f, t, p)\r\n> @@ -50,6 +50,9 @@\r\n>         }\r\n>\r\n>         if ursa != nil {\r\n> +               if beforeConnect != nil {\r\n> +                       beforeConnect <- fd\r\n> +               }\r\n>                 if err = fd.connect(ursa); err != nil {\r\n>                         closesocket(s)\r\n>                         fd.Close()\r\n> Index: src/pkg/net/tcpsock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/tcpsock_posix.go\r\n> +++ b/src/pkg/net/tcpsock_posix.go\r\n> @@ -143,11 +143,16 @@\r\n>  // which must be \"tcp\", \"tcp4\", or \"tcp6\".  If laddr is not nil, it is\r\n> used\r\n>  // as the local address for the connection.\r\n>  func DialTCP(net string, laddr, raddr *TCPAddr) (*TCPConn, error) {\r\n> +       return dialTCP(net, laddr, raddr, nil)\r\n> +}\r\n> +\r\n> +// If beforeConnect is non-nil, it receives the *netFD before connect is\r\n> called.\r\n> +func dialTCP(net string, laddr, raddr *TCPAddr, beforeConnect chan<-\r\n> *netFD) (*TCPConn, error) {\r\n>         if raddr == nil {\r\n>                 return nil, &OpError{\"dial\", net, nil, errMissingAddress}\r\n>         }\r\n>\r\n> -       fd, err := internetSocket(net, laddr.toAddr(), raddr.toAddr(),\r\n> syscall.SOCK_STREAM, 0, \"dial\", sockaddrToTCP)\r\n> +       fd, err := internetSocket(net, laddr.toAddr(), raddr.toAddr(),\r\n> syscall.SOCK_STREAM, 0, \"dial\", sockaddrToTCP, beforeConnect)\r\n>\r\n>         // TCP has a rarely used mechanism called a 'simultaneous\r\n> connection' in\r\n>         // which Dial(\"tcp\", addr1, addr2) run on the machine at addr1 can\r\n> @@ -177,7 +182,7 @@\r\n>                 if err == nil {\r\n>                         fd.Close()\r\n>                 }\r\n> -               fd, err = internetSocket(net, laddr.toAddr(),\r\n> raddr.toAddr(), syscall.SOCK_STREAM, 0, \"dial\", sockaddrToTCP)\r\n> +               fd, err = internetSocket(net, laddr.toAddr(),\r\n> raddr.toAddr(), syscall.SOCK_STREAM, 0, \"dial\", sockaddrToTCP, nil)\r\n>         }\r\n>\r\n>         if err != nil {\r\n> @@ -225,7 +230,7 @@\r\n>  // If laddr has a port of 0, it means to listen on some available port.\r\n>  // The caller can use l.Addr() to retrieve the chosen address.\r\n>  func ListenTCP(net string, laddr *TCPAddr) (*TCPListener, error) {\r\n> -       fd, err := internetSocket(net, laddr.toAddr(), nil,\r\n> syscall.SOCK_STREAM, 0, \"listen\", sockaddrToTCP)\r\n> +       fd, err := internetSocket(net, laddr.toAddr(), nil,\r\n> syscall.SOCK_STREAM, 0, \"listen\", sockaddrToTCP, nil)\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> Index: src/pkg/net/udpsock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/udpsock_posix.go\r\n> +++ b/src/pkg/net/udpsock_posix.go\r\n> @@ -168,7 +168,7 @@\r\n>         if raddr == nil {\r\n>                 return nil, &OpError{\"dial\", net, nil, errMissingAddress}\r\n>         }\r\n> -       fd, err := internetSocket(net, laddr.toAddr(), raddr.toAddr(),\r\n> syscall.SOCK_DGRAM, 0, \"dial\", sockaddrToUDP)\r\n> +       fd, err := internetSocket(net, laddr.toAddr(), raddr.toAddr(),\r\n> syscall.SOCK_DGRAM, 0, \"dial\", sockaddrToUDP, nil)\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> @@ -188,7 +188,7 @@\r\n>         if laddr == nil {\r\n>                 return nil, &OpError{\"listen\", net, nil, errMissingAddress}\r\n>         }\r\n> -       fd, err := internetSocket(net, laddr.toAddr(), nil,\r\n> syscall.SOCK_DGRAM, 0, \"listen\", sockaddrToUDP)\r\n> +       fd, err := internetSocket(net, laddr.toAddr(), nil,\r\n> syscall.SOCK_DGRAM, 0, \"listen\", sockaddrToUDP, nil)\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> @@ -208,7 +208,7 @@\r\n>         if gaddr == nil || gaddr.IP == nil {\r\n>                 return nil, &OpError{\"listenmulticast\", net, nil,\r\n> errMissingAddress}\r\n>         }\r\n> -       fd, err := internetSocket(net, gaddr.toAddr(), nil,\r\n> syscall.SOCK_DGRAM, 0, \"listen\", sockaddrToUDP)\r\n> +       fd, err := internetSocket(net, gaddr.toAddr(), nil,\r\n> syscall.SOCK_DGRAM, 0, \"listen\", sockaddrToUDP, nil)\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> Index: src/pkg/net/unixsock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/unixsock_posix.**go\r\n> +++ b/src/pkg/net/unixsock_posix.**go\r\n> @@ -59,7 +59,7 @@\r\n>                 f = sockaddrToUnixpacket\r\n>         }\r\n>\r\n> -       fd, err = socket(net, syscall.AF_UNIX, sotype, 0, false, la, ra, f)\r\n> +       fd, err = socket(net, syscall.AF_UNIX, sotype, 0, false, la, ra,\r\n> f, nil)\r\n>         if err != nil {\r\n>                 goto Error\r\n>         }\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-09-26 17:59:21.887630",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Integrating with the poll server should be straightforward. In fact it is probably simpler than using a goroutine.",
+			"disapproval": false,
+			"date": "2012-09-26 18:52:27.409710",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-09-26 17:35:28.176520",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/26 18:52:27, rsc wrote:\n> Integrating with the poll server should be straightforward. In fact it is\n> probably simpler than using a goroutine.\n\nI didn't look properly. But, I think, we could use windows ConnectEx api to implement similar functionality on windows. It should fit our current windows \"poll server\" method too.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-09-27 02:38:37.317020",
+			"approval": false
+		},
+		{
+			"sender": "paul@vanbrouwershaven.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"paul@vanbrouwershaven.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I did some testing on this code. Initially everything looks fine and the fd is closed. But as soon I start to make concurrent requests I'm getting the message \"Epoll delete fd=35212: bad file descriptor\".\n\nThe error does not always occur and I get the feeling that the fd is closed between the timeout and the close request.\n\nThe location of the error message:\nhttp://code.google.com/p/go/source/browse/src/pkg/net/fd_linux.go#111",
+			"disapproval": false,
+			"date": "2012-10-02 17:16:05.471970",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"paul@vanbrouwershaven.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-10-03 15:04:53.859040",
+			"approval": false
+		},
+		{
+			"sender": "paul@vanbrouwershaven.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "When a connection fails because a server not listening on that port, \r\nfd.connect(ursa) does not return an error but sets fd.isConnected to true. \r\nThis causes an open file descriptor till a timeout occurs. I would also \r\nsuggest that this would be the right place to handle all connection \r\ntimeouts.\r\n\r\nif err = fd.connect(ursa); err != nil {\r\nclosesocket(s)\r\nfd.Close()\r\nreturn nil, err\r\n}\r\nfd.isConnected = true \r\nhttp://code.google.com/p/go/source/browse/src/pkg/net/sock_posix.go#53\r\n\r\nAny idea how to detect the connection failure or/and to implement a better \r\ntimeout handler?\r\n\r\nOn Wednesday, October 3, 2012 5:04:56 PM UTC+2, Brad Fitzpatrick wrote:\r\n>\r\n> *** Abandoned *** \r\n>\r\n> http://codereview.appspot.com/6575050/ \r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-04 15:09:44.577790",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 6575050: net: close dialing fds in DialTimeout",
+	"created": "2012-09-26 17:34:27.767090",
+	"patchsets": [
+		1,
+		2001,
+		4008
+	],
+	"modified": "2012-10-03 15:04:55.466230",
+	"closed": true,
+	"issue": 6575050
+}

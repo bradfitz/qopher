@@ -1,0 +1,62 @@
+{
+	"description": "runtime: transfer whole span from MCentral to MCache\nFiner-grained transfers were relevant with per-M caches,\nwith per-P caches they are not relevant and harmful for performance.\nFor few small size classes where it makes difference,\nit's fine to grab the whole span (4K).\n\nbenchmark          old ns/op    new ns/op    delta\nBenchmarkMalloc           42           40   -4.45%",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-13 09:10:03.261940",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM for code getting simpler\r\n\r\n\r\nOn Mon, May 13, 2013 at 2:10 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: transfer whole span from MCentral to MCache\r\n> Finer-grained transfers were relevant with per-M caches,\r\n> with per-P caches they are not relevant and harmful for performance.\r\n> For few small size classes where it makes difference,\r\n> it's fine to grab the whole span (4K).\r\n>\r\n> benchmark          old ns/op    new ns/op    delta\r\n> BenchmarkMalloc           42           40   -4.45%\r\n>\r\n> Please review this at https://codereview.appspot.**com/9374043/<https://codereview.appspot.com/9374043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/malloc.h\r\n>   M src/pkg/runtime/mcache.c\r\n>   M src/pkg/runtime/mcentral.c\r\n>   M src/pkg/runtime/msize.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/malloc.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/malloc.h\r\n> +++ b/src/pkg/runtime/malloc.h\r\n> @@ -267,14 +267,10 @@\r\n>  // class_to_size[i] = largest size in class i\r\n>  // class_to_allocnpages[i] = number of pages to allocate when\r\n>  //     making new objects in class i\r\n> -// class_to_transfercount[i] = number of objects to move when\r\n> -//     taking a bunch of objects out of the central lists\r\n> -//     and putting them in the thread free list.\r\n>\r\n>  int32  runtime\u00b7SizeToClass(int32);\r\n>  extern int32   runtime\u00b7class_to_size[**NumSizeClasses];\r\n>  extern int32   runtime\u00b7class_to_allocnpages[**NumSizeClasses];\r\n> -extern int32   runtime\u00b7class_to_**transfercount[NumSizeClasses];\r\n>  extern void    runtime\u00b7InitSizes(void);\r\n>\r\n>\r\n> @@ -397,7 +393,7 @@\r\n>  };\r\n>\r\n>  void   runtime\u00b7MCentral_Init(MCentral *c, int32 sizeclass);\r\n> -int32  runtime\u00b7MCentral_AllocList(**MCentral *c, int32 n, MLink **first);\r\n> +int32  runtime\u00b7MCentral_AllocList(**MCentral *c, MLink **first);\r\n>  void   runtime\u00b7MCentral_FreeList(**MCentral *c, int32 n, MLink *first);\r\n>  void   runtime\u00b7MCentral_FreeSpan(**MCentral *c, MSpan *s, int32 n, MLink\r\n> *start, MLink *end);\r\n>\r\n> Index: src/pkg/runtime/mcache.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mcache.c\r\n> +++ b/src/pkg/runtime/mcache.c\r\n> @@ -21,8 +21,7 @@\r\n>         l = &c->list[sizeclass];\r\n>         if(l->list == nil) {\r\n>                 // Replenish using central lists.\r\n> -               n = runtime\u00b7MCentral_AllocList(&**runtime\u00b7mheap->central[*\r\n> *sizeclass],\r\n> -                       runtime\u00b7class_to_**transfercount[sizeclass],\r\n> &first);\r\n> +               n = runtime\u00b7MCentral_AllocList(&**runtime\u00b7mheap->central[*\r\n> *sizeclass], &first);\r\n>                 if(n == 0)\r\n>                         runtime\u00b7throw(\"out of memory\");\r\n>                 l->list = first;\r\n> @@ -91,7 +90,7 @@\r\n>\r\n>         if(l->nlist >= MaxMCacheListLen) {\r\n>                 // Release a chunk back.\r\n> -               ReleaseN(c, l, runtime\u00b7class_to_**transfercount[sizeclass],\r\n> sizeclass);\r\n> +               ReleaseN(c, l, l->nlist/2, sizeclass);\r\n>         }\r\n>\r\n>         if(c->size >= MaxMCacheSize) {\r\n> Index: src/pkg/runtime/mcentral.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mcentral.c\r\n> +++ b/src/pkg/runtime/mcentral.c\r\n> @@ -30,16 +30,15 @@\r\n>         runtime\u00b7MSpanList_Init(&c->**empty);\r\n>  }\r\n>\r\n> -// Allocate up to n objects from the central free list.\r\n> +// Allocate a list of objects from the central free list.\r\n>  // Return the number of objects allocated.\r\n>  // The objects are linked together by their first words.\r\n>  // On return, *pstart points at the first object.\r\n>  int32\r\n> -runtime\u00b7MCentral_AllocList(**MCentral *c, int32 n, MLink **pfirst)\r\n> +runtime\u00b7MCentral_AllocList(**MCentral *c, MLink **pfirst)\r\n>  {\r\n>         MSpan *s;\r\n> -       MLink *first, *last;\r\n> -       int32 cap, avail, i;\r\n> +       int32 cap, n;\r\n>\r\n>         runtime\u00b7lock(c);\r\n>         // Replenish central list if empty.\r\n> @@ -52,31 +51,14 @@\r\n>         }\r\n>         s = c->nonempty.next;\r\n>         cap = (s->npages << PageShift) / s->elemsize;\r\n> -       avail = cap - s->ref;\r\n> -       if(avail < n)\r\n> -               n = avail;\r\n> -\r\n> -       // First one is guaranteed to work, because we just grew the list.\r\n> -       first = s->freelist;\r\n> -       last = first;\r\n> -       for(i=1; i<n; i++) {\r\n> -               last = last->next;\r\n> -       }\r\n> -       s->freelist = last->next;\r\n> -       last->next = nil;\r\n> +       n = cap - s->ref;\r\n> +       *pfirst = s->freelist;\r\n> +       s->freelist = nil;\r\n>         s->ref += n;\r\n>         c->nfree -= n;\r\n> -\r\n> -       if(n == avail) {\r\n> -               if(s->freelist != nil || s->ref != cap) {\r\n> -                       runtime\u00b7throw(\"invalid freelist\");\r\n> -               }\r\n> -               runtime\u00b7MSpanList_Remove(s);\r\n> -               runtime\u00b7MSpanList_Insert(&c->**empty, s);\r\n> -       }\r\n> -\r\n> +       runtime\u00b7MSpanList_Remove(s);\r\n> +       runtime\u00b7MSpanList_Insert(&c->**empty, s);\r\n>         runtime\u00b7unlock(c);\r\n> -       *pfirst = first;\r\n>         return n;\r\n>  }\r\n>\r\n> Index: src/pkg/runtime/msize.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/msize.c\r\n> +++ b/src/pkg/runtime/msize.c\r\n> @@ -31,7 +31,6 @@\r\n>\r\n>  int32 runtime\u00b7class_to_size[**NumSizeClasses];\r\n>  int32 runtime\u00b7class_to_allocnpages[**NumSizeClasses];\r\n> -int32 runtime\u00b7class_to_**transfercount[NumSizeClasses];\r\n>\r\n>  // The SizeToClass lookup is implemented using two arrays,\r\n>  // one mapping sizes <= 1024 to their class and one mapping\r\n> @@ -137,16 +136,6 @@\r\n>         // Copy out for statistics table.\r\n>         for(i=0; i<nelem(runtime\u00b7class_to_size)**; i++)\r\n>                 mstats.by_size[i].size = runtime\u00b7class_to_size[i];\r\n> -\r\n> -       // Initialize the runtime\u00b7class_to_transfercount table.\r\n> -       for(sizeclass = 1; sizeclass < NumSizeClasses; sizeclass++) {\r\n> -               n = 64*1024 / runtime\u00b7class_to_size[**sizeclass];\r\n> -               if(n < 2)\r\n> -                       n = 2;\r\n> -               if(n > 32)\r\n> -                       n = 32;\r\n> -               runtime\u00b7class_to_**transfercount[sizeclass] = n;\r\n> -       }\r\n>         return;\r\n>\r\n>  dump:\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-13 15:49:46.097800",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=931a7362e30c ***\n\nruntime: transfer whole span from MCentral to MCache\nFiner-grained transfers were relevant with per-M caches,\nwith per-P caches they are not relevant and harmful for performance.\nFor few small size classes where it makes difference,\nit's fine to grab the whole span (4K).\n\nbenchmark          old ns/op    new ns/op    delta\nBenchmarkMalloc           42           40   -4.45%\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/9374043",
+			"disapproval": false,
+			"date": "2013-05-15 14:35:22.351940",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 9374043: runtime: transfer whole span from MCentral to MCache",
+	"created": "2013-05-13 09:02:03.017060",
+	"patchsets": [
+		1,
+		2001,
+		3001,
+		5001,
+		10001,
+		13001
+	],
+	"modified": "2013-05-15 14:35:23.757110",
+	"closed": true,
+	"issue": 9374043
+}

@@ -1,0 +1,60 @@
+{
+	"description": "runtime: use persistentalloc instead of custom malloc in memory profiler\nRemoves code duplication.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\n\r\n\r\nOn Sun, Jun 9, 2013 at 7:22 PM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: use persistentalloc instead of custom malloc in memory profiler\r\n> Removes code duplication.\r\n>\r\n> Please review this at https://codereview.appspot.**com/9874055/<https://codereview.appspot.com/9874055/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/mprof.goc\r\n>\r\n>\r\n> Index: src/pkg/runtime/mprof.goc\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mprof.goc\r\n> +++ b/src/pkg/runtime/mprof.goc\r\n> @@ -13,44 +13,11 @@\r\n>  #include \"type.h\"\r\n>\r\n>  // NOTE(rsc): Everything here could use cas if contention became an issue.\r\n> -static Lock proflock, alloclock;\r\n> +static Lock proflock;\r\n>\r\n>  // All memory allocations are local and do not escape outside of the\r\n> profiler.\r\n>  // The profiler is forbidden from referring to garbage-collected memory.\r\n>\r\n> -static byte *pool;        // memory allocation pool\r\n> -static uintptr poolfree;  // number of bytes left in the pool\r\n> -enum {\r\n> -       Chunk = 32*PageSize,  // initial size of the pool\r\n> -};\r\n> -\r\n> -// Memory allocation local to this file.\r\n> -// There is no way to return the allocated memory back to the OS.\r\n> -static void*\r\n> -allocate(uintptr size)\r\n> -{\r\n> -       void *v;\r\n> -\r\n> -       if(size == 0)\r\n> -               return nil;\r\n> -\r\n> -       if(size >= Chunk/2)\r\n> -               return runtime\u00b7SysAlloc(size);\r\n> -\r\n> -       runtime\u00b7lock(&alloclock);\r\n> -       if(size > poolfree) {\r\n> -               pool = runtime\u00b7SysAlloc(Chunk);\r\n> -               if(pool == nil)\r\n> -                       runtime\u00b7throw(\"runtime: cannot allocate memory\");\r\n> -               poolfree = Chunk;\r\n> -       }\r\n> -       v = pool;\r\n> -       pool += size;\r\n> -       poolfree -= size;\r\n> -       runtime\u00b7unlock(&alloclock);\r\n> -       return v;\r\n> -}\r\n> -\r\n>  enum { MProf, BProf };  // profile types\r\n>\r\n>  // Per-call-stack profiling information.\r\n> @@ -128,9 +95,7 @@\r\n>         if(!alloc)\r\n>                 return nil;\r\n>\r\n> -       b = allocate(sizeof *b + nstk*sizeof stk[0]);\r\n> -       if(b == nil)\r\n> -               runtime\u00b7throw(\"runtime: cannot allocate memory\");\r\n> +       b = runtime\u00b7persistentalloc(sizeof *b + nstk*sizeof stk[0], 0);\r\n>         bucketmem += sizeof *b + nstk*sizeof stk[0];\r\n>         runtime\u00b7memmove(b->stk, stk, nstk*sizeof stk[0]);\r\n>         b->typ = typ;\r\n> @@ -232,7 +197,7 @@\r\n>                 if(ah->addr == (addr>>AddrHashShift))\r\n>                         goto found;\r\n>\r\n> -       ah = allocate(sizeof *ah);\r\n> +       ah = runtime\u00b7persistentalloc(sizeof *ah, 0);\r\n>         addrmem += sizeof *ah;\r\n>         ah->next = addrhash[h];\r\n>         ah->addr = addr>>AddrHashShift;\r\n> @@ -240,7 +205,7 @@\r\n>\r\n>  found:\r\n>         if((e = addrfree) == nil) {\r\n> -               e = allocate(64*sizeof *e);\r\n> +               e = runtime\u00b7persistentalloc(64***sizeof *e, 0);\r\n>                 addrmem += 64*sizeof *e;\r\n>                 for(i=0; i+1<64; i++)\r\n>                         e[i].next = &e[i+1];\r\n> @@ -554,5 +519,5 @@\r\n>  void\r\n>  runtime\u00b7mprofinit(void)\r\n>  {\r\n> -       addrhash = allocate((1<<AddrHashBits)***sizeof *addrhash);\r\n> +       addrhash = runtime\u00b7persistentalloc((1<<**AddrHashBits)*sizeof\r\n> *addrhash, 0);\r\n>  }\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-09 17:23:52.929230",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-06-09 17:22:36.328820",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=6f3e6d2e7f1c ***\n\nruntime: use persistentalloc instead of custom malloc in memory profiler\nRemoves code duplication.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/9874055",
+			"disapproval": false,
+			"date": "2013-06-09 17:38:55.106570",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 9874055: runtime: use persistentalloc instead of custom malloc i...",
+	"created": "2013-06-09 17:22:23.975460",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9001
+	],
+	"modified": "2013-06-09 17:38:56.361830",
+	"closed": true,
+	"issue": 9874055
+}

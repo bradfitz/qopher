@@ -1,0 +1,181 @@
+{
+	"description": "exp/types: process ast.Fun in checkObj; fix variadic function building\n\nFixed creation of Func's, taking IsVariadic from parameter list rather\nthan results.\n\nUpdated checkObj to process ast.Fun objects.",
+	"cc": [
+		"gri@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"axwalk@gmail.com",
+				"golang-dev@googlegroups.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go\nFile src/pkg/exp/types/check.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode42\nsrc/pkg/exp/types/check.go:42: if isVariadic {\nI think this should not be done here. There are two distinct places where parameters of a function signature are looked at:\n\n1) When checking signatures, e.g. when a function is called, a function assigned, etc. In this case, the parameter types should have the actual type (because that's what is passed to them), and the isVariadic bit only indicates that multiple arguments of the same last type can be passed. The slice... argument is a special case and that should be the only case where the parameter type needs to be checked against the element type of slice - if the function is variadic.\n\nOr to make the point clearer: What if you have a function f(arg... []int) ? Now, all of a sudden, the argument type is [][]int if it is variadic, and it gets a bit confusing.\n\nAs it is, for the last argument one _always_ has to check if the function is variadic and do something special. If you leave it alone, only if there are too many arguments, or the last argument is of arg... type, one has to check the isVariadic bit.\n\nThus, leave this as is.\n\n2) It makes sense to separate the objects inside the scope of the function from the list of parameters. They may share information, but the two lists should probably be separate. When a function body is present, that scope should be populated with the parameters (as local variables), and that's the time when the last parameter's type is adjusted to a slice if the function is variadic.\n\nHere's another reason why having two separate lists (scopes) makes sense: When passing arguments, the \"addresses/offsets\" of the parameters may be something else than the \"addresses/offsets\" that the function body cares about.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode164\nsrc/pkg/exp/types/check.go:164: params, _, isVariadic := c.collectFields(token.FUNC, t.Params, true)\nyes, good fix\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode206\nsrc/pkg/exp/types/check.go:206: fndecl := obj.Decl.(*ast.FuncDecl)\nPlease call this fdecl - or just decl. This is the more common naming convention in all of AST related code.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode208\nsrc/pkg/exp/types/check.go:208: fn := obj.Type.(*Func)\ns/fn/f/ or\ns/fn/fun/\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode210\nsrc/pkg/exp/types/check.go:210: // TODO(axw) add method to a list in the receiver type.\nThis will require some design before doing this. The actual representation of method sets has wide impacts.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode220\nsrc/pkg/exp/types/check.go:220: // TODO(axw) check function body (only if non-method). Methods\nI am not convinced that the distinction is necessary. How is a receiver type different from any parameter type (which may also be incomplete)? It's not - a receiver is just a parameter.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/gcimporter.go\nFile src/pkg/exp/types/gcimporter.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/gcimporter.go#newcode447\nsrc/pkg/exp/types/gcimporter.go:447: if isVariadic {\ndon't do this - for the reasons explained before\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/types_test.go\nFile src/pkg/exp/types/types_test.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/types_test.go#newcode35\nsrc/pkg/exp/types/types_test.go:35: func TestVariadicFunction(t *testing.T) {\ns/TestVariadicFunction/TestVariadicFunctions/\n\nand the test should ideally operate on list of different functions f1, f2, etc. with various types of variadic functions to be reasonably comprehensive.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/types_test.go#newcode37\nsrc/pkg/exp/types/types_test.go:37: package x\nplease make this\n\npackage p\nfunc f(arg ...int)\n\nthis is the more common naming scheme\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/types_test.go#newcode41\nsrc/pkg/exp/types/types_test.go:41: fntype := fn.Type.(*Func)\nf := ...\nftype := ...",
+			"disapproval": false,
+			"date": "2012-07-14 23:58:26.259500",
+			"approval": false
+		},
+		{
+			"sender": "axwalk@gmail.com",
+			"recipients": [
+				"axwalk@gmail.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go\nFile src/pkg/exp/types/check.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode42\nsrc/pkg/exp/types/check.go:42: if isVariadic {\nI'll take this change out of this CL, but there will have to be a change somewhere in type checking, whether it be introducing local variable objects or this change. I'll write up the alternatives and save that for another CL. Read on for my rationale.\n\n> 1) When checking signatures, e.g. when a function is called, a function\n> assigned, etc. In this case, the parameter types should have the actual type\n> (because that's what is passed to them), and the isVariadic bit only indicates\n> that multiple arguments of the same last type can be passed. The slice...\n> argument is a special case and that should be the only case where the parameter\n> type needs to be checked against the element type of slice - if the function is\n> variadic.\n> \n> Or to make the point clearer: What if you have a function f(arg... []int) ? Now,\n> all of a sudden, the argument type is [][]int if it is variadic, and it gets a\n> bit confusing.\n> \n> As it is, for the last argument one _always_ has to check if the function is\n> variadic and do something special. If you leave it alone, only if there are too\n> many arguments, or the last argument is of arg... type, one has to check the\n> isVariadic bit.\n\nI think we both agree on this point, that IsVariadic must always be checked. I wasn't attempting to change this fact - it'll be required regardless of whether a slice or the base type is stored.\n \n> Thus, leave this as is.\n> \n> 2) It makes sense to separate the objects inside the scope of the function from\n> the list of parameters. They may share information, but the two lists should\n> probably be separate. When a function body is present, that scope should be\n> populated with the parameters (as local variables), and that's the time when the\n> last parameter's type is adjusted to a slice if the function is variadic.\n> \n> Here's another reason why having two separate lists (scopes) makes sense: When\n> passing arguments, the \"addresses/offsets\" of the parameters may be something\n> else than the \"addresses/offsets\" that the function body cares about. \n\nSure, but you can do this without multiple objects, can you not? In llgo, I create local variables, load the parameter value into them, and store a reference to the local variable in the parameter's (ast.Object) Data field. This works if the type of the parameter is a slice, as expected in the function body. I'm not really sure what you get by creating two objects for each parameter.\n\nAnyway, I'll write up the design and consult you again later.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode206\nsrc/pkg/exp/types/check.go:206: fndecl := obj.Decl.(*ast.FuncDecl)\nOn 2012/07/14 23:58:26, gri wrote:\n> Please call this fdecl - or just decl. This is the more common naming convention\n> in all of AST related code.\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode208\nsrc/pkg/exp/types/check.go:208: fn := obj.Type.(*Func)\nOn 2012/07/14 23:58:26, gri wrote:\n> s/fn/f/ or\n> s/fn/fun/\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode210\nsrc/pkg/exp/types/check.go:210: // TODO(axw) add method to a list in the receiver type.\nOn 2012/07/14 23:58:26, gri wrote:\n> This will require some design before doing this. The actual representation of\n> method sets has wide impacts.\n\nI'll add it to the doc.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode220\nsrc/pkg/exp/types/check.go:220: // TODO(axw) check function body (only if non-method). Methods\nOn 2012/07/14 23:58:26, gri wrote:\n> I am not convinced that the distinction is necessary. How is a receiver type\n> different from any parameter type (which may also be incomplete)? It's not - a\n> receiver is just a parameter.\n\nIndeed. This distinction is a holdover, and can be removed.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/gcimporter.go\nFile src/pkg/exp/types/gcimporter.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/gcimporter.go#newcode447\nsrc/pkg/exp/types/gcimporter.go:447: if isVariadic {\nOn 2012/07/14 23:58:26, gri wrote:\n> don't do this - for the reasons explained before\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/types_test.go\nFile src/pkg/exp/types/types_test.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/types_test.go#newcode35\nsrc/pkg/exp/types/types_test.go:35: func TestVariadicFunction(t *testing.T) {\nOn 2012/07/14 23:58:26, gri wrote:\n> s/TestVariadicFunction/TestVariadicFunctions/\n> \n> and the test should ideally operate on list of different functions f1, f2, etc.\n> with various types of variadic functions to be reasonably comprehensive.\n\nI'll add another couple of that tests with multiple arguments, the last being variadic, and also non-variadic functions. The only other test I can think of is checking that '...' isn't specified in an earlier parameter, but I'd rather leave that to check_test.go, and another CL.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/types_test.go#newcode37\nsrc/pkg/exp/types/types_test.go:37: package x\nOn 2012/07/14 23:58:26, gri wrote:\n> please make this\n> \n> package p\n> func f(arg ...int)\n> \n> this is the more common naming scheme\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/types_test.go#newcode41\nsrc/pkg/exp/types/types_test.go:41: fntype := fn.Type.(*Func)\nOn 2012/07/14 23:58:26, gri wrote:\n> f := ...\n> ftype := ...\n\nDone.",
+			"disapproval": false,
+			"date": "2012-07-15 12:46:31.479710",
+			"approval": false
+		},
+		{
+			"sender": "axwalk@gmail.com",
+			"recipients": [
+				"axwalk@gmail.com",
+				"golang-dev@googlegroups.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: gri@golang.org),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-07-14 14:32:01.986150",
+			"approval": false
+		},
+		{
+			"sender": "axwalk@gmail.com",
+			"recipients": [
+				"axwalk@gmail.com",
+				"golang-dev@googlegroups.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, gri@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-07-15 12:44:55.023650",
+			"approval": false
+		},
+		{
+			"sender": "axwalk@gmail.com",
+			"recipients": [
+				"axwalk@gmail.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go\nFile src/pkg/exp/types/check.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/5001/src/pkg/exp/types/check.go#newcode220\nsrc/pkg/exp/types/check.go:220: // TODO(axw) check function body (only if non-method). Methods\nOn 2012/07/15 12:46:31, axw wrote:\n> Indeed. This distinction is a holdover, and can be removed.\n\nI take that back. Sorry, I had a memory failure. I'm probably missing a simpler approach, but here's my reasoning anyway.\n\nThe distinction was made due to the possibility of selector expressions in the method body, which may reference types that are still being constructed. It wasn't so much the fact that the receiver may be incomplete, but that any of the types in the body may be incomplete (or more to the point, partially complete).\n\nObviously if the referred-to type has never been seen it can be checked. But if it's partially complete (e.g. a type that embeds the receiver of the method), then the method can't use it yet.\n\nSo I figured the simplest thing to do was to defer all method body checking to the end of the top-level Check function.",
+			"disapproval": false,
+			"date": "2012-07-16 13:47:45.189180",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"axwalk@gmail.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go\nFile src/pkg/exp/types/check.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go#newcode204\nsrc/pkg/exp/types/check.go:204: obj.Type = c.makeType(fdecl.Type, ref)\nftype := c.makeType(fdecl.Type, ref).(*Func)\nobj.Type = ftype\n...\n\n(use ftype instead of f, like you do in the test)\n\n(Actually, I'd prefer ftyp in consistency with typ used elsewhere)\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go#newcode207\nsrc/pkg/exp/types/check.go:207: // TODO(axw) add method to a list in the receiver type.\nmove this TODO to the end of the if statement\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go#newcode211\nsrc/pkg/exp/types/check.go:211: c.checkObj(f.Recv, ref)\nfactor c.checkObj out to the end of the if statement\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go#newcode214\nsrc/pkg/exp/types/check.go:214: f.Recv.Type = c.makeType(recvField.Type, ref)\ninstead of doing this differently here, use c.checkObj factored out after the if statement\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go\nFile src/pkg/exp/types/types_test.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode5\nsrc/pkg/exp/types/types_test.go:5: // This file contains tests for checking the Types\n// This file contains tests verifying the types associated with an AST after type checking.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode16\nsrc/pkg/exp/types/types_test.go:16: func checkSource(t *testing.T, src string) (pkg *ast.Package) {\nremove pkg, just *ast.Package\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode17\nsrc/pkg/exp/types/types_test.go:17: file, err := parser.ParseFile(\none line please\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode17\nsrc/pkg/exp/types/types_test.go:17: file, err := parser.ParseFile(\nconst filename = \"<src>\"\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode18\nsrc/pkg/exp/types/types_test.go:18: fset, \"test.go\", src, parser.DeclarationErrors)\ns/\"test.go\"/filename/\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode22\nsrc/pkg/exp/types/types_test.go:22: files := make(map[string]*ast.File)\nfiles := map[string]*ast.File{ filename: file }\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode23\nsrc/pkg/exp/types/types_test.go:23: files[\"test.go\"] = file\nget rid of this line\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode24\nsrc/pkg/exp/types/types_test.go:24: pkg, err = ast.NewPackage(fset, files, GcImport, Universe)\npkg, err := ...\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode25\nsrc/pkg/exp/types/types_test.go:25: if err == nil {\ndon't be clever here - just:\n\nif err != nil {\n   t.Fatal(err)\n}\n_, err = Check(fset, pkg)\nif err != nil {\n   t.Fatal(err)\n}\nreturn pkg\n\nIt's the same number of if's and also permits better error messages because each Fatal can provide additional call-specific information if so desired in the future\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode34\nsrc/pkg/exp/types/types_test.go:34: // Test variadic function declarations.\nThis comment is not adding any additional information - the function name says it all.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode37\nsrc/pkg/exp/types/types_test.go:37: package p\nPlease unindent this string - in the future, tests will be more complex and having them all indented is going to be tedious.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode48\nsrc/pkg/exp/types/types_test.go:48: t.Fatalf(\"expected %s's functype type to have IsVariadic\", f.Name)\ns/t.Fatalf/t.Errorf/\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode48\nsrc/pkg/exp/types/types_test.go:48: t.Fatalf(\"expected %s's functype type to have IsVariadic\", f.Name)\nt.Errorf(\"expected %s to be variadic\", f.Name)\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode52\nsrc/pkg/exp/types/types_test.go:52: t.Fatalf(\"expected last parameter of %s to have type int, found %T\",\ns/t.Fatalf/t.Errorf/\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode62\nsrc/pkg/exp/types/types_test.go:62: t.Fatalf(\"expected %s's functype type to have !IsVariadic\", f.Name)\nt.Errorf(\"expected %s to not be variadic\", f.Name)\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode64\nsrc/pkg/exp/types/types_test.go:64: }\nTest is fine for now, but if you go through the trouble, why not really set up a table with function signatures and corresponding type information that can all be checked at once instead of hardwiring a few special cases?\n\nDefine a helper function that prints the type signature for each function given the function type. Then you just have to compare each programs function object's type signature with the expected signature string. No need for all the special hardwired tests and it can grow w/o writing a lot of code by simply adding more tests to the test table.",
+			"disapproval": false,
+			"date": "2012-07-24 22:38:48.793440",
+			"approval": false
+		},
+		{
+			"sender": "axwalk@gmail.com",
+			"recipients": [
+				"axwalk@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gri@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-07-26 12:13:52.554880",
+			"approval": false
+		},
+		{
+			"sender": "axwalk@gmail.com",
+			"recipients": [
+				"axwalk@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for the review, sorry for being a bit sloppy.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go\nFile src/pkg/exp/types/check.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go#newcode204\nsrc/pkg/exp/types/check.go:204: obj.Type = c.makeType(fdecl.Type, ref)\nOn 2012/07/24 22:38:48, gri wrote:\n> ftype := c.makeType(fdecl.Type, ref).(*Func)\n> obj.Type = ftype\n> ...\n> \n> (use ftype instead of f, like you do in the test)\n> \n> (Actually, I'd prefer ftyp in consistency with typ used elsewhere)\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go#newcode207\nsrc/pkg/exp/types/check.go:207: // TODO(axw) add method to a list in the receiver type.\nOn 2012/07/24 22:38:48, gri wrote:\n> move this TODO to the end of the if statement\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go#newcode211\nsrc/pkg/exp/types/check.go:211: c.checkObj(f.Recv, ref)\nOn 2012/07/24 22:38:48, gri wrote:\n> factor c.checkObj out to the end of the if statement\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/check.go#newcode214\nsrc/pkg/exp/types/check.go:214: f.Recv.Type = c.makeType(recvField.Type, ref)\nOn 2012/07/24 22:38:48, gri wrote:\n> instead of doing this differently here, use c.checkObj factored out after the if\n> statement\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go\nFile src/pkg/exp/types/types_test.go (right):\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode5\nsrc/pkg/exp/types/types_test.go:5: // This file contains tests for checking the Types\nOn 2012/07/24 22:38:48, gri wrote:\n> // This file contains tests verifying the types associated with an AST after\n> type checking.\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode16\nsrc/pkg/exp/types/types_test.go:16: func checkSource(t *testing.T, src string) (pkg *ast.Package) {\nOn 2012/07/24 22:38:48, gri wrote:\n> remove pkg, just *ast.Package\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode17\nsrc/pkg/exp/types/types_test.go:17: file, err := parser.ParseFile(\nOn 2012/07/24 22:38:48, gri wrote:\n> one line please\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode18\nsrc/pkg/exp/types/types_test.go:18: fset, \"test.go\", src, parser.DeclarationErrors)\nOn 2012/07/24 22:38:48, gri wrote:\n> s/\"test.go\"/filename/\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode22\nsrc/pkg/exp/types/types_test.go:22: files := make(map[string]*ast.File)\nOn 2012/07/24 22:38:48, gri wrote:\n> files := map[string]*ast.File{ filename: file }\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode23\nsrc/pkg/exp/types/types_test.go:23: files[\"test.go\"] = file\nOn 2012/07/24 22:38:48, gri wrote:\n> get rid of this line\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode24\nsrc/pkg/exp/types/types_test.go:24: pkg, err = ast.NewPackage(fset, files, GcImport, Universe)\nOn 2012/07/24 22:38:48, gri wrote:\n> pkg, err := ...\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode25\nsrc/pkg/exp/types/types_test.go:25: if err == nil {\nOn 2012/07/24 22:38:48, gri wrote:\n> don't be clever here - just:\n> \n> if err != nil {\n>    t.Fatal(err)\n> }\n> _, err = Check(fset, pkg)\n> if err != nil {\n>    t.Fatal(err)\n> }\n> return pkg\n> \n> It's the same number of if's and also permits better error messages because each\n> Fatal can provide additional call-specific information if so desired in the\n> future\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode34\nsrc/pkg/exp/types/types_test.go:34: // Test variadic function declarations.\nOn 2012/07/24 22:38:48, gri wrote:\n> This comment is not adding any additional information - the function name says\n> it all.\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode37\nsrc/pkg/exp/types/types_test.go:37: package p\nOn 2012/07/24 22:38:48, gri wrote:\n> Please unindent this string - in the future, tests will be more complex and\n> having them all indented is going to be tedious.\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode48\nsrc/pkg/exp/types/types_test.go:48: t.Fatalf(\"expected %s's functype type to have IsVariadic\", f.Name)\nOn 2012/07/24 22:38:48, gri wrote:\n> s/t.Fatalf/t.Errorf/\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode48\nsrc/pkg/exp/types/types_test.go:48: t.Fatalf(\"expected %s's functype type to have IsVariadic\", f.Name)\nOn 2012/07/24 22:38:48, gri wrote:\n> t.Errorf(\"expected %s to be variadic\", f.Name)\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode52\nsrc/pkg/exp/types/types_test.go:52: t.Fatalf(\"expected last parameter of %s to have type int, found %T\",\nOn 2012/07/24 22:38:48, gri wrote:\n> s/t.Fatalf/t.Errorf/\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode62\nsrc/pkg/exp/types/types_test.go:62: t.Fatalf(\"expected %s's functype type to have !IsVariadic\", f.Name)\nOn 2012/07/24 22:38:48, gri wrote:\n> t.Errorf(\"expected %s to not be variadic\", f.Name)\n\nDone.\n\nhttp://codereview.appspot.com/6402046/diff/9001/src/pkg/exp/types/types_test.go#newcode64\nsrc/pkg/exp/types/types_test.go:64: }\nOn 2012/07/24 22:38:48, gri wrote:\n> Test is fine for now, but if you go through the trouble, why not really set up a\n> table with function signatures and corresponding type information that can all\n> be checked at once instead of hardwiring a few special cases?\n> \n> Define a helper function that prints the type signature for each function given\n> the function type. Then you just have to compare each programs function object's\n> type signature with the expected signature string. No need for all the special\n> hardwired tests and it can grow w/o writing a lot of code by simply adding more\n> tests to the test table.\n\nGood idea, thanks. If you don't mind I'll leave a TODO and get to it when next expanding the tests.",
+			"disapproval": false,
+			"date": "2012-07-25 15:26:14.283710",
+			"approval": false
+		},
+		{
+			"sender": "axwalk@gmail.com",
+			"recipients": [
+				"axwalk@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gri@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-07-25 15:25:03.896180",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"axwalk@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ok, this looks better now.\n\nPlease update the CL description which is not accurate anymore (the final parameter of variadic functions is not changed).\n\n- gri",
+			"disapproval": false,
+			"date": "2012-07-25 17:41:17.882380",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"axwalk@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-07-26 18:42:37.106790",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"axwalk@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=5d368f4de636 ***\n\nexp/types: process ast.Fun in checkObj; fix variadic function building\n\nFixed creation of Func's, taking IsVariadic from parameter list rather\nthan results.\n\nUpdated checkObj to process ast.Fun objects.\n\nR=gri\nCC=golang-dev\nhttp://codereview.appspot.com/6402046\n\nCommitter: Robert Griesemer <gri@golang.org>",
+			"disapproval": false,
+			"date": "2012-07-26 18:47:49.885970",
+			"approval": false
+		}
+	],
+	"owner_email": "axwalk@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "axw",
+	"subject": "code review 6402046: exp/types: process ast.Fun in checkObj; fix variadic fu...",
+	"created": "2012-07-14 14:22:25.153200",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9001,
+		13001,
+		14003
+	],
+	"modified": "2013-04-08 11:57:47.950440",
+	"closed": true,
+	"issue": 6402046
+}

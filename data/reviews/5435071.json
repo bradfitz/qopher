@@ -1,0 +1,130 @@
+{
+	"description": "exp/ssh: move openChan to NewSession\n\nopenChan was only being called by NewSession, Dial has\nits own version.",
+	"cc": [
+		"gustav.paul@gmail.com",
+		"agl@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gustav.paul@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\nOn Fri, Nov 25, 2011 at 3:04 PM, <dave@cheney.net> wrote:\n\n> Reviewers: gpaul, agl1, rsc,\n>\n> Message:\n> Hello gustav.paul@gmail.com, agl@golang.org, rsc@golang.org (cc:\n> golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> exp/ssh: move openChan to NewSession\n>\n> openChan was only being called by NewSession, Dial has\n> its own version.\n>\n> Also, remove camel casing of mainloop.\n>\n> Please review this at http://codereview.appspot.com/**5435071/<http://codereview.appspot.com/5435071/>\n>\n> Affected files:\n>  M src/pkg/exp/ssh/client.go\n>  M src/pkg/exp/ssh/session.go\n>\n>\n> Index: src/pkg/exp/ssh/client.go\n> ==============================**==============================**=======\n> --- a/src/pkg/exp/ssh/client.go\n> +++ b/src/pkg/exp/ssh/client.go\n> @@ -35,7 +35,7 @@\n>                conn.Close()\n>                return nil, err\n>        }\n> -       go conn.mainLoop()\n> +       go conn.mainloop()\n>        return conn, nil\n>  }\n>\n> @@ -177,37 +177,9 @@\n>        return H, K, nil\n>  }\n>\n> -// openChan opens a new client channel. The most common session type is\n> \"session\".\n> -// The full set of valid session types are listed in RFC 4250 4.9.1.\n> -func (c *ClientConn) openChan(typ string) (*clientChan, error) {\n> -       ch := c.newChan(c.transport)\n> -       if err := c.writePacket(marshal(**msgChannelOpen, channelOpenMsg{\n> -               ChanType:      typ,\n> -               PeersId:       ch.id,\n> -               PeersWindow:   1 << 14,\n> -               MaxPacketSize: 1 << 15, // RFC 4253 6.1\n> -       })); err != nil {\n> -               c.chanlist.remove(ch.id)\n> -               return nil, err\n> -       }\n> -       // wait for response\n> -       switch msg := (<-ch.msg).(type) {\n> -       case *channelOpenConfirmMsg:\n> -               ch.peersId = msg.MyId\n> -               ch.win <- int(msg.MyWindow)\n> -       case *channelOpenFailureMsg:\n> -               c.chanlist.remove(ch.id)\n> -               return nil, errors.New(msg.Message)\n> -       default:\n> -               c.chanlist.remove(ch.id)\n> -               return nil, errors.New(\"Unexpected packet\")\n> -       }\n> -       return ch, nil\n> -}\n> -\n>  // mainloop reads incoming messages and routes channel messages\n>  // to their respective ClientChans.\n> -func (c *ClientConn) mainLoop() {\n> +func (c *ClientConn) mainloop() {\n>        // TODO(dfc) signal the underlying close to all channels\n>        defer c.Close()\n>        for {\n> @@ -271,7 +243,7 @@\n>                        case *windowAdjustMsg:\n>                                c.getChan(msg.PeersId).win <-\n> int(msg.AdditionalBytes)\n>                        default:\n> -                               fmt.Printf(\"mainLoop: unhandled %#v\\n\",\n> msg)\n> +                               fmt.Printf(\"mainloop: unhandled %#v\\n\",\n> msg)\n>                        }\n>                }\n>        }\n> @@ -419,7 +391,7 @@\n>  // A chanReader represents stdout or stderr of a remote process.\n>  type chanReader struct {\n>        // TODO(dfc) a fixed size channel may not be the right data\n> structure.\n> -       // If writes to this channel block, they will block mainLoop,\n> making\n> +       // If writes to this channel block, they will block mainloop,\n> making\n>        // it unable to receive new messages from the remote side.\n>        data         chan []byte // receives data from remote\n>        id           uint32\n> Index: src/pkg/exp/ssh/session.go\n> ==============================**==============================**=======\n> --- a/src/pkg/exp/ssh/session.go\n> +++ b/src/pkg/exp/ssh/session.go\n> @@ -277,11 +277,29 @@\n>\n>  // NewSession returns a new interactive session on the remote host.\n>  func (c *ClientConn) NewSession() (*Session, error) {\n> -       ch, err := c.openChan(\"session\")\n> -       if err != nil {\n> +       ch := c.newChan(c.transport)\n> +       if err := c.writePacket(marshal(**msgChannelOpen, channelOpenMsg{\n> +               ChanType:      \"session\",\n> +               PeersId:       ch.id,\n> +               PeersWindow:   1 << 14,\n> +               MaxPacketSize: 1 << 15, // RFC 4253 6.1\n> +       })); err != nil {\n> +               c.chanlist.remove(ch.id)\n>                return nil, err\n>        }\n> -       return &Session{\n> -               clientChan: ch,\n> -       }, nil\n> +       // wait for response\n> +       msg := <-ch.msg\n> +       switch msg := msg.(type) {\n> +       case *channelOpenConfirmMsg:\n> +               ch.peersId = msg.MyId\n> +               ch.win <- int(msg.MyWindow)\n> +               return &Session{\n> +                       clientChan: ch,\n> +               }, nil\n> +       case *channelOpenFailureMsg:\n> +               c.chanlist.remove(ch.id)\n> +               return nil, fmt.Errorf(\"ssh: channel open failed: %s\",\n> msg.Message)\n> +       }\n> +       c.chanlist.remove(ch.id)\n> +       return nil, fmt.Errorf(\"ssh: unexpected message %T: %v\", msg, msg)\n>  }\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-11-25 13:12:42.412555",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"gustav.paul@gmail.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gustav.paul@gmail.com, agl@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-11-25 13:04:30.129126",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"gustav.paul@gmail.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5435071/diff/6005/src/pkg/exp/ssh/client.go\nFile src/pkg/exp/ssh/client.go (right):\n\nhttp://codereview.appspot.com/5435071/diff/6005/src/pkg/exp/ssh/client.go#newcode38\nsrc/pkg/exp/ssh/client.go:38: go conn.mainloop()\nwhy change this? mainLoop is the case that I would expect.\n\nhttp://codereview.appspot.com/5435071/diff/6005/src/pkg/exp/ssh/client.go#newcode246\nsrc/pkg/exp/ssh/client.go:246: fmt.Printf(\"mainloop: unhandled message %T: %v%\\n\", msg, msg)\nis there an extra % after the %v?",
+			"disapproval": false,
+			"date": "2011-11-28 16:05:52.527194",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"gustav.paul@gmail.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for your comments Adam and Gustav. PTAL\n\nhttp://codereview.appspot.com/5435071/diff/6005/src/pkg/exp/ssh/client.go\nFile src/pkg/exp/ssh/client.go (right):\n\nhttp://codereview.appspot.com/5435071/diff/6005/src/pkg/exp/ssh/client.go#newcode38\nsrc/pkg/exp/ssh/client.go:38: go conn.mainloop()\nI thought the Go style was to eschew camel case. I've revered that change and fixed a few places where it was inconsistent. \n\nOn 2011/11/28 16:05:52, agl1 wrote:\n> why change this? mainLoop is the case that I would expect.\n\nhttp://codereview.appspot.com/5435071/diff/6005/src/pkg/exp/ssh/client.go#newcode246\nsrc/pkg/exp/ssh/client.go:246: fmt.Printf(\"mainloop: unhandled message %T: %v%\\n\", msg, msg)\nOn 2011/11/28 16:05:52, agl1 wrote:\n> is there an extra % after the %v?\n\nDone.",
+			"disapproval": false,
+			"date": "2011-11-28 20:44:03.692647",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"gustav.paul@gmail.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gustav.paul@gmail.com, agl@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-27 15:54:41.804143",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"gustav.paul@gmail.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gustav.paul@gmail.com, agl@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-28 20:40:30.020105",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"gustav.paul@gmail.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=e871f124ffa1 ***\n\nexp/ssh: move openChan to NewSession\n\nopenChan was only being called by NewSession, Dial has\nits own version.\n\nR=gustav.paul, agl, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5435071\n\nCommitter: Adam Langley <agl@golang.org>",
+			"disapproval": false,
+			"date": "2011-11-28 20:42:58.849956",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 5435071: exp/ssh: move openChan to NewSession",
+	"created": "2011-11-25 13:01:19.479494",
+	"patchsets": [
+		1,
+		1002,
+		3002,
+		3003,
+		6001,
+		6005,
+		9001
+	],
+	"modified": "2011-11-28 20:50:36.684077",
+	"closed": true,
+	"issue": 5435071
+}

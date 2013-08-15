@@ -1,0 +1,350 @@
+{
+	"description": "runtime: unify mutex code across OSes\nThe change introduces 2 generic mutex implementations\n(futex- and semaphore-based). Each OS chooses a suitable mutex\nimplementation and implements few callbacks (e.g. futex wait/wake).\nThe CL reduces code duplication, extends some optimizations available\nonly on Linux/Windows to other OSes and provides ground\nfor futher optimizations. Chan finalizers are finally eliminated.\n\n(Linux/amd64, 8 HT cores)\nbenchmark                      old      new\nBenchmarkChanContended         83.6     77.8 ns/op\nBenchmarkChanContended-2       341      328 ns/op\nBenchmarkChanContended-4       382      383 ns/op\nBenchmarkChanContended-8       390      374 ns/op\nBenchmarkChanContended-16      313      291 ns/op\n\n(Darwin/amd64, 2 cores)\nbenchmark                      old      new\nBenchmarkChanContended         159      172 ns/op\nBenchmarkChanContended-2       6735     263 ns/op\nBenchmarkChanContended-4       10384    255 ns/op\nBenchmarkChanCreation          1174     407 ns/op\nBenchmarkChanCreation-2        4007     254 ns/op\nBenchmarkChanCreation-4        4029     246 ns/op",
+	"cc": [
+		"rsc@golang.org",
+		"jsing@google.com",
+		"hectorchu@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "The futex implementation is basically old Linux mutex implementation.\nThe sema implementation is based on old Windows implementation, however it is extended with spinning.\nI've tried sema implementation on Linux, it sucks.\nI've tested on Linux and Darwin. For others I merely run GOARCH=xxx ./make.bash on Linux to where it runs.",
+			"disapproval": false,
+			"date": "2011-10-26 16:52:28.150064",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I re-ran the test suite to check the finalizer results:\nruntime_test.BenchmarkFinalizerRun        100000              2320 ns/op\nruntime_test.BenchmarkFinalizerRun-2       50000              3060 ns/op\nruntime_test.BenchmarkFinalizerRun-3      100000              5060 ns/op\nruntime_test.BenchmarkFinalizerRun-4       10000             24601 ns/op\nruntime_test.BenchmarkFinalizerRun-5       10000             35902 ns/op\nruntime_test.BenchmarkFinalizerRun-6      100000              4590 ns/op\nruntime_test.BenchmarkFinalizerRun-7      100000              2530 ns/op\nruntime_test.BenchmarkFinalizerRun-8      100000              2600 ns/op",
+			"disapproval": false,
+			"date": "2011-10-26 19:46:41.844365",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Very nice. Some nice speedups across the board.\n\nWindows 7 x64 Pentium Dual-Core T4200 @ 2GHz 3GB RAM\nbenchmark\t\t\t\t\t\t old         new      speedup\nruntime_test.BenchmarkAppend\t\t\t        61.8        57.6         6.8%\nruntime_test.BenchmarkAppend-2\t\t\t        62.2        57.6         7.4%\nruntime_test.BenchmarkAppend-3\t\t\t        61.6        57.4         6.8%\nruntime_test.BenchmarkAppend-4\t\t\t        61.6        57.4         6.8%\nruntime_test.BenchmarkAppend-5\t\t\t        61.6        57.6         6.5%\nruntime_test.BenchmarkAppend-6\t\t\t        61.6        57.6         6.5%\nruntime_test.BenchmarkAppend-7\t\t\t        61.6        57.6         6.5%\nruntime_test.BenchmarkAppend-8\t\t\t        61.4        57.4         6.5%\nruntime_test.BenchmarkAppendSpecialCase\t\t        72.0        81.5       -13.2%\nruntime_test.BenchmarkAppendSpecialCase-2\t        72.0        81.5       -13.2%\nruntime_test.BenchmarkAppendSpecialCase-3\t        71.6        81.5       -13.8%\nruntime_test.BenchmarkAppendSpecialCase-4\t        71.8        81.5       -13.5%\nruntime_test.BenchmarkAppendSpecialCase-5\t        71.6        81.5       -13.8%\nruntime_test.BenchmarkAppendSpecialCase-6\t        71.8        81.5       -13.5%\nruntime_test.BenchmarkAppendSpecialCase-7\t        71.6        81.5       -13.8%\nruntime_test.BenchmarkAppendSpecialCase-8\t        71.6        81.5       -13.8%\nruntime_test.BenchmarkSelectUncontended\t\t       608.0       554.0         8.9%\nruntime_test.BenchmarkSelectUncontended-2\t       340.0       312.0         8.2%\nruntime_test.BenchmarkSelectUncontended-3\t       342.0       308.0         9.9%\nruntime_test.BenchmarkSelectUncontended-4\t       340.0       308.0         9.4%\nruntime_test.BenchmarkSelectUncontended-5\t       336.0       308.0         8.3%\nruntime_test.BenchmarkSelectUncontended-6\t       338.0       308.0         8.9%\nruntime_test.BenchmarkSelectUncontended-7\t       332.0       312.0         6.0%\nruntime_test.BenchmarkSelectUncontended-8\t       336.0       308.0         8.3%\nruntime_test.BenchmarkSelectContended\t\t       610.0       558.0         8.5%\nruntime_test.BenchmarkSelectContended-2\t\t      9100.0       512.0        94.4%\nruntime_test.BenchmarkSelectContended-3\t\t     10200.0       532.0        94.8%\nruntime_test.BenchmarkSelectContended-4\t\t     12600.0       518.0        95.9%\nruntime_test.BenchmarkSelectContended-5\t\t     12600.0       526.0        95.8%\nruntime_test.BenchmarkSelectContended-6\t\t     12300.0       522.0        95.8%\nruntime_test.BenchmarkSelectContended-7\t\t     11700.0       512.0        95.6%\nruntime_test.BenchmarkSelectContended-8\t\t     12700.0       510.0        96.0%\nruntime_test.BenchmarkSelectNonblock\t\t       384.0       320.0        16.7%\nruntime_test.BenchmarkSelectNonblock-2\t\t       190.0       166.0        12.6%\nruntime_test.BenchmarkSelectNonblock-3\t\t       193.0       169.0        12.4%\nruntime_test.BenchmarkSelectNonblock-4\t\t       195.0       165.0        15.4%\nruntime_test.BenchmarkSelectNonblock-5\t\t       191.0       162.0        15.2%\nruntime_test.BenchmarkSelectNonblock-6\t\t       189.0       162.0        14.3%\nruntime_test.BenchmarkSelectNonblock-7\t\t       190.0       162.0        14.7%\nruntime_test.BenchmarkSelectNonblock-8\t\t       188.0       163.0        13.3%\nruntime_test.BenchmarkChanUncontended\t\t       225.0       193.0        14.2%\nruntime_test.BenchmarkChanUncontended-2\t\t       114.0       101.0        11.4%\nruntime_test.BenchmarkChanUncontended-3\t\t       117.0        97.5        16.7%\nruntime_test.BenchmarkChanUncontended-4\t\t       114.0        97.5        14.5%\nruntime_test.BenchmarkChanUncontended-5\t\t       112.0        97.5        12.9%\nruntime_test.BenchmarkChanUncontended-6\t\t       113.0        97.0        14.2%\nruntime_test.BenchmarkChanUncontended-7\t\t       113.0        97.0        14.2%\nruntime_test.BenchmarkChanUncontended-8\t\t       118.0        97.0        17.8%\nruntime_test.BenchmarkChanContended\t\t       224.0       194.0        13.4%\nruntime_test.BenchmarkChanContended-2\t\t     14550.0       221.0        98.5%\nruntime_test.BenchmarkChanContended-3\t\t     16500.0       227.0        98.6%\nruntime_test.BenchmarkChanContended-4\t\t     16201.0       241.0        98.5%\nruntime_test.BenchmarkChanContended-5\t\t     17501.0       237.0        98.6%\nruntime_test.BenchmarkChanContended-6\t\t     15300.0       233.0        98.5%\nruntime_test.BenchmarkChanContended-7\t\t     16601.0       232.0        98.6%\nruntime_test.BenchmarkChanContended-8\t\t     16100.0       235.0        98.5%\nruntime_test.BenchmarkChanSync\t\t\t       542.0       488.0        10.0%\nruntime_test.BenchmarkChanSync-2\t\t      6740.0      6900.0        -2.4%\nruntime_test.BenchmarkChanSync-3\t\t      4260.0      6980.0       -63.8%\nruntime_test.BenchmarkChanSync-4\t\t      4300.0      6820.0       -58.6%\nruntime_test.BenchmarkChanSync-5\t\t      4340.0      6940.0       -59.9%\nruntime_test.BenchmarkChanSync-6\t\t      4120.0      7620.0       -85.0%\nruntime_test.BenchmarkChanSync-7\t\t      4320.0      9650.0      -123.4%\nruntime_test.BenchmarkChanSync-8\t\t      4320.0      9650.0      -123.4%\nruntime_test.BenchmarkChanProdCons0\t\t       554.0       494.0        10.8%\nruntime_test.BenchmarkChanProdCons0-2\t\t     11500.0       422.0        96.3%\nruntime_test.BenchmarkChanProdCons0-3\t\t     12600.0       452.0        96.4%\nruntime_test.BenchmarkChanProdCons0-4\t\t     13800.0       474.0        96.6%\nruntime_test.BenchmarkChanProdCons0-5\t\t     17101.0       458.0        97.3%\nruntime_test.BenchmarkChanProdCons0-6\t\t     17201.0       454.0        97.4%\nruntime_test.BenchmarkChanProdCons0-7\t\t     17001.0       458.0        97.3%\nruntime_test.BenchmarkChanProdCons0-8\t\t     16901.0       450.0        97.3%\nruntime_test.BenchmarkChanProdCons10\t\t       308.0       274.0        11.0%\nruntime_test.BenchmarkChanProdCons10-2\t\t     17000.0       392.0        97.7%\nruntime_test.BenchmarkChanProdCons10-3\t\t     16000.0       440.0        97.2%\nruntime_test.BenchmarkChanProdCons10-4\t\t     16901.0       462.0        97.3%\nruntime_test.BenchmarkChanProdCons10-5\t\t     14900.0       464.0        96.9%\nruntime_test.BenchmarkChanProdCons10-6\t\t     16300.0       536.0        96.7%\nruntime_test.BenchmarkChanProdCons10-7\t\t     15800.0       562.0        96.4%\nruntime_test.BenchmarkChanProdCons10-8\t\t     16900.0       554.0        96.7%\nruntime_test.BenchmarkChanProdCons100\t\t       229.0       200.0        12.7%\nruntime_test.BenchmarkChanProdCons100-2\t\t     14600.0       243.0        98.3%\nruntime_test.BenchmarkChanProdCons100-3\t\t     15500.0       252.0        98.4%\nruntime_test.BenchmarkChanProdCons100-4\t\t     11600.0       266.0        97.7%\nruntime_test.BenchmarkChanProdCons100-5\t\t     13500.0       267.0        98.0%\nruntime_test.BenchmarkChanProdCons100-6\t\t      7095.0       272.0        96.2%\nruntime_test.BenchmarkChanProdCons100-7\t\t      7040.0       270.0        96.2%\nruntime_test.BenchmarkChanProdCons100-8\t\t      7260.0       273.0        96.2%\nruntime_test.BenchmarkChanProdConsWork0\t\t      2980.0      2910.0         2.3%\nruntime_test.BenchmarkChanProdConsWork0-2\t      2050.0      1600.0        22.0%\nruntime_test.BenchmarkChanProdConsWork0-3\t      8150.0      1680.0        79.4%\nruntime_test.BenchmarkChanProdConsWork0-4\t      8000.0      1660.0        79.2%\nruntime_test.BenchmarkChanProdConsWork0-5\t      7600.0      1650.0        78.3%\nruntime_test.BenchmarkChanProdConsWork0-6\t      8150.0      1660.0        79.6%\nruntime_test.BenchmarkChanProdConsWork0-7\t      7050.0      1650.0        76.6%\nruntime_test.BenchmarkChanProdConsWork0-8\t      7700.0      1680.0        78.2%\nruntime_test.BenchmarkChanProdConsWork10\t      2760.0      2710.0         1.8%\nruntime_test.BenchmarkChanProdConsWork10-2\t     13700.0      1540.0        88.8%\nruntime_test.BenchmarkChanProdConsWork10-3\t     15200.0      1570.0        89.7%\nruntime_test.BenchmarkChanProdConsWork10-4\t     14400.0      1590.0        89.0%\nruntime_test.BenchmarkChanProdConsWork10-5\t     15300.0      1720.0        88.8%\nruntime_test.BenchmarkChanProdConsWork10-6\t     14100.0      1620.0        88.5%\nruntime_test.BenchmarkChanProdConsWork10-7\t     14300.0      1660.0        88.4%\nruntime_test.BenchmarkChanProdConsWork10-8\t     15300.0      1690.0        89.0%\nruntime_test.BenchmarkChanProdConsWork100\t      2670.0      2630.0         1.5%\nruntime_test.BenchmarkChanProdConsWork100-2\t      5640.0      1440.0        74.5%\nruntime_test.BenchmarkChanProdConsWork100-3\t      7950.0      1430.0        82.0%\nruntime_test.BenchmarkChanProdConsWork100-4\t      8050.0      1430.0        82.2%\nruntime_test.BenchmarkChanProdConsWork100-5\t      7950.0      1420.0        82.1%\nruntime_test.BenchmarkChanProdConsWork100-6\t      7950.0      1420.0        82.1%\nruntime_test.BenchmarkChanProdConsWork100-7\t      8050.0      1460.0        81.9%\nruntime_test.BenchmarkChanProdConsWork100-8\t      7950.0      1440.0        81.9%",
+			"disapproval": false,
+			"date": "2011-10-26 19:45:09.625611",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Sorry Dmitry just one more thing I noticed, please see comments.  I guess in future I should batch up my comments to save context switching time. :)\nP.S. While looking at this code I couldn't find any documentation that stated that futex_wake before futex_wait wakes up the waiter.  I'm assuming that it does, and that is probably why wakeups can be spurious.\n\nhttp://codereview.appspot.com/5140043/diff/37012/src/pkg/runtime/lock_futex.c\nFile src/pkg/runtime/lock_futex.c (right):\n\nhttp://codereview.appspot.com/5140043/diff/37012/src/pkg/runtime/lock_futex.c#newcode110\nsrc/pkg/runtime/lock_futex.c:110: runtime\u00b7futexwakeup(&n->key, 1<<30);\nSince no more than one thread sleeps on the futex, it should be ok to set cnt to 1 now.",
+			"disapproval": false,
+			"date": "2011-10-27 13:26:08.050661",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 27 October 2011 08:56,  <dvyukov@google.com> wrote:\n> Do you run all the benchmarks with -benchtime=.1?\n\nYes I ran the benchmark with the command line you described in a previous email.\n",
+			"disapproval": false,
+			"date": "2011-10-27 08:00:26.636926",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, jsing@google.com, hectorchu@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-27 13:37:12.092217",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/26 16:52:28, dvyukov wrote:\n> The futex implementation is basically old Linux mutex implementation.\n> The sema implementation is based on old Windows implementation, however it is\n> extended with spinning.\n> I've tried sema implementation on Linux, it sucks.\n> I've tested on Linux and Darwin. For others I merely run GOARCH=xxx ./make.bash\n> on Linux to where it runs.\n\nhector, jsing, I will appreciate if you try it on OpenBSD/Windows. Ideally something like\nsrc/pkg/runtime$ gotest -v -bench=.* -benchtime=.1 -cpu=1,2,3,4,5,6,7,8",
+			"disapproval": false,
+			"date": "2011-10-26 18:18:26.061996",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "runtime_test.BenchmarkChanCreation\t\t       536.0       486.0         9.3%\nruntime_test.BenchmarkChanCreation-2\t\t       556.0       502.0         9.7%\nruntime_test.BenchmarkChanCreation-3\t\t       534.0       502.0         6.0%\nruntime_test.BenchmarkChanCreation-4\t\t       530.0       502.0         5.3%\nruntime_test.BenchmarkChanCreation-5\t\t       520.0       508.0         2.3%\nruntime_test.BenchmarkChanCreation-6\t\t       534.0       500.0         6.4%\nruntime_test.BenchmarkChanCreation-7\t\t       524.0       490.0         6.5%\nruntime_test.BenchmarkChanCreation-8\t\t       522.0       488.0         6.5%\nruntime_test.BenchmarkCallClosure\t\t         5.6         5.1         9.6%\nruntime_test.BenchmarkCallClosure-2\t\t         5.6         5.1         9.3%\nruntime_test.BenchmarkCallClosure-3\t\t         5.6         5.1         9.3%\nruntime_test.BenchmarkCallClosure-4\t\t         5.6         5.1         9.3%\nruntime_test.BenchmarkCallClosure-5\t\t         5.6         5.1         9.6%\nruntime_test.BenchmarkCallClosure-6\t\t         5.6         5.1         9.3%\nruntime_test.BenchmarkCallClosure-7\t\t         5.6         5.1         9.6%\nruntime_test.BenchmarkCallClosure-8\t\t         5.6         5.1         9.6%\nruntime_test.BenchmarkCallClosure1\t\t         6.9         6.8         0.6%\nruntime_test.BenchmarkCallClosure1-2\t\t         6.8         6.8         0.3%\nruntime_test.BenchmarkCallClosure1-3\t\t         6.8         6.9        -0.3%\nruntime_test.BenchmarkCallClosure1-4\t\t         6.8         6.8         0.3%\nruntime_test.BenchmarkCallClosure1-5\t\t         6.8         6.8         0.3%\nruntime_test.BenchmarkCallClosure1-6\t\t         6.8         6.8        -0.3%\nruntime_test.BenchmarkCallClosure1-7\t\t         6.9         6.8         0.9%\nruntime_test.BenchmarkCallClosure1-8\t\t         7.0         6.8         2.8%\nruntime_test.BenchmarkCallClosure2\t\t       147.0       142.0         3.4%\nruntime_test.BenchmarkCallClosure2-2\t\t       321.0       157.0        51.1%\nruntime_test.BenchmarkCallClosure2-3\t\t       310.0       154.0        50.3%\nruntime_test.BenchmarkCallClosure2-4\t\t       297.0       154.0        48.1%\nruntime_test.BenchmarkCallClosure2-5\t\t       244.0       156.0        36.1%\nruntime_test.BenchmarkCallClosure2-6\t\t       232.0       156.0        32.8%\nruntime_test.BenchmarkCallClosure2-7\t\t       237.0       157.0        33.8%\nruntime_test.BenchmarkCallClosure2-8\t\t       237.0       153.0        35.4%\nruntime_test.BenchmarkCallClosure3\t\t       150.0       145.0         3.3%\nruntime_test.BenchmarkCallClosure3-2\t\t       319.0       158.0        50.5%\nruntime_test.BenchmarkCallClosure3-3\t\t       321.0       157.0        51.1%\nruntime_test.BenchmarkCallClosure3-4\t\t       269.0       159.0        40.9%\nruntime_test.BenchmarkCallClosure3-5\t\t       236.0       157.0        33.5%\nruntime_test.BenchmarkCallClosure3-6\t\t       237.0       159.0        32.9%\nruntime_test.BenchmarkCallClosure3-7\t\t       244.0       157.0        35.7%\nruntime_test.BenchmarkCallClosure3-8\t\t       240.0       157.0        34.6%\nruntime_test.BenchmarkCallClosure4\t\t       149.0       146.0         2.0%\nruntime_test.BenchmarkCallClosure4-2\t\t       254.0       160.0        37.0%\nruntime_test.BenchmarkCallClosure4-3\t\t       242.0       160.0        33.9%\nruntime_test.BenchmarkCallClosure4-4\t\t       265.0       159.0        40.0%\nruntime_test.BenchmarkCallClosure4-5\t\t       360.0       162.0        55.0%\nruntime_test.BenchmarkCallClosure4-6\t\t       376.0       159.0        57.7%\nruntime_test.BenchmarkCallClosure4-7\t\t       385.0       159.0        58.7%\nruntime_test.BenchmarkCallClosure4-8\t\t       379.0       160.0        57.8%\nruntime_test.BenchmarkFinalizer\t\t\t       534.0       478.0        10.5%\nruntime_test.BenchmarkFinalizer-2\t\t       352.0       294.0        16.5%\nruntime_test.BenchmarkFinalizer-3\t\t       524.0       302.0        42.4%\nruntime_test.BenchmarkFinalizer-4\t\t       520.0       300.0        42.3%\nruntime_test.BenchmarkFinalizer-5\t\t       530.0       312.0        41.1%\nruntime_test.BenchmarkFinalizer-6\t\t       534.0       310.0        41.9%\nruntime_test.BenchmarkFinalizer-7\t\t       544.0       308.0        43.4%\nruntime_test.BenchmarkFinalizer-8\t\t       548.0       318.0        42.0%\nruntime_test.BenchmarkFinalizerRun\t\t      2590.0      2000.0        22.8%\nruntime_test.BenchmarkFinalizerRun-2\t\t      3160.0     25901.0      -719.7%\nruntime_test.BenchmarkFinalizerRun-3\t\t      5160.0     14100.0      -173.3%\nruntime_test.BenchmarkFinalizerRun-4\t\t     14400.0     20901.0       -45.1%\nruntime_test.BenchmarkFinalizerRun-5\t\t     26801.0      2260.0        91.6%\nruntime_test.BenchmarkFinalizerRun-6\t\t      4340.0     10000.0      -130.4%\nruntime_test.BenchmarkFinalizerRun-7\t\t      3940.0     12000.0      -204.6%\nruntime_test.BenchmarkFinalizerRun-8\t\t      4200.0      2640.0        37.1%\nruntime_test.BenchmarkStackGrowth\t\t      1620.0      1560.0         3.7%\nruntime_test.BenchmarkStackGrowth-2\t\t       820.0       798.0         2.7%\nruntime_test.BenchmarkStackGrowth-3\t\t       820.0       790.0         3.7%\nruntime_test.BenchmarkStackGrowth-4\t\t       815.0       795.0         2.5%\nruntime_test.BenchmarkStackGrowth-5\t\t       825.0       790.0         4.2%\nruntime_test.BenchmarkStackGrowth-6\t\t       815.0       790.0         3.1%\nruntime_test.BenchmarkStackGrowth-7\t\t       805.0       785.0         2.5%\nruntime_test.BenchmarkStackGrowth-8\t\t       810.0       790.0         2.5%\nruntime_test.BenchmarkSyscall\t\t\t        68.4        68.2         0.3%\nruntime_test.BenchmarkSyscall-2\t\t\t        65.0        61.2         5.8%\nruntime_test.BenchmarkSyscall-3\t\t\t        65.6        61.0         7.0%\nruntime_test.BenchmarkSyscall-4\t\t\t        65.6        61.0         7.0%\nruntime_test.BenchmarkSyscall-5\t\t\t        65.6        61.0         7.0%\nruntime_test.BenchmarkSyscall-6\t\t\t        65.2        61.2         6.1%\nruntime_test.BenchmarkSyscall-7\t\t\t        65.6        61.0         7.0%\nruntime_test.BenchmarkSyscall-8\t\t\t        65.4        61.0         6.7%\nruntime_test.BenchmarkSyscallWork\t\t      1370.0      1360.0         0.7%\nruntime_test.BenchmarkSyscallWork-2\t\t       712.0       740.0        -3.9%\nruntime_test.BenchmarkSyscallWork-3\t\t       710.0       716.0        -0.8%\nruntime_test.BenchmarkSyscallWork-4\t\t       708.0       706.0         0.3%\nruntime_test.BenchmarkSyscallWork-5\t\t       712.0       710.0         0.3%\nruntime_test.BenchmarkSyscallWork-6\t\t       750.0       705.0         6.0%\nruntime_test.BenchmarkSyscallWork-7\t\t       710.0       708.0         0.3%\nruntime_test.BenchmarkSyscallWork-8\t\t       710.0       710.0         0.0%\nruntime_test.BenchmarkSemaUncontended\t\t        86.5        86.5         0.0%\nruntime_test.BenchmarkSemaUncontended-2\t\t        44.0        44.0         0.0%\nruntime_test.BenchmarkSemaUncontended-3\t\t        44.4        43.6         1.8%\nruntime_test.BenchmarkSemaUncontended-4\t\t        44.6        43.8         1.8%\nruntime_test.BenchmarkSemaUncontended-5\t\t        45.4        43.6         4.0%\nruntime_test.BenchmarkSemaUncontended-6\t\t        43.4        43.6        -0.5%\nruntime_test.BenchmarkSemaUncontended-7\t\t        43.8        43.4         0.9%\nruntime_test.BenchmarkSemaUncontended-8\t\t        43.8        43.6         0.5%\nruntime_test.BenchmarkSemaSyntNonblock\t\t        86.0        86.0         0.0%\nruntime_test.BenchmarkSemaSyntNonblock-2\t        80.5        82.5        -2.5%\nruntime_test.BenchmarkSemaSyntNonblock-3\t        89.6        81.0         9.6%\nruntime_test.BenchmarkSemaSyntNonblock-4\t        86.5        83.5         3.5%\nruntime_test.BenchmarkSemaSyntNonblock-5\t        85.5        90.0        -5.3%\nruntime_test.BenchmarkSemaSyntNonblock-6\t        91.0        78.0        14.3%\nruntime_test.BenchmarkSemaSyntNonblock-7\t        83.0        83.5        -0.6%\nruntime_test.BenchmarkSemaSyntNonblock-8\t        84.5        81.5         3.6%\nruntime_test.BenchmarkSemaSyntBlock\t\t        86.0        86.0         0.0%\nruntime_test.BenchmarkSemaSyntBlock-2\t\t       157.0       122.0        22.3%\nruntime_test.BenchmarkSemaSyntBlock-3\t\t        89.5        86.0         3.9%\nruntime_test.BenchmarkSemaSyntBlock-4\t\t        84.5        88.5        -4.7%\nruntime_test.BenchmarkSemaSyntBlock-5\t\t        90.0        94.5        -5.0%\nruntime_test.BenchmarkSemaSyntBlock-6\t\t        88.0        85.5         2.8%\nruntime_test.BenchmarkSemaSyntBlock-7\t\t        85.5        81.0         5.3%\nruntime_test.BenchmarkSemaSyntBlock-8\t\t        87.5        71.0        18.9%\nruntime_test.BenchmarkSemaWorkNonblock\t\t      1125.0      1110.0         1.3%\nruntime_test.BenchmarkSemaWorkNonblock-2\t       584.0       580.0         0.7%\nruntime_test.BenchmarkSemaWorkNonblock-3\t       586.0       586.0         0.0%\nruntime_test.BenchmarkSemaWorkNonblock-4\t       580.0       582.0        -0.3%\nruntime_test.BenchmarkSemaWorkNonblock-5\t       590.0       580.0         1.7%\nruntime_test.BenchmarkSemaWorkNonblock-6\t       584.0       576.0         1.4%\nruntime_test.BenchmarkSemaWorkNonblock-7\t       604.0       578.0         4.3%\nruntime_test.BenchmarkSemaWorkNonblock-8\t       578.0       578.0         0.0%\nruntime_test.BenchmarkSemaWorkBlock\t\t      1120.0      1110.0         0.9%\nruntime_test.BenchmarkSemaWorkBlock-2\t\t       584.0       584.0         0.0%\nruntime_test.BenchmarkSemaWorkBlock-3\t\t       580.0       578.0         0.3%\nruntime_test.BenchmarkSemaWorkBlock-4\t\t       584.0       584.0         0.0%\nruntime_test.BenchmarkSemaWorkBlock-5\t\t       590.0       578.0         2.0%\nruntime_test.BenchmarkSemaWorkBlock-6\t\t       590.0       578.0         2.0%\nruntime_test.BenchmarkSemaWorkBlock-7\t\t       586.0       582.0         0.7%\nruntime_test.BenchmarkSemaWorkBlock-8\t\t       596.0       580.0         2.7%",
+			"disapproval": false,
+			"date": "2011-10-26 19:46:12.154123",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/27 08:14:55, hector wrote:\n> http://codereview.appspot.com/5140043/diff/36001/src/pkg/runtime/lock_sema.c\n> File src/pkg/runtime/lock_sema.c (right):\n> \n> http://codereview.appspot.com/5140043/diff/36001/src/pkg/runtime/lock_sema.c#newcode66\n> src/pkg/runtime/lock_sema.c:66: if((v&LOCKED) == 0)\n> In this case can you avoid a double atomicloadp as it returns to the top of the\n> for loop?  Most easiest way is to goto line 48.\n\nDone.\n\n> http://codereview.appspot.com/5140043/diff/36001/src/pkg/runtime/lock_sema.c#newcode125\n> src/pkg/runtime/lock_sema.c:125: if(runtime\u00b7casp(&n->waitm, nil, m))\n> Are notes only waited on by a single m at a time?\n\nYes, it was always that way. There was some confusion because note comments said that several threads can wait, but some OSes always implement it in such a way that at most 1 thread can wait. Now note comments reflect that:\n\n/*\n * sleep and wakeup on one-time events.\n * before any calls to notesleep or notewakeup,\n * must call noteclear to initialize the Note.\n * then, exactly one thread can call notesleep\n * and exactly one thread can call notewakeup (once).\n * once notewakeup has been called, the notesleep\n * will return.  future notesleep will return immediately.\n * subsequent noteclear must be called only after\n * previous notesleep has returned, e.g. it's disallowed\n * to call noteclear straight after notewakeup.\n */\nvoid\truntime\u00b7noteclear(Note*);\nvoid\truntime\u00b7notesleep(Note*);\nvoid\truntime\u00b7notewakeup(Note*);",
+			"disapproval": false,
+			"date": "2011-10-27 08:42:21.937257",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/26 19:46:41, hector wrote:\n\nThanks, Hector! It's a good sign that it does not crash :)\nDo you run all the benchmarks with -benchtime=.1? It would explain bad results at least for GC/Finalizer related benchmarks, they require something like -benchtine=3 to get more consistent results.\nThere is also some degradation on ChanSync, however I think it is OK because the benchmark implies constant OS thread parking and unparking (it is a way too synthetic). ChanProdCons (producer-consumer) is a more realistic benchmark, and it shows good speedups.\nIt's interesting that CallClosure shows some speedups, does it involve locking? humm...\nAppendSpecialCase shows some degradation, I am not sure how it relates to locking... it must be something else.",
+			"disapproval": false,
+			"date": "2011-10-27 07:56:50.666289",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2011-10-31 16:25:38.435878",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, jsing@google.com, hectorchu@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-26 16:47:55.956837",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nI've tested this under OpenBSD and have not found any issues - the\ngenerally performance appears to be the same (or slightly better),\nalthough there appear to be significant slow downs with certain tests\n(such as the ChanSync and FinalizerRun tests).\n\nI'll investigate these issues further after the change has been\nsubmitted, if need be.\n\nThe results from \"gotest -v -bench=.* -benchtime=3\n-cpu=1,2,3,4,5,6,7,8\" are given below.\n\nbenchmark                                        old ns/op    new ns/op    delta\nruntime_test.BenchmarkAppend                           154          146   -5.19%\nruntime_test.BenchmarkAppend-2                         154          162   +5.19%\nruntime_test.BenchmarkAppend-3                         156          166   +6.41%\nruntime_test.BenchmarkAppend-4                         154          167   +8.44%\nruntime_test.BenchmarkAppend-5                         154          188  +22.08%\nruntime_test.BenchmarkAppend-6                         154          135  -12.34%\nruntime_test.BenchmarkAppend-7                         154          175  +13.64%\nruntime_test.BenchmarkAppend-8                         154          191  +24.03%\nruntime_test.BenchmarkAppendSpecialCase                178          158  -11.24%\nruntime_test.BenchmarkAppendSpecialCase-2              178          210  +17.98%\nruntime_test.BenchmarkAppendSpecialCase-3              178          225  +26.40%\nruntime_test.BenchmarkAppendSpecialCase-4              178          209  +17.42%\nruntime_test.BenchmarkAppendSpecialCase-5              178          156  -12.36%\nruntime_test.BenchmarkAppendSpecialCase-6              178           97  -45.39%\nruntime_test.BenchmarkAppendSpecialCase-7              178           97  -45.34%\nruntime_test.BenchmarkAppendSpecialCase-8              179           94  -47.21%\nruntime_test.BenchmarkSelectUncontended               1547          706  -54.36%\nruntime_test.BenchmarkSelectUncontended-2              673          374  -44.43%\nruntime_test.BenchmarkSelectUncontended-3              305          317   +3.93%\nruntime_test.BenchmarkSelectUncontended-4              306          319   +4.25%\nruntime_test.BenchmarkSelectUncontended-5              304          312   +2.63%\nruntime_test.BenchmarkSelectUncontended-6              308          276  -10.39%\nruntime_test.BenchmarkSelectUncontended-7              305          275   -9.84%\nruntime_test.BenchmarkSelectUncontended-8              353          286  -18.98%\nruntime_test.BenchmarkSelectContended                  695          507  -27.05%\nruntime_test.BenchmarkSelectContended-2                743          687   -7.54%\nruntime_test.BenchmarkSelectContended-3                522          506   -3.07%\nruntime_test.BenchmarkSelectContended-4                523          516   -1.34%\nruntime_test.BenchmarkSelectContended-5                530          530   +0.00%\nruntime_test.BenchmarkSelectContended-6                527          547   +3.80%\nruntime_test.BenchmarkSelectContended-7                571          588   +2.98%\nruntime_test.BenchmarkSelectContended-8                579          604   +4.32%\nruntime_test.BenchmarkSelectNonblock                   664          382  -42.47%\nruntime_test.BenchmarkSelectNonblock-2                 399          347  -13.03%\nruntime_test.BenchmarkSelectNonblock-3                 198          145  -26.77%\nruntime_test.BenchmarkSelectNonblock-4                 216          148  -31.48%\nruntime_test.BenchmarkSelectNonblock-5                 214          148  -30.84%\nruntime_test.BenchmarkSelectNonblock-6                 222          148  -33.33%\nruntime_test.BenchmarkSelectNonblock-7                 217          148  -31.80%\nruntime_test.BenchmarkSelectNonblock-8                 214          159  -25.70%\nruntime_test.BenchmarkChanUncontended                  380          244  -35.79%\nruntime_test.BenchmarkChanUncontended-2                186          183   -1.61%\nruntime_test.BenchmarkChanUncontended-3                116           83  -28.36%\nruntime_test.BenchmarkChanUncontended-4                119           83  -30.00%\nruntime_test.BenchmarkChanUncontended-5                117           82  -29.15%\nruntime_test.BenchmarkChanUncontended-6                114           83  -26.93%\nruntime_test.BenchmarkChanUncontended-7                117           85  -27.35%\nruntime_test.BenchmarkChanUncontended-8                115           83  -27.30%\nruntime_test.BenchmarkChanContended                    205          275  +34.15%\nruntime_test.BenchmarkChanContended-2                  345          203  -41.16%\nruntime_test.BenchmarkChanContended-3                  454          185  -59.25%\nruntime_test.BenchmarkChanContended-4                  349          205  -41.26%\nruntime_test.BenchmarkChanContended-5                  410          241  -41.22%\nruntime_test.BenchmarkChanContended-6                  461          214  -53.58%\nruntime_test.BenchmarkChanContended-7                  532          237  -55.45%\nruntime_test.BenchmarkChanContended-8                  637          236  -62.95%\nruntime_test.BenchmarkChanSync                         500          816  +63.20%\nruntime_test.BenchmarkChanSync-2                      8501        16760  +97.15%\nruntime_test.BenchmarkChanSync-3                      7103\n17340  +144.12%\nruntime_test.BenchmarkChanSync-4                     11452        17655  +54.17%\nruntime_test.BenchmarkChanSync-5                     12066        16745  +38.78%\nruntime_test.BenchmarkChanSync-6                      4210\n17010  +304.04%\nruntime_test.BenchmarkChanSync-7                      4167\n35443  +750.56%\nruntime_test.BenchmarkChanSync-8                      3297\n22326  +577.16%\nruntime_test.BenchmarkChanProdCons0                    602\n1358  +125.58%\nruntime_test.BenchmarkChanProdCons0-2                  634          422  -33.44%\nruntime_test.BenchmarkChanProdCons0-3                  503          484   -3.78%\nruntime_test.BenchmarkChanProdCons0-4                  532\n1149  +115.98%\nruntime_test.BenchmarkChanProdCons0-5                  512\n1220  +138.28%\nruntime_test.BenchmarkChanProdCons0-6                  568\n824060  +144980.99%\nruntime_test.BenchmarkChanProdCons0-7                  672\n625164  +92930.36%\nruntime_test.BenchmarkChanProdCons0-8                  626\n1662492  +265473.80%\nruntime_test.BenchmarkChanProdCons10                   488          270  -44.67%\nruntime_test.BenchmarkChanProdCons10-2                1294          328  -74.65%\nruntime_test.BenchmarkChanProdCons10-3                 630          343  -45.56%\nruntime_test.BenchmarkChanProdCons10-4                 789          484  -38.66%\nruntime_test.BenchmarkChanProdCons10-5                1067          644  -39.64%\nruntime_test.BenchmarkChanProdCons10-6                 883\n56104  +6253.79%\nruntime_test.BenchmarkChanProdCons10-7                1290\n519008  +40133.18%\nruntime_test.BenchmarkChanProdCons10-8                 829\n467127  +56248.25%\nruntime_test.BenchmarkChanProdCons100                  410          311  -24.15%\nruntime_test.BenchmarkChanProdCons100-2                911          516  -43.36%\nruntime_test.BenchmarkChanProdCons100-3                443          198  -55.30%\nruntime_test.BenchmarkChanProdCons100-4                463          218  -52.92%\nruntime_test.BenchmarkChanProdCons100-5                584          242  -58.56%\nruntime_test.BenchmarkChanProdCons100-6                610          266  -56.39%\nruntime_test.BenchmarkChanProdCons100-7                610          284  -53.44%\nruntime_test.BenchmarkChanProdCons100-8                678          314  -53.69%\nruntime_test.BenchmarkChanProdConsWork0               5709         5507   -3.54%\nruntime_test.BenchmarkChanProdConsWork0-2             3425         3897  +13.78%\nruntime_test.BenchmarkChanProdConsWork0-3             1710         1671   -2.28%\nruntime_test.BenchmarkChanProdConsWork0-4             1773\n133265  +7416.36%\nruntime_test.BenchmarkChanProdConsWork0-5             1710\n9784  +472.16%\nruntime_test.BenchmarkChanProdConsWork0-6             1767\n120714  +6731.58%\nruntime_test.BenchmarkChanProdConsWork0-7             1877\n1538970  +81890.94%\nruntime_test.BenchmarkChanProdConsWork0-8             1772\n461155  +25924.55%\nruntime_test.BenchmarkChanProdConsWork10              2535         4503  +77.63%\nruntime_test.BenchmarkChanProdConsWork10-2            1712\n3528  +106.07%\nruntime_test.BenchmarkChanProdConsWork10-3            1582         1552   -1.90%\nruntime_test.BenchmarkChanProdConsWork10-4            1634         1929  +18.05%\nruntime_test.BenchmarkChanProdConsWork10-5            1698         1642   -3.30%\nruntime_test.BenchmarkChanProdConsWork10-6            1729         1780   +2.95%\nruntime_test.BenchmarkChanProdConsWork10-7            1704\n6685  +292.31%\nruntime_test.BenchmarkChanProdConsWork10-8            1804\n3632  +101.33%\nruntime_test.BenchmarkChanProdConsWork100             4294         4159   -3.14%\nruntime_test.BenchmarkChanProdConsWork100-2           3396         3470   +2.18%\nruntime_test.BenchmarkChanProdConsWork100-3           1509         1374   -8.95%\nruntime_test.BenchmarkChanProdConsWork100-4           1312         1379   +5.11%\nruntime_test.BenchmarkChanProdConsWork100-5           1322         1398   +5.75%\nruntime_test.BenchmarkChanProdConsWork100-6           1317         1533  +16.40%\nruntime_test.BenchmarkChanProdConsWork100-7           1351         1410   +4.37%\nruntime_test.BenchmarkChanProdConsWork100-8           1400         1924  +37.43%\nruntime_test.BenchmarkChanCreation                     433          417   -3.70%\nruntime_test.BenchmarkChanCreation-2                  2093         2999  +43.29%\nruntime_test.BenchmarkChanCreation-3                  2036         3077  +51.13%\nruntime_test.BenchmarkChanCreation-4                  2040         2953  +44.75%\nruntime_test.BenchmarkChanCreation-5                  2072         3446  +66.31%\nruntime_test.BenchmarkChanCreation-6                  2060         3247  +57.62%\nruntime_test.BenchmarkChanCreation-7                  2010         2865  +42.54%\nruntime_test.BenchmarkChanCreation-8                  2016         3451  +71.18%\nruntime_test.BenchmarkCallClosure                       12           14  +17.32%\nruntime_test.BenchmarkCallClosure-2                     12           15  +18.90%\nruntime_test.BenchmarkCallClosure-3                     12           15  +18.11%\nruntime_test.BenchmarkCallClosure-4                     14           15   +6.34%\nruntime_test.BenchmarkCallClosure-5                      4\n14  +214.23%\nruntime_test.BenchmarkCallClosure-6                     13           14   +5.80%\nruntime_test.BenchmarkCallClosure-7                     15           13  -10.46%\nruntime_test.BenchmarkCallClosure-8                     13           13   +3.76%\nruntime_test.BenchmarkCallClosure1                      17           17   +1.75%\nruntime_test.BenchmarkCallClosure1-2                    16           17   +7.23%\nruntime_test.BenchmarkCallClosure1-3                     8\n17  +103.25%\nruntime_test.BenchmarkCallClosure1-4                    19           18   -5.13%\nruntime_test.BenchmarkCallClosure1-5                    19           19   -0.51%\nruntime_test.BenchmarkCallClosure1-6                    17           17   +2.91%\nruntime_test.BenchmarkCallClosure1-7                    17           16   -8.94%\nruntime_test.BenchmarkCallClosure1-8                    17           16   -7.34%\nruntime_test.BenchmarkCallClosure2                     329          330   +0.30%\nruntime_test.BenchmarkCallClosure2-2                   459          447   -2.61%\nruntime_test.BenchmarkCallClosure2-3                   457          455   -0.44%\nruntime_test.BenchmarkCallClosure2-4                   451          447   -0.89%\nruntime_test.BenchmarkCallClosure2-5                   485          446   -8.04%\nruntime_test.BenchmarkCallClosure2-6                   506          445  -12.06%\nruntime_test.BenchmarkCallClosure2-7                   485          449   -7.42%\nruntime_test.BenchmarkCallClosure2-8                   450          438   -2.67%\nruntime_test.BenchmarkCallClosure3                     377          347   -7.96%\nruntime_test.BenchmarkCallClosure3-2                   371          632  +70.35%\nruntime_test.BenchmarkCallClosure3-3                   449          455   +1.34%\nruntime_test.BenchmarkCallClosure3-4                   428          448   +4.67%\nruntime_test.BenchmarkCallClosure3-5                   436          442   +1.38%\nruntime_test.BenchmarkCallClosure3-6                   439          440   +0.23%\nruntime_test.BenchmarkCallClosure3-7                   430          450   +4.65%\nruntime_test.BenchmarkCallClosure3-8                   425          453   +6.59%\nruntime_test.BenchmarkCallClosure4                     356          343   -3.65%\nruntime_test.BenchmarkCallClosure4-2                   444          450   +1.35%\nruntime_test.BenchmarkCallClosure4-3                   429          445   +3.73%\nruntime_test.BenchmarkCallClosure4-4                   442          441   -0.23%\nruntime_test.BenchmarkCallClosure4-5                   432          446   +3.24%\nruntime_test.BenchmarkCallClosure4-6                   421          442   +4.99%\nruntime_test.BenchmarkCallClosure4-7                   444          449   +1.13%\nruntime_test.BenchmarkCallClosure4-8                   421          609  +44.66%\nruntime_test.BenchmarkFinalizer                       1247          446  -64.23%\nruntime_test.BenchmarkFinalizer-2                      423          418   -1.18%\nruntime_test.BenchmarkFinalizer-3                      360          531  +47.50%\nruntime_test.BenchmarkFinalizer-4                      298          420  +40.94%\nruntime_test.BenchmarkFinalizer-5                      330          519  +57.27%\nruntime_test.BenchmarkFinalizer-6                      473          478   +1.06%\nruntime_test.BenchmarkFinalizer-7                      440          566  +28.64%\nruntime_test.BenchmarkFinalizer-8                      419          610  +45.58%\nruntime_test.BenchmarkFinalizerRun                    4496         1685  -62.52%\nruntime_test.BenchmarkFinalizerRun-2                 37750        46324  +22.71%\nruntime_test.BenchmarkFinalizerRun-3                 34600\n73540  +112.54%\nruntime_test.BenchmarkFinalizerRun-4                 37948        21648  -42.95%\nruntime_test.BenchmarkFinalizerRun-5                 28951        22250  -23.15%\nruntime_test.BenchmarkFinalizerRun-6                 20699        21756   +5.11%\nruntime_test.BenchmarkFinalizerRun-7                 17627        21450  +21.69%\nruntime_test.BenchmarkFinalizerRun-8                 17900        23300  +30.17%\nruntime_test.BenchmarkStackGrowth                     4029         3950   -1.96%\nruntime_test.BenchmarkStackGrowth-2                    852          724  -15.02%\nruntime_test.BenchmarkStackGrowth-3                    746          717   -3.89%\nruntime_test.BenchmarkStackGrowth-4                    751          722   -3.86%\nruntime_test.BenchmarkStackGrowth-5                    818          819   +0.12%\nruntime_test.BenchmarkStackGrowth-6                    792          834   +5.30%\nruntime_test.BenchmarkStackGrowth-7                    748          853  +14.04%\nruntime_test.BenchmarkStackGrowth-8                    717          767   +6.97%\nruntime_test.BenchmarkSyscall                           62           52  -15.81%\nruntime_test.BenchmarkSyscall-2                         85           52  -39.16%\nruntime_test.BenchmarkSyscall-3                         52           51   -1.92%\nruntime_test.BenchmarkSyscall-4                         52           50   -2.49%\nruntime_test.BenchmarkSyscall-5                         52           50   -3.24%\nruntime_test.BenchmarkSyscall-6                         52           51   -2.49%\nruntime_test.BenchmarkSyscall-7                         52           51   -1.52%\nruntime_test.BenchmarkSyscall-8                         53           51   -4.31%\nruntime_test.BenchmarkSyscallWork                     1312         1940  +47.87%\nruntime_test.BenchmarkSyscallWork-2                    827          739  -10.64%\nruntime_test.BenchmarkSyscallWork-3                    728          646  -11.26%\nruntime_test.BenchmarkSyscallWork-4                    704          645   -8.38%\nruntime_test.BenchmarkSyscallWork-5                    646          645   -0.15%\nruntime_test.BenchmarkSyscallWork-6                    647          681   +5.26%\nruntime_test.BenchmarkSyscallWork-7                    645          746  +15.66%\nruntime_test.BenchmarkSyscallWork-8                    644          736  +14.29%\nruntime_test.BenchmarkSemaUncontended                  125          124   -0.80%\nruntime_test.BenchmarkSemaUncontended-2                 77           50  -35.32%\nruntime_test.BenchmarkSemaUncontended-3                 41           44   +7.80%\nruntime_test.BenchmarkSemaUncontended-4                 44           45   +2.04%\nruntime_test.BenchmarkSemaUncontended-5                 38           44  +13.66%\nruntime_test.BenchmarkSemaUncontended-6                 38           44  +15.50%\nruntime_test.BenchmarkSemaUncontended-7                 42           43   +4.03%\nruntime_test.BenchmarkSemaUncontended-8                 45           42   -5.74%\nruntime_test.BenchmarkSemaSyntNonblock                 111           78  -29.28%\nruntime_test.BenchmarkSemaSyntNonblock-2               112           74  -33.57%\nruntime_test.BenchmarkSemaSyntNonblock-3                72           74   +2.76%\nruntime_test.BenchmarkSemaSyntNonblock-4                72           76   +5.52%\nruntime_test.BenchmarkSemaSyntNonblock-5                73           75   +2.03%\nruntime_test.BenchmarkSemaSyntNonblock-6                74           76   +3.92%\nruntime_test.BenchmarkSemaSyntNonblock-7                75           77   +3.47%\nruntime_test.BenchmarkSemaSyntNonblock-8                77           75   -2.57%\nruntime_test.BenchmarkSemaSyntBlock                    145          101  -30.34%\nruntime_test.BenchmarkSemaSyntBlock-2                  158\n439  +177.85%\nruntime_test.BenchmarkSemaSyntBlock-3                   84           81   -4.13%\nruntime_test.BenchmarkSemaSyntBlock-4                   90           85   -6.27%\nruntime_test.BenchmarkSemaSyntBlock-5                   81           79   -1.60%\nruntime_test.BenchmarkSemaSyntBlock-6                   82           84   +2.56%\nruntime_test.BenchmarkSemaSyntBlock-7                   79           78   -0.38%\nruntime_test.BenchmarkSemaSyntBlock-8                   80           86   +7.23%\nruntime_test.BenchmarkSemaWorkNonblock                 993         1549  +55.99%\nruntime_test.BenchmarkSemaWorkNonblock-2               603          767  +27.20%\nruntime_test.BenchmarkSemaWorkNonblock-3               596          521  -12.58%\nruntime_test.BenchmarkSemaWorkNonblock-4               581          526   -9.47%\nruntime_test.BenchmarkSemaWorkNonblock-5               578          526   -9.00%\nruntime_test.BenchmarkSemaWorkNonblock-6               591          526  -11.00%\nruntime_test.BenchmarkSemaWorkNonblock-7               572          525   -8.22%\nruntime_test.BenchmarkSemaWorkNonblock-8               572          538   -5.94%\nruntime_test.BenchmarkSemaWorkBlock                   1019         1340  +31.50%\nruntime_test.BenchmarkSemaWorkBlock-2                  716          714   -0.28%\nruntime_test.BenchmarkSemaWorkBlock-3                  608          526  -13.49%\nruntime_test.BenchmarkSemaWorkBlock-4                  594          541   -8.92%\nruntime_test.BenchmarkSemaWorkBlock-5                  527          525   -0.38%\nruntime_test.BenchmarkSemaWorkBlock-6                  525          539   +2.67%\nruntime_test.BenchmarkSemaWorkBlock-7                  526          526   +0.00%\nruntime_test.BenchmarkSemaWorkBlock-8                  527          521   -1.14%\n\nOn 27 October 2011 05:18,  <dvyukov@google.com> wrote:\n> On 2011/10/26 16:52:28, dvyukov wrote:\n>>\n>> The futex implementation is basically old Linux mutex implementation.\n>> The sema implementation is based on old Windows implementation,\n>\n> however it is\n>>\n>> extended with spinning.\n>> I've tried sema implementation on Linux, it sucks.\n>> I've tested on Linux and Darwin. For others I merely run GOARCH=xxx\n>\n> ./make.bash\n>>\n>> on Linux to where it runs.\n>\n> hector, jsing, I will appreciate if you try it on OpenBSD/Windows.\n> Ideally something like\n> src/pkg/runtime$ gotest -v -bench=.* -benchtime=.1 -cpu=1,2,3,4,5,6,7,8\n>\n>\n> http://codereview.appspot.com/5140043/\n>\n",
+			"disapproval": false,
+			"date": "2011-11-02 12:23:02.502726",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, jsing@google.com, hectorchu@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-27 10:36:20.775671",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5140043/diff/36001/src/pkg/runtime/lock_sema.c\nFile src/pkg/runtime/lock_sema.c (right):\n\nhttp://codereview.appspot.com/5140043/diff/36001/src/pkg/runtime/lock_sema.c#newcode66\nsrc/pkg/runtime/lock_sema.c:66: if((v&LOCKED) == 0)\nIn this case can you avoid a double atomicloadp as it returns to the top of the for loop?  Most easiest way is to goto line 48.\n\nhttp://codereview.appspot.com/5140043/diff/36001/src/pkg/runtime/lock_sema.c#newcode125\nsrc/pkg/runtime/lock_sema.c:125: if(runtime\u00b7casp(&n->waitm, nil, m))\nAre notes only waited on by a single m at a time?",
+			"disapproval": false,
+			"date": "2011-10-27 08:14:55.806607",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/27 10:31:25, hector wrote:\n> LGTM, though I wish there weren't so many waitsema* vars in M.\n\nAny suggestions?\nsemacreate() could allocate them dynamically, but it can't.\nOpenBSD thread parking/unparking API is weird, it combines cons of both futexes and semaphores and requires 2 vars.\n\n> http://codereview.appspot.com/5140043/diff/28014/src/pkg/runtime/runtime.h\n> File src/pkg/runtime/runtime.h (right):\n> \n> http://codereview.appspot.com/5140043/diff/28014/src/pkg/runtime/runtime.h#newcode126\n> src/pkg/runtime/runtime.h:126: uint32\tstate;\t// futex-based imple\n> impl. Also perhaps rename state to key in keeping with Lock?\n\nDone.",
+			"disapproval": false,
+			"date": "2011-10-27 10:40:14.549405",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, jsing@google.com, hectorchu@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-27 08:39:40.205114",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM, though I wish there weren't so many waitsema* vars in M.\n\nhttp://codereview.appspot.com/5140043/diff/28014/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttp://codereview.appspot.com/5140043/diff/28014/src/pkg/runtime/runtime.h#newcode126\nsrc/pkg/runtime/runtime.h:126: uint32\tstate;\t// futex-based imple\nimpl. Also perhaps rename state to key in keeping with Lock?",
+			"disapproval": false,
+			"date": "2011-10-27 10:31:25.246316",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/27 13:26:08, hector wrote:\n> Sorry Dmitry just one more thing I noticed, please see comments.  I guess in\n> future I should batch up my comments to save context switching time. :)\n\nnp\n\n> P.S. While looking at this code I couldn't find any documentation that stated\n> that futex_wake before futex_wait wakes up the waiter.  I'm assuming that it\n> does, and that is probably why wakeups can be spurious.\n\nFutex_wake has no effect if there is no waiters, that is, subsequent futex_wait will *not* return immediately. But futex_wait rechecks the variable value after adding the thread to waitlist.\n\n\n> http://codereview.appspot.com/5140043/diff/37012/src/pkg/runtime/lock_futex.c\n> File src/pkg/runtime/lock_futex.c (right):\n> \n> http://codereview.appspot.com/5140043/diff/37012/src/pkg/runtime/lock_futex.c#newcode110\n> src/pkg/runtime/lock_futex.c:110: runtime\u00b7futexwakeup(&n->key, 1<<30);\n> Since no more than one thread sleeps on the futex, it should be ok to set cnt to\n> 1 now.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-10-27 14:26:42.401979",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Wed, Nov 2, 2011 at 5:21 PM, Joel Sing <jsing@google.com> wrote:\n> I think I've just tracked it down - the results below look\n> considerably better and are certainly more consistent. For the\n> spinlock on m->waitsemalock you are using runtime\u00b7procyield(10)\n> whereas I was previously using runtime\u00b7osyield() - changing this back\n> gives the results below. I'm guessing that we are spending too much\n> time spinning.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-11-02 13:38:20.511891",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"jsing@google.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=71dc491f16f9 ***\n\nruntime: unify mutex code across OSes\nThe change introduces 2 generic mutex implementations\n(futex- and semaphore-based). Each OS chooses a suitable mutex\nimplementation and implements few callbacks (e.g. futex wait/wake).\nThe CL reduces code duplication, extends some optimizations available\nonly on Linux/Windows to other OSes and provides ground\nfor futher optimizations. Chan finalizers are finally eliminated.\n\n(Linux/amd64, 8 HT cores)\nbenchmark                      old      new\nBenchmarkChanContended         83.6     77.8 ns/op\nBenchmarkChanContended-2       341      328 ns/op\nBenchmarkChanContended-4       382      383 ns/op\nBenchmarkChanContended-8       390      374 ns/op\nBenchmarkChanContended-16      313      291 ns/op\n\n(Darwin/amd64, 2 cores)\nbenchmark                      old      new\nBenchmarkChanContended         159      172 ns/op\nBenchmarkChanContended-2       6735     263 ns/op\nBenchmarkChanContended-4       10384    255 ns/op\nBenchmarkChanCreation          1174     407 ns/op\nBenchmarkChanCreation-2        4007     254 ns/op\nBenchmarkChanCreation-4        4029     246 ns/op\n\nR=rsc, jsing, hectorchu\nCC=golang-dev\nhttp://codereview.appspot.com/5140043",
+			"disapproval": false,
+			"date": "2011-11-02 13:42:06.857903",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 5140043: runtime: unify mutex code across OSes",
+	"created": "2011-09-26 14:38:03.279015",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9001,
+		6013,
+		11001,
+		11002,
+		15012,
+		18001,
+		21001,
+		21002,
+		28001,
+		30001,
+		32001,
+		35001,
+		36001,
+		28014,
+		37012,
+		22013,
+		37013,
+		23026,
+		26012
+	],
+	"modified": "2011-11-02 13:42:07.828481",
+	"closed": true,
+	"issue": 5140043
+}

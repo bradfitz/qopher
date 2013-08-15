@@ -1,0 +1,162 @@
+{
+	"description": "net/http: fix race on bodyEOFSignal.isClosed\n\nUpdate issue 4191.\n\nFixes unreported race failure at\nhttp://build.golang.org/log/61e43a328fb220801d3d5c88cd91916cfc5dc43c",
+	"cc": [
+		"dvyukov@google.com",
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go\nFile src/pkg/net/http/transport.go (right):\n\nhttps://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode837\nsrc/pkg/net/http/transport.go:837: // already closed\nIs it OK that a goroutine returns from Close() when the es is not yet closed?",
+			"disapproval": false,
+			"date": "2012-10-11 04:26:44.940820",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-10-11 04:04:39.492850",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-10-11 04:31:55.498500",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The more concerning thing is that Close was called on two goroutines to\r\nbegin with.\r\n\r\nI would think that if the original design expected that, it would've used a\r\nmutex or atomic already.  Which makes me think somebody is calling Close\r\nwho shouldn't.\r\n\r\nI don't remember this code well, though.  Let me stare at this more\r\ntomorrow.\r\n\r\n\r\nOn Wed, Oct 10, 2012 at 9:04 PM, <dave@cheney.net> wrote:\r\n\r\n> Reviewers: dvyukov, bradfitz,\r\n>\r\n> Message:\r\n> Hello dvyukov@google.com, bradfitz@golang.org (cc:\r\n> golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> net/http: fix race on bodyEOFSignal.isClosed\r\n>\r\n> Fixes unreported race failure at\r\n> http://build.golang.org/log/**61e43a328fb220801d3d5c88cd9191**6cfc5dc43c<http://build.golang.org/log/61e43a328fb220801d3d5c88cd91916cfc5dc43c>\r\n>\r\n> Please review this at http://codereview.appspot.com/**6640057/<http://codereview.appspot.com/6640057/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/http/transport.go\r\n>\r\n>\r\n> Index: src/pkg/net/http/transport.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/http/transport.**go\r\n> +++ b/src/pkg/net/http/transport.**go\r\n> @@ -24,6 +24,7 @@\r\n>         \"os\"\r\n>         \"strings\"\r\n>         \"sync\"\r\n> +       \"sync/atomic\"\r\n>         \"time\"\r\n>  )\r\n>\r\n> @@ -816,13 +817,13 @@\r\n>  type bodyEOFSignal struct {\r\n>         body     io.ReadCloser\r\n>         fn       func()\r\n> -       isClosed bool\r\n> +       isClosed uint32 // atomic bool, non zero if true\r\n>         once     sync.Once\r\n>  }\r\n>\r\n>  func (es *bodyEOFSignal) Read(p []byte) (n int, err error) {\r\n>         n, err = es.body.Read(p)\r\n> -       if es.isClosed && n > 0 {\r\n> +       if es.closed() && n > 0 {\r\n>                 panic(\"http: unexpected bodyEOFSignal Read after Close;\r\n> see issue 1725\")\r\n>         }\r\n>         if err == io.EOF {\r\n> @@ -832,10 +833,10 @@\r\n>  }\r\n>\r\n>  func (es *bodyEOFSignal) Close() (err error) {\r\n> -       if es.isClosed {\r\n> +       if !es.setClosed() {\r\n> +               // already closed\r\n>                 return nil\r\n>         }\r\n> -       es.isClosed = true\r\n>         err = es.body.Close()\r\n>         if err == nil {\r\n>                 es.condfn()\r\n> @@ -849,6 +850,14 @@\r\n>         }\r\n>  }\r\n>\r\n> +func (es *bodyEOFSignal) closed() bool {\r\n> +       return atomic.LoadUint32(&es.**isClosed) > 0\r\n> +}\r\n> +\r\n> +func (es *bodyEOFSignal) setClosed() bool {\r\n> +       return atomic.CompareAndSwapUint32(&**es.isClosed, 0, 1)\r\n> +}\r\n> +\r\n>  type readFirstCloseBoth struct {\r\n>         io.ReadCloser\r\n>         io.Closer\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-11 04:09:41.392930",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "But I think Dmitry means that the loser still should wait for the winner's\r\nfunction to complete.\r\n On Oct 10, 2012 9:31 PM, <dave@cheney.net> wrote:\r\n\r\n> Thank you for your comments.\r\n>\r\n>\r\n> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n> net/http/transport.go<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go>\r\n> File src/pkg/net/http/transport.go (right):\r\n>\r\n> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n> net/http/transport.go#**newcode820<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode820>\r\n> src/pkg/net/http/transport.go:**820: isClosed uint32 // atomic bool, non\r\n> zero if true\r\n> On 2012/10/11 04:19:24, bradfitz wrote:\r\n>\r\n>> non-zero\r\n>>\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n> net/http/transport.go#**newcode837<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode837>\r\n> src/pkg/net/http/transport.go:**837: // already closed\r\n> On 2012/10/11 04:26:45, dvyukov wrote:\r\n>\r\n>> Is it OK that a goroutine returns from Close() when the es is not yet\r\n>>\r\n> closed?\r\n>\r\n> If setClosed was false, you lost the race to close, which means someone\r\n> else won, and is closing es.body.Close.\r\n>\r\n> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n> net/http/transport.go#**newcode854<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode854>\r\n> src/pkg/net/http/transport.go:**854: return\r\n> atomic.LoadUint32(&es.**isClosed) > 0\r\n> On 2012/10/11 04:19:24, bradfitz wrote:\r\n>\r\n>> != 0, to match comment above\r\n>>\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.**com/6640057/<https://codereview.appspot.com/6640057/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-11 04:43:11.655950",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nokay, I looked.  I'm happy with this.\n\nIt's just as reasonable for line 575 (lastBody.Close() // assumed idempotent) and a user goroutine to race as it is for two user goroutines to race.  And we should be correct in either case, even if two concurrent Closes from user goroutines doesn't make any sense.  The one on line 575 does make sense... it's just making sure the user called theirs.\n\nhttps://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go\nFile src/pkg/net/http/transport.go (right):\n\nhttps://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode820\nsrc/pkg/net/http/transport.go:820: isClosed uint32 // atomic bool, non zero if true\nnon-zero\n\nhttps://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode854\nsrc/pkg/net/http/transport.go:854: return atomic.LoadUint32(&es.isClosed) > 0\n!= 0, to match comment above",
+			"disapproval": false,
+			"date": "2012-10-11 04:19:23.910180",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for your comments.\n\nhttps://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go\nFile src/pkg/net/http/transport.go (right):\n\nhttps://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode820\nsrc/pkg/net/http/transport.go:820: isClosed uint32 // atomic bool, non zero if true\nOn 2012/10/11 04:19:24, bradfitz wrote:\n> non-zero\n\nDone.\n\nhttps://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode837\nsrc/pkg/net/http/transport.go:837: // already closed\nOn 2012/10/11 04:26:45, dvyukov wrote:\n> Is it OK that a goroutine returns from Close() when the es is not yet closed?\n\nIf setClosed was false, you lost the race to close, which means someone else won, and is closing es.body.Close.\n\nhttps://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode854\nsrc/pkg/net/http/transport.go:854: return atomic.LoadUint32(&es.isClosed) > 0\nOn 2012/10/11 04:19:24, bradfitz wrote:\n> != 0, to match comment above\n\nDone.",
+			"disapproval": false,
+			"date": "2012-10-11 04:31:40.474030",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes,that's what I mean. But I don't know whether its required.\r\nOn Oct 11, 2012 8:43 AM, \"Brad Fitzpatrick\" <bradfitz@golang.org> wrote:\r\n\r\n> But I think Dmitry means that the loser still should wait for the winner's\r\n> function to complete.\r\n>  On Oct 10, 2012 9:31 PM, <dave@cheney.net> wrote:\r\n>\r\n>> Thank you for your comments.\r\n>>\r\n>>\r\n>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>> net/http/transport.go<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go>\r\n>> File src/pkg/net/http/transport.go (right):\r\n>>\r\n>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>> net/http/transport.go#**newcode820<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode820>\r\n>> src/pkg/net/http/transport.go:**820: isClosed uint32 // atomic bool, non\r\n>> zero if true\r\n>> On 2012/10/11 04:19:24, bradfitz wrote:\r\n>>\r\n>>> non-zero\r\n>>>\r\n>>\r\n>> Done.\r\n>>\r\n>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>> net/http/transport.go#**newcode837<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode837>\r\n>> src/pkg/net/http/transport.go:**837: // already closed\r\n>> On 2012/10/11 04:26:45, dvyukov wrote:\r\n>>\r\n>>> Is it OK that a goroutine returns from Close() when the es is not yet\r\n>>>\r\n>> closed?\r\n>>\r\n>> If setClosed was false, you lost the race to close, which means someone\r\n>> else won, and is closing es.body.Close.\r\n>>\r\n>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>> net/http/transport.go#**newcode854<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode854>\r\n>> src/pkg/net/http/transport.go:**854: return\r\n>> atomic.LoadUint32(&es.**isClosed) > 0\r\n>> On 2012/10/11 04:19:24, bradfitz wrote:\r\n>>\r\n>>> != 0, to match comment above\r\n>>>\r\n>>\r\n>> Done.\r\n>>\r\n>> https://codereview.appspot.**com/6640057/<https://codereview.appspot.com/6640057/>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-11 05:45:08.393110",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I just looked.  Doesn't seem to matter.\r\n\r\nIf the user goroutine calls Close() first and then the http package calls\r\nit, the transport will still want for the condfn to finish:\r\n\r\n                var waitForBodyRead chan bool\r\n                if hasBody {\r\n                        lastbody = resp.Body\r\n                        waitForBodyRead = make(chan bool, 1)\r\n                        resp.Body.(*bodyEOFSignal).fn = func() {\r\n                                if alive && !pc.t.putIdleConn(pc) {\r\n                        alive = false\r\n                                }\r\n                                if !alive || pc.isBroken() {\r\n                                        pc.close()\r\n                                }\r\n                                waitForBodyRead <- true\r\n                        }\r\n....\r\n// Wait for the just-returned response body to be fully consumed\r\n\r\n// before we race and peek on the underlying bufio reader.\r\n\r\n                if waitForBodyRead != nil {\r\n                        <-waitForBodyRead\r\n                }\r\n\r\n\r\nSo I think we're fine with this CL as-is.\r\n\r\nThanks, Dave!\r\n\r\n\r\nOn Wed, Oct 10, 2012 at 10:45 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> Yes,that's what I mean. But I don't know whether its required.\r\n> On Oct 11, 2012 8:43 AM, \"Brad Fitzpatrick\" <bradfitz@golang.org> wrote:\r\n>\r\n>> But I think Dmitry means that the loser still should wait for the\r\n>> winner's function to complete.\r\n>>  On Oct 10, 2012 9:31 PM, <dave@cheney.net> wrote:\r\n>>\r\n>>> Thank you for your comments.\r\n>>>\r\n>>>\r\n>>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>>> net/http/transport.go<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go>\r\n>>> File src/pkg/net/http/transport.go (right):\r\n>>>\r\n>>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>>> net/http/transport.go#**newcode820<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode820>\r\n>>> src/pkg/net/http/transport.go:**820: isClosed uint32 // atomic bool, non\r\n>>> zero if true\r\n>>> On 2012/10/11 04:19:24, bradfitz wrote:\r\n>>>\r\n>>>> non-zero\r\n>>>>\r\n>>>\r\n>>> Done.\r\n>>>\r\n>>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>>> net/http/transport.go#**newcode837<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode837>\r\n>>> src/pkg/net/http/transport.go:**837: // already closed\r\n>>> On 2012/10/11 04:26:45, dvyukov wrote:\r\n>>>\r\n>>>> Is it OK that a goroutine returns from Close() when the es is not yet\r\n>>>>\r\n>>> closed?\r\n>>>\r\n>>> If setClosed was false, you lost the race to close, which means someone\r\n>>> else won, and is closing es.body.Close.\r\n>>>\r\n>>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>>> net/http/transport.go#**newcode854<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode854>\r\n>>> src/pkg/net/http/transport.go:**854: return\r\n>>> atomic.LoadUint32(&es.**isClosed) > 0\r\n>>> On 2012/10/11 04:19:24, bradfitz wrote:\r\n>>>\r\n>>>> != 0, to match comment above\r\n>>>>\r\n>>>\r\n>>> Done.\r\n>>>\r\n>>> https://codereview.appspot.**com/6640057/<https://codereview.appspot.com/6640057/>\r\n>>>\r\n>>\r\n",
+			"disapproval": false,
+			"date": "2012-10-11 16:40:56.311990",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=cb38e940c38a ***\n\nnet/http: fix race on bodyEOFSignal.isClosed\n\nUpdate issue 4191.\n\nFixes unreported race failure at\nhttp://build.golang.org/log/61e43a328fb220801d3d5c88cd91916cfc5dc43c\n\nR=dvyukov, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6640057",
+			"disapproval": false,
+			"date": "2012-10-11 21:33:14.610300",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Awesome. Thanks for the confirmation.\r\nOn 12 Oct 2012 03:40, \"Brad Fitzpatrick\" <bradfitz@golang.org> wrote:\r\n\r\n> I just looked.  Doesn't seem to matter.\r\n>\r\n> If the user goroutine calls Close() first and then the http package calls\r\n> it, the transport will still want for the condfn to finish:\r\n>\r\n>                 var waitForBodyRead chan bool\r\n>                 if hasBody {\r\n>                         lastbody = resp.Body\r\n>                         waitForBodyRead = make(chan bool, 1)\r\n>                         resp.Body.(*bodyEOFSignal).fn = func() {\r\n>                                 if alive && !pc.t.putIdleConn(pc) {\r\n>                         alive = false\r\n>                                 }\r\n>                                 if !alive || pc.isBroken() {\r\n>                                         pc.close()\r\n>                                 }\r\n>                                 waitForBodyRead <- true\r\n>                         }\r\n> ....\r\n> // Wait for the just-returned response body to be fully consumed\r\n>\r\n>  // before we race and peek on the underlying bufio reader.\r\n>\r\n>                 if waitForBodyRead != nil {\r\n>                         <-waitForBodyRead\r\n>                 }\r\n>\r\n>\r\n> So I think we're fine with this CL as-is.\r\n>\r\n> Thanks, Dave!\r\n>\r\n>\r\n> On Wed, Oct 10, 2012 at 10:45 PM, Dmitry Vyukov <dvyukov@google.com>wrote:\r\n>\r\n>> Yes,that's what I mean. But I don't know whether its required.\r\n>> On Oct 11, 2012 8:43 AM, \"Brad Fitzpatrick\" <bradfitz@golang.org> wrote:\r\n>>\r\n>>> But I think Dmitry means that the loser still should wait for the\r\n>>> winner's function to complete.\r\n>>>  On Oct 10, 2012 9:31 PM, <dave@cheney.net> wrote:\r\n>>>\r\n>>>> Thank you for your comments.\r\n>>>>\r\n>>>>\r\n>>>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>>>> net/http/transport.go<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go>\r\n>>>> File src/pkg/net/http/transport.go (right):\r\n>>>>\r\n>>>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>>>> net/http/transport.go#**newcode820<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode820>\r\n>>>> src/pkg/net/http/transport.go:**820: isClosed uint32 // atomic bool,\r\n>>>> non\r\n>>>> zero if true\r\n>>>> On 2012/10/11 04:19:24, bradfitz wrote:\r\n>>>>\r\n>>>>> non-zero\r\n>>>>>\r\n>>>>\r\n>>>> Done.\r\n>>>>\r\n>>>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>>>> net/http/transport.go#**newcode837<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode837>\r\n>>>> src/pkg/net/http/transport.go:**837: // already closed\r\n>>>> On 2012/10/11 04:26:45, dvyukov wrote:\r\n>>>>\r\n>>>>> Is it OK that a goroutine returns from Close() when the es is not yet\r\n>>>>>\r\n>>>> closed?\r\n>>>>\r\n>>>> If setClosed was false, you lost the race to close, which means someone\r\n>>>> else won, and is closing es.body.Close.\r\n>>>>\r\n>>>> https://codereview.appspot.**com/6640057/diff/4001/src/pkg/**\r\n>>>> net/http/transport.go#**newcode854<https://codereview.appspot.com/6640057/diff/4001/src/pkg/net/http/transport.go#newcode854>\r\n>>>> src/pkg/net/http/transport.go:**854: return\r\n>>>> atomic.LoadUint32(&es.**isClosed) > 0\r\n>>>> On 2012/10/11 04:19:24, bradfitz wrote:\r\n>>>>\r\n>>>>> != 0, to match comment above\r\n>>>>>\r\n>>>>\r\n>>>> Done.\r\n>>>>\r\n>>>> https://codereview.appspot.**com/6640057/<https://codereview.appspot.com/6640057/>\r\n>>>>\r\n>>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-11 20:44:48.926240",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 6640057: net/http: fix race on bodyEOFSignal.isClosed",
+	"created": "2012-10-11 04:02:10.188640",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		2004,
+		12001,
+		12002
+	],
+	"modified": "2012-10-13 03:47:34.761510",
+	"closed": true,
+	"issue": 6640057
+}

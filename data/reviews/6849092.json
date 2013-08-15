@@ -1,0 +1,212 @@
+{
+	"description": "exp/cookiejar: new package.\n\nThis CL defines the API. Implementation will come in follow-up CLs.\n\nUpdate issue 1960.",
+	"cc": [
+		"bradfitz@golang.org",
+		"dr.volker.dobler@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 6:58 PM,  <dr.volker.dobler@gmail.com> wrote:\r\n> I wonder if cookiejar should be located under exp:\r\n> Handling IDNs properly will require exp/norm.\r\n\r\nHmm... I'll move it to exp/cookiejar for now.\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 07:18:33.607630",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I see.\n\nWhy not taking the identifying (name,domain,path)-tuple\nout of the opaque Data like this:\ntype Entry {\n    Creation, LastAccess time.Time\n    Id string  // e.g. Name + \";\" + Domain + \";\" + Path\n    Data []byte // just Value and flags left\n}\nand Storage must treat any Entry with the same Id\nas identical in the set of a given key? This wouldn't\nmake a DB-backed Storage much more complicated and\nStorage can be required to manage Creation as it know\nknows if two cookies are the same (even if it doesn't\nneed to know anything about cookies at all).\nThis would remove the need of Jar to query Storage\nfirst before Add'ing a cookie.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go\nFile src/pkg/net/http/cookiejar/jar.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode56\nsrc/pkg/net/http/cookiejar/jar.go:56: // TODO: how do we reject HttpOnly cookies? Do we post-process the return\nOn 2012/11/25 23:22:35, nigeltao wrote:\n> On 2012/11/25 15:58:51, rsc wrote:\n> > I don't understand this TODO. Both the Cookies and SetCookies methods have a\n> URL\n> > so it seems like they can tell HTTP from HTTPS.\n> \n> Heh, the HttpOnly name is unfortunate, but out of our control.\n> \n> It has nothing to do with FTP, from Go's point of view. It means that the cookie\n> is used for HTTP(S) requests, but is not viewable from a page's javascript (via\n> document.cookie). It mitigates XSS attacks.\n\nYes, access through document.cookie is one of those\n\"non-HTTP\" APIs RFC 6265 forbids in 5.4.1 bullet 4.\nAm I wrong in assuming that every other (incl. FTP or \njet-to-invent protocols) are excluded too?\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode66\nsrc/pkg/net/http/cookiejar/storage.go:66: Creation   time.Time\nOn 2012/11/25 23:22:35, nigeltao wrote:\n> On 2012/11/25 20:50:58, volker.dobler wrote:\n> > Why is Creation treated special here? Created is set once\n> > like Name or Path and not used for retrieval (it is not\n> > even used for cleanup or shrinking the jar). Just because\n> > LastAccess is handled special?\n> \n> It's here because when a newly set cookie replaces an existing cookie (replaces\n> means same name/domain/path), then the new cookie is stored with the creation\n> time of the old cookie. (RFC 6265 Section 5.3 Step 11).\n> \n> On second thoughts, creation time could arguably be encoded in the Data []byte,\n> but it could be easier to manage as a separate Entry field. This API isn't set\n> in stone yet; presumably implementing a MemStorage and possibly a SQLiteStorage\n> or LevelDBStorage will shake out the design.\n> \n> LastAccess is a separate field because sending an HTTP request scans the cookies\n> and updates the LastAccess of each to time.Now. Being a separate field means\n> that the Data bytes don't need a decode-modify-encode step for this common\n> operation.\n\nLastAccess as a separate field is perfectly fine,\nIt is managed by Storage. But who is going to manage\nCreation? If Storage is responsible for updating\nthan Storage must have know-how about the opaque Data;\notherwise it cannot know if two cookies are the same.\nIf Jar manages this field, then it can be envoded in Data\nas well. If Jar manages Creation, then Jar will have\nto look up any cookie with Entries before Add'ing\nthem to choose the right Creation time.",
+			"disapproval": false,
+			"date": "2012-11-26 00:26:39.158220",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 11:54 AM,  <nigeltao@golang.org> wrote:\r\n> We could move name/domain/path into an Entry instead, but it would make\r\n> a Storage more complicated. Hmm...\r\n\r\nI've uploaded a version that puts the domain/name/path (which I've\r\ncalled a SubKey) into an Entry. PTAL at\r\nhttps://codereview.appspot.com/6849092/\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 03:38:24.584170",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=69e2f3d33300 ***\n\nexp/cookiejar: new package.\n\nThis CL defines the API. Implementation will come in follow-up CLs.\n\nUpdate issue 1960.\n\nR=bradfitz, dr.volker.dobler, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6849092",
+			"disapproval": false,
+			"date": "2012-11-27 07:21:24.756980",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage_test.go\nFile src/pkg/net/http/cookiejar/storage_test.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage_test.go#newcode12\nsrc/pkg/net/http/cookiejar/storage_test.go:12: testCases := map[string]bool{\nOn 2012/11/26 03:52:55, rsc wrote:\n> On 2012/11/25 23:22:35, nigeltao wrote:\n> > On 2012/11/25 15:58:51, rsc wrote:\n> > > make global var validStorageKeyTests\n> > \n> > Why? I prefer local variables over global variables, and I think it's just as\n> > readable.\n> \n> Because 99% of the other tests do that. Some of the reasons: it avoids some\n> indentation, it makes it easier to scan forward to find where the table is done\n> (completely unindented lines), and it makes the table available to some future\n> test function that might be able to reuse the cases.\n> \n> When I see a local variable I like this I expect it contains a value that can\n> only be computed once the test has started running. There's no such value here.\n\nDone.\n\nhttps://codereview.appspot.com/6849092/diff/10002/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10002/src/pkg/net/http/cookiejar/storage.go#newcode12\nsrc/pkg/net/http/cookiejar/storage.go:12: // entries. Each entry consists of a sub-key, creation time, last access time,\nOn 2012/11/26 03:52:55, rsc wrote:\n> s/sub-key/subkey/\n> subkey is a fine English word without needing a hyphen.\n> Because of that fact, the name below should be Subkey not SubKey.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-26 04:01:10.444740",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI wonder if cookiejar should be located under exp:\nHandling IDNs properly will require exp/norm.",
+			"disapproval": false,
+			"date": "2012-11-26 07:58:15.359510",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, dr.volker.dobler@gmail.com (cc: golang-dev@googlegroups.com, rsc@golang.org),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-11-23 06:48:09.042650",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Nothing is fundamentally wrong with this API,\nbut I admit I don't see what the rationals for\nthis API are. Having a Storage with opaque Data\nforces Jar to serialize Cookies and the filter\nfunctions f to decode this serialization before\ndoing actual work. Is it about squeezing the\nbooleans HostOnly, Secure and HttpOnly into a\nbitfield and compressing Value to minimize the\nmemory footprint of an in-memory Storage?  \nOr is it just a way to avoid an additional type\nStoredCookie which would share several fields with\nhttp.Cookie? \nHaving LastAccess exposed in Entry and managed by\nStorage is nice, but only if LastAccess is used\nsomewhere: The only two task where LastAccess\nis ever used is a) display in a GUI and b) during\ncompactification of the jar when LastAccess helps\nto decide which cookies to drop from the jar.\nSuch functions should be part of the API, at least\nif we are heading for a general \"suits-everything\"\ncookie jar.\n\nJust to be sure: The general design is fixed to\n\"Jar delegates all cookie storage to an interface\ntype Storage\"? Or are other designs like \"Package\ncookiejar provides an efficent in-memory cookie\njar as well as functions to build specialized \ncookie jars.\" or \"The way chromium/firefox does.\"\nstill discussed?\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go\nFile src/pkg/net/http/cookiejar/jar.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode44\nsrc/pkg/net/http/cookiejar/jar.go:44: // Jar implements the http.CookieJar interface from the net/http package.\nRuss's Options could be used for stuff like allowing\nhost cookies on IP addresses and safeguarding against \nexcessive long Value.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode56\nsrc/pkg/net/http/cookiejar/jar.go:56: // TODO: how do we reject HttpOnly cookies? Do we post-process the return\nOn 2012/11/25 15:58:51, rsc wrote:\n> I don't understand this TODO. Both the Cookies and SetCookies methods have a URL\n> so it seems like they can tell HTTP from HTTPS.\n\nIt is (I assume) about telling HTTP(S) from FTP\nand other protocols, not about telling HTTP from\nHTTPS (which is controlled by Secure field).\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode56\nsrc/pkg/net/http/cookiejar/jar.go:56: // TODO: how do we reject HttpOnly cookies? Do we post-process the return\nAllowing an ftp server to set a cookie which gets sent\nto a HTTP request (and the other way around) might be\nallowed in theory, but most probably this is a bad\nidea.  I would be strict (and safe): \"Jar will neither\naccept cookies from, nor send cookies to any URL which\nis neither HTTP nor HTTPS.\"\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode66\nsrc/pkg/net/http/cookiejar/storage.go:66: Creation   time.Time\nWhy is Creation treated special here? Created is set once\nlike Name or Path and not used for retrieval (it is not\neven used for cleanup or shrinking the jar). Just because\nLastAccess is handled special?",
+			"disapproval": false,
+			"date": "2012-11-25 20:50:58.742910",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go\nFile src/pkg/net/http/cookiejar/jar.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode5\nsrc/pkg/net/http/cookiejar/jar.go:5: // Package cookiejar provides a http.CookieJar implementation that conforms\nPackage cookiejar implements an RFC 6265-compliant http.CookieJar.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode44\nsrc/pkg/net/http/cookiejar/jar.go:44: // Jar implements the http.CookieJar interface from the net/http package.\nDo you want people to modify the jar after construction? I am wondering if we should have a cookiejar.New(*Options) instead.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode56\nsrc/pkg/net/http/cookiejar/jar.go:56: // TODO: how do we reject HttpOnly cookies? Do we post-process the return\nI don't understand this TODO. Both the Cookies and SetCookies methods have a URL so it seems like they can tell HTTP from HTTPS.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode17\nsrc/pkg/net/http/cookiejar/storage.go:17: // A key is invalid if it contains a byte that is not '-', not '.', is outside\nA valid key must use only bytes in the character class [a-z0-9.-] and must have at least one non-. byte. Note that this excludes any key containing a capital ASCII letter as well as the empty string.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode23\nsrc/pkg/net/http/cookiejar/storage.go:23: // The Add method has undefined behavior if the entry's Data has zero length.\nAn added Entry will always have non-empty Data.\n(maybe move down to the Add method comment)\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode25\nsrc/pkg/net/http/cookiejar/storage.go:25: // A Jar will not call a Storage's methods, other than Lock, unless it has\nI think this might work better as comments on the Lock and Unlock methods, if you expand sync.Locker (which most people have probably not seen):\n\n// A client must call Lock before calling other methods and must call\n// Unlock when finished. Between the calls to Lock and Unlock, a client\n// can assume that other clients are not modifying the Storage.\nLock()\nUnlock()\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode68\nsrc/pkg/net/http/cookiejar/storage.go:68: Data       []byte\nYou spend a lot of time telling people not to mutate the []byte.\nThis is ASCII data, though, right? So maybe it would be okay to use string?\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage_test.go\nFile src/pkg/net/http/cookiejar/storage_test.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage_test.go#newcode12\nsrc/pkg/net/http/cookiejar/storage_test.go:12: testCases := map[string]bool{\nmake global var validStorageKeyTests",
+			"disapproval": false,
+			"date": "2012-11-25 15:58:51.582650",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The rationale for this design, as bradfitz mused earlier, is that the implementor of an SQLiteStorage or a LevelDBStorage shouldn't have to know anything about HTTP cookies and all its subtleties. Note that in this proposal, storage.go does not import \"net/http\".\n\nI haven't decided yet whether Jar has its own in-memory storage. This design does allow for a CachingStorage to wrap another Storage, so it doesn't have to be the responsibility of  Jar per se. On a related note, a Jar may want its own in-memory storage for non-persistent cookies. I'm still exploring this space.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go\nFile src/pkg/net/http/cookiejar/jar.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode56\nsrc/pkg/net/http/cookiejar/jar.go:56: // TODO: how do we reject HttpOnly cookies? Do we post-process the return\nOn 2012/11/25 15:58:51, rsc wrote:\n> I don't understand this TODO. Both the Cookies and SetCookies methods have a URL\n> so it seems like they can tell HTTP from HTTPS.\n\nHeh, the HttpOnly name is unfortunate, but out of our control.\n\nIt has nothing to do with FTP, from Go's point of view. It means that the cookie is used for HTTP(S) requests, but is not viewable from a page's javascript (via document.cookie). It mitigates XSS attacks.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode66\nsrc/pkg/net/http/cookiejar/storage.go:66: Creation   time.Time\nOn 2012/11/25 20:50:58, volker.dobler wrote:\n> Why is Creation treated special here? Created is set once\n> like Name or Path and not used for retrieval (it is not\n> even used for cleanup or shrinking the jar). Just because\n> LastAccess is handled special?\n\nIt's here because when a newly set cookie replaces an existing cookie (replaces means same name/domain/path), then the new cookie is stored with the creation time of the old cookie. (RFC 6265 Section 5.3 Step 11).\n\nOn second thoughts, creation time could arguably be encoded in the Data []byte, but it could be easier to manage as a separate Entry field. This API isn't set in stone yet; presumably implementing a MemStorage and possibly a SQLiteStorage or LevelDBStorage will shake out the design.\n\nLastAccess is a separate field because sending an HTTP request scans the cookies and updates the LastAccess of each to time.Now. Being a separate field means that the Data bytes don't need a decode-modify-encode step for this common operation.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode68\nsrc/pkg/net/http/cookiejar/storage.go:68: Data       []byte\nOn 2012/11/25 15:58:51, rsc wrote:\n> You spend a lot of time telling people not to mutate the []byte.\n> This is ASCII data, though, right? So maybe it would be okay to use string?\n\nYeah, string might be better. I was trying to avoid []byte <--> string conversions to and from storage, but that's possibly premature optimization.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage_test.go\nFile src/pkg/net/http/cookiejar/storage_test.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage_test.go#newcode12\nsrc/pkg/net/http/cookiejar/storage_test.go:12: testCases := map[string]bool{\nOn 2012/11/25 15:58:51, rsc wrote:\n> make global var validStorageKeyTests\n\nWhy? I prefer local variables over global variables, and I think it's just as readable.",
+			"disapproval": false,
+			"date": "2012-11-25 23:22:35.276380",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go\nFile src/pkg/net/http/cookiejar/jar.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode56\nsrc/pkg/net/http/cookiejar/jar.go:56: // TODO: how do we reject HttpOnly cookies? Do we post-process the return\nOn 2012/11/26 00:26:39, volker.dobler wrote:\n> Yes, access through document.cookie is one of those\n> \"non-HTTP\" APIs RFC 6265 forbids in 5.4.1 bullet 4.\n> Am I wrong in assuming that every other (incl. FTP or \n> jet-to-invent protocols) are excluded too?\n\nI think that net/http/cookiejar would only care about HTTP(S). FTP and other transport protocols are out of scope.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode66\nsrc/pkg/net/http/cookiejar/storage.go:66: Creation   time.Time\nOn 2012/11/26 00:26:39, volker.dobler wrote:\n> LastAccess as a separate field is perfectly fine,\n> It is managed by Storage. But who is going to manage\n> Creation? If Storage is responsible for updating\n> than Storage must have know-how about the opaque Data;\n> otherwise it cannot know if two cookies are the same.\n> If Jar manages this field, then it can be envoded in Data\n> as well. If Jar manages Creation, then Jar will have\n> to look up any cookie with Entries before Add'ing\n> them to choose the right Creation time.\n\nI think the principle is that Storage is as dumb as possible. Again, I'd like the programmer who implements SQLiteStorage not to have to know anything about HTTP cookies.\n\nYes, a Jar will need to scan existing cookies before Add'ing new ones. We could move name/domain/path into an Entry instead, but it would make a Storage more complicated. Hmm...",
+			"disapproval": false,
+			"date": "2012-11-26 00:54:12.295680",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I haven't thought enough about whether the Subkey needs to be exposed.\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage_test.go\nFile src/pkg/net/http/cookiejar/storage_test.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10001/src/pkg/net/http/cookiejar/storage_test.go#newcode12\nsrc/pkg/net/http/cookiejar/storage_test.go:12: testCases := map[string]bool{\nOn 2012/11/25 23:22:35, nigeltao wrote:\n> On 2012/11/25 15:58:51, rsc wrote:\n> > make global var validStorageKeyTests\n> \n> Why? I prefer local variables over global variables, and I think it's just as\n> readable.\n\nBecause 99% of the other tests do that. Some of the reasons: it avoids some indentation, it makes it easier to scan forward to find where the table is done (completely unindented lines), and it makes the table available to some future test function that might be able to reuse the cases.\n\nWhen I see a local variable I like this I expect it contains a value that can only be computed once the test has started running. There's no such value here.\n\nhttps://codereview.appspot.com/6849092/diff/10002/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6849092/diff/10002/src/pkg/net/http/cookiejar/storage.go#newcode12\nsrc/pkg/net/http/cookiejar/storage.go:12: // entries. Each entry consists of a sub-key, creation time, last access time,\ns/sub-key/subkey/\nsubkey is a fine English word without needing a hyphen.\nBecause of that fact, the name below should be Subkey not SubKey.",
+			"disapproval": false,
+			"date": "2012-11-26 03:52:55.239480",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "There is only one Jar implementation here. The Storage interface is\r\nstructured so that it is as simple as possible to implement and as\r\ndifficult as possible to implement incorrectly.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-25 22:21:40.458200",
+			"approval": false
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 6849092: net/http/cookiejar: new package.",
+	"created": "2012-11-23 06:44:54.838460",
+	"patchsets": [
+		1,
+		2001,
+		3004,
+		8001,
+		10001,
+		10002,
+		13002,
+		12004,
+		7005
+	],
+	"modified": "2012-11-27 07:21:29.144290",
+	"closed": true,
+	"issue": 6849092
+}

@@ -1,0 +1,59 @@
+{
+	"description": "cmd/cgo: make Go code order deterministic\n\nThe type declarations were being generated using\na range over a map, which meant that successive\nruns produced different orders. This will make sure\nsuccessive runs produce the same files.\n\nFixes issue 3707.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Thu, Jun 7, 2012 at 9:33 AM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> cmd/cgo: make Go code order deterministic\r\n>\r\n> The type declarations were being generated using\r\n> a range over a map, which meant that successive\r\n> runs produced different orders. This will make sure\r\n> successive runs produce the same files.\r\n>\r\n> Fixes issue 3707.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6300062/<http://codereview.appspot.com/6300062/>\r\n>\r\n> Affected files:\r\n>  M src/cmd/cgo/main.go\r\n>  M src/cmd/cgo/out.go\r\n>\r\n>\r\n> Index: src/cmd/cgo/main.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/cgo/main.go\r\n> +++ b/src/cmd/cgo/main.go\r\n> @@ -22,6 +22,7 @@\r\n>        \"path/filepath\"\r\n>        \"reflect\"\r\n>        \"runtime\"\r\n> +       \"sort\"\r\n>        \"strings\"\r\n>  )\r\n>\r\n> @@ -33,9 +34,8 @@\r\n>        GccOptions  []string\r\n>        CgoFlags    map[string]string // #cgo flags (CFLAGS, LDFLAGS)\r\n>        Written     map[string]bool\r\n> -       Name        map[string]*Name    // accumulated Name from Files\r\n> -       Typedef     map[string]ast.Expr // accumulated Typedef from Files\r\n> -       ExpFunc     []*ExpFunc          // accumulated ExpFunc from Files\r\n> +       Name        map[string]*Name // accumulated Name from Files\r\n> +       ExpFunc     []*ExpFunc       // accumulated ExpFunc from Files\r\n>        Decl        []ast.Decl\r\n>        GoFiles     []string // list of Go files\r\n>        GccFiles    []string // list of gcc output files\r\n> @@ -51,7 +51,15 @@\r\n>        Ref      []*Ref              // all references to C.xxx in AST\r\n>        ExpFunc  []*ExpFunc          // exported functions for this file\r\n>        Name     map[string]*Name    // map from Go name to Name\r\n> -       Typedef  map[string]ast.Expr // translations of all necessary\r\n> types from C\r\n> +}\r\n> +\r\n> +func nameKeys(m map[string]*Name) []string {\r\n> +       var ks []string\r\n> +       for k := range m {\r\n> +               ks = append(ks, k)\r\n> +       }\r\n> +       sort.Strings(ks)\r\n> +       return ks\r\n>  }\r\n>\r\n>  // A Ref refers to an expression of the form C.xxx in the AST.\r\n> Index: src/cmd/cgo/out.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/cgo/out.go\r\n> +++ b/src/cmd/cgo/out.go\r\n> @@ -71,7 +71,8 @@\r\n>        }\r\n>\r\n>        cVars := make(map[string]bool)\r\n> -       for _, n := range p.Name {\r\n> +       for _, key := range nameKeys(p.Name) {\r\n> +               n := p.Name[key]\r\n>                if n.Kind != \"var\" {\r\n>                        continue\r\n>                }\r\n> @@ -94,14 +95,16 @@\r\n>        }\r\n>        fmt.Fprintf(fc, \"\\n\")\r\n>\r\n> -       for _, n := range p.Name {\r\n> +       for _, key := range nameKeys(p.Name) {\r\n> +               n := p.Name[key]\r\n>                if n.Const != \"\" {\r\n>                        fmt.Fprintf(fgo2, \"const _Cconst_%s = %s\\n\", n.Go,\r\n> n.Const)\r\n>                }\r\n>        }\r\n>        fmt.Fprintf(fgo2, \"\\n\")\r\n>\r\n> -       for _, n := range p.Name {\r\n> +       for _, key := range nameKeys(p.Name) {\r\n> +               n := p.Name[key]\r\n>                if n.FuncType != nil {\r\n>                        p.writeDefsFunc(fc, fgo2, n)\r\n>                }\r\n> @@ -378,7 +381,8 @@\r\n>        fmt.Fprintf(fgcc, \"%s\\n\", f.Preamble)\r\n>        fmt.Fprintf(fgcc, \"%s\\n\", gccProlog)\r\n>\r\n> -       for _, n := range f.Name {\r\n> +       for _, key := range nameKeys(f.Name) {\r\n> +               n := f.Name[key]\r\n>                if n.FuncType != nil {\r\n>                        p.writeOutputFunc(fgcc, n)\r\n>                }\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-06-07 16:35:53.131244",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=319a9f3330d0 ***\n\ncmd/cgo: make Go code order deterministic\n\nThe type declarations were being generated using\na range over a map, which meant that successive\nruns produced different orders. This will make sure\nsuccessive runs produce the same files.\n\nFixes issue 3707.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6300062",
+			"disapproval": false,
+			"date": "2012-06-07 16:37:57.883273",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-06-07 16:33:11.062777",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6300062: cmd/cgo: make Go code order deterministic",
+	"created": "2012-06-07 16:32:42.708381",
+	"patchsets": [
+		1,
+		2001,
+		6001
+	],
+	"modified": "2012-06-07 16:37:58.284729",
+	"closed": true,
+	"issue": 6300062
+}

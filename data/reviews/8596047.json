@@ -1,0 +1,96 @@
+{
+	"description": "go.crypto/ssh: More error reporting improvements.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"kardianos@gmail.com",
+		"dave@cheney.net"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.crypto",
+			"disapproval": false,
+			"date": "2013-04-23 02:37:14.855440",
+			"approval": false
+		},
+		{
+			"sender": "kardianos@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I would suggest we use more types in the ssh error code. I like to be able \r\nto easily check for how it failed.\r\nIf you are going to replace a net error with a custom error, please do so \r\nwith care; a user of this package just lost an ability to check certain \r\nclasses of net errors.\r\n\r\nOn Monday, April 22, 2013 7:37:14 PM UTC-7, David Symonds wrote:\r\n>\r\n> Reviewers: golang-dev1, \r\n>\r\n> Message: \r\n> Hello golan...@googlegroups.com <javascript:>, \r\n>\r\n> I'd like you to review this change to \r\n> https://code.google.com/p/go.crypto \r\n>\r\n>\r\n> Description: \r\n> go.crypto/ssh: More error reporting improvements. \r\n>\r\n> Please review this at https://codereview.appspot.com/8596047/ \r\n>\r\n> Affected files: \r\n>    M ssh/client.go \r\n>    M ssh/test/test_unix_test.go \r\n>\r\n>\r\n> Index: ssh/client.go \r\n> =================================================================== \r\n> --- a/ssh/client.go \r\n> +++ b/ssh/client.go \r\n> @@ -42,7 +42,7 @@ \r\n>           } \r\n>           if err := conn.handshake(); err != nil { \r\n>                   conn.Close() \r\n> -                return nil, err \r\n> +                return nil, fmt.Errorf(\"handshake failed: %v\", err) \r\n>           } \r\n>           go conn.mainLoop() \r\n>           return conn, nil \r\n> Index: ssh/test/test_unix_test.go \r\n> =================================================================== \r\n> --- a/ssh/test/test_unix_test.go \r\n> +++ b/ssh/test/test_unix_test.go \r\n> @@ -129,9 +129,9 @@ \r\n>\r\n>   func (s *server) Shutdown() { \r\n>           if s.cmd != nil && s.cmd.Process != nil { \r\n> -                if err := s.cmd.Process.Kill(); err != nil { \r\n> -                        s.t.Error(err) \r\n> -                } \r\n> +                // don't check for Kill error; if it fails it's most \r\n> likely \r\n> +                // \"os: process already finished\", and we don't care \r\n> about that. \r\n> +                s.cmd.Process.Kill() \r\n>                   s.cmd.Wait() \r\n>           } \r\n>           if s.t.Failed() { \r\n>\r\n>\r\n>",
+			"disapproval": false,
+			"date": "2013-04-23 07:59:04.341490",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Apr 23, 2013 at 5:59 PM, Daniel Theophanes <kardianos@gmail.com> wrote:\r\n\r\n> I would suggest we use more types in the ssh error code. I like to be able\r\n> to easily check for how it failed.\r\n> If you are going to replace a net error with a custom error, please do so\r\n> with care; a user of this package just lost an ability to check certain\r\n> classes of net errors.\r\n\r\nGood point. The useless errors I was seeing were simply io.EOF, which\r\nis meaningless to a program that invoked ssh.Client. Maybe I should\r\npass through anything that satisfies net.Error?\r\n",
+			"disapproval": false,
+			"date": "2013-04-23 08:18:38.901960",
+			"approval": false
+		},
+		{
+			"sender": "kardianos@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, 23 Apr 2013 18:18:37 +1000\r\nDavid Symonds <dsymonds@golang.org> wrote:\r\n\r\n> On Tue, Apr 23, 2013 at 5:59 PM, Daniel Theophanes\r\n> <kardianos@gmail.com> wrote:\r\n> \r\n> > I would suggest we use more types in the ssh error code. I like to\r\n> > be able to easily check for how it failed.\r\n> > If you are going to replace a net error with a custom error, please\r\n> > do so with care; a user of this package just lost an ability to\r\n> > check certain classes of net errors.\r\n> \r\n> Good point. The useless errors I was seeing were simply io.EOF, which\r\n> is meaningless to a program that invoked ssh.Client. Maybe I should\r\n> pass through anything that satisfies net.Error?\r\n\r\nHi David,\r\n\r\nI retract my previous point. In the ssh code there are three real error\r\ntypes and one pseudo error type.\r\nReal:\r\n\tUnexpectedMessageError\r\n\tParseError\r\n\t*ExitError\r\n\r\npseudo\r\n\tChannelRequest\r\n\r\nHowever, most of the code just does what you did, call fmt.Errorf or\r\nerrors.New. As the code to start a client will either fail or succeed\r\nin a fairly binary fashion, it is probably fine for now.\r\n...\r\nHowever, right now the ssh server package isn't very pleasant to work\r\nwith out of the box in-part due to how errors are handled. Also, would\r\nbe nice to handle and send the SUGGESTED close message.\r\n\r\nWell, while I'm off topic, I'll just state what changes I'd like to\r\nmake to the package:\r\n\tType more errors\r\n\tHandle the close message gracefully (issue 3995)\r\n\tMake the \"UnexpectedMessageError\" inspectable (issue 3995)\r\n\tBetter authentication on server (issues 3994 & 5232)\r\n\t(Of course, let's fix the races) (issues 5137 & 5138)\r\n\r\nI would like something like:\r\nhttps://codereview.appspot.com/6546051/\r\nto go in, to test the code we would need to send and receive the close\r\nmessage, which we currently don't do.\r\n...\r\n\r\nSorry for getting so off topic. Again, I retract my objections to his\r\nCL.\r\n-Daniel\r\n\r\n\r\n",
+			"disapproval": false,
+			"date": "2013-04-23 16:37:00.205410",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"kardianos@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. Thank you.",
+			"disapproval": false,
+			"date": "2013-04-25 02:20:29.242880",
+			"approval": true
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"kardianos@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=ecb6c1599438&repo=crypto ***\n\ngo.crypto/ssh: More error reporting improvements.\n\nR=golang-dev, kardianos, dave\nCC=golang-dev\nhttps://codereview.appspot.com/8596047",
+			"disapproval": false,
+			"date": "2013-04-25 23:44:10.701000",
+			"approval": false
+		}
+	],
+	"owner_email": "dsymonds@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "dsymonds",
+	"subject": "code review 8596047: go.crypto/ssh: More error reporting improvements.",
+	"created": "2013-04-23 02:36:55.567390",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		13001
+	],
+	"modified": "2013-04-25 23:44:12.969730",
+	"closed": true,
+	"issue": 8596047
+}

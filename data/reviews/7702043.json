@@ -1,0 +1,146 @@
+{
+	"description": "sync/atomic: make unaligned 64-bit atomics crash on 386",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"dvyukov@google.com"
+	],
+	"reviewers": [
+		"minux.ma@gmail.com",
+		"rminnich@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-11 15:50:25.917520",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If anyone wants to try on ARM, https://codereview.appspot.com/7703043 has\r\nan attempt but I haven't even checked that it compiles. I'll be away from\r\nmy ARM laptop for a few days.\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 15:51:51.320070",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n On Mar 11, 2013 8:50 AM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> sync/atomic: make unaligned 64-bit atomics crash on 386\r\n>\r\n> Please review this at https://codereview.appspot.**com/7702043/<https://codereview.appspot.com/7702043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/sync/atomic/asm_386.s\r\n>   M src/pkg/sync/atomic/atomic_**test.go\r\n>\r\n>\r\n> Index: src/pkg/sync/atomic/asm_386.s\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/sync/atomic/asm_386.**s\r\n> +++ b/src/pkg/sync/atomic/asm_386.**s\r\n> @@ -28,6 +28,9 @@\r\n>\r\n>  TEXT \u00b7CompareAndSwapUint64(SB),7,$0\r\n>         MOVL    addr+0(FP), BP\r\n> +       TESTL   $7, BP\r\n> +       JZ      2(PC)\r\n> +       MOVL    0, AX // crash with nil ptr deref\r\n>         MOVL    old+4(FP), AX\r\n>         MOVL    old+8(FP), DX\r\n>         MOVL    new+12(FP), BX\r\n> @@ -61,6 +64,9 @@\r\n>  TEXT \u00b7AddUint64(SB),7,$0\r\n>         // no XADDQ so use CMPXCHG8B loop\r\n>         MOVL    addr+0(FP), BP\r\n> +       TESTL   $7, BP\r\n> +       JZ      2(PC)\r\n> +       MOVL    0, AX // crash with nil ptr deref\r\n>         // DI:SI = delta\r\n>         MOVL    delta+4(FP), SI\r\n>         MOVL    delta+8(FP), DI\r\n> @@ -105,6 +111,9 @@\r\n>\r\n>  TEXT \u00b7LoadUint64(SB),7,$0\r\n>         MOVL    addr+0(FP), AX\r\n> +       TESTL   $7, AX\r\n> +       JZ      2(PC)\r\n> +       MOVL    0, AX // crash with nil ptr deref\r\n>         // MOVQ and EMMS were introduced on the Pentium MMX.\r\n>         // MOVQ (%EAX), %MM0\r\n>         BYTE $0x0f; BYTE $0x6f; BYTE $0x00\r\n> @@ -133,6 +142,9 @@\r\n>\r\n>  TEXT \u00b7StoreUint64(SB),7,$0\r\n>         MOVL    addr+0(FP), AX\r\n> +       TESTL   $7, AX\r\n> +       JZ      2(PC)\r\n> +       MOVL    0, AX // crash with nil ptr deref\r\n>         // MOVQ and EMMS were introduced on the Pentium MMX.\r\n>         // MOVQ 0x8(%ESP), %MM0\r\n>         BYTE $0x0f; BYTE $0x6f; BYTE $0x44; BYTE $0x24; BYTE $0x08\r\n> Index: src/pkg/sync/atomic/atomic_**test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/sync/atomic/atomic_**test.go\r\n> +++ b/src/pkg/sync/atomic/atomic_**test.go\r\n> @@ -1177,3 +1177,29 @@\r\n>         <-c\r\n>         <-c\r\n>  }\r\n> +\r\n> +func shouldPanic(t *testing.T, name string, f func()) {\r\n> +       defer func() {\r\n> +               if recover() == nil {\r\n> +                       t.Errorf(\"%s did not panic\", name)\r\n> +               }\r\n> +       }()\r\n> +       f()\r\n> +}\r\n> +\r\n> +func TestUnaligned64(t *testing.T) {\r\n> +       // Unaligned 64-bit atomics on 32-bit systems are\r\n> +       // a continual source of pain. Test that on 386 they crash\r\n> +       // instead of failing silently.\r\n> +       if runtime.GOARCH != \"386\" {\r\n> +               t.Skip(\"test only runs on 386\")\r\n> +       }\r\n> +\r\n> +       x := make([]uint32, 4)\r\n> +       p := (*uint64)(unsafe.Pointer(&x[1]**)) // misaligned\r\n> +\r\n> +       shouldPanic(t, \"LoadUint64\", func() { LoadUint64(p) })\r\n> +       shouldPanic(t, \"StoreUint64\", func() { StoreUint64(p, 1) })\r\n> +       shouldPanic(t, \"CompareAndSwapUint64\", func() {\r\n> CompareAndSwapUint64(p, 1, 2) })\r\n> +       shouldPanic(t, \"AddUint64\", func() { AddUint64(p, 3) })\r\n> +}\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 16:04:37.857930",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 16:07:24.214910",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=09cc9661f4ee ***\n\nsync/atomic: make unaligned 64-bit atomics crash on 386\n\nR=golang-dev, bradfitz, dvyukov\nCC=golang-dev\nhttps://codereview.appspot.com/7702043",
+			"disapproval": false,
+			"date": "2013-03-11 16:21:52.519090",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Mar 11, 2013 at 11:51 PM, Russ Cox <rsc@golang.org> wrote:\r\n> If anyone wants to try on ARM, https://codereview.appspot.com/7703043 has an\r\n> attempt but I haven't even checked that it compiles. I'll be away from my\r\n> ARM laptop for a few days.\r\nmailed https://codereview.appspot.com/7718043 for ARM changes.\r\n\r\n(in fact, even without changes to asm_arm.s, the new test passes on ARM\r\nbecause of SIGBUS, but I figure that we shouldn't depend on that)\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 19:01:20.652610",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 12, 2013 at 2:22 PM, minux <minux.ma@gmail.com> wrote:\r\n\r\n> what about we make 386 and arm code call a unalignedAtomic() function\r\n> when the address is not aligned properly?\r\n>\r\n\r\nFine with me.\r\n",
+			"disapproval": false,
+			"date": "2013-03-12 22:02:35.080240",
+			"approval": false
+		},
+		{
+			"sender": "rminnich@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Mar 11, 2013 at 12:00 PM, minux <minux.ma@gmail.com> wrote:\r\n> On Mon, Mar 11, 2013 at 11:51 PM, Russ Cox <rsc@golang.org> wrote:\r\n>> If anyone wants to try on ARM, https://codereview.appspot.com/7703043 has an\r\n>> attempt but I haven't even checked that it compiles. I'll be away from my\r\n>> ARM laptop for a few days.\r\n> mailed https://codereview.appspot.com/7718043 for ARM changes.\r\n>\r\n> (in fact, even without changes to asm_arm.s, the new test passes on ARM\r\n> because of SIGBUS, but I figure that we shouldn't depend on that)\r\n\r\nthat's the part of this CL I don't understand. As I read the test, all\r\nyou're doing is trading a SIGSEGV for a SIGBUS. From my point of view\r\nit's hiding the real problem -- unaligned access, which is immediately\r\nobvious from the callback trace, since you see the function name and a\r\nnon-64-bit-aligned address -- with a SEGV, which is a bit confusing:\r\ndid I pass in a null pointer or did the runtime reinterpret one fault\r\nas another? Maybe I'm missing something but I don't see a real\r\nadvantage to this code.\r\n\r\nOr is there and ARM that incorrectly fails to take a fault on\r\nnon-aligned-64-bit accesses? That sounds like a broken CPU.\r\n\r\nron\r\n",
+			"disapproval": false,
+			"date": "2013-03-12 14:29:07.954790",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 12, 2013 at 10:29 PM, ron minnich <rminnich@gmail.com> wrote:\r\n> On Mon, Mar 11, 2013 at 12:00 PM, minux <minux.ma@gmail.com> wrote:\r\n>> (in fact, even without changes to asm_arm.s, the new test passes on ARM\r\n>> because of SIGBUS, but I figure that we shouldn't depend on that)\r\n> that's the part of this CL I don't understand. As I read the test, all\r\n> you're doing is trading a SIGSEGV for a SIGBUS. From my point of view\r\n> it's hiding the real problem -- unaligned access, which is immediately\r\n> obvious from the callback trace, since you see the function name and a\r\n> non-64-bit-aligned address -- with a SEGV, which is a bit confusing:\r\n> did I pass in a null pointer or did the runtime reinterpret one fault\r\n> as another? Maybe I'm missing something but I don't see a real\r\n> advantage to this code.\r\nwe need to retain changes to asm_linux_arm.s, as we have 3 methods for 64-bit\r\ncas: native LDREXD/STREXD, kernel helper, and runtime mutex emulation, and\r\nwe can't count on correct panic behavior of the latter two.\r\n\r\ni made the changes to asm_arm.s so that on alignment panic, we get SIGSEGV\r\nconsistently, and the faulting address is addr mod 8.\r\n> Or is there and ARM that incorrectly fails to take a fault on\r\n> non-aligned-64-bit accesses? That sounds like a broken CPU.\r\nnot that i'm aware of.\r\n",
+			"disapproval": false,
+			"date": "2013-03-12 15:33:44.406800",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 12, 2013 at 10:29 AM, ron minnich <rminnich@gmail.com> wrote:\r\n\r\n> that's the part of this CL I don't understand. As I read the test, all\r\n> you're doing is trading a SIGSEGV for a SIGBUS.\r\n>\r\n\r\nKudos for knowing the difference. You're ahead of me.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-03-12 15:41:14.830140",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "what about we make 386 and arm code call a unalignedAtomic() function\r\nwhen the address is not aligned properly?\r\n\r\nthe unalignedAtomics() will panic with appropriate address and message,\r\ni believe this should be much better (in terms of user friendliness) than the\r\ncurrent SIGSEGV/SIGBUS approach (the error message is confusing to\r\nsome as i believe most people associate SIGSEGV will unaccessible address\r\nlike nil, but this is not the case so it warrants a special message)\r\n",
+			"disapproval": false,
+			"date": "2013-03-12 18:23:10.427350",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 7702043: sync/atomic: make unaligned 64-bit atomics crash on 386",
+	"created": "2013-03-11 15:43:36.098940",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		11001,
+		10002
+	],
+	"modified": "2013-03-12 14:29:08.071830",
+	"closed": true,
+	"issue": 7702043
+}

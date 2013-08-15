@@ -1,0 +1,399 @@
+{
+	"description": "runtime: use reflect\u00b7call() to enter the function gc()\n\nGarbage collection code (to be merged later) is calling functions\nwhich have many local variables. This increases the probability that\nthe stack capacity won't be big enough to hold the local variables.\nSo, start gc() on a bigger stack to eliminate a potentially large number\nof calls to runtime\u00b7morestack().",
+	"cc": [
+		"rsc@golang.org",
+		"remyoudompheng@gmail.com",
+		"dsymonds@golang.org",
+		"minux.ma@gmail.com",
+		"iant@golang.org",
+		"iant@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 13, 2012 at 7:18 AM,  <0xE2.0x9A.0x9B@gmail.com> wrote:\r\n> On 2012/11/13 14:28:40, iant wrote:\r\n>>\r\n>> I can't help but feel that this would be better done via some sort of\r\n>\r\n> compiler\r\n>>\r\n>> pragma.  You are introducing runtime overhead to every call to the\r\n>\r\n> garbage\r\n>>\r\n>> collector.  But the compiler could easily say at the start of the\r\n>\r\n> function \"give\r\n>>\r\n>> me at least this much space on the stack\" with much less overhead.\r\n>\r\n>\r\n> In my opinion it wouldn't be much faster than reflect\u00b7call().\r\n\r\nPerhaps you are right.  Hard to know for sure.\r\n\r\n\r\n>> Much better than that would be some sort of runtime heuristic: if we\r\n>\r\n> had to\r\n>>\r\n>> split the stack several times beneath some function, then the next\r\n>\r\n> time we enter\r\n>>\r\n>> the function ask for a bigger stack.  I have no concrete suggestions\r\n>\r\n> for how to\r\n>>\r\n>> implement that, though.\r\n>\r\n>\r\n> A problem is that any goroutine can call gc(). The stack of a random\r\n> goroutine cannot be enlarged if there are many goroutines because over\r\n> time it may consume too much memory. Though it would be possible when\r\n> there are few goroutines.\r\n\r\nIf it worked well, it would reduce the number of stack splits per GC\r\nto 1.  More importantly, it would help in other cases as well.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-11-13 16:53:32.723720",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc, remyoudompheng (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-13 07:18:42.160970",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Do you have performance numbers?\r\n",
+			"disapproval": false,
+			"date": "2012-11-13 07:40:56.911800",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/13 07:40:56, dsymonds wrote:\n> Do you have performance numbers?\n\nThe probability of stack reallocations during GC is low, but it can occur in regular Go programs. The worst case I encountered is test/bench/garbage/peano.go - the stack reallocations were causing performance issues there. I based my decision to send this CL on the worst case scenario.",
+			"disapproval": false,
+			"date": "2012-11-13 07:56:45.388350",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It appears to be caused by the position of the new field 'moreframesize_minalloc' in struct M. This affects amd64 only. If I move the field lower (below 'racepc') it works fine on amd64.\n\nI wasn't able to determine the actual cause of the problem.\n\nOn 2012/11/27 17:20:56, rsc wrote:\n> I tried to patch this in to my tree to submit it, but when I run\n> all.bash the first Go binary (the bootstrap go command) crashes with\n> \n> runtime: memory allocated by OS (0x2210517000) not in usable range\n> [0x2103a6000,0x2903a6000)\n> runtime: out of memory: cannot allocate 585205940224-byte block (1048576 in\n> use)\n> throw: out of memory\n> \n> goroutine 1 [running]:\n> ----- stack segment boundary -----\n> regexp/syntax.(*parser).factor(0x210438000, 0x210439080, 0xa, 0x10, 0x0, ...)\n> /Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:417 +0x1b74\n> regexp/syntax.(*parser).collapse(0x210438000, 0x210439010, 0xa, 0xe,\n> 0x210415113, ...)\n> /Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:347 +0x25d\n> regexp/syntax.(*parser).alternate(0x210438000, 0x2103a6701, 0x0, 0x0)\n> /Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:302 +0x1e9\n> regexp/syntax.(*parser).parseRightParen(0x210438000, 0x6f, 0x6f, 0x290dbe)\n> /Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:1166 +0x89\n> regexp/syntax.Parse(0x290d80, 0xbb, 0xd4, 0xffffffffffffffff, 0x3721a0, ...)\n> /Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:705 +0x5ca\n> regexp.compile(0x290d80, 0xbb, 0xd4, 0x4, 0xffffffffffffffff, ...)\n> /Users/rsc/g/go/src/pkg/regexp/regexp.go:134 +0x40\n> regexp.Compile(0x290d80, 0xbb, 0x53d5c, 0x174948, 0x0, ...)\n> /Users/rsc/g/go/src/pkg/regexp/regexp.go:107 +0x3b\n> regexp.MustCompile(0x290d80, 0xbb, 0x2000, 0x210427180, 0xf20bd, ...)\n> /Users/rsc/g/go/src/pkg/regexp/regexp.go:195 +0x38\n> go/doc.init(0x0, 0x0, 0x0, 0x0, 0x0, ...)\n> /Users/rsc/g/go/src/pkg/go/doc/synopsis.go:-1878 +0x8b\n> main.init()\n> /Users/rsc/g/go/src/cmd/go/vet.go:37 +0x54\n> \n> goroutine 2 [runnable]:\n> created by runtime.main\n> /Users/rsc/g/go/src/pkg/runtime/proc.c:225\n> \n> Any ideas?\n> \n> Russ",
+			"disapproval": false,
+			"date": "2012-11-27 17:59:32.644430",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 13, 2012 at 6:56 PM,  <0xE2.0x9A.0x9B@gmail.com> wrote:\r\n\r\n> On 2012/11/13 07:40:56, dsymonds wrote:\r\n>>\r\n>> Do you have performance numbers?\r\n>\r\n>\r\n> The probability of stack reallocations during GC is low, but it can\r\n> occur in regular Go programs. The worst case I encountered is\r\n> test/bench/garbage/peano.go - the stack reallocations were causing\r\n> performance issues there. I based my decision to send this CL on the\r\n> worst case scenario.\r\n\r\nSo can you post some numbers for the impact on peano?\r\n",
+			"disapproval": false,
+			"date": "2012-11-13 07:58:42.414920",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This seems fine for now. I share Ian's reservations, but this is easy to change if we come up with a better idea. I expect that the cost of the reflect.call is tiny compared to a typical gc.\n\nhttps://codereview.appspot.com/6846044/diff/5/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/6846044/diff/5/src/pkg/runtime/mgc0.c#newcode968\nsrc/pkg/runtime/mgc0.c:968: static void\nCan you please do\n\nstatic void gc(struct gc_args *args);\n\nvoid\nruntime.gc(int force)\n{\n...\n}\n\nstatic void\ngc(struct gc_args *args)\n{\n...\n}\n\nso that the code reads top to bottom and also to minimize the diff?\n\nThanks.\n\nhttps://codereview.appspot.com/6846044/diff/5/src/pkg/runtime/mgc0.c#newcode977\nsrc/pkg/runtime/mgc0.c:977: // The atomic operations are not atomic if the uint64s\nThis can move into runtime.gc.\n\nhttps://codereview.appspot.com/6846044/diff/5/src/pkg/runtime/mgc0.c#newcode1092\nsrc/pkg/runtime/mgc0.c:1092: runtime\u00b7gc(1);\nMaybe this should be done in runtime.gc instead?\nI'm a little weirded out by runtime.gc calling gc on a new stack calling runtime.gc calling gc on a new stack.",
+			"disapproval": false,
+			"date": "2012-11-26 20:40:19.383590",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/13 07:58:42, dsymonds wrote:\n> On Tue, Nov 13, 2012 at 6:56 PM,  <mailto:0xE2.0x9A.0x9B@gmail.com> wrote:\n> \n> > On 2012/11/13 07:40:56, dsymonds wrote:\n> >>\n> >> Do you have performance numbers?\n> >\n> >\n> > The probability of stack reallocations during GC is low, but it can\n> > occur in regular Go programs. The worst case I encountered is\n> > test/bench/garbage/peano.go - the stack reallocations were causing\n> > performance issues there. I based my decision to send this CL on the\n> > worst case scenario.\n> \n> So can you post some numbers for the impact on peano?\n\nI am unable to make exact measurements on amd64 when running peano.go because I am using a virtualized environment (rhcloud.com).\n\nOn i386, the number of calls to runtime\u00b7newstack() per 1 call to gc() is low: it ranges from 0 to 1000. So, the stack allocations are not an issue on i386. When it is about 1000, the measured time spent in runtime\u00b7newstack() while in gc() is about 0.04% of total program time.\n\nHowever, on amd64, the number of calls to runtime\u00b7newstack() per 1 call to gc() can be high: from 0 to 100000+. The behavior of the peano benchmark is stochastic: the number cab be 0, 1026, 9926, ..., 125470.   I am unable to determine how this impacts GC performance. I presume that 100000 stack reallocations lead to a measureable performance degradation.\n\n---\n\nNote: I added a new field 'moreframesize_minalloc' to struct M just below the extant field 'moreframesize'. However, on amd64 this positioning appears to be completely incorrect and I have to move the new field lower (for example: below 'racepc').",
+			"disapproval": false,
+			"date": "2012-11-13 09:47:43.425680",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "My benchmark result on linux/amd64 (I've run both the new and old\nversions 20 times, and select the best/worst case _pair_):\nworst case:\nbenchmark                          old ns/op    new ns/op    delta\ngarbage.BenchmarkPeano              65746437     69322040   +5.44%\ngarbage.BenchmarkPeanoLastPause      6062509      6115177   +0.87%\ngarbage.BenchmarkPeanoPause          2154311      2532654  +17.56%\nbest case:\nbenchmark                          old ns/op    new ns/op    delta\ngarbage.BenchmarkPeano              70536831     65711182   -6.84%\ngarbage.BenchmarkPeanoLastPause      6347188      6116066   -3.64%\ngarbage.BenchmarkPeanoPause          2812915      2499263  -11.15%\n\nOn 2012/11/13 09:47:43, atom wrote:\n> Note: I added a new field 'moreframesize_minalloc' to struct M just below the\n> extant field 'moreframesize'. However, on amd64 this positioning appears to be\n> completely incorrect and I have to move the new field lower (for example: below\n> 'racepc').\ni think you can place the new field just below moreargsize.\njust remember to run \"cmd/dist install pkg/runtime\" before\n\"go install -v std\" whenever you changed struct M or G;\nthe assembly routines in runtime might use out-of-date offset\notherwise.\n\nbtw, please 'hg sync' and 'hg upload 6846044' as the runtime.h change\ncan't be applied cleanly.",
+			"disapproval": false,
+			"date": "2012-11-13 11:57:16.731200",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, remyoudompheng@gmail.com, dsymonds@golang.org, minux.ma@gmail.com, iant@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-13 14:36:34.506530",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/13 11:57:16, minux wrote:\n> My benchmark result on linux/amd64 (I've run both the new and old\n> versions 20 times, and select the best/worst case _pair_):\n> worst case:\n> benchmark                          old ns/op    new ns/op    delta\n> garbage.BenchmarkPeano              65746437     69322040   +5.44%\n> garbage.BenchmarkPeanoLastPause      6062509      6115177   +0.87%\n> garbage.BenchmarkPeanoPause          2154311      2532654  +17.56%\n> best case:\n> benchmark                          old ns/op    new ns/op    delta\n> garbage.BenchmarkPeano              70536831     65711182   -6.84%\n> garbage.BenchmarkPeanoLastPause      6347188      6116066   -3.64%\n> garbage.BenchmarkPeanoPause          2812915      2499263  -11.15%\n\nDid you apply CL 6114046? I made some modifications to my local copy of CL 6114046, and those are the numbers I reported. I didn't test without CL 6114046.   I can publish the diff files if you like.\n\nIn my opinion, the average out of the 20 runs would be more useful.\n\n> btw, please 'hg sync' and 'hg upload 6846044' as the runtime.h change\n> can't be applied cleanly.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-13 12:58:56.175910",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, remyoudompheng@gmail.com, dsymonds@golang.org, minux.ma@gmail.com, iant@golang.org, iant@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-16 07:24:57.169640",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Worked. It's possible that the offset of the tls field is known\r\nsomewhere deep. I don't mind just moving the field and leaving that\r\nmystery for another day. Thanks for the quick fix.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 18:04:02.891350",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I can't help but feel that this would be better done via some sort of compiler pragma.  You are introducing runtime overhead to every call to the garbage collector.  But the compiler could easily say at the start of the function \"give me at least this much space on the stack\" with much less overhead.\n\nMuch better than that would be some sort of runtime heuristic: if we had to split the stack several times beneath some function, then the next time we enter the function ask for a bigger stack.  I have no concrete suggestions for how to implement that, though.\n\nhttps://codereview.appspot.com/6846044/diff/4002/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/6846044/diff/4002/src/pkg/runtime/mgc0.c#newcode1097\nsrc/pkg/runtime/mgc0.c:1097: // a problem in the past.\nThis test should stay where it was, since that is where it matters.",
+			"disapproval": false,
+			"date": "2012-11-13 14:28:40.742750",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6846044/diff/4002/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/6846044/diff/4002/src/pkg/runtime/mgc0.c#newcode1097\nsrc/pkg/runtime/mgc0.c:1097: // a problem in the past.\nOn 2012/11/13 14:28:40, iant wrote:\n> This test should stay where it was, since that is where it matters.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-13 14:37:05.275870",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, remyoudompheng@gmail.com, dsymonds@golang.org, minux.ma@gmail.com, iant@golang.org, iant@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-27 05:48:00.586400",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-11-27 14:50:10.959370",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I tried to patch this in to my tree to submit it, but when I run\r\nall.bash the first Go binary (the bootstrap go command) crashes with\r\n\r\nruntime: memory allocated by OS (0x2210517000) not in usable range\r\n[0x2103a6000,0x2903a6000)\r\nruntime: out of memory: cannot allocate 585205940224-byte block (1048576 in use)\r\nthrow: out of memory\r\n\r\ngoroutine 1 [running]:\r\n----- stack segment boundary -----\r\nregexp/syntax.(*parser).factor(0x210438000, 0x210439080, 0xa, 0x10, 0x0, ...)\r\n/Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:417 +0x1b74\r\nregexp/syntax.(*parser).collapse(0x210438000, 0x210439010, 0xa, 0xe,\r\n0x210415113, ...)\r\n/Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:347 +0x25d\r\nregexp/syntax.(*parser).alternate(0x210438000, 0x2103a6701, 0x0, 0x0)\r\n/Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:302 +0x1e9\r\nregexp/syntax.(*parser).parseRightParen(0x210438000, 0x6f, 0x6f, 0x290dbe)\r\n/Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:1166 +0x89\r\nregexp/syntax.Parse(0x290d80, 0xbb, 0xd4, 0xffffffffffffffff, 0x3721a0, ...)\r\n/Users/rsc/g/go/src/pkg/regexp/syntax/parse.go:705 +0x5ca\r\nregexp.compile(0x290d80, 0xbb, 0xd4, 0x4, 0xffffffffffffffff, ...)\r\n/Users/rsc/g/go/src/pkg/regexp/regexp.go:134 +0x40\r\nregexp.Compile(0x290d80, 0xbb, 0x53d5c, 0x174948, 0x0, ...)\r\n/Users/rsc/g/go/src/pkg/regexp/regexp.go:107 +0x3b\r\nregexp.MustCompile(0x290d80, 0xbb, 0x2000, 0x210427180, 0xf20bd, ...)\r\n/Users/rsc/g/go/src/pkg/regexp/regexp.go:195 +0x38\r\ngo/doc.init(0x0, 0x0, 0x0, 0x0, 0x0, ...)\r\n/Users/rsc/g/go/src/pkg/go/doc/synopsis.go:-1878 +0x8b\r\nmain.init()\r\n/Users/rsc/g/go/src/cmd/go/vet.go:37 +0x54\r\n\r\ngoroutine 2 [runnable]:\r\ncreated by runtime.main\r\n/Users/rsc/g/go/src/pkg/runtime/proc.c:225\r\n\r\nAny ideas?\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 17:20:56.256770",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/13 14:28:40, iant wrote:\n> I can't help but feel that this would be better done via some sort of compiler\n> pragma.  You are introducing runtime overhead to every call to the garbage\n> collector.  But the compiler could easily say at the start of the function \"give\n> me at least this much space on the stack\" with much less overhead.\n\nIn my opinion it wouldn't be much faster than reflect\u00b7call().\n\n> Much better than that would be some sort of runtime heuristic: if we had to\n> split the stack several times beneath some function, then the next time we enter\n> the function ask for a bigger stack.  I have no concrete suggestions for how to\n> implement that, though.\n\nA problem is that any goroutine can call gc(). The stack of a random goroutine cannot be enlarged if there are many goroutines because over time it may consume too much memory. Though it would be possible when there are few goroutines.",
+			"disapproval": false,
+			"date": "2012-11-13 15:18:33.251420",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 4:31 AM,  <0xE2.0x9A.0x9B@gmail.com> wrote:\r\n> I would like to obtain information about the progress of merging this\r\n> CL.\r\n\r\nI have 83 gmail threads in my rsc@golang.org todo label, dating back\r\nto Nov 3. This is one of them. I hope to review many of them this\r\nweek.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 14:07:01.944980",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I would like to obtain information about the progress of merging this CL.",
+			"disapproval": false,
+			"date": "2012-11-26 09:31:51.006110",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6846044/diff/5/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/6846044/diff/5/src/pkg/runtime/mgc0.c#newcode968\nsrc/pkg/runtime/mgc0.c:968: static void\nOn 2012/11/26 20:40:19, rsc wrote:\n> Can you please do\n> \n> static void gc(struct gc_args *args);\n> \n> void\n> runtime.gc(int force)\n> {\n> ...\n> }\n> \n> static void\n> gc(struct gc_args *args)\n> {\n> ...\n> }\n> \n> so that the code reads top to bottom and also to minimize the diff?\n> \n> Thanks.\n\nDone.\n\nhttps://codereview.appspot.com/6846044/diff/5/src/pkg/runtime/mgc0.c#newcode977\nsrc/pkg/runtime/mgc0.c:977: // The atomic operations are not atomic if the uint64s\nOn 2012/11/26 20:40:19, rsc wrote:\n> This can move into runtime.gc.\n\nDone.\n\nhttps://codereview.appspot.com/6846044/diff/5/src/pkg/runtime/mgc0.c#newcode1092\nsrc/pkg/runtime/mgc0.c:1092: runtime\u00b7gc(1);\nOn 2012/11/26 20:40:19, rsc wrote:\n> Maybe this should be done in runtime.gc instead?\n> I'm a little weirded out by runtime.gc calling gc on a new stack calling\n> runtime.gc calling gc on a new stack.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-27 05:47:20.537440",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, remyoudompheng@gmail.com, dsymonds@golang.org, minux.ma@gmail.com, iant@golang.org, iant@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-27 17:53:15.002290",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=7646c94159a1 ***\n\nruntime: use reflect\u00b7call() to enter the function gc()\n\nGarbage collection code (to be merged later) is calling functions\nwhich have many local variables. This increases the probability that\nthe stack capacity won't be big enough to hold the local variables.\nSo, start gc() on a bigger stack to eliminate a potentially large number\nof calls to runtime\u00b7morestack().\n\nR=rsc, remyoudompheng, dsymonds, minux.ma, iant, iant\nCC=golang-dev\nhttp://codereview.appspot.com/6846044\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2012-11-27 18:05:06.590550",
+			"approval": false
+		}
+	],
+	"owner_email": "0xE2.0x9A.0x9B@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "atom",
+	"subject": "code review 6846044: runtime: use reflect\u00b7call() to enter the function gc()",
+	"created": "2012-11-13 07:18:35.141920",
+	"patchsets": [
+		1,
+		6001,
+		4002,
+		10001,
+		5,
+		2009,
+		5004
+	],
+	"modified": "2012-11-27 18:42:54.473930",
+	"closed": true,
+	"issue": 6846044
+}

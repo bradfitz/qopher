@@ -1,0 +1,128 @@
+{
+	"description": "cmd/ld: support for linking with host linker\n\nA step toward a fix for issue 4069.\n\nTo allow linking with arbitrary host object files, add a linker mode\nthat can generate a host object file instead of an executable.\nThen the host linker can be invoked to generate the final executable.\n\nThis CL adds a new -hostobj flag that instructs the linker to write\na host object file instead of an executable.\n\nThat is, this works:\n\n        go tool 6g x.go\n        go tool 6l -hostobj -o x.o x.6\n        ld -e _rt0_amd64_linux x.o\n        ./a.out\n\nas does:\n\n        go tool 8g x.go\n        go tool 8l -hostld ignored -o x.o x.8\n        ld -m elf_i386 -e _rt0_386_linux x.o\n        ./a.out\n\nBecause 5l was never updated to use the standard relocation scheme,\nit will take more work to get this working on ARM.\n\nThis is a checkpoint of the basic functionality. It does not work\nwith cgo yet, and cgo is the main reason for the change.\nThe command-line interface will likely change too.\nThe gc linker has other information that needs to be returned to\nthe caller for use when invoking the host linker besides the single\nobject file.",
+	"cc": [
+		"iant@golang.org",
+		"iant@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello iant (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-01-06 22:28:43.314390",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/6l/obj.c\nFile src/cmd/6l/obj.c (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/6l/obj.c#newcode135\nsrc/cmd/6l/obj.c:135: sysfatal(\"cannot use -hostobj with output header type\");\nThis error message is rather obscure.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/8l/obj.c\nFile src/cmd/8l/obj.c (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/8l/obj.c#newcode141\nsrc/cmd/8l/obj.c:141: sysfatal(\"cannot use -hostobj with output header type\");\nObscure error message.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/data.c\nFile src/cmd/ld/data.c (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/data.c#newcode180\nsrc/cmd/ld/data.c:180: if(isobj || archreloc(r, s, &o) < 0)\nChecking isobj like this won't work for ARM or almost any processor other than x86.  Probably easiest to have archreloc handle isobj in which case this line can be reverted.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/data.c#newcode186\nsrc/cmd/ld/data.c:186: if(thechar == '6')\nChecking thechar == '6' here seems a bit ugly but it's OK with me if it's OK with you.  The relevant distinction is SHT_REL or SHT_RELA, which you also check elsewhere.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/elf.c\nFile src/cmd/ld/elf.c (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/elf.c#newcode779\nsrc/cmd/ld/elf.c:779: // Also nothing to relocate in .shstrtab.\nI would not be surprised if emitting empty reloc sections causes trouble somewhere down the road.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/elf.c#newcode871\nsrc/cmd/ld/elf.c:871: while(cpos()&7)\nFor 386 and ARM you only need to align to a 4 byte boundary, though I suppose additional alignment doesn't hurt.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/elf.c#newcode1462\nsrc/cmd/ld/elf.c:1462: // TODO(rsc): Do these go into .o files too?\nPretty sure these are only required in executables.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/lib.h\nFile src/cmd/ld/lib.h (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/lib.h#newcode140\nsrc/cmd/ld/lib.h:140: EXTERN\tchar*\thostld;\nWhere is hostld used?",
+			"disapproval": false,
+			"date": "2013-01-07 22:14:59.559440",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7060044/diff/1009/src/cmd/6l/obj.c\nFile src/cmd/6l/obj.c (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/6l/obj.c#newcode135\nsrc/cmd/6l/obj.c:135: sysfatal(\"cannot use -hostobj with output header type\");\nOn 2013/01/07 22:14:59, iant wrote:\n> This error message is rather obscure.\n\nDone.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/8l/obj.c\nFile src/cmd/8l/obj.c (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/8l/obj.c#newcode141\nsrc/cmd/8l/obj.c:141: sysfatal(\"cannot use -hostobj with output header type\");\nOn 2013/01/07 22:14:59, iant wrote:\n> Obscure error message.\n\nDone.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/data.c\nFile src/cmd/ld/data.c (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/data.c#newcode180\nsrc/cmd/ld/data.c:180: if(isobj || archreloc(r, s, &o) < 0)\nOn 2013/01/07 22:14:59, iant wrote:\n> Checking isobj like this won't work for ARM or almost any processor other than\n> x86.  Probably easiest to have archreloc handle isobj in which case this line\n> can be reverted.\n\narchreloc handles relocations pulled in from .o files. Since we're not reading .o files in this mode it shouldn't happen.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/data.c#newcode186\nsrc/cmd/ld/data.c:186: if(thechar == '6')\nOn 2013/01/07 22:14:59, iant wrote:\n> Checking thechar == '6' here seems a bit ugly but it's OK with me if it's OK\n> with you.  The relevant distinction is SHT_REL or SHT_RELA, which you also check\n> elsewhere.\n\nAcknowledged.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/elf.c\nFile src/cmd/ld/elf.c (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/elf.c#newcode779\nsrc/cmd/ld/elf.c:779: // Also nothing to relocate in .shstrtab.\nOn 2013/01/07 22:14:59, iant wrote:\n> I would not be surprised if emitting empty reloc sections causes trouble\n> somewhere down the road.\n\nAcknowledged (it's not trivial to suppress them).\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/elf.c#newcode871\nsrc/cmd/ld/elf.c:871: while(cpos()&7)\nOn 2013/01/07 22:14:59, iant wrote:\n> For 386 and ARM you only need to align to a 4 byte boundary, though I suppose\n> additional alignment doesn't hurt.\n\nAck.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/elf.c#newcode1462\nsrc/cmd/ld/elf.c:1462: // TODO(rsc): Do these go into .o files too?\nOn 2013/01/07 22:14:59, iant wrote:\n> Pretty sure these are only required in executables.\n\nDone.\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/lib.h\nFile src/cmd/ld/lib.h (right):\n\nhttps://codereview.appspot.com/7060044/diff/1009/src/cmd/ld/lib.h#newcode140\nsrc/cmd/ld/lib.h:140: EXTERN\tchar*\thostld;\nOn 2013/01/07 22:14:59, iant wrote:\n> Where is hostld used?\n\nGone.",
+			"disapproval": false,
+			"date": "2013-01-31 03:00:58.528120",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "For some reason I'm not seeing the changes, e.g., to 6l/obj.c.",
+			"disapproval": false,
+			"date": "2013-01-31 17:28:32.651370",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This appears to have broken the non linux 386 builders.\r\n\r\nOn Fri, Feb 1, 2013 at 9:11 AM,  <rsc@golang.org> wrote:\r\n> *** Submitted as\r\n> https://code.google.com/p/go/source/detail?r=98034d036d03 ***\r\n>\r\n> cmd/ld: support for linking with host linker\r\n>\r\n> A step toward a fix for issue 4069.\r\n>\r\n> To allow linking with arbitrary host object files, add a linker mode\r\n> that can generate a host object file instead of an executable.\r\n> Then the host linker can be invoked to generate the final executable.\r\n>\r\n> This CL adds a new -hostobj flag that instructs the linker to write\r\n> a host object file instead of an executable.\r\n>\r\n> That is, this works:\r\n>\r\n>         go tool 6g x.go\r\n>         go tool 6l -hostobj -o x.o x.6\r\n>         ld -e _rt0_amd64_linux x.o\r\n>         ./a.out\r\n>\r\n> as does:\r\n>\r\n>         go tool 8g x.go\r\n>         go tool 8l -hostld ignored -o x.o x.8\r\n>         ld -m elf_i386 -e _rt0_386_linux x.o\r\n>         ./a.out\r\n>\r\n> Because 5l was never updated to use the standard relocation scheme,\r\n> it will take more work to get this working on ARM.\r\n>\r\n> This is a checkpoint of the basic functionality. It does not work\r\n> with cgo yet, and cgo is the main reason for the change.\r\n> The command-line interface will likely change too.\r\n> The gc linker has other information that needs to be returned to\r\n> the caller for use when invoking the host linker besides the single\r\n> object file.\r\n>\r\n> R=iant, iant\r\n> CC=golang-dev\r\n> https://codereview.appspot.com/7060044\r\n>\r\n>\r\n> https://codereview.appspot.com/7060044/\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n>\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-01 00:08:09.588080",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Uploaded now. I was going to submit but merging with the shared object\r\nchanges has produced code that no longer links correctly in -hostobj mode.\r\nI might check it in anyway just to checkpoint the review.\r\n",
+			"disapproval": false,
+			"date": "2013-01-31 17:31:23.994720",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Thu, Jan 31, 2013 at 9:31 AM, Russ Cox <rsc@golang.org> wrote:\r\n> Uploaded now. I was going to submit but merging with the shared object\r\n> changes has produced code that no longer links correctly in -hostobj mode. I\r\n> might check it in anyway just to checkpoint the review.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-31 17:55:43.581390",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=98034d036d03 ***\n\ncmd/ld: support for linking with host linker\n\nA step toward a fix for issue 4069.\n\nTo allow linking with arbitrary host object files, add a linker mode\nthat can generate a host object file instead of an executable.\nThen the host linker can be invoked to generate the final executable.\n\nThis CL adds a new -hostobj flag that instructs the linker to write\na host object file instead of an executable.\n\nThat is, this works:\n\n        go tool 6g x.go\n        go tool 6l -hostobj -o x.o x.6\n        ld -e _rt0_amd64_linux x.o\n        ./a.out\n\nas does:\n\n        go tool 8g x.go\n        go tool 8l -hostld ignored -o x.o x.8\n        ld -m elf_i386 -e _rt0_386_linux x.o\n        ./a.out\n\nBecause 5l was never updated to use the standard relocation scheme,\nit will take more work to get this working on ARM.\n\nThis is a checkpoint of the basic functionality. It does not work\nwith cgo yet, and cgo is the main reason for the change.\nThe command-line interface will likely change too.\nThe gc linker has other information that needs to be returned to\nthe caller for use when invoking the host linker besides the single\nobject file.\n\nR=iant, iant\nCC=golang-dev\nhttps://codereview.appspot.com/7060044",
+			"disapproval": false,
+			"date": "2013-01-31 22:11:37.009780",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 7060044: cmd/ld: support for linking with host linker",
+	"created": "2013-01-04 20:30:55.349500",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		4,
+		1009,
+		13001,
+		22002,
+		28001
+	],
+	"modified": "2013-02-01 00:08:09.677210",
+	"closed": true,
+	"issue": 7060044
+}

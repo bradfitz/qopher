@@ -1,0 +1,113 @@
+{
+	"description": "net/http: treat HEAD requests like GET requests\n\nA response to a HEAD request is supposed to look the same as a\nresponse to a GET request, just without a body.\n\nHEAD requests are incredibly rare in the wild.\n\nThe Go net/http package has so far treated HEAD requests\nspecially: a Write on our default ResponseWriter returned\nErrBodyNotAllowed, telling handlers that something was wrong.\nThis was to optimize the fast path for HEAD requests, but:\n\n1) because HEAD requests are incredibly rare, they're not\n   worth having a fast path for.\n\n2) Letting the http.Handler handle but do nop Writes is still\n   very fast.\n\n3) this forces ugly error handling into the application.\n   e.g. https://code.google.com/p/go/source/detail?r=6f596be7a31e\n   and related.\n\n4) The net/http package nowadays does Content-Type sniffing,\n   but you don't get that for HEAD.\n\n5) The net/http package nowadays does Content-Length counting\n   for small (few KB) responses, but not for HEAD.\n\n6) ErrBodyNotAllowed was useless. By the time you received it,\n   you had probably already done all your heavy computation\n   and I/O to calculate what to write.\n\nSo, this change makes HEAD requests like GET requests.\n\nWe now count content-length and sniff content-type for HEAD\nrequests. If you Write, it doesn't return an error.\n\nIf you want a fast-path in your code for HEAD, you have to do\nit early and set all the response headers yourself. Just like\nbefore. If you choose not to Write in HEAD requests, be sure\nto set Content-Length if you know it. We won't write\n\"Content-Length: 0\" because you might've just chosen to not\nwrite (or you don't know your Content-Length in advance).\n\nFixes issue 5454",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dsymonds@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI'm a little rusty on this code these days, but it looks sane. Just one place that raised my eyebrows; it could just be that I'm misunderstanding it.\n\nhttps://codereview.appspot.com/12583043/diff/4001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/12583043/diff/4001/src/pkg/net/http/server.go#newcode743\nsrc/pkg/net/http/server.go:743: if w.handlerDone && header.get(\"Content-Length\") == \"\" && (!isHEAD || len(p) > 0) {\ndoesn't this trigger for HEAD responses if a Write happens? chunkWriter.Write will call this function with that data, but we don't want a Content-Length header written, no?",
+			"disapproval": false,
+			"date": "2013-08-07 01:01:47.760180",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Aug 6, 2013 at 6:01 PM, <dsymonds@golang.org> wrote:\r\n\r\n> LGTM\r\n>\r\n> I'm a little rusty on this code these days, but it looks sane. Just one\r\n> place that raised my eyebrows; it could just be that I'm\r\n> misunderstanding it.\r\n>\r\n>\r\n> https://codereview.appspot.**com/12583043/diff/4001/src/**\r\n> pkg/net/http/server.go<https://codereview.appspot.com/12583043/diff/4001/src/pkg/net/http/server.go>\r\n> File src/pkg/net/http/server.go (right):\r\n>\r\n> https://codereview.appspot.**com/12583043/diff/4001/src/**\r\n> pkg/net/http/server.go#**newcode743<https://codereview.appspot.com/12583043/diff/4001/src/pkg/net/http/server.go#newcode743>\r\n> src/pkg/net/http/server.go:**743: if w.handlerDone &&\r\n>\r\n> header.get(\"Content-Length\") == \"\" && (!isHEAD || len(p) > 0) {\r\n> doesn't this trigger for HEAD responses if a Write happens?\r\n> chunkWriter.Write will call this function with that data, but we don't\r\n> want a Content-Length header written, no?\r\n>\r\n\r\nWe do want a Content-Length header written when responding to HEAD.\r\n\r\nBut we just can't write \"Content-Length: 0\", because we don't know the\r\ndifference between a Handler writing nothing (a real Content-Length: 0) or\r\nthe handler being clever and choosing to not write.  So we keep it\r\nambiguous in that case.\r\n\r\nSo this means with both GET and HEAD, if you Write <=\r\nbufferBeforeChunkingSize (2k currently) but don't set a Content-Length\r\nheader, we send one for you.\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 01:06:50.620400",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-08-07 00:52:12.610990",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Aug 6, 2013 at 6:06 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n>\r\n>\r\n>\r\n> On Tue, Aug 6, 2013 at 6:01 PM, <dsymonds@golang.org> wrote:\r\n>\r\n>> LGTM\r\n>>\r\n>> I'm a little rusty on this code these days, but it looks sane. Just one\r\n>> place that raised my eyebrows; it could just be that I'm\r\n>> misunderstanding it.\r\n>>\r\n>>\r\n>> https://codereview.appspot.**com/12583043/diff/4001/src/**\r\n>> pkg/net/http/server.go<https://codereview.appspot.com/12583043/diff/4001/src/pkg/net/http/server.go>\r\n>> File src/pkg/net/http/server.go (right):\r\n>>\r\n>> https://codereview.appspot.**com/12583043/diff/4001/src/**\r\n>> pkg/net/http/server.go#**newcode743<https://codereview.appspot.com/12583043/diff/4001/src/pkg/net/http/server.go#newcode743>\r\n>> src/pkg/net/http/server.go:**743: if w.handlerDone &&\r\n>>\r\n>> header.get(\"Content-Length\") == \"\" && (!isHEAD || len(p) > 0) {\r\n>> doesn't this trigger for HEAD responses if a Write happens?\r\n>> chunkWriter.Write will call this function with that data, but we don't\r\n>> want a Content-Length header written, no?\r\n>>\r\n>\r\n> We do want a Content-Length header written when responding to HEAD.\r\n>\r\n> But we just can't write \"Content-Length: 0\", because we don't know the\r\n> difference between a Handler writing nothing (a real Content-Length: 0) or\r\n> the handler being clever and choosing to not write.  So we keep it\r\n> ambiguous in that case.\r\n>\r\n> So this means with both GET and HEAD, if you Write <=\r\n> bufferBeforeChunkingSize (2k currently) but don't set a Content-Length\r\n> header, we send one for you.\r\n>\r\n\r\n... and this all covered by tests.\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 01:07:21.711270",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 7 August 2013 11:06, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n\r\n> We do want a Content-Length header written when responding to HEAD.\r\n\r\nWhy is that so important? If it's a handler that writes a large chunk\r\nof data in dribs and drabs (e.g. text/template), grabbing the first\r\nchunk for sniffing is okay, but it looks like this code uses the size\r\nof the first chunk as a Content-Length. Isn't a wrong value worse than\r\nno value, even more so for HEAD than for GET?\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 01:18:18.169910",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Aug 6, 2013 at 6:18 PM, David Symonds <dsymonds@golang.org> wrote:\r\n\r\n> On 7 August 2013 11:06, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n>\r\n> > We do want a Content-Length header written when responding to HEAD.\r\n>\r\n> Why is that so important?\r\n\r\n\r\nThe whole point of this CL is to make the answers to HEAD requests look the\r\nsame as answers to GET requests, if a handler isn't checking for HEAD\r\n(which almost none do).\r\n\r\nThis makes the behavior the same.  This is what we do for GET.\r\n\r\n\r\n> If it's a handler that writes a large chunk\r\n> of data in dribs and drabs (e.g. text/template), grabbing the first\r\n> chunk for sniffing is okay, but it looks like this code uses the size\r\n> of the first chunk as a Content-Length. Isn't a wrong value worse than\r\n> no value, even more so for HEAD than for GET?\r\n>\r\n\r\nWe do it correctly for GET and HEAD.\r\n\r\nSee the comment above that line:\r\n\r\n        // *If the handler is done* but never sent a Content-Length\r\n        // response header and *this is our first (and last) write*, set\r\n        // it, even to zero. This helps HTTP/1.0 clients keep their\r\n        // \"keep-alive\" connections alive.\r\n        if *w.handlerDone* && header.get(\"Content-Length\") == \"\" &&\r\n(!isHEAD || len(p) > 0) {\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 01:29:03.016910",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=3a388be1862e ***\n\nnet/http: treat HEAD requests like GET requests\n\nA response to a HEAD request is supposed to look the same as a\nresponse to a GET request, just without a body.\n\nHEAD requests are incredibly rare in the wild.\n\nThe Go net/http package has so far treated HEAD requests\nspecially: a Write on our default ResponseWriter returned\nErrBodyNotAllowed, telling handlers that something was wrong.\nThis was to optimize the fast path for HEAD requests, but:\n\n1) because HEAD requests are incredibly rare, they're not\n   worth having a fast path for.\n\n2) Letting the http.Handler handle but do nop Writes is still\n   very fast.\n\n3) this forces ugly error handling into the application.\n   e.g. https://code.google.com/p/go/source/detail?r=6f596be7a31e\n   and related.\n\n4) The net/http package nowadays does Content-Type sniffing,\n   but you don't get that for HEAD.\n\n5) The net/http package nowadays does Content-Length counting\n   for small (few KB) responses, but not for HEAD.\n\n6) ErrBodyNotAllowed was useless. By the time you received it,\n   you had probably already done all your heavy computation\n   and I/O to calculate what to write.\n\nSo, this change makes HEAD requests like GET requests.\n\nWe now count content-length and sniff content-type for HEAD\nrequests. If you Write, it doesn't return an error.\n\nIf you want a fast-path in your code for HEAD, you have to do\nit early and set all the response headers yourself. Just like\nbefore. If you choose not to Write in HEAD requests, be sure\nto set Content-Length if you know it. We won't write\n\"Content-Length: 0\" because you might've just chosen to not\nwrite (or you don't know your Content-Length in advance).\n\nFixes issue 5454\n\nR=golang-dev, dsymonds\nCC=golang-dev\nhttps://codereview.appspot.com/12583043",
+			"disapproval": false,
+			"date": "2013-08-07 01:33:08.534000",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 01:53:01.485820",
+			"approval": true
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 12583043: net/http: treat HEAD requests like GET requests",
+	"created": "2013-08-07 00:51:56.375790",
+	"patchsets": [
+		1,
+		2002,
+		4001,
+		12001
+	],
+	"modified": "2013-08-07 01:53:01.540920",
+	"closed": true,
+	"issue": 12583043
+}

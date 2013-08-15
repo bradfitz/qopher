@@ -1,0 +1,155 @@
+{
+	"description": "go.tools/go/types: fix more cycle errors, lots of refactoring\n\n- moved ident and typ expr checking into typexpr.go\n- as a result, fewer parameters are needed for expr checking\n- forward-chain type decls of the form type ( A B; B C; C *A) etc.\n  so that cycles are getting the right types in all cases\n- fixed several corner case bugs, added more test cases",
+	"cc": [
+		"adonovan@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nbut some questions.\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/expr.go\nFile go/types/expr.go (right):\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/expr.go#newcode827\ngo/types/expr.go:827: ignore := false // if set, don't do anything in the deferred call\nIt might be cheaper to make this a field of operand, since you'll allocate an(other) new object for every expression this way.\n\n(There may be subtleties though since operands are often reused.)\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/expr.go#newcode1240\ngo/types/expr.go:1240: // of e's type; don't do it a 2nd time\nHave you tried doing a first switch for this list of ast.Nodes before you even create the deferred call?  It might be cleaner.\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/typexpr.go\nFile go/types/typexpr.go (right):\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/typexpr.go#newcode110\ngo/types/typexpr.go:110: if f := check.ctxt.Expr; f != nil {\nSorry I didn't notice this disappearing!\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/typexpr.go#newcode111\ngo/types/typexpr.go:111: defer func() {\nConsider spliting this into two functions at L116; then this becomes just:\n\nfunc (check *checker) typ(...) {\n    res := typ2(...)\n    if f := check.ctxt.Expr; f != nil {\n        assert(e != nil && res != nil && !isUntyped(res))\n        f(e, res, nil)\n    }\n    return res\n}\n\nwith no 'defer' closure allocation.\n\nDitto for expr().  Neither deferred call needs be executed during a panic, they're merely appending code to each 'return'.",
+			"disapproval": false,
+			"date": "2013-07-02 23:05:13.948040",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10773043/diff/39001/go/types/expr.go\nFile go/types/expr.go (right):\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/expr.go#newcode827\ngo/types/expr.go:827: ignore := false // if set, don't do anything in the deferred call\nOn 2013/07/02 23:05:14, adonovan wrote:\n> It might be cheaper to make this a field of operand, since you'll allocate\n> an(other) new object for every expression this way.\n> \n> (There may be subtleties though since operands are often reused.)\n\nI'm not concerned with efficiency here for now - there might be a better way down the road. I don't want to add more state to operand, especially since it's only used here.\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/expr.go#newcode1240\ngo/types/expr.go:1240: // of e's type; don't do it a 2nd time\nOn 2013/07/02 23:05:14, adonovan wrote:\n> Have you tried doing a first switch for this list of ast.Nodes before you even\n> create the deferred call?  It might be cleaner.\n\nCould do that. But this specific case only shows up when a type appears in expression context, which is only for composite literals. So this is rare. Putting an extra switch first would make the normal case slower.\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/typexpr.go\nFile go/types/typexpr.go (right):\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/typexpr.go#newcode110\ngo/types/typexpr.go:110: if f := check.ctxt.Expr; f != nil {\nOn 2013/07/02 23:05:14, adonovan wrote:\n> Sorry I didn't notice this disappearing!\n\nneither did I :-)\n\nhttps://codereview.appspot.com/10773043/diff/39001/go/types/typexpr.go#newcode111\ngo/types/typexpr.go:111: defer func() {\nOn 2013/07/02 23:05:14, adonovan wrote:\n> Consider spliting this into two functions at L116; then this becomes just:\n> \n> func (check *checker) typ(...) {\n>     res := typ2(...)\n>     if f := check.ctxt.Expr; f != nil {\n>         assert(e != nil && res != nil && !isUntyped(res))\n>         f(e, res, nil)\n>     }\n>     return res\n> }\n> \n> with no 'defer' closure allocation.\n> \n> Ditto for expr().  Neither deferred call needs be executed during a panic,\n> they're merely appending code to each 'return'.\n\nAgreed. I was thinking about that, also for rawExpr. Another CL.",
+			"disapproval": false,
+			"date": "2013-07-02 23:26:42.189060",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/02 01:03:57, gri wrote:\n> Hello mailto:adonovan@google.com (cc: mailto:golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://code.google.com/p/go.tools\n\nLGTM.\n\nNice.  (I'm assuming typexpr.go is all moved code and systematic refactorings, no new logic.)",
+			"disapproval": false,
+			"date": "2013-07-02 01:12:15.293070",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/02 01:12:15, adonovan wrote:\n> On 2013/07/02 01:03:57, gri wrote:\n> > Hello mailto:adonovan@google.com (cc: mailto:golang-dev@googlegroups.com),\n> > \n> > I'd like you to review this change to\n> > https://code.google.com/p/go.tools\n> \n> LGTM.\n> \n> Nice.  (I'm assuming typexpr.go is all moved code and systematic refactorings,\n> no new logic.)\n\nCorrect. There's some new logic in the resolver which is documented accordingly.",
+			"disapproval": false,
+			"date": "2013-07-02 03:39:29.280150",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-07-02 22:53:58.404590",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=ebfd63fb1fcc&repo=tools ***\n\ngo.tools/go/types: fix more cycle errors, lots of refactoring\n\n- moved ident and typ expr checking into typexpr.go\n- as a result, fewer parameters are needed for expr checking\n- forward-chain type decls of the form type ( A B; B C; C *A) etc.\n  so that cycles are getting the right types in all cases\n- fixed several corner case bugs, added more test cases\n\nR=adonovan\nCC=golang-dev\nhttps://codereview.appspot.com/10773043",
+			"disapproval": false,
+			"date": "2013-07-02 23:39:56.598870",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10773043/diff/27001/go/types/resolver.go\nFile go/types/resolver.go (right):\n\nhttps://codereview.appspot.com/10773043/diff/27001/go/types/resolver.go#newcode338\ngo/types/resolver.go:338: func (check *checker) declareObject(obj Object, def *Named, cycleOk bool) {\n// declareObject inserts object into the topmost scope.\n// See declareType for specification of def.",
+			"disapproval": false,
+			"date": "2013-07-02 01:12:20.993900",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.tools",
+			"disapproval": false,
+			"date": "2013-07-02 01:03:57.929900",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/02 01:12:15, adonovan wrote:\n> On 2013/07/02 01:03:57, gri wrote:\n> > Hello mailto:adonovan@google.com (cc: mailto:golang-dev@googlegroups.com),\n> > \n> > I'd like you to review this change to\n> > https://code.google.com/p/go.tools\n> \n> LGTM.\n> \n> Nice.  (I'm assuming typexpr.go is all moved code and systematic refactorings,\n> no new logic.)\n\nCorrect. There's some new logic in the resolver which is documented accordingly.",
+			"disapproval": false,
+			"date": "2013-07-02 03:39:31.724030",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 10773043: go.tools/go/types: fix more cycle errors, lots of refac...",
+	"created": "2013-06-29 01:24:17.334640",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		9001,
+		12001,
+		15001,
+		18001,
+		21001,
+		24001,
+		27001,
+		34001,
+		37001,
+		39001,
+		53001,
+		44001,
+		56001,
+		33001
+	],
+	"modified": "2013-07-02 23:39:58.324230",
+	"closed": true,
+	"issue": 10773043
+}

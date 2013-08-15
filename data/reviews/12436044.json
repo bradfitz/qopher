@@ -1,0 +1,97 @@
+{
+	"description": "runtime: use GetQueuedCompletionStatusEx on windows if available\nGetQueuedCompletionStatusEx allows to dequeue a batch of completion\nnotifications, which is more efficient than dequeueing one by one.\n\nbenchmark                           old ns/op    new ns/op    delta\nBenchmarkClientServerParallel4         100605        90945   -9.60%\nBenchmarkClientServerParallel4-2        90225        74504  -17.42%",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"alex.brainman@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-08-04 19:28:48.390830",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've made some initial comments, but lets land https://codereview.appspot.com/12413043/ before we do proper review. Please, ping me when ready. Thank you.\n\nAlex\n\nhttps://codereview.appspot.com/12436044/diff/12001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/12436044/diff/12001/src/pkg/net/fd_windows.go#newcode205\nsrc/pkg/net/fd_windows.go:205: err = syscall.WSAGetOverlappedResult(o.fd.sysfd, &o.o, &o.qty, 0, &flags)\nI am concerned that we are doing 2 syscalls (instead of 1) on systems without GetQueuedCompletionStatusEx. Also on systems with GetQueuedCompletionStatusEx this WSAGetOverlappedResult call would run runtime.cgocall (which does entersyscall / exitsyscall among other things). Maybe you could move all this error retrieval logic into runtime - you could use stdcall there.\n\nGiven all this extra calls + complications, are you sure it is worth pursuing batch retrievals?\n\nhttps://codereview.appspot.com/12436044/diff/12001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/12436044/diff/12001/src/pkg/runtime/netpoll_windows.c#newcode126\nsrc/pkg/runtime/netpoll_windows.c:126: \nCould you, please explain for me (I don't have to put in the source), your logic here. Why wouldn't take as many completions as you can in one single call?\n\nAlso the extra NtQueryIoCompletion syscall, is it all paying for itself? In worse case scenario (1 pending completed io), which, I think, will be common, you will end up with 3 syscalls instead of 1.",
+			"disapproval": false,
+			"date": "2013-08-05 02:59:34.434020",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/05 02:59:34, brainman wrote:\n> I've made some initial comments, but lets land\n> https://codereview.appspot.com/12413043/ before we do proper review. Please,\n> ping me when ready. Thank you.\n> \n> Alex\n> \n> https://codereview.appspot.com/12436044/diff/12001/src/pkg/net/fd_windows.go\n> File src/pkg/net/fd_windows.go (right):\n> \n> https://codereview.appspot.com/12436044/diff/12001/src/pkg/net/fd_windows.go#newcode205\n> src/pkg/net/fd_windows.go:205: err = syscall.WSAGetOverlappedResult(o.fd.sysfd,\n> &o.o, &o.qty, 0, &flags)\n> I am concerned that we are doing 2 syscalls (instead of 1) on systems without\n> GetQueuedCompletionStatusEx. Also on systems with GetQueuedCompletionStatusEx\n> this WSAGetOverlappedResult call would run runtime.cgocall (which does\n> entersyscall / exitsyscall among other things). Maybe you could move all this\n> error retrieval logic into runtime - you could use stdcall there.\n> \n> Given all this extra calls + complications, are you sure it is worth pursuing\n> batch retrievals?\n> \n> https://codereview.appspot.com/12436044/diff/12001/src/pkg/runtime/netpoll_windows.c\n> File src/pkg/runtime/netpoll_windows.c (right):\n> \n> https://codereview.appspot.com/12436044/diff/12001/src/pkg/runtime/netpoll_windows.c#newcode126\n> src/pkg/runtime/netpoll_windows.c:126: \n> Could you, please explain for me (I don't have to put in the source), your logic\n> here. Why wouldn't take as many completions as you can in one single call?\n> \n> Also the extra NtQueryIoCompletion syscall, is it all paying for itself? In\n> worse case scenario (1 pending completed io), which, I think, will be common,\n> you will end up with 3 syscalls instead of 1.\n\n\n\nHi Alex,\n\nI've synched to tip and simplified this change significantly.\nIt does not use NtQueryIoCompletion and WSAGetOverlappedResult is called from runtime, so no syscall overhead (and no changes to fd_windows.go).\n\nIn general I think that using GQCSEx is important because (1) it should provide speedup for real programs, and (2) it unifies implicit interface between netpoll and scheduler (return a batch of ready goroutines). (2) will allow to do further scheduling improvements that will benefit all OSes.\n\nPTAL",
+			"disapproval": false,
+			"date": "2013-08-06 13:05:30.038640",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nAlex",
+			"disapproval": false,
+			"date": "2013-08-08 06:39:30.316080",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=23e06fccd3b9 ***\n\nruntime: use GetQueuedCompletionStatusEx on windows if available\nGetQueuedCompletionStatusEx allows to dequeue a batch of completion\nnotifications, which is more efficient than dequeueing one by one.\n\nbenchmark                           old ns/op    new ns/op    delta\nBenchmarkClientServerParallel4         100605        90945   -9.60%\nBenchmarkClientServerParallel4-2        90225        74504  -17.42%\n\nR=golang-dev, alex.brainman\nCC=golang-dev\nhttps://codereview.appspot.com/12436044",
+			"disapproval": false,
+			"date": "2013-08-08 13:42:13.038590",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 12436044: runtime: use GetQueuedCompletionStatusEx on windows if ...",
+	"created": "2013-08-04 18:18:09.826230",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		7001,
+		9001,
+		12001,
+		17001,
+		20001,
+		23001,
+		26001,
+		29001,
+		32001
+	],
+	"modified": "2013-08-08 13:42:14.879610",
+	"closed": true,
+	"issue": 12436044
+}

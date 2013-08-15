@@ -1,0 +1,123 @@
+{
+	"description": "exp/template/html: elide comments in template source.\n\nWhen templates are stored in external files, developers often embed\ncomments to explain&|disable code.\n\n  <!-- Oblique reference to project code name here -->\n  {{if .C}}...{{else}}<!-- commented out default -->{{end}}\n\nThis unnecessarily increases the size of shipped HTML and can leak\ninformation.\n\nThis change elides all comments of the following types:\n1. <!-- ... --> comments found in source.\n2. /*...*/ and // comments found in <script> elements.\n3. /*...*/ and // comments found in <style> elements.\n\nIt does not elide /*...*/ or // comments found in HTML attributes:\n4. <button onclick=\"/*...*/\">\n5. <div style=\"/*...*/\">\n\nI can find no examples of comments in attributes in Closure Templates\ncode and doing so would require keeping track of character positions\npost decode in\n\n  <button onclick=\"/&#42;...*/\">\n\nTo prevent token joining, /*comments*/ are JS and CSS comments are\nreplaced with a whitespace char.\nHTML comments are not, but to prevent token joining we could try to\ndetect cases like\n   <<!---->b>\n   </<!---->b>\nwhich has a well defined meaning in HTML but will cause a validator\nto barf.  This is difficult, and this is a very minor case.\nI have punted for now, but if we need to address this case, the best\nway would be to normalize '<' in stateText to '&lt;' consistently.\n\nThe whitespace to replace a JS /*comment*/ with depends on whether\nthere is an embedded line terminator since\n    break/*\n    */foo\n    ...\nis equivalent to\n    break;\n    foo\n    ...\nwhile\n    break/**/foo\n    ...\nis equivalent to\n    break foo;\n    ...\n\nComment eliding can interfere with IE conditional comments.\nhttp://en.wikipedia.org/wiki/Conditional_comment\n\n<!--[if IE 6]>\n<p>You are using Internet Explorer 6.</p>\n<![endif]-->\n\n/*@cc_on\n  document.write(\"You are using IE4 or higher\");\n@*/\n\nI have not encountered these in production template code, and\nthe typed content change in CL 4962067 provides an escape-hatch\nif conditional comments are needed.",
+	"cc": [
+		"nigeltao@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM.\n\nCan we also get some tests for:\n`<button onclick=\"/*...*/\">`\n\"<script>var a/*b*//c\\nd</script>\"\n\"<script>var a/*b*///c\\nd</script>\"\n\nhttp://codereview.appspot.com/4999042/diff/30004/src/pkg/exp/template/html/context.go\nFile src/pkg/exp/template/html/context.go (right):\n\nhttp://codereview.appspot.com/4999042/diff/30004/src/pkg/exp/template/html/context.go#newcode93\nsrc/pkg/exp/template/html/context.go:93: stateComment\nIt might be worth renaming this to stateHTMLCmt. It looks a little weird that isCommentState(c) returns true for states other than stateComment.\n\nhttp://codereview.appspot.com/4999042/diff/30004/src/pkg/exp/template/html/context.go#newcode170\nsrc/pkg/exp/template/html/context.go:170: func isCommentState(s state) bool {\nYou could drop the \"State\" if this was a method:\nfunc (s state) isComment() bool {\n\nhttp://codereview.appspot.com/4999042/diff/30004/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4999042/diff/30004/src/pkg/exp/template/html/escape.go#newcode559\nsrc/pkg/exp/template/html/escape.go:559: // start.\nIn general code, you're not constrained to 80 chars. That limit is only for doc comments.\n\nhttp://codereview.appspot.com/4999042/diff/30004/src/pkg/exp/template/html/escape_test.go\nFile src/pkg/exp/template/html/escape_test.go (right):\n\nhttp://codereview.appspot.com/4999042/diff/30004/src/pkg/exp/template/html/escape_test.go#newcode369\nsrc/pkg/exp/template/html/escape_test.go:369: \"Split HTML comment\",\nI guess this works, but my naive instinct would be that it would be simpler to say that it's an error to end a text node in a comment state.\n\nhttp://codereview.appspot.com/4999042/diff/30004/src/pkg/exp/template/html/escape_test.go#newcode384\nsrc/pkg/exp/template/html/escape_test.go:384: // Newline separates break from call.  If newline\nSingle space after full stop. Same below.",
+			"disapproval": false,
+			"date": "2011-09-19 05:49:07.589155",
+			"approval": true
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-19 02:19:04.147582",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I addressed most of these issues, but I'm going to put this CL on hold.  Your suggested testcases exposed a few problems.\n\nI have a series of 4 smaller CLs starting with http://mondrian/5074041 which I think will lead to a better result.\n\nIf it's OK by you,\n(1) CL 5074041 simplifies escapeText and the transition.go in a non-semantics changing way.\n(2) A second CL will rename stateComment as requested and introduce isComment.\n(3) A third CL will change escapeAction to escape comments so that every action inside a comment produces the empty string.  This will allow commenting out of actions in templates and will introduce most of the testcases in this CL.\n(4) A final CL will change escapeText to do comment elision and elide comments in the testcases introduced in (3).",
+			"disapproval": false,
+			"date": "2011-09-19 20:56:37.287931",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=b2f72c9b13e9 ***\n\nexp/template/html: elide comments in template source.\n\nWhen templates are stored in external files, developers often embed\ncomments to explain&|disable code.\n\n  <!-- Oblique reference to project code name here -->\n  {{if .C}}...{{else}}<!-- commented out default -->{{end}}\n\nThis unnecessarily increases the size of shipped HTML and can leak\ninformation.\n\nThis change elides all comments of the following types:\n1. <!-- ... --> comments found in source.\n2. /*...*/ and // comments found in <script> elements.\n3. /*...*/ and // comments found in <style> elements.\n\nIt does not elide /*...*/ or // comments found in HTML attributes:\n4. <button onclick=\"/*...*/\">\n5. <div style=\"/*...*/\">\n\nI can find no examples of comments in attributes in Closure Templates\ncode and doing so would require keeping track of character positions\npost decode in\n\n  <button onclick=\"/&#42;...*/\">\n\nTo prevent token joining, /*comments*/ are JS and CSS comments are\nreplaced with a whitespace char.\nHTML comments are not, but to prevent token joining we could try to\ndetect cases like\n   <<!---->b>\n   </<!---->b>\nwhich has a well defined meaning in HTML but will cause a validator\nto barf.  This is difficult, and this is a very minor case.\nI have punted for now, but if we need to address this case, the best\nway would be to normalize '<' in stateText to '&lt;' consistently.\n\nThe whitespace to replace a JS /*comment*/ with depends on whether\nthere is an embedded line terminator since\n    break/*\n    */foo\n    ...\nis equivalent to\n    break;\n    foo\n    ...\nwhile\n    break/**/foo\n    ...\nis equivalent to\n    break foo;\n    ...\n\nComment eliding can interfere with IE conditional comments.\nhttp://en.wikipedia.org/wiki/Conditional_comment\n\n<!--[if IE 6]>\n<p>You are using Internet Explorer 6.</p>\n<![endif]-->\n\n/*@cc_on\n  document.write(\"You are using IE4 or higher\");\n@*/\n\nI have not encountered these in production template code, and\nthe typed content change in CL 4962067 provides an escape-hatch\nif conditional comments are needed.\n\nR=nigeltao\nCC=golang-dev\nhttp://codereview.appspot.com/4999042",
+			"disapproval": false,
+			"date": "2011-09-22 04:38:46.217063",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Most of this CL is now gone.  Only the changes to escapeText and tests remain.",
+			"disapproval": false,
+			"date": "2011-09-22 02:23:23.120817",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM.",
+			"disapproval": false,
+			"date": "2011-09-22 03:39:17.031072",
+			"approval": true
+		}
+	],
+	"owner_email": "mikesamuel@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "MikeSamuel",
+	"subject": "code review 4999042: exp/template/html: elide comments in template source.",
+	"created": "2011-09-12 16:41:02.199777",
+	"patchsets": [
+		1,
+		2001,
+		4004,
+		8001,
+		11001,
+		16001,
+		10004,
+		17001,
+		20001,
+		21001,
+		23001,
+		26001,
+		29001,
+		31001,
+		31002,
+		35001,
+		38001,
+		40001,
+		30004,
+		32007,
+		39005,
+		49001,
+		50001,
+		54001
+	],
+	"modified": "2011-09-22 04:38:47.226904",
+	"closed": true,
+	"issue": 4999042
+}

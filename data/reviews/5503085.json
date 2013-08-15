@@ -1,0 +1,157 @@
+{
+	"description": "strconv: use a variable buffer size for decimal representations.\n\nFast cases usually only needed a small fraction of the previous\n800-byte fixed size buffer.\n\n                        old ns/op  new ns/op     diff\nBenchmarkAtof64Decimal      327        192       -41%\nBenchmarkAtof64Float        382        247       -35%\nBenchmarkAtof64FloatExp     429        299       -30%\nBenchmarkAtof64Big          710        582       -18%\nBenchmarkAppendFloatDecimal 472        345       -27%\nBenchmarkAppendFloat        483        357       -26%\nBenchmarkAppendFloatExp     496        369       -26%\nBenchmarkAppendFloatNegExp  485        361       -25%\nBenchmarkAppendFloatBig     646        520       -19%",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"remy@archlinux.org"
+	],
+	"reviewers": [
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This changeset needs CL 5489128 to be applied first, otherwise it would introduce unwanted allocations.\n\nR\u00e9my.",
+			"disapproval": false,
+			"date": "2011-12-31 11:51:56.195260",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, remy@archlinux.org),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-12-31 11:51:01.485053",
+			"approval": false
+		},
+		{
+			"sender": "balasanjay@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Does this fix http://code.google.com/p/go/issues/detail?id=2642 ? I feel \nlike changing to a variable length buffer would also solve this problem.\n\nSanjay\n",
+			"disapproval": false,
+			"date": "2012-01-03 23:44:20.618789",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/1/4 sanjay.m <balasanjay@gmail.com> wrote:\n> Does this fix http://code.google.com/p/go/issues/detail?id=2642 ? I feel\n> like changing to a variable length buffer would also solve this problem.\n\nIt depends what you mean by variable length. As far as I understand,\nthe code was written like this in order to avoid dynamic allocations,\nand the escape analysis code is not able to convert variable length\nmake()'s into stack allocations.\n\nR\u00e9my.\n",
+			"disapproval": false,
+			"date": "2012-01-04 05:50:27.175693",
+			"approval": false
+		},
+		{
+			"sender": "balasanjay@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ahh, excuse me, from the CL title I thought you were changing it to be a \ndynamically growing slice for the buffer, but I see you're hardcoding to 32 \nor 800.\n\nIssue 2642 would only come up when trying to ParseFloat a string with a \nmassive number of digits, and in this case, it causes a panic due to index \nout of range rather than returning an error, so this CL would not fix it.\n\nA trivial fix would probably be to explicitly check for a write over the \nlen of the array/slice (depending on whether this CL goes in or not). I can \nwrite it up once the fate of this CL is decided.\n\nCheers,\n\nSanjay\n",
+			"disapproval": false,
+			"date": "2012-01-04 06:00:36.081821",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It also looks very hacky to me. Actually none of the fast paths needs the buffer at all, so for me the best solution is to leave the allocation to the slow path, while for the fast paths, we only need a functions that parses a string into an int64 mantissa and a decimal exponent.",
+			"disapproval": false,
+			"date": "2012-01-16 23:13:44.385381",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5503085/diff/8001/src/pkg/strconv/atof.go\nFile src/pkg/strconv/atof.go (right):\n\nhttp://codereview.appspot.com/5503085/diff/8001/src/pkg/strconv/atof.go#newcode360\nsrc/pkg/strconv/atof.go:360: var d decimal\nBefore, decimal had an 800-byte buffer in it,\nso there was one 800-byte buffer on the stack.\n\nNow, with this code, assuming all the allocations end\nup on the stack, we have a 32-byte buffer for one arm\nof the if and an 800-byte buffer for the other arm.\nAnd then another 800-byte buffer for decimalBuf below.\nSo the stack size has actually grown by 832 bytes, but\nthe 'fast path' is zeroing 768 fewer bytes, which must be\nwhere the time savings comes from.\n\nThis is all rather subtle to me.  I wonder if there is a \nbetter way to make this faster.",
+			"disapproval": false,
+			"date": "2012-01-16 23:06:21.184050",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"balasanjay@gmail.com",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, balasanjay@gmail.com (cc: golang-dev@googlegroups.com, remy@archlinux.org),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-14 11:21:41.679092",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Okay.  Let me know when I should take another look.\n\nThanks very much.\nRuss",
+			"disapproval": false,
+			"date": "2012-01-17 00:17:04.060536",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-04-07 09:30:23.609960",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 5503085: strconv: use a variable buffer size for decimal represe...",
+	"created": "2011-12-31 11:50:40.349555",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		8001,
+		14001
+	],
+	"modified": "2012-04-21 11:35:38.636179",
+	"closed": true,
+	"issue": 5503085
+}

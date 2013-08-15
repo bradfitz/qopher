@@ -1,0 +1,216 @@
+{
+	"description": "runtime: more flexible heap memory mapping on 64-bits\nFixes issue 5641.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"daniel.morsing@gmail.com",
+		"iant@golang.org",
+		"kcc@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-06-10 08:49:29.694900",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, kcc@google.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-06-10 08:50:30.839970",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "s/mere/more/ in the title. \r\n\r\n\r\n\r\nOn 10/06/2013, at 18:49, dvyukov@google.com wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n> \r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n> \r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@code.google.com/p/go/\r\n> \r\n> \r\n> Description:\r\n> runtime: mere flexible heap memory mapping on 64-bits\r\n> Fixes issue 5641.\r\n> \r\n> Please review this at https://codereview.appspot.com/10126044/\r\n> \r\n> Affected files:\r\n>  A misc/cgo/testasan/main.go\r\n>  M src/pkg/runtime/malloc.goc\r\n>  M src/run.bash\r\n> \r\n> \r\n> Index: misc/cgo/testasan/main.go\r\n> ===================================================================\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/misc/cgo/testasan/main.go\r\n> @@ -0,0 +1,51 @@\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +package main\r\n> +\r\n> +/*\r\n> +#include <sys/mman.h>\r\n> +#include <pthread.h>\r\n> +#include <unistd.h>\r\n> +\r\n> +void ctor(void) __attribute__((constructor));\r\n> +static void* thread(void*);\r\n> +\r\n> +void ctor(void)\r\n> +{\r\n> +    // occupy memory where Go runtime would normally map heap\r\n> +    mmap((void*)0x00c000000000, 64<<10, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED, -1, 0);\r\n> +\r\n> +    // allocate 4K every 10us\r\n> +    pthread_t t;\r\n> +    pthread_create(&t, 0, thread, 0);\r\n> +}\r\n> +\r\n> +void* thread(void *p)\r\n> +{\r\n> +    for(;;) {\r\n> +        usleep(10000);\r\n> +        mmap(0, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);\r\n> +    }\r\n> +    return 0;\r\n> +}\r\n> +*/\r\n> +import \"C\"\r\n> +\r\n> +import (\r\n> +    \"fmt\"\r\n> +    \"time\"\r\n> +)\r\n> +\r\n> +func main() {\r\n> +    // say where the heap is\r\n> +    fmt.Printf(\"%v\\n\", new(int))\r\n> +\r\n> +    // ensure that we can functionate normally\r\n> +    var v [][]byte\r\n> +    for i := 0; i < 1000; i++ {\r\n> +        time.Sleep(10*time.Microsecond)\r\n> +        v = append(v, make([]byte, 64<<10))\r\n> +    }\r\n> +}\r\n> Index: src/pkg/runtime/malloc.goc\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/malloc.goc\r\n> +++ b/src/pkg/runtime/malloc.goc\r\n> @@ -303,6 +303,7 @@\r\n>    extern byte end[];\r\n>    byte *want;\r\n>    uintptr limit;\r\n> +    int32 i;\r\n> \r\n>    p = nil;\r\n>    arena_size = 0;\r\n> @@ -330,15 +331,17 @@\r\n>        // 128 GB (MaxMem) should be big enough for now.\r\n>        //\r\n>        // The code will work with the reservation at any address, but ask\r\n> -        // SysReserve to use 0x000000c000000000 if possible.\r\n> +        // SysReserve to use 0x0000XXc000000000 if possible (XX=00...7f).\r\n>        // Allocating a 128 GB region takes away 37 bits, and the amd64\r\n>        // doesn't let us choose the top 17 bits, so that leaves the 11 bits\r\n>        // in the middle of 0x00c0 for us to choose.  Choosing 0x00c0 means\r\n>        // that the valid memory addresses will begin 0x00c0, 0x00c1, ..., 0x0x00df.\r\n>        // In little-endian, that's c0 00, c1 00, ..., df 00. None of those are valid\r\n>        // UTF-8 sequences, and they are otherwise as far away from\r\n> -        // ff (likely a common byte) as possible. An earlier attempt to use 0x11f8\r\n> -        // caused out of memory errors on OS X during thread allocations.\r\n> +        // ff (likely a common byte) as possible.  If that fail, we try other 0xXXc0\r\n> +        // addresses.  An earlier attempt to use 0x11f8 caused out of memory errors\r\n> +        // on OS X during thread allocations.  0x00c0 causes conflicts with\r\n> +        // AddressSanitizer which reserves all memory up to 0x0100.\r\n>        // These choices are both for debuggability and to reduce the\r\n>        // odds of the conservative garbage collector not collecting memory\r\n>        // because some non-pointer block of memory had a bit pattern\r\n> @@ -351,7 +354,15 @@\r\n>        arena_size = MaxMem;\r\n>        bitmap_size = arena_size / (sizeof(void*)*8/4);\r\n>        spans_size = arena_size / PageSize * sizeof(runtime\u00b7mheap.spans[0]);\r\n> -        p = runtime\u00b7SysReserve((void*)(0x00c0ULL<<32), bitmap_size + spans_size + arena_size);\r\n> +        for(i = -1; i <= 0x7f; i++) {\r\n> +            if(i == -1)\r\n> +                p = (void*)(0x00c0ULL<<32);\r\n> +            else\r\n> +                p = (void*)((uint64)i<<40 | 0x00c0ULL<<32);\r\n> +            p = runtime\u00b7SysReserve(p, bitmap_size + spans_size + arena_size);\r\n> +            if(p != nil)\r\n> +                break;\r\n> +        }\r\n>    }\r\n>    if (p == nil) {\r\n>        // On a 32-bit machine, we can't typically get away\r\n> Index: src/run.bash\r\n> ===================================================================\r\n> --- a/src/run.bash\r\n> +++ b/src/run.bash\r\n> @@ -108,6 +108,12 @@\r\n> ./test.bash\r\n> ) || exit $?\r\n> \r\n> +[ \"$CGO_ENABLED\" != 1 ] ||\r\n> +[ \"$GOHOSTOS-$GOARCH\" != linux-amd64 ] ||\r\n> +(xcd ../misc/cgo/testasan\r\n> +go run main.go\r\n> +) || exit $?\r\n> +\r\n> (xcd ../doc/progs\r\n> time ./run\r\n> ) || exit $?\r\n> \r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-06-10 09:20:43.750930",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/10 09:20:43, dfc wrote:\n> s/mere/more/ in the title. \n\n\nDone",
+			"disapproval": false,
+			"date": "2013-06-10 09:22:49.927900",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc\nFile src/pkg/runtime/malloc.goc (right):\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode306\nsrc/pkg/runtime/malloc.goc:306: int32 i;\nUse int64 here to avoid a cast.\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode334\nsrc/pkg/runtime/malloc.goc:334: // SysReserve to use 0x0000XXc000000000 if possible (XX=00...7f).\nThere are a couple of places in this comment where 00 hasn't been replaced with XX.\n\nThe code is extremely subtle, so I'd like to keep this comment as up to date as possible for any future code archaeology.\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode337\nsrc/pkg/runtime/malloc.goc:337: // in the middle of 0x00c0 for us to choose.  Choosing 0x00c0 means\nAny sequence c0 xx where xx =< 7f is invalid UTF-8. Not sure if that's worth pointing out.\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode338\nsrc/pkg/runtime/malloc.goc:338: // that the valid memory addresses will begin 0x00c0, 0x00c1, ..., 0x0x00df.\ndouble 0x on 0x0x00df\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode358\nsrc/pkg/runtime/malloc.goc:358: if(i == -1)\nwhy the if here?\n\nIf i == 0, then \"(void*)((uint64)i<<40 | 0x00c0ULL<<32);\" would evaluate to 0x00c0ULL<<32",
+			"disapproval": false,
+			"date": "2013-06-10 09:36:22.722010",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10126044/diff/15001/src/run.bash\nFile src/run.bash (right):\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/run.bash#newcode112\nsrc/run.bash:112: [ \"$GOHOSTOS-$GOARCH\" != linux-amd64 ] ||\nnot testing windows/amd64 or darwin/amd64 ?",
+			"disapproval": false,
+			"date": "2013-06-10 12:28:39.018270",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/10 12:28:39, dfc wrote:\n> https://codereview.appspot.com/10126044/diff/15001/src/run.bash\n> File src/run.bash (right):\n> \n> https://codereview.appspot.com/10126044/diff/15001/src/run.bash#newcode112\n> src/run.bash:112: [ \"$GOHOSTOS-$GOARCH\" != linux-amd64 ] ||\n> not testing windows/amd64 or darwin/amd64 ?\n\nDarwin does not use MAP_FIXED, so at least on my machine it is not using 0x00c0 anyway. So the test won't actually test what it is intended to test.\nWindows test will require radically different code for constructors (will it require dll?), threads, memory mapping and sleep. So it will be a different test.",
+			"disapproval": false,
+			"date": "2013-06-10 13:32:03.411490",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc\nFile src/pkg/runtime/malloc.goc (right):\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode306\nsrc/pkg/runtime/malloc.goc:306: int32 i;\nOn 2013/06/10 09:36:22, DMorsing wrote:\n> Use int64 here to avoid a cast.\n\nI am not sure here. Then it will involve signed shift that is not visible in the code. \"(uint64)i<<40\" looks more bulletproof.\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode334\nsrc/pkg/runtime/malloc.goc:334: // SysReserve to use 0x0000XXc000000000 if possible (XX=00...7f).\nOn 2013/06/10 09:36:22, DMorsing wrote:\n> There are a couple of places in this comment where 00 hasn't been replaced with\n> XX.\n> \n> The code is extremely subtle, so I'd like to keep this comment as up to date as\n> possible for any future code archaeology.\n\nThis is intentional. That place describes what happens if we choose 0x00c0, which we choose be default (as before). After that I've added \"If that fail, we try other 0xXXc0 addresses.\"\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode337\nsrc/pkg/runtime/malloc.goc:337: // in the middle of 0x00c0 for us to choose.  Choosing 0x00c0 means\nOn 2013/06/10 09:36:22, DMorsing wrote:\n> Any sequence c0 xx where xx =< 7f is invalid UTF-8. Not sure if that's worth\n> pointing out.\n\nIs that true? I don't know.\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode338\nsrc/pkg/runtime/malloc.goc:338: // that the valid memory addresses will begin 0x00c0, 0x00c1, ..., 0x0x00df.\nOn 2013/06/10 09:36:22, DMorsing wrote:\n> double 0x on 0x0x00df\n\nDone.\n\nhttps://codereview.appspot.com/10126044/diff/15001/src/pkg/runtime/malloc.goc#newcode358\nsrc/pkg/runtime/malloc.goc:358: if(i == -1)\nOn 2013/06/10 09:36:22, DMorsing wrote:\n> why the if here?\n> \n> If i == 0, then \"(void*)((uint64)i<<40 | 0x00c0ULL<<32);\" would evaluate to\n> 0x00c0ULL<<32\n\nSome deployments use patched default address. It makes it possible to have minimal diff. So the idea is that it starts from -N, then we can enumerate N special cases in the necessary order. And only then try all 0xXXc0 in order.",
+			"disapproval": false,
+			"date": "2013-06-10 13:32:09.388720",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10126044/diff/20001/misc/cgo/testasan/main.go\nFile misc/cgo/testasan/main.go (right):\n\nhttps://codereview.appspot.com/10126044/diff/20001/misc/cgo/testasan/main.go#newcode25\nmisc/cgo/testasan/main.go:25: void* thread(void *p)\nThe declaration above is static, so the function should be static.\n\nhttps://codereview.appspot.com/10126044/diff/20001/misc/cgo/testasan/main.go#newcode43\nmisc/cgo/testasan/main.go:43: fmt.Printf(\"%v\\n\", new(int))\nProbably this test shouldn't print anything in the normal case.  That makes the run.bash output simpler and easier to interpret.\n\nhttps://codereview.appspot.com/10126044/diff/20001/misc/cgo/testasan/main.go#newcode45\nmisc/cgo/testasan/main.go:45: // ensure that we can functionate normally\nNot sure what \"functionate\" means, do you mean \"function\"?\n\nhttps://codereview.appspot.com/10126044/diff/20001/src/pkg/runtime/malloc.goc\nFile src/pkg/runtime/malloc.goc (right):\n\nhttps://codereview.appspot.com/10126044/diff/20001/src/pkg/runtime/malloc.goc#newcode341\nsrc/pkg/runtime/malloc.goc:341: // ff (likely a common byte) as possible.  If that fail, we try other 0xXXc0\ns/fail/fails/\n\nhttps://codereview.appspot.com/10126044/diff/20001/src/pkg/runtime/malloc.goc#newcode358\nsrc/pkg/runtime/malloc.goc:358: if(i == -1)\nI saw your argument about why you use -1, but it makes this code too confusing.  This loop should start at 0 and you should skip the -1 case.  And then I think you should make i have type uint64.",
+			"disapproval": false,
+			"date": "2013-06-10 17:00:00.639660",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/10126044/diff/20001/misc/cgo/testasan/main.go\nFile misc/cgo/testasan/main.go (right):\n\nhttps://codereview.appspot.com/10126044/diff/20001/misc/cgo/testasan/main.go#newcode25\nmisc/cgo/testasan/main.go:25: void* thread(void *p)\nOn 2013/06/10 17:00:00, iant wrote:\n> The declaration above is static, so the function should be static.\n\nDone.\n\nhttps://codereview.appspot.com/10126044/diff/20001/misc/cgo/testasan/main.go#newcode43\nmisc/cgo/testasan/main.go:43: fmt.Printf(\"%v\\n\", new(int))\nOn 2013/06/10 17:00:00, iant wrote:\n> Probably this test shouldn't print anything in the normal case.  That makes the\n> run.bash output simpler and easier to interpret.\n\nDone.\n\nhttps://codereview.appspot.com/10126044/diff/20001/misc/cgo/testasan/main.go#newcode45\nmisc/cgo/testasan/main.go:45: // ensure that we can functionate normally\nOn 2013/06/10 17:00:00, iant wrote:\n> Not sure what \"functionate\" means, do you mean \"function\"?\n\nDone.\n\nhttps://codereview.appspot.com/10126044/diff/20001/src/pkg/runtime/malloc.goc\nFile src/pkg/runtime/malloc.goc (right):\n\nhttps://codereview.appspot.com/10126044/diff/20001/src/pkg/runtime/malloc.goc#newcode341\nsrc/pkg/runtime/malloc.goc:341: // ff (likely a common byte) as possible.  If that fail, we try other 0xXXc0\nOn 2013/06/10 17:00:00, iant wrote:\n> s/fail/fails/\n\nDone.\n\nhttps://codereview.appspot.com/10126044/diff/20001/src/pkg/runtime/malloc.goc#newcode358\nsrc/pkg/runtime/malloc.goc:358: if(i == -1)\nOn 2013/06/10 17:00:00, iant wrote:\n> I saw your argument about why you use -1, but it makes this code too confusing. \n> This loop should start at 0 and you should skip the -1 case.  And then I think\n> you should make i have type uint64.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-10 18:29:58.342590",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-06-10 21:17:39.336170",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"iant@golang.org",
+				"kcc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7544727c9c28 ***\n\nruntime: more flexible heap memory mapping on 64-bits\nFixes issue 5641.\n\nR=golang-dev, dave, daniel.morsing, iant\nCC=golang-dev, kcc\nhttps://codereview.appspot.com/10126044",
+			"disapproval": false,
+			"date": "2013-06-12 14:47:29.644160",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 10126044: runtime: more flexible heap memory mapping on 64-bits",
+	"created": "2013-06-10 08:15:35.279420",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		12001,
+		15001,
+		20001,
+		26001,
+		34001,
+		36001
+	],
+	"modified": "2013-06-12 14:47:31.398730",
+	"closed": true,
+	"issue": 10126044
+}

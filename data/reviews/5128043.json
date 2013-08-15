@@ -1,0 +1,101 @@
+{
+	"description": "graphics: use integer arithmetic instead of float64.\nOn my laptop (6g), benchmarks show a 10%-ish improvement.\n\nBefore:\ngraphics_test.BenchmarkBlur400x400x3\t      50\t  68509600 ns/op\ngraphics_test.BenchmarkBlur400x800x3\t      10\t 139270000 ns/op\ngraphics_test.BenchmarkBlur400x1600x3\t       5\t 280013000 ns/op\n\nAfter:\ngraphics_test.BenchmarkBlur400x400x3\t      50\t  61061700 ns/op\ngraphics_test.BenchmarkBlur400x800x3\t      10\t 123754300 ns/op\ngraphics_test.BenchmarkBlur400x1600x3\t      10\t 247410300 ns/op",
+	"cc": [
+		"crawshaw@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"crawshaw@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as 759a85cf1f77 ***\n\ngraphics: use integer arithmetic instead of float64.\nOn my laptop (6g), benchmarks show a 10%-ish improvement.\n\nBefore:\ngraphics_test.BenchmarkBlur400x400x3\t      50\t  68509600 ns/op\ngraphics_test.BenchmarkBlur400x800x3\t      10\t 139270000 ns/op\ngraphics_test.BenchmarkBlur400x1600x3\t       5\t 280013000 ns/op\n\nAfter:\ngraphics_test.BenchmarkBlur400x400x3\t      50\t  61061700 ns/op\ngraphics_test.BenchmarkBlur400x800x3\t      10\t 123754300 ns/op\ngraphics_test.BenchmarkBlur400x1600x3\t      10\t 247410300 ns/op\n\nR=crawshaw\nCC=golang-dev\nhttp://codereview.appspot.com/5128043",
+			"disapproval": false,
+			"date": "2011-09-28 09:58:37.966466",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"crawshaw@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello crawshaw@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/graphics-go/",
+			"disapproval": false,
+			"date": "2011-09-25 08:15:34.163026",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"crawshaw@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Ping.",
+			"disapproval": false,
+			"date": "2011-09-27 22:21:54.412907",
+			"approval": false
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"crawshaw@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Caught by a bad filter.\n\nhttp://codereview.appspot.com/5128043/diff/1002/graphics/blur.go\nFile graphics/blur.go (right):\n\nhttp://codereview.appspot.com/5128043/diff/1002/graphics/blur.go#newcode15\ngraphics/blur.go:15: kernel := make([]uint64, size+1)\nWhat do you think of defining: type fixed48 uint64\n\nhttp://codereview.appspot.com/5128043/diff/1002/graphics/blur.go#newcode26\ngraphics/blur.go:26: kSum *= kSum\nMy understanding of fixed point arithmetic is that when you multiply two fixed point numbers, you multiply the scaling factor.\n\nIn which case, dividing through by kSum at the end does not bring you back to an integer value. (But then, how do the tests pass?)\n\nhttp://codereview.appspot.com/5128043/diff/1002/graphics/blur.go#newcode87\ngraphics/blur.go:87: k0, off := kernel[0], y*width*4+x*4\nCombining lines like this is idiomatic? It is not clearly more readable to me.",
+			"disapproval": false,
+			"date": "2011-09-27 22:49:27.979983",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"crawshaw@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5128043/diff/1002/graphics/blur.go\nFile graphics/blur.go (right):\n\nhttp://codereview.appspot.com/5128043/diff/1002/graphics/blur.go#newcode15\ngraphics/blur.go:15: kernel := make([]uint64, size+1)\nOn 2011/09/27 22:49:28, crawshaw1 wrote:\n> What do you think of defining: type fixed48 uint64\n\nMaybe later, but it's not needed for now.\n\nhttp://codereview.appspot.com/5128043/diff/1002/graphics/blur.go#newcode26\ngraphics/blur.go:26: kSum *= kSum\nOn 2011/09/27 22:49:28, crawshaw1 wrote:\n> My understanding of fixed point arithmetic is that when you multiply two fixed\n> point numbers, you multiply the scaling factor.\n> \n> In which case, dividing through by kSum at the end does not bring you back to an\n> integer value. (But then, how do the tests pass?)\n\nYou're right that, when multiplying two fixed point numbers, you need to correct for the scaling factor.\n\nBut I'm not using these as fixed point numbers. In the original code, you try to make the kernelSum equal to 1, by multiplying all the kernel entries by coeff. But it's not exactly 1 (I think it's because you're truncating the Gaussian) -- you even had an explicit comment that said \"When the kernel does not sum to 1.0...\". Prior to this changelist, if you dropped the \"coeff\" adjustment in circularGauss, things would still Just Work.\n\nThe kernelSum doesn't have to 'equal' 1, though. If you multiply kernel[i] and kernelSum all by the same factor, then intermediate values are all inflated by that factor, but since you divide by kernelSum in the end, it all cancels out.\n\nI'm just using 1<<16 as a factor, not to represent a 48.16 fixed point per se.\n\nhttp://codereview.appspot.com/5128043/diff/1002/graphics/blur.go#newcode87\ngraphics/blur.go:87: k0, off := kernel[0], y*width*4+x*4\nOn 2011/09/27 22:49:28, crawshaw1 wrote:\n> Combining lines like this is idiomatic? It is not clearly more readable to me.\n\nYeah, it's idiomatic.",
+			"disapproval": false,
+			"date": "2011-09-28 00:01:09.922861",
+			"approval": false
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn Tue, Sep 27, 2011 at 5:01 PM, <nigeltao@golang.org> wrote:\n\n>\n> http://codereview.appspot.com/**5128043/diff/1002/graphics/**blur.go<http://codereview.appspot.com/5128043/diff/1002/graphics/blur.go>\n> File graphics/blur.go (right):\n>\n> http://codereview.appspot.com/**5128043/diff/1002/graphics/**\n> blur.go#newcode15<http://codereview.appspot.com/5128043/diff/1002/graphics/blur.go#newcode15>\n> graphics/blur.go:15: kernel := make([]uint64, size+1)\n> On 2011/09/27 22:49:28, crawshaw1 wrote:\n>\n>> What do you think of defining: type fixed48 uint64\n>>\n>\n> Maybe later, but it's not needed for now.\n>\n>\n> http://codereview.appspot.com/**5128043/diff/1002/graphics/**\n> blur.go#newcode26<http://codereview.appspot.com/5128043/diff/1002/graphics/blur.go#newcode26>\n> graphics/blur.go:26: kSum *= kSum\n> On 2011/09/27 22:49:28, crawshaw1 wrote:\n>\n>> My understanding of fixed point arithmetic is that when you multiply\n>>\n> two fixed\n>\n>> point numbers, you multiply the scaling factor.\n>>\n>\n>  In which case, dividing through by kSum at the end does not bring you\n>>\n> back to an\n>\n>> integer value. (But then, how do the tests pass?)\n>>\n>\n> You're right that, when multiplying two fixed point numbers, you need to\n> correct for the scaling factor.\n>\n> But I'm not using these as fixed point numbers. In the original code,\n> you try to make the kernelSum equal to 1, by multiplying all the kernel\n> entries by coeff. But it's not exactly 1 (I think it's because you're\n> truncating the Gaussian) -- you even had an explicit comment that said\n> \"When the kernel does not sum to 1.0...\". Prior to this changelist, if\n> you dropped the \"coeff\" adjustment in circularGauss, things would still\n> Just Work.\n>\n> The kernelSum doesn't have to 'equal' 1, though. If you multiply\n> kernel[i] and kernelSum all by the same factor, then intermediate values\n> are all inflated by that factor, but since you divide by kernelSum in\n> the end, it all cancels out.\n>\n> I'm just using 1<<16 as a factor, not to represent a 48.16 fixed point\n> per se.\n>\n>\n> http://codereview.appspot.com/**5128043/diff/1002/graphics/**\n> blur.go#newcode87<http://codereview.appspot.com/5128043/diff/1002/graphics/blur.go#newcode87>\n> graphics/blur.go:87: k0, off := kernel[0], y*width*4+x*4\n> On 2011/09/27 22:49:28, crawshaw1 wrote:\n>\n>> Combining lines like this is idiomatic? It is not clearly more\n>>\n> readable to me.\n>\n> Yeah, it's idiomatic.\n>\n>\n> http://codereview.appspot.com/**5128043/<http://codereview.appspot.com/5128043/>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-28 00:22:26.847409",
+			"approval": true
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 5128043: graphics: use integer arithmetic instead of float64.",
+	"created": "2011-09-25 08:15:10.452317",
+	"patchsets": [
+		1,
+		3,
+		3001,
+		1002,
+		1003
+	],
+	"modified": "2011-09-28 09:58:40.173797",
+	"closed": true,
+	"issue": 5128043
+}

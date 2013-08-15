@@ -1,0 +1,141 @@
+{
+	"description": "cmd/gc: recognize small TPTR64 values as small integer constants.\n\nGiven the following Go program:\n\nfunc sum(s []int) int {\n        ret := 0\n        for _, x := range s {\n                ret += x\n        }\n        return ret\n}\n\n6g would previously generate:\n\n--- prog list \"sum\" ---\n0000 (main.go:3) TEXT    sum+0(SB),$0-24\n0001 (main.go:5) MOVQ    s+0(FP),CX\n0002 (main.go:5) MOVL    s+8(FP),DI\n0003 (main.go:5) MOVL    s+12(FP),BX\n0004 (main.go:4) MOVL    $0,SI\n0005 (main.go:5) MOVL    $0,AX\n0006 (main.go:5) JMP     ,8\n0007 (main.go:5) INCL    ,AX\n0008 (main.go:5) CMPL    AX,DI\n0009 (main.go:5) JGE     $0,16\n0010 (main.go:5) MOVL    (CX),DX\n0011 (main.go:5) MOVQ    $4,BX\n0012 (main.go:5) ADDQ    CX,BX\n0013 (main.go:5) MOVQ    BX,CX\n0014 (main.go:6) ADDL    DX,SI\n0015 (main.go:5) JMP     ,7\n0016 (main.go:8) MOVL    SI,.noname+16(FP)\n0017 (main.go:8) RET     ,\n\nand now generates:\n\n--- prog list \"sum\" ---\n0000 (main.go:3) TEXT    sum+0(SB),$0-24\n0001 (main.go:5) MOVQ    s+0(FP),CX\n0002 (main.go:5) MOVL    s+8(FP),DI\n0003 (main.go:5) MOVL    s+12(FP),BX\n0004 (main.go:4) MOVL    $0,SI\n0005 (main.go:5) MOVL    $0,AX\n0006 (main.go:5) JMP     ,8\n0007 (main.go:5) INCL    ,AX\n0008 (main.go:5) CMPL    AX,DI\n0009 (main.go:5) JGE     $0,14\n0010 (main.go:5) MOVL    (CX),BP\n0011 (main.go:5) ADDQ    $4,CX\n0012 (main.go:6) ADDL    BP,SI\n0013 (main.go:5) JMP     ,7\n0014 (main.go:8) MOVL    SI,.noname+16(FP)\n0015 (main.go:8) RET     ,\n\nThe key difference is that\n0011 (main.go:5) MOVQ    $4,BX\n0012 (main.go:5) ADDQ    CX,BX\n0013 (main.go:5) MOVQ    BX,CX\nhas changed to\n0011 (main.go:5) ADDQ    $4,CX",
+	"cc": [
+		"rsc@golang.org",
+		"dave@cheney.net",
+		"remyoudompheng@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/09 05:37:49, dfc wrote:\n> Ahh, thank you. To indulge me further, why does it matter if the size of the\n> slice element is smaller than 32 bits?\n\nIt's because (correct me if I'm wrong) although x86-64 is 64 bits, there is no instruction to add a 64-bit constant to a register. You can only add a 32-bit constant, or load a 64-bit constant into a separate register and then add it.",
+			"disapproval": false,
+			"date": "2012-09-09 06:22:14.590310",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com, remyoudompheng@gmail.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-09-09 01:33:11.848080",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ahh, thank you. To indulge me further, why does it matter if the size of the slice element is smaller than 32 bits?\r\n\r\nOn 09/09/2012, at 15:19, remyoudompheng@gmail.com wrote:\r\n\r\n> ret is not a PTR64. The range loop is tranformed by the frontend in:\r\n> \r\n> for i, p := 0, &s[0]; i < len(s); i++, p += sizeof(s[0]) {\r\n>  x := *p\r\n>  sum += x\r\n> }\r\n> \r\n> hence the constant 4.\r\n> \r\n> http://codereview.appspot.com/6506089/\r\n",
+			"disapproval": false,
+			"date": "2012-09-09 05:37:49.696260",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Nice. Could you explain why ret is a TPTR64? With my limited understanding of the compiler, ret := 0 means ret is of type int.",
+			"disapproval": false,
+			"date": "2012-09-09 01:38:26.443320",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ret is not a PTR64. The range loop is tranformed by the frontend in:\n\nfor i, p := 0, &s[0]; i < len(s); i++, p += sizeof(s[0]) {\n  x := *p\n  sum += x\n}\n\nhence the constant 4.",
+			"disapproval": false,
+			"date": "2012-09-09 05:19:46.050650",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> It's because (correct me if I'm wrong) although x86-64 is 64 bits, there is no\n> instruction to add a 64-bit constant to a register. You can only add a 32-bit\n> constant, or load a 64-bit constant into a separate register and then add it.\n\nThat would make sense, a 64bit constant would make for a very long instruction. Reading the intel manual, the occurrence of imm64 is extremely rare, and not an option with ADD/ADC.",
+			"disapproval": false,
+			"date": "2012-09-09 06:35:10.782620",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-09-11 02:19:49.120260",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=46e193d130ce ***\n\ncmd/gc: recognize small TPTR64 values as small integer constants.\n\nGiven the following Go program:\n\nfunc sum(s []int) int {\n        ret := 0\n        for _, x := range s {\n                ret += x\n        }\n        return ret\n}\n\n6g would previously generate:\n\n--- prog list \"sum\" ---\n0000 (main.go:3) TEXT    sum+0(SB),$0-24\n0001 (main.go:5) MOVQ    s+0(FP),CX\n0002 (main.go:5) MOVL    s+8(FP),DI\n0003 (main.go:5) MOVL    s+12(FP),BX\n0004 (main.go:4) MOVL    $0,SI\n0005 (main.go:5) MOVL    $0,AX\n0006 (main.go:5) JMP     ,8\n0007 (main.go:5) INCL    ,AX\n0008 (main.go:5) CMPL    AX,DI\n0009 (main.go:5) JGE     $0,16\n0010 (main.go:5) MOVL    (CX),DX\n0011 (main.go:5) MOVQ    $4,BX\n0012 (main.go:5) ADDQ    CX,BX\n0013 (main.go:5) MOVQ    BX,CX\n0014 (main.go:6) ADDL    DX,SI\n0015 (main.go:5) JMP     ,7\n0016 (main.go:8) MOVL    SI,.noname+16(FP)\n0017 (main.go:8) RET     ,\n\nand now generates:\n\n--- prog list \"sum\" ---\n0000 (main.go:3) TEXT    sum+0(SB),$0-24\n0001 (main.go:5) MOVQ    s+0(FP),CX\n0002 (main.go:5) MOVL    s+8(FP),DI\n0003 (main.go:5) MOVL    s+12(FP),BX\n0004 (main.go:4) MOVL    $0,SI\n0005 (main.go:5) MOVL    $0,AX\n0006 (main.go:5) JMP     ,8\n0007 (main.go:5) INCL    ,AX\n0008 (main.go:5) CMPL    AX,DI\n0009 (main.go:5) JGE     $0,14\n0010 (main.go:5) MOVL    (CX),BP\n0011 (main.go:5) ADDQ    $4,CX\n0012 (main.go:6) ADDL    BP,SI\n0013 (main.go:5) JMP     ,7\n0014 (main.go:8) MOVL    SI,.noname+16(FP)\n0015 (main.go:8) RET     ,\n\nThe key difference is that\n0011 (main.go:5) MOVQ    $4,BX\n0012 (main.go:5) ADDQ    CX,BX\n0013 (main.go:5) MOVQ    BX,CX\nhas changed to\n0011 (main.go:5) ADDQ    $4,CX\n\nR=rsc, dave, remyoudompheng\nCC=golang-dev\nhttp://codereview.appspot.com/6506089",
+			"disapproval": false,
+			"date": "2012-09-11 09:44:44.703720",
+			"approval": false
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 6506089: cmd/gc: recognize small TPTR64 values as small integer ...",
+	"created": "2012-09-09 01:32:37.988000",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		10002
+	],
+	"modified": "2012-09-11 09:44:47.481550",
+	"closed": true,
+	"issue": 6506089
+}

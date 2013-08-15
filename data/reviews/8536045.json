@@ -1,0 +1,91 @@
+{
+	"description": "mime/multipart: don't strip leading space/tab in quoted-printable decoding\n\nLate bug fix, but this is arguably a regression from Go 1.0,\nsince we added this transparent decoding since then. Without\nthis fix, Go 1.0 users could decode this correctly, but Go 1.1\nusers would not be able to.\n\nThe newly added test is from the RFC itself.\n\nThe updated tests had the wrong \"want\" values before. They\nwere there to test \\r\\n vs \\n equivalence (which is\nunchanged), not leading whitespace.\n\nThe skipWhite decoder struct field was added in the battles of\nIssue 4771 in revision b3bb265bfecf. It was just a wrong\nstrategy, from an earlier round of attempts in\nhttps://codereview.appspot.com/7300092/\n\nUpdate issue 4771\nFixes issue 5295",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org"
+	],
+	"reviewers": [
+		"minux.ma@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-04-17 20:53:16.042580",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=minux, r\r\n\r\n\r\n\r\nOn Wed, Apr 17, 2013 at 1:53 PM, <bradfitz@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> mime/multipart: don't strip leading space/tab in quoted-printable\r\n> decoding\r\n>\r\n> Late bug fix, but this is arguably a regression from Go 1.0,\r\n> since we added this transparent decoding since then. Without\r\n> this fix, Go 1.0 users could decode this correctly, but Go 1.1\r\n> users would not be able to.\r\n>\r\n> The newly added test is from the RFC itself.\r\n>\r\n> The updated tests had the wrong \"want\" values before. They\r\n> were there to test \\r\\n vs \\n equivalence (which is\r\n> unchanged), not leading whitespace.\r\n>\r\n> The skipWhite decoder struct field was added in the battles of\r\n> Issue 4771 in revision b3bb265bfecf. It was just a wrong\r\n> strategy, from an earlier round of attempts in\r\n> https://codereview.appspot.**com/7300092/<https://codereview.appspot.com/7300092/>\r\n>\r\n> Update issue 4771\r\n> Fixes issue 5295\r\n>\r\n> Please review this at https://codereview.appspot.**com/8536045/<https://codereview.appspot.com/8536045/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/mime/multipart/**quotedprintable.go\r\n>   M src/pkg/mime/multipart/**quotedprintable_test.go\r\n>\r\n>\r\n> Index: src/pkg/mime/multipart/**quotedprintable.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/mime/multipart/**quotedprintable.go\r\n> +++ b/src/pkg/mime/multipart/**quotedprintable.go\r\n> @@ -55,10 +55,6 @@\r\n>         return hb<<4 | lb, nil\r\n>  }\r\n>\r\n> -func isQPSkipWhiteByte(b byte) bool {\r\n> -       return b == ' ' || b == '\\t'\r\n> -}\r\n> -\r\n>  func isQPDiscardWhitespace(r rune) bool {\r\n>         switch r {\r\n>         case '\\n', '\\r', ' ', '\\t':\r\n> @@ -79,7 +75,6 @@\r\n>                         if q.rerr != nil {\r\n>                                 return n, q.rerr\r\n>                         }\r\n> -                       q.skipWhite = true\r\n>                         q.line, q.rerr = q.br.ReadSlice('\\n')\r\n>\r\n>                         // Does the line end in CRLF instead of just LF?\r\n> @@ -103,11 +98,6 @@\r\n>                         continue\r\n>                 }\r\n>                 b := q.line[0]\r\n> -               if q.skipWhite && isQPSkipWhiteByte(b) {\r\n> -                       q.line = q.line[1:]\r\n> -                       continue\r\n> -               }\r\n> -               q.skipWhite = false\r\n>\r\n>                 switch {\r\n>                 case b == '=':\r\n> Index: src/pkg/mime/multipart/**quotedprintable_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/mime/multipart/**quotedprintable_test.go\r\n> +++ b/src/pkg/mime/multipart/**quotedprintable_test.go\r\n> @@ -32,8 +32,8 @@\r\n>                 {in: \"foo bar=0\", want: \"foo bar\", err:\r\n> io.ErrUnexpectedEOF},\r\n>                 {in: \"foo bar=ab\", want: \"foo bar\", err: \"multipart:\r\n> invalid quoted-printable hex byte 0x61\"},\r\n>                 {in: \"foo bar=0D=0A\", want: \"foo bar\\r\\n\"},\r\n> -               {in: \" A B =\\r\\n C \", want: \"A B C\"},\r\n> -               {in: \" A B =\\n C \", want: \"A B C\"}, // lax. treating LF as\r\n> CRLF\r\n> +               {in: \" A B =\\r\\n C \", want: \" A B  C\"},\r\n> +               {in: \" A B =\\n C \", want: \" A B  C\"}, // lax. treating LF\r\n> as CRLF\r\n>                 {in: \"foo=\\nbar\", want: \"foobar\"},\r\n>                 {in: \"foo\\x00bar\", want: \"foo\", err: \"multipart: invalid\r\n> unescaped byte 0x00 in quoted-printable body\"},\r\n>                 {in: \"foo bar\\xff\", want: \"foo bar\", err: \"multipart:\r\n> invalid unescaped byte 0xff in quoted-printable body\"},\r\n> @@ -57,6 +57,10 @@\r\n>                 {in: \"foo=\\nbar\", want: \"foobar\"},\r\n>                 {in: \"foo=\\rbar\", want: \"foo\", err: \"multipart: invalid\r\n> quoted-printable hex byte 0x0d\"},\r\n>                 {in: \"foo=\\r\\r\\r \\nbar\", want: \"foo\", err: `multipart:\r\n> invalid bytes after =: \"\\r\\r\\r \\n\"`},\r\n> +\r\n> +               // Exsample from RFC 2045:\r\n> +               {in: \"Now's the time =\\n\" + \"for all folk to come=\\n\" + \"\r\n> to the aid of their country.\",\r\n> +                       want: \"Now's the time for all folk to come to the\r\n> aid of their country.\"},\r\n>         }\r\n>         for _, tt := range tests {\r\n>                 var buf bytes.Buffer\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-17 20:58:27.484240",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-04-17 22:54:23.837640",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=fa6a760fcc63 ***\n\nmime/multipart: don't strip leading space/tab in quoted-printable decoding\n\nLate bug fix, but this is arguably a regression from Go 1.0,\nsince we added this transparent decoding since then. Without\nthis fix, Go 1.0 users could decode this correctly, but Go 1.1\nusers would not be able to.\n\nThe newly added test is from the RFC itself.\n\nThe updated tests had the wrong \"want\" values before. They\nwere there to test \\r\\n vs \\n equivalence (which is\nunchanged), not leading whitespace.\n\nThe skipWhite decoder struct field was added in the battles of\nIssue 4771 in revision b3bb265bfecf. It was just a wrong\nstrategy, from an earlier round of attempts in\nhttps://codereview.appspot.com/7300092/\n\nUpdate issue 4771\nFixes issue 5295\n\nR=golang-dev, r\nCC=golang-dev\nhttps://codereview.appspot.com/8536045",
+			"disapproval": false,
+			"date": "2013-04-18 03:05:12.187360",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.",
+			"disapproval": false,
+			"date": "2013-04-19 01:27:51.503390",
+			"approval": true
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 8536045: mime/multipart: don't strip leading space/tab in quoted...",
+	"created": "2013-04-17 20:52:18.637350",
+	"patchsets": [
+		1,
+		2001,
+		3003,
+		6002,
+		9001,
+		12001
+	],
+	"modified": "2013-04-19 01:27:51.569100",
+	"closed": true,
+	"issue": 8536045
+}

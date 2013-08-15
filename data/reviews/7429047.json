@@ -1,0 +1,71 @@
+{
+	"description": "go/types: fixed a few failure checks\n\nMore robustness in case of incorrect programs.\n\nFixes issue 4962.",
+	"cc": [
+		"dsymonds@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dsymonds@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-02 00:38:34.006000",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM, though I don't know this code. It looks plausible.\r\n\r\nIt presumably fixes issue 4962; that's what I care about.\r\n",
+			"disapproval": false,
+			"date": "2013-03-02 01:18:17.234730",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It does fix issue 4962.\r\n\r\nThe culprit was this missing check:\r\n\r\n        case *ast.IndexExpr:\r\n                check.expr(x, e.X, nil, iota)\r\n+               if x.mode == invalid {\r\n+                       goto Error\r\n+               }\r\n\r\nafter which it continued with some random x.typ which you saw. In turn, I\r\nwent through the code and checked for similar situations.\r\n\r\nThere's a TODO to streamline error handling, but this it not the CL.\r\n\r\nThanks for the bug.\r\n- gri\r\n\r\n\r\nOn Fri, Mar 1, 2013 at 5:18 PM, David Symonds <dsymonds@golang.org> wrote:\r\n\r\n> LGTM, though I don't know this code. It looks plausible.\r\n>\r\n> It presumably fixes issue 4962; that's what I care about.\r\n>\r\n\r\n\r\n\r\n\r\nOn Fri, Mar 1, 2013 at 4:38 PM, <gri@golang.org> wrote:\r\n\r\n> Reviewers: dsymonds,\r\n>\r\n> Message:\r\n> Hello dsymonds@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> go/types: fixed a few failure checks\r\n>\r\n> More robustness in case of incorrect programs.\r\n>\r\n> Fixes issue 4962.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7429047/<https://codereview.appspot.com/7429047/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/go/types/expr.go\r\n>   M src/pkg/go/types/stmt.go\r\n>\r\n>\r\n> Index: src/pkg/go/types/expr.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/go/types/expr.go\r\n> +++ b/src/pkg/go/types/expr.go\r\n> @@ -550,6 +550,15 @@\r\n>         check.expr(x, lhs, nil, iota)\r\n>         check.expr(&y, rhs, nil, iota)\r\n>\r\n> +       if x.mode == invalid {\r\n> +               return\r\n> +       }\r\n> +       if y.mode == invalid {\r\n> +               x.mode = invalid\r\n> +               x.expr = y.expr\r\n> +               return\r\n> +       }\r\n> +\r\n>         if isShift(op) {\r\n>                 check.shift(x, &y, op)\r\n>                 return\r\n> @@ -1089,6 +1098,9 @@\r\n>\r\n>         case *ast.IndexExpr:\r\n>                 check.expr(x, e.X, nil, iota)\r\n> +               if x.mode == invalid {\r\n> +                       goto Error\r\n> +               }\r\n>\r\n>                 valid := false\r\n>                 length := int64(-1) // valid if >= 0\r\n> @@ -1130,9 +1142,9 @@\r\n>                 case *Map:\r\n>                         var key operand\r\n>                         check.expr(&key, e.Index, nil, iota)\r\n> -                       if key.mode == invalid || !check.assignment(&key,\r\n> typ.Key) {\r\n> -                               if x.mode != invalid {\r\n> -                                       check.invalidOp(x.pos(), \"cannot\r\n> use %s as map index of type %s\", &key, typ.Key)\r\n> +                       if !check.assignment(&key, typ.Key) {\r\n> +                               if key.mode != invalid {\r\n> +                                       check.invalidOp(key.pos(), \"cannot\r\n> use %s as map index of type %s\", &key, typ.Key)\r\n>                                 }\r\n>                                 goto Error\r\n>                         }\r\n> @@ -1157,6 +1169,9 @@\r\n>\r\n>         case *ast.SliceExpr:\r\n>                 check.expr(x, e.X, nil, iota)\r\n> +               if x.mode == invalid {\r\n> +                       goto Error\r\n> +               }\r\n>\r\n>                 valid := false\r\n>                 length := int64(-1) // valid if >= 0\r\n> @@ -1367,10 +1382,19 @@\r\n>\r\n>         case *ast.UnaryExpr:\r\n>                 check.expr(x, e.X, nil, iota)\r\n> +               if x.mode == invalid {\r\n> +                       goto Error\r\n> +               }\r\n>                 check.unary(x, e.Op)\r\n> +               if x.mode == invalid {\r\n> +                       goto Error\r\n> +               }\r\n>\r\n>         case *ast.BinaryExpr:\r\n>                 check.binary(x, e.X, e.Y, e.Op, iota)\r\n> +               if x.mode == invalid {\r\n> +                       goto Error\r\n> +               }\r\n>\r\n>         case *ast.KeyValueExpr:\r\n>                 // key:value expressions are handled in composite literals\r\n> @@ -1423,7 +1447,9 @@\r\n>                 x.typ = &Chan{Dir: e.Dir, Elt: check.typ(e.Value, true)}\r\n>\r\n>         default:\r\n> -               check.dump(\"e = %s\", e)\r\n> +               if debug {\r\n> +                       check.dump(\"expr = %v (%T)\", e, e)\r\n> +               }\r\n>                 unreachable()\r\n>         }\r\n>\r\n> Index: src/pkg/go/types/stmt.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/go/types/stmt.go\r\n> +++ b/src/pkg/go/types/stmt.go\r\n> @@ -18,6 +18,10 @@\r\n>  // TODO(gri) This latter behavior is for historic reasons and complicates\r\n>  // callers. Needs to be cleaned up.\r\n>  func (check *checker) assignment(x *operand, to Type) bool {\r\n> +       if x.mode == invalid {\r\n> +               return false\r\n> +       }\r\n> +\r\n>         if t, ok := x.typ.(*Result); ok {\r\n>                 // TODO(gri) elsewhere we use \"assignment count mismatch\"\r\n> (consolidate)\r\n>                 check.errorf(x.pos(), \"%d-valued expression %s used as\r\n> single value\", len(t.Values), x)\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-02 01:30:18.257790",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=17a869d2ae24 ***\n\ngo/types: fixed a few failure checks\n\nMore robustness in case of incorrect programs.\n\nFixes issue 4962.\n\nR=dsymonds\nCC=golang-dev\nhttps://codereview.appspot.com/7429047",
+			"disapproval": false,
+			"date": "2013-03-02 01:39:52.141130",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 7429047: go/types: fixed a few failure checks",
+	"created": "2013-03-02 00:36:43.576080",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		10001
+	],
+	"modified": "2013-03-02 19:35:05.972920",
+	"closed": true,
+	"issue": 7429047
+}

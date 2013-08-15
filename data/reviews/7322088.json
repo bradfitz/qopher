@@ -1,0 +1,381 @@
+{
+	"description": "bufio: new Scanner interface\n\nAdd a new, simple interface for scanning (probably textual) data,\nbased on a new type called Scanner. It does its own internal buffering,\nso should be plausibly efficient even without injecting a bufio.Reader.\nThe format of the input is defined by a \"split function\", by default\nsplitting into lines. Other implemented split functions include single\nbytes, single runes, and space-separated words.\n\nHere's the loop to scan stdin as a file of lines:\n\n        s := bufio.NewScanner(os.Stdin)\n        for s.Scan() {\n                fmt.Printf(\"%s\\n\", s.Bytes())\n        }\n        if s.Err() != nil {\n                log.Fatal(s.Err())\n        }\n\nWhile we're dealing with spaces, define what space means to strings.Fields.\n\nFixes issue 4802.",
+	"cc": [
+		"adg@golang.org",
+		"rogpeppe@gmail.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode266\nsrc/pkg/bufio/scan.go:266: for i, c := range data {\nOn 2013/02/19 17:33:05, r wrote:\n> no we won't, because the maximum token size is 64K. i thought about this issue\n> but decided for a reasonable token maximum, the cost is affordable and dealing\n> with the problem adds significant complexity to the signature and implementation\n> of split functions. i'm comfortable with the current design.\n> \n> the IndexByte idea is good, though. i hadn't noticed that the package already\n> depends on \"bytes\".\n\nit seems a pity to wire 64K as a maximum, given the general nature of the scanning. we don't have many hard limits elsewhere.\n\ni'd assumed that a later CL might add a Scanner.MaxTokenSize method or NewScannerSize function.",
+			"disapproval": false,
+			"date": "2013-02-19 18:18:40.140910",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-02-17 00:58:41.729050",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode23\nsrc/pkg/bufio/scan.go:23: // Scanning stops, unrecoverably, at EOF, the first I/O error, or a\nremove commas around \"unrecoverably\"? confuses with the list that follows\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode29\nsrc/pkg/bufio/scan.go:29: // A typical scan loop over text lines looks like this:\nadd a testable example too? (or instead)\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode68\nsrc/pkg/bufio/scan.go:68: ErrNegativeAdvance = errors.New(\"Scanner: SplitFunc returns negative advance count\")\nThis error and the next feel like programmer error and worthy of a panic. Would people want to catch these errors programmatically?  I can't think of a reason why.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode113\nsrc/pkg/bufio/scan.go:113: // occurred during scanning, except that if it was a plain EOF, Err\ns/a plain EOF/an io.EOF/\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode113\nsrc/pkg/bufio/scan.go:113: // occurred during scanning, except that if it was a plain EOF, Err\nThis doc comment says more about Err than the comment\u00a0on Err.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode163\nsrc/pkg/bufio/scan.go:163: if n == 0 { // Don't loop forever if Reader doesn't deliver EOF.\nThis seems an unconventional precaution. Is there precedent?\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode174\nsrc/pkg/bufio/scan.go:174: s.setErr(ErrNegativeAdvance)\nYeah, I really reckon these should be panics. The only reason they'll happen is if the SplitFunc is busted.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode233\nsrc/pkg/bufio/scan.go:233: // We know it's an error: we have width==1and implicitly r==utf8.RuneError.\ns/1and/1 and/\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode256\nsrc/pkg/bufio/scan.go:256: }\ninstead of checking for the carriage return twice, you could write this here\n\ndefer func() {\n  if len(token) > 0 && token[len(token)-1] == '\\r' {\n    token = token[:len(token)-1]\n  }\n}()\n\nor make that a function splitCr(token []byte) []byte\nand return like\n  return i  + 1, splitCr(data[:i])\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode262\nsrc/pkg/bufio/scan.go:262: return i + 1, data[0 : i-1]\nthis line could be just\ndata = data[:i-1]\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode271\nsrc/pkg/bufio/scan.go:271: return len(data), data[0 : len(data)-1]\nditto\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode309\nsrc/pkg/bufio/scan.go:309: var width, start int\ndelete\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode310\nsrc/pkg/bufio/scan.go:310: for width, start = 0, 0; start < len(data); start += width {\ns/=/:=/",
+			"disapproval": false,
+			"date": "2013-02-17 01:27:32.073460",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode282\nsrc/pkg/bufio/scan.go:282: func isWhiteSpace(r rune) bool {\nisSpace?\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan_test.go\nFile src/pkg/bufio/scan_test.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan_test.go#newcode43\nsrc/pkg/bufio/scan_test.go:43: if len(s.Bytes()) != 1 || s.Bytes()[0] != test[i] {\nb := s.Bytes() ?\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan_test.go#newcode98\nsrc/pkg/bufio/scan_test.go:98: \" abc\\tdef\\nghi\\rjkl\\fmno\\vpqr\\u0085stu\\u00a0\\n\",\nhow about a test with more than one space character?\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan_test.go#newcode138\nsrc/pkg/bufio/scan_test.go:138: const max = 7\nit would be good to test even lower numbers, like 1\ncould make max a field of slowReader",
+			"disapproval": false,
+			"date": "2013-02-17 01:35:10.766090",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, adg@golang.org, rogpeppe@gmail.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-02-19 17:33:19.082210",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/export_test.go\nFile src/pkg/bufio/export_test.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/export_test.go#newcode7\nsrc/pkg/bufio/export_test.go:7: // Exported for testing only.\nImported?\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/export_test.go#newcode12\nsrc/pkg/bufio/export_test.go:12: func (s *Scanner) MaxTokenSize(n int) {\nBut why are these exported?\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/export_test.go#newcode23\nsrc/pkg/bufio/export_test.go:23: func IsWhiteSpace(r rune) bool {\nIsSpace?",
+			"disapproval": false,
+			"date": "2013-02-17 01:36:37.108280",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/export_test.go\nFile src/pkg/bufio/export_test.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/export_test.go#newcode7\nsrc/pkg/bufio/export_test.go:7: // Exported for testing only.\nOn 2013/02/17 01:36:37, adg wrote:\n> Imported?\n\nno, exported. this is export_test.go. its purpose is to export internals.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/export_test.go#newcode12\nsrc/pkg/bufio/export_test.go:12: func (s *Scanner) MaxTokenSize(n int) {\nOn 2013/02/17 01:36:37, adg wrote:\n> But why are these exported?\n\nso they can be used in the test.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode23\nsrc/pkg/bufio/scan.go:23: // Scanning stops, unrecoverably, at EOF, the first I/O error, or a\nOn 2013/02/17 01:27:32, adg wrote:\n> remove commas around \"unrecoverably\"? confuses with the list that follows\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode29\nsrc/pkg/bufio/scan.go:29: // A typical scan loop over text lines looks like this:\nOn 2013/02/17 01:27:32, adg wrote:\n> add a testable example too? (or instead)\n\nin another CL. there should be a simple intro here, and complete examples elsewhere. the CL is long enough already.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode68\nsrc/pkg/bufio/scan.go:68: ErrNegativeAdvance = errors.New(\"Scanner: SplitFunc returns negative advance count\")\nOn 2013/02/17 01:27:32, adg wrote:\n> This error and the next feel like programmer error and worthy of a panic. Would\n> people want to catch these errors programmatically?  I can't think of a reason\n> why.\n\ni thought of that, but then thought panics were out of place when there's a good error mechanism in place. i could be talked into changing my mind again.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode113\nsrc/pkg/bufio/scan.go:113: // occurred during scanning, except that if it was a plain EOF, Err\nOn 2013/02/17 01:27:32, adg wrote:\n> s/a plain EOF/an io.EOF/\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode113\nsrc/pkg/bufio/scan.go:113: // occurred during scanning, except that if it was a plain EOF, Err\nOn 2013/02/17 01:27:32, adg wrote:\n> This doc comment says more about Err than the comment&nbsp;on Err.\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode174\nsrc/pkg/bufio/scan.go:174: s.setErr(ErrNegativeAdvance)\nOn 2013/02/17 01:27:32, adg wrote:\n> Yeah, I really reckon these should be panics. The only reason they'll happen is\n> if the SplitFunc is busted.\n\ni'll let others weigh in. i don't like panics.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode233\nsrc/pkg/bufio/scan.go:233: // We know it's an error: we have width==1and implicitly r==utf8.RuneError.\nOn 2013/02/17 01:27:32, adg wrote:\n> s/1and/1 and/\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode256\nsrc/pkg/bufio/scan.go:256: }\ni certainly don't want a defer. a function might be nice.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode262\nsrc/pkg/bufio/scan.go:262: return i + 1, data[0 : i-1]\nOn 2013/02/17 01:27:32, adg wrote:\n> this line could be just\n> data = data[:i-1]\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode271\nsrc/pkg/bufio/scan.go:271: return len(data), data[0 : len(data)-1]\nOn 2013/02/17 01:27:32, adg wrote:\n> ditto\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode282\nsrc/pkg/bufio/scan.go:282: func isWhiteSpace(r rune) bool {\nOn 2013/02/17 01:35:10, adg wrote:\n> isSpace?\n\nit is Unicode White_Space, so no.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode310\nsrc/pkg/bufio/scan.go:310: for width, start = 0, 0; start < len(data); start += width {\nOn 2013/02/17 01:27:32, adg wrote:\n> s/=/:=/\n\nstart is used after the loop. in fact, the purpose of this loop is to set start.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan_test.go\nFile src/pkg/bufio/scan_test.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan_test.go#newcode43\nsrc/pkg/bufio/scan_test.go:43: if len(s.Bytes()) != 1 || s.Bytes()[0] != test[i] {\nOn 2013/02/17 01:35:10, adg wrote:\n> b := s.Bytes() ?\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan_test.go#newcode98\nsrc/pkg/bufio/scan_test.go:98: \" abc\\tdef\\nghi\\rjkl\\fmno\\vpqr\\u0085stu\\u00a0\\n\",\nOn 2013/02/17 01:35:10, adg wrote:\n> how about a test with more than one space character?\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan_test.go#newcode138\nsrc/pkg/bufio/scan_test.go:138: const max = 7\nOn 2013/02/17 01:35:10, adg wrote:\n> it would be good to test even lower numbers, like 1\n> could make max a field of slowReader\n\nDone.",
+			"disapproval": false,
+			"date": "2013-02-17 02:23:22.405760",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "now i'm leaning towards putting an error in.  it's trivial to handle in Scan and makes it possible to do things like scan numerical data but catch errors neatly.\n\nany error would terminate the scan immediately.",
+			"disapproval": false,
+			"date": "2013-02-19 18:27:36.746990",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode201\nsrc/pkg/bufio/scan.go:201: // Bytes is a split function that returns each byte as a token.\nThis will look weird in godoc for pkg/bufio.  If this is going to be named like this, the docs should at least reference the Scanner type.",
+			"disapproval": false,
+			"date": "2013-02-18 20:09:25.781870",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-02-17 02:23:45.946860",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode282\nsrc/pkg/bufio/scan.go:282: func isWhiteSpace(r rune) bool {\nOn 2013/02/17 02:23:22, r wrote:\n> On 2013/02/17 01:35:10, adg wrote:\n> > isSpace?\n> \n> it is Unicode White_Space, so no.\n\nBut in the unicode package it's IsSpace... I thought it was your call originally to avoid the \"white\" part.\n\nNo big deal though.\n\nhttps://codereview.appspot.com/7322088/diff/1/src/pkg/bufio/scan.go#newcode310\nsrc/pkg/bufio/scan.go:310: for width, start = 0, 0; start < len(data); start += width {\nOn 2013/02/17 02:23:22, r wrote:\n> On 2013/02/17 01:27:32, adg wrote:\n> > s/=/:=/\n> \n> start is used after the loop. in fact, the purpose of this loop is to set start.\n\nah, I missed that.\n\nIn that case, it might be clearer to write:\n\nstart := 0\nfor width := 0; start < len(data); start += width {\n...",
+			"disapproval": false,
+			"date": "2013-02-18 03:01:45.106260",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/export_test.go\nFile src/pkg/bufio/export_test.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/export_test.go#newcode22\nsrc/pkg/bufio/export_test.go:22: func IsSpace(r rune) bool {\ndone, but seems tricky\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode16\nsrc/pkg/bufio/scan.go:16: // Scanner.Scan will step through the 'tokens' of a file, skipping\nOn 2013/02/19 17:53:44, rsc wrote:\n> s/Scanner.//\n> \n> There is no Scanner.Scan; there's a (*Scanner).Scan.\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode25\nsrc/pkg/bufio/scan.go:25: // token too large to fit in the buffer. When a scan stops, the Reader\nOn 2013/02/19 17:53:44, rsc wrote:\n> Unqualified Reader here should refer to bufio.Reader but it refers to io.Reader.\n> I think you can sidestep the issue by s/R/r/.\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode28\nsrc/pkg/bufio/scan.go:28: // scans on a Reader, should use bufio.Reader instead.\nOn 2013/02/19 17:53:44, rsc wrote:\n> Same problem. s/ on a Reader//\n> Technically, should s/bufio.// too but I guess it's fine.\n> \n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode30\nsrc/pkg/bufio/scan.go:30: // A typical scan loop over text lines looks like this:\ni weakly disagree. i will provide examples later, but since this simple interface is for simpletons, and for the vast majority of uses this loop has all the usage information you need, is it worth putting it elsewhere?\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode64\nsrc/pkg/bufio/scan.go:64: type SplitFunc func(data []byte, atEOF bool) (advance int, token []byte)\nOn 2013/02/19 17:53:44, rsc wrote:\n> I wonder if SplitFunc should be allowed to return an error.\n\nit's more complicated, and in the four i wrote the issue never came up. is it important?\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode68\nsrc/pkg/bufio/scan.go:68: ErrTooLong         = errors.New(\"Scanner: token too long\")\nOn 2013/02/19 17:53:44, rsc wrote:\n> s/Scanner/bufio/? \n> Usually our errors say the package name.\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode89\nsrc/pkg/bufio/scan.go:89: // Err returns the first error encountered by the Scanner unless that error is io.EOF,\nOn 2013/02/19 17:53:44, rsc wrote:\n> // Err returns the first non-EOF error encountered by the Scanner.\n\nDone. That's exactly the text I had before adg complained it was too short.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode105\nsrc/pkg/bufio/scan.go:105: // String returns the most recent token generated by a call to Scan\nOn 2013/02/19 17:53:44, rsc wrote:\n> s/String/Text/\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode214\nsrc/pkg/bufio/scan.go:214: var errorRune = []byte{'\\xEF', '\\xBF', '\\xBD'} // []byte(string(utf8.RuneError))\nOn 2013/02/19 17:53:44, rsc wrote:\n> I think the compiler will do var errorRune = []byte(string(utf8.RuneError)) just\n> fine.\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode216\nsrc/pkg/bufio/scan.go:216: // Runes is a split function for a Scanner that returns each UTF-8-encoded\nchanged to ScanRunes etc.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode265\nsrc/pkg/bufio/scan.go:265: // one mandatory newline. In regular expression notation, it is `\\r?\\n',\nOn 2013/02/19 17:53:44, rsc wrote:\n> s/,/./\n> next line\n> s/although the/The/\n> \n> I don't believe the end-of-input behavior is related to the regexp.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-02-19 18:14:36.207550",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM with a few remarks below.\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/export_test.go\nFile src/pkg/bufio/export_test.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/export_test.go#newcode15\nsrc/pkg/bufio/export_test.go:15: } else {\nlose the else?\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode84\nsrc/pkg/bufio/scan.go:84: buf:          make([]byte, 4096), // Plausible starting size; needn't be large.\nit would be nice if we could use the reader's buffer when it's a bufio.Reader, but perhaps that's too much chumminess between types.\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode152\nsrc/pkg/bufio/scan.go:152: newBuf := make([]byte, len(s.buf)*2)\ni wonder if the new buffer size should be limited to maxTokenSize.\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode266\nsrc/pkg/bufio/scan.go:266: for i, c := range data {\ni'm concerned that for very long lines this will do more work than necessary.\n\nfor instance, if we have a 1MB-long line and the underlying reader is returning data in 4K chunks, we'll end up scanning 128MB rather than 1MB.\n\nif there was an argument to SplitFunc that provided the amount of previously seen data, this would be easy to avoid without changing the rest of the interface.\n\nalso we should probably use bytes.IndexByte.\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode311\nsrc/pkg/bufio/scan.go:311: for width, start = 0, 0; start < len(data); start += width {\nyou could lose the initialization if you wanted.",
+			"disapproval": false,
+			"date": "2013-02-18 15:04:11.772970",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/export_test.go\nFile src/pkg/bufio/export_test.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/export_test.go#newcode15\nsrc/pkg/bufio/export_test.go:15: } else {\nOn 2013/02/18 15:04:11, rog wrote:\n> lose the else?\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode84\nsrc/pkg/bufio/scan.go:84: buf:          make([]byte, 4096), // Plausible starting size; needn't be large.\nthe purpose of this buffer is very different from bufio's. i'm not even sure how to share.\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode152\nsrc/pkg/bufio/scan.go:152: newBuf := make([]byte, len(s.buf)*2)\nOn 2013/02/18 15:04:11, rog wrote:\n> i wonder if the new buffer size should be limited to maxTokenSize.\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode201\nsrc/pkg/bufio/scan.go:201: // Bytes is a split function that returns each byte as a token.\nOn 2013/02/18 20:09:25, bradfitz wrote:\n> This will look weird in godoc for pkg/bufio.  If this is going to be named like\n> this, the docs should at least reference the Scanner type.\n\nDone.\n\nhttps://codereview.appspot.com/7322088/diff/3002/src/pkg/bufio/scan.go#newcode266\nsrc/pkg/bufio/scan.go:266: for i, c := range data {\nno we won't, because the maximum token size is 64K. i thought about this issue but decided for a reasonable token maximum, the cost is affordable and dealing with the problem adds significant complexity to the signature and implementation of split functions. i'm comfortable with the current design.\n\nthe IndexByte idea is good, though. i hadn't noticed that the package already depends on \"bytes\".",
+			"disapproval": false,
+			"date": "2013-02-19 17:33:05.804800",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think your recent update came in while I was looking at this older copy.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/export_test.go\nFile src/pkg/bufio/export_test.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/export_test.go#newcode22\nsrc/pkg/bufio/export_test.go:22: func IsSpace(r rune) bool {\nfine but even easier is: var IsSpace = isSpace\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode16\nsrc/pkg/bufio/scan.go:16: // Scanner.Scan will step through the 'tokens' of a file, skipping\ns/Scanner.//\n\nThere is no Scanner.Scan; there's a (*Scanner).Scan.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode25\nsrc/pkg/bufio/scan.go:25: // token too large to fit in the buffer. When a scan stops, the Reader\nUnqualified Reader here should refer to bufio.Reader but it refers to io.Reader.\nI think you can sidestep the issue by s/R/r/.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode28\nsrc/pkg/bufio/scan.go:28: // scans on a Reader, should use bufio.Reader instead.\nSame problem. s/ on a Reader//\nTechnically, should s/bufio.// too but I guess it's fine.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode30\nsrc/pkg/bufio/scan.go:30: // A typical scan loop over text lines looks like this:\nMove this into a func ExampleScanner.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode64\nsrc/pkg/bufio/scan.go:64: type SplitFunc func(data []byte, atEOF bool) (advance int, token []byte)\nI wonder if SplitFunc should be allowed to return an error.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode68\nsrc/pkg/bufio/scan.go:68: ErrTooLong         = errors.New(\"Scanner: token too long\")\ns/Scanner/bufio/? \nUsually our errors say the package name.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode89\nsrc/pkg/bufio/scan.go:89: // Err returns the first error encountered by the Scanner unless that error is io.EOF,\n// Err returns the first non-EOF error encountered by the Scanner.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode105\nsrc/pkg/bufio/scan.go:105: // String returns the most recent token generated by a call to Scan\ns/String/Text/\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode214\nsrc/pkg/bufio/scan.go:214: var errorRune = []byte{'\\xEF', '\\xBF', '\\xBD'} // []byte(string(utf8.RuneError))\nI think the compiler will do var errorRune = []byte(string(utf8.RuneError)) just fine.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode216\nsrc/pkg/bufio/scan.go:216: // Runes is a split function for a Scanner that returns each UTF-8-encoded\nThe names Runes, Lines, etc seem like they might be a bit too short, at least in the context of package bufio as opposed to a separate package just for scanning.\n\nPerhaps ScanRunes, ScanLines, ScanWords? That has two benefits: it suggests looking for Scan (found in Scanner) and it will put the three functions next to each other in the documentation.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode265\nsrc/pkg/bufio/scan.go:265: // one mandatory newline. In regular expression notation, it is `\\r?\\n',\ns/,/./\nnext line\ns/although the/The/\n\nI don't believe the end-of-input behavior is related to the regexp.",
+			"disapproval": false,
+			"date": "2013-02-19 17:53:44.758760",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Actually, looks like I did comment on the right (latest) version.",
+			"disapproval": false,
+			"date": "2013-02-19 17:54:22.243410",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go\nFile src/pkg/bufio/scan.go (right):\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode30\nsrc/pkg/bufio/scan.go:30: // A typical scan loop over text lines looks like this:\nOn 2013/02/19 18:14:36, r wrote:\n> i weakly disagree. i will provide examples later, but since this simple\n> interface is for simpletons, and for the vast majority of uses this loop has all\n> the usage information you need, is it worth putting it elsewhere?\n\nYes, because if it's an executable example it will not drift out of date, and also people will be able to edit and play when viewing it on golang.org.\n\nhttps://codereview.appspot.com/7322088/diff/3003/src/pkg/bufio/scan.go#newcode64\nsrc/pkg/bufio/scan.go:64: type SplitFunc func(data []byte, atEOF bool) (advance int, token []byte)\nOn 2013/02/19 18:14:36, r wrote:\n> On 2013/02/19 17:53:44, rsc wrote:\n> > I wonder if SplitFunc should be allowed to return an error.\n> \n> it's more complicated, and in the four i wrote the issue never came up. is it\n> important?\n\nno, i think it's fine to leave out.",
+			"disapproval": false,
+			"date": "2013-02-19 18:23:33.533560",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, adg@golang.org, rogpeppe@gmail.com, bradfitz@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-02-19 18:14:49.785640",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't have a strong opinion on whether SplitFunc returns an error or doesn't. I just thought it was worth bringing up. Either way is fine with me.",
+			"disapproval": false,
+			"date": "2013-02-19 18:30:12.962980",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Again, and strongly, this is supposed to be convenient for workaday\r\njobs. You are pushing to make it something of greater engineering\r\npower, and that requires complexity I am trying to avoid.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-02-19 18:21:20.531710",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adg@golang.org, rogpeppe@gmail.com, bradfitz@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-02-19 22:49:32.703330",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=f685026a2d38 ***\n\nbufio: new Scanner interface\n\nAdd a new, simple interface for scanning (probably textual) data,\nbased on a new type called Scanner. It does its own internal buffering,\nso should be plausibly efficient even without injecting a bufio.Reader.\nThe format of the input is defined by a \"split function\", by default\nsplitting into lines. Other implemented split functions include single\nbytes, single runes, and space-separated words.\n\nHere's the loop to scan stdin as a file of lines:\n\n        s := bufio.NewScanner(os.Stdin)\n        for s.Scan() {\n                fmt.Printf(\"%s\\n\", s.Bytes())\n        }\n        if s.Err() != nil {\n                log.Fatal(s.Err())\n        }\n\nWhile we're dealing with spaces, define what space means to strings.Fields.\n\nFixes issue 4802.\n\nR=adg, rogpeppe, bradfitz, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/7322088",
+			"disapproval": false,
+			"date": "2013-02-20 20:14:37.628150",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-02-20 18:33:47.080030",
+			"approval": true
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 7322088: bufio: new Scanner interface",
+	"created": "2013-02-17 00:58:36.058680",
+	"patchsets": [
+		1,
+		3002,
+		3003,
+		23001,
+		1006,
+		21007,
+		11008,
+		27002,
+		23007,
+		24007,
+		41001
+	],
+	"modified": "2013-02-20 18:33:47.080030",
+	"closed": true,
+	"issue": 7322088
+}

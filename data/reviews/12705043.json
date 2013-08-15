@@ -1,0 +1,75 @@
+{
+	"description": "net: make IP implement encoding.MarshalerText, encoding.UnmarshalerText\n\nSee golang.org/s/go12encoding for design.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"mikioh.mikioh@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-09 19:31:11.622500",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\n\r\n\r\nOn Fri, Aug 9, 2013 at 12:31 PM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> net: make IP implement encoding.MarshalerText, encoding.UnmarshalerText\r\n>\r\n> See golang.org/s/go12encoding for design.\r\n>\r\n> Please review this at https://codereview.appspot.**com/12705043/<https://codereview.appspot.com/12705043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/ip.go\r\n>   M src/pkg/net/ip_test.go\r\n>\r\n>\r\n> Index: src/pkg/net/ip.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ip.go\r\n> +++ b/src/pkg/net/ip.go\r\n> @@ -12,6 +12,8 @@\r\n>\r\n>  package net\r\n>\r\n> +import \"errors\"\r\n> +\r\n>  // IP address lengths (bytes).\r\n>  const (\r\n>         IPv4len = 4\r\n> @@ -310,6 +312,27 @@\r\n>         return s\r\n>  }\r\n>\r\n> +// MarshalText implements the encoding.TextMarshaler interface.\r\n> +// The encoding is the same as returned by String.\r\n> +func (ip IP) MarshalText() ([]byte, error) {\r\n> +       if len(ip) != IPv4len && len(ip) != IPv6len {\r\n> +               return nil, errors.New(\"invalid IP address\")\r\n> +       }\r\n> +       return []byte(ip.String()), nil\r\n> +}\r\n> +\r\n> +// UnmarshalText implements the encoding.TextUnmarshaler interface.\r\n> +// The IP address is expected in a form accepted by ParseIP.\r\n> +func (ip *IP) UnmarshalText(text []byte) error {\r\n> +       s := string(text)\r\n> +       x := ParseIP(s)\r\n> +       if x == nil {\r\n> +               return &ParseError{\"IP address\", s}\r\n> +       }\r\n> +       *ip = x\r\n> +       return nil\r\n> +}\r\n> +\r\n>  // Equal returns true if ip and x are the same IP address.\r\n>  // An IPv4 address and that same address in IPv6 form are\r\n>  // considered to be equal.\r\n> Index: src/pkg/net/ip_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ip_test.go\r\n> +++ b/src/pkg/net/ip_test.go\r\n> @@ -32,6 +32,11 @@\r\n>                 if out := ParseIP(tt.in); !reflect.DeepEqual(out, tt.out)\r\n> {\r\n>                         t.Errorf(\"ParseIP(%q) = %v, want %v\", tt.in, out,\r\n> tt.out)\r\n>                 }\r\n> +               var out IP\r\n> +\r\n> +               if err := out.UnmarshalText([]byte(tt.in**));\r\n> !reflect.DeepEqual(out, tt.out) || (tt.out == nil) != (err != nil) {\r\n> +                       t.Errorf(\"IP.UnmarshalText(%q) = %v, %v, want %v\",\r\n> tt.in, out, err, tt.out)\r\n> +               }\r\n>         }\r\n>  }\r\n>\r\n> @@ -47,6 +52,7 @@\r\n>         {IP{0x20, 0x1, 0xd, 0xb8, 0, 0, 0, 0, 0, 0x1, 0, 0, 0, 0, 0, 0},\r\n> \"2001:db8:0:0:1::\"},\r\n>         {IP{0x20, 0x1, 0xd, 0xb8, 0, 0, 0, 0, 0, 0x1, 0, 0, 0, 0, 0, 0x1},\r\n> \"2001:db8::1:0:0:1\"},\r\n>         {IP{0x20, 0x1, 0xD, 0xB8, 0, 0, 0, 0, 0, 0xA, 0, 0xB, 0, 0xC, 0,\r\n> 0xD}, \"2001:db8::a:b:c:d\"},\r\n> +       {IPv4(192, 168, 0, 1), \"192.168.0.1\"},\r\n>         {nil, \"<nil>\"},\r\n>  }\r\n>\r\n> @@ -55,6 +61,15 @@\r\n>                 if out := tt.in.String(); out != tt.out {\r\n>                         t.Errorf(\"IP.String(%v) = %q, want %q\", tt.in,\r\n> out, tt.out)\r\n>                 }\r\n> +               if tt.in != nil {\r\n> +                       if out, err := tt.in.MarshalText(); string(out) !=\r\n> tt.out || err != nil {\r\n> +                               t.Errorf(\"IP.MarshalText(%v) = %q, %v,\r\n> want %q, nil\", out, err, tt.out)\r\n> +                       }\r\n> +               } else {\r\n> +                       if _, err := tt.in.MarshalText(); err == nil {\r\n> +                               t.Errorf(\"IP.MarshalText(nil) succeeded,\r\n> want failure\")\r\n> +                       }\r\n> +               }\r\n>         }\r\n>  }\r\n>\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 19:31:59.861500",
+			"approval": true
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Fixes issue 5086?\n\nhttps://codereview.appspot.com/12705043/diff/3001/src/pkg/net/ip.go\nFile src/pkg/net/ip.go (right):\n\nhttps://codereview.appspot.com/12705043/diff/3001/src/pkg/net/ip.go#newcode319\nsrc/pkg/net/ip.go:319: return nil, errors.New(\"invalid IP address\")\nwhy not use InvalidAddrError?",
+			"disapproval": false,
+			"date": "2013-08-10 00:05:25.596660",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7c4368941249 ***\n\nnet: make IP implement encoding.MarshalerText, encoding.UnmarshalerText\n\nSee golang.org/s/go12encoding for design.\n\nR=golang-dev, bradfitz, mikioh.mikioh\nCC=golang-dev\nhttps://codereview.appspot.com/12705043",
+			"disapproval": false,
+			"date": "2013-08-14 04:33:24.626190",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 12705043: net: make IP implement encoding.MarshalerText, encoding...",
+	"created": "2013-08-09 19:23:54.617540",
+	"patchsets": [
+		1,
+		3001,
+		8001
+	],
+	"modified": "2013-08-14 04:33:27.129140",
+	"closed": true,
+	"issue": 12705043
+}

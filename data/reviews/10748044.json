@@ -1,0 +1,129 @@
+{
+	"description": "go.tools/go/types: implement New, Eval and EvalNode\n\nEval and EvalNode permit the evaluation of an expression\nor type literal string (or AST node in case of EvalNode)\nwithin a given context (package and scope).\n\nAlso:\n- track nested (children) scopes for all scopes\n- provide a mechanism to iterate over nested scopes\n- permit recursive printing of scopes\n\nTODO: more tests",
+	"cc": [
+		"adonovan@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.tools",
+			"disapproval": false,
+			"date": "2013-07-12 01:13:23.413540",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-07-12 04:04:08.388180",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10748044/diff/30001/go/types/eval.go\nFile go/types/eval.go (right):\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval.go#newcode23\ngo/types/eval.go:23: // New is a convenience function to create a new type from a given\nDon't forget to update this if/when you remove the other constructors.\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval.go#newcode57\ngo/types/eval.go:57: func Eval(pkg *Package, scope *Scope, str string) (typ Type, val exact.Value, err error) {\nWe need to think carefully about FileSets.  We really want to avoid the situation where the user has to worry about the question \"which fileset does this pos belong to?\" and I think that means we have to be explicit about FileSets everywhere.\n\nInitially I thought we could worry about this later because we don't create new types.Objects yet---but in fact we do.   Consider:\n   \"interface { String() string }\"\n   \"struct { x int }\" \nString and x are objects, with positions.  Those positions should be correct, even if they're not real files. I'd rather see this in an error message from a tool:\n\n  <internal>:1:13: error: problem with method String\n\nthan spend time wondering why an error is reported in the middle of an arbitrary source file.\n\nSo I think the API should look more like this:\n\n  var fset *token.FileSet = ...\n  var texpr ast.Expr\n  texpr, err := types.ParseType(fset, \"internal\", \"interface{ String() string }\")\n  \n  var pkg *types.Package\n  var scope *types.Scope\n  var typ types.Type\n  typ, err := types.ResolveType(texpr, pkg, scope)\n\nSince this package contains not just the type checker but also the name resolver, in the future I think it's likely we'll want additional functions:\n\n  ParseExpr, ResolveExpr\n  ParseStmt, ResolveStmt\n  etc.\n\n(Consider a debugger that lets you evaluate an expression within the scope of current breakpoint.)\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval.go#newcode57\ngo/types/eval.go:57: func Eval(pkg *Package, scope *Scope, str string) (typ Type, val exact.Value, err error) {\nAvoid the name \"Eval\" since it connotes a function from string to value.\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval.go#newcode58\ngo/types/eval.go:58: node, err := parser.ParseExpr(str)\nThat parser.ParseExpr doesn't accept a *token.FileSet seems like a mistake.  Can we not add another function to that package?\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval_test.go\nFile go/types/eval_test.go (right):\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval_test.go#newcode11\ngo/types/eval_test.go:11: func testEval(t *testing.T, pkg *Package, scope *Scope, str string, typ Type, typStr, valStr string) {\nA docstring would be good since the use of parameters is somewhat subtle.\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/scope.go\nFile go/types/scope.go (right):\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/scope.go#newcode49\ngo/types/scope.go:49: func (s *Scope) Node() ast.Node {\nTODO(gri): consider whether we want to pin ASTs in memory.\nPerhaps this could be expressed like the other callbacks (or whatever they become, e.g. a container of results separable from the types themselves)\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/scope.go#newcode158\ngo/types/scope.go:158: func (s *Scope) WriteTo(w io.Writer, n int, recurse bool) {\nIs there an established convention in my code for naming such methods?  I've used DumpTo but I'm not satisfied with it; WriteTo seems better.\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/scope.go#newcode168\ngo/types/scope.go:168: indn1 := indn + ind\nOr just:\n\nfmt.Fprintf(w, \"%s%s%s\\n\", indn, ind, obj)\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/types_test.go\nFile go/types/types_test.go (left):\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/types_test.go#oldcode59\ngo/types/types_test.go:59: elems []T\nWhat happens to this input now?\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/types_test.go\nFile go/types/types_test.go (right):\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/types_test.go#newcode37\ngo/types/types_test.go:37: var testTypes = []testEntry{\n// These entries are also inputs to testEval in eval.go",
+			"disapproval": false,
+			"date": "2013-07-12 14:28:58.559390",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\n- moved str to first position in argument list\n- fixed fset computation (missing SetLinesForContent)\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval.go\nFile go/types/eval.go (right):\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval.go#newcode23\ngo/types/eval.go:23: // New is a convenience function to create a new type from a given\nOn 2013/07/12 14:28:58, adonovan wrote:\n> Don't forget to update this if/when you remove the other constructors.\n\nI meant convenience in the sense that one doesn't need to call Eval. Rephrased.\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval.go#newcode57\ngo/types/eval.go:57: func Eval(pkg *Package, scope *Scope, str string) (typ Type, val exact.Value, err error) {\nOn 2013/07/12 14:28:58, adonovan wrote:\n> Avoid the name \"Eval\" since it connotes a function from string to value.\n\nI really like Eval here, because that is exactly what it does: it's a function from a string to a value, where the value is the type. That's the whole point of the type checker - evaluating to types.\n\nhttps://codereview.appspot.com/10748044/diff/30001/go/types/eval.go#newcode57\ngo/types/eval.go:57: func Eval(pkg *Package, scope *Scope, str string) (typ Type, val exact.Value, err error) {\nOn 2013/07/12 14:28:58, adonovan wrote:\n> We need to think carefully about FileSets.  We really want to avoid the\n> situation where the user has to worry about the question \"which fileset does\n> this pos belong to?\" and I think that means we have to be explicit about\n> FileSets everywhere.\n> \n> Initially I thought we could worry about this later because we don't create new\n> types.Objects yet---but in fact we do.   Consider:\n>    \"interface { String() string }\"\n>    \"struct { x int }\" \n> String and x are objects, with positions.  Those positions should be correct,\n> even if they're not real files. I'd rather see this in an error message from a\n> tool:\n> \n>   <internal>:1:13: error: problem with method String\n> \n> than spend time wondering why an error is reported in the middle of an arbitrary\n> source file.\n> \n> So I think the API should look more like this:\n> \n>   var fset *token.FileSet = ...\n>   var texpr ast.Expr\n>   texpr, err := types.ParseType(fset, \"internal\", \"interface{ String() string\n> }\")\n>   \n>   var pkg *types.Package\n>   var scope *types.Scope\n>   var typ types.Type\n>   typ, err := types.ResolveType(texpr, pkg, scope)\n> \n> Since this package contains not just the type checker but also the name\n> resolver, in the future I think it's likely we'll want additional functions:\n> \n>   ParseExpr, ResolveExpr\n>   ParseStmt, ResolveStmt\n>   etc.\n> \n> (Consider a debugger that lets you evaluate an expression within the scope of\n> current breakpoint.)\n\nThe whole point of New and Eval is to be easy to use. Error messages will write position information pertinent to the input string.\n\nIf a FileSet is needed, EvalNode is the function to use. It can grow in terms of the kind of nodes it might accept in the future (statements, declarations, etc.). We can change the argument to ast.Node if needed (API is not frozen).\n\nI don't want to add ParseX functionality here - and also not in the parser, for now.",
+			"disapproval": false,
+			"date": "2013-07-12 16:38:59.205320",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/10748044/diff/44001/go/types/eval.go\nFile go/types/eval.go (right):\n\nhttps://codereview.appspot.com/10748044/diff/44001/go/types/eval.go#newcode22\ngo/types/eval.go:22: // and fields in types in Universe scope.\nPlease document that using any of these functions to parse types that define names, such as String, x below:\n\n  interface{ String() string }\n  struct { x int }\n\nwill contain garbage position info for their Objects.\n\nhttps://codereview.appspot.com/10748044/diff/44001/go/types/eval.go#newcode38\ngo/types/eval.go:38: // agrees that it's the best name for the functionality provided.\nThat's putting it mildly. :)\n\n'eval' is universally understood to mean dynamic evaluation of an program expression or statements, not static analysis (name resolution, constant folding, type checking).  Evaluation contains the root of the word \"value\", which has a technical meaning different from \"type\".  Indeed, the signature of this function also contains \"val exact.Value\", so the potential for confusion is very great. \n\nI would prefer a name like ResolveExpr or CheckExpr.\n\nIn the interests of progres, LG for now, but we should discuss with Rob.",
+			"disapproval": false,
+			"date": "2013-07-12 17:58:33.423860",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10748044/diff/44001/go/types/eval.go\nFile go/types/eval.go (right):\n\nhttps://codereview.appspot.com/10748044/diff/44001/go/types/eval.go#newcode22\ngo/types/eval.go:22: // and fields in types in Universe scope.\nOn 2013/07/12 17:58:33, adonovan wrote:\n> Please document that using any of these functions to parse types that define\n> names, such as String, x below:\n> \n>   interface{ String() string }\n>   struct { x int }\n> \n> will contain garbage position info for their Objects.\n\nDone.\n\nhttps://codereview.appspot.com/10748044/diff/44001/go/types/eval.go#newcode38\ngo/types/eval.go:38: // agrees that it's the best name for the functionality provided.\nOn 2013/07/12 17:58:33, adonovan wrote:\n> That's putting it mildly. :)\n> \n> 'eval' is universally understood to mean dynamic evaluation of an program\n> expression or statements, not static analysis (name resolution, constant\n> folding, type checking).  Evaluation contains the root of the word \"value\",\n> which has a technical meaning different from \"type\".  Indeed, the signature of\n> this function also contains \"val exact.Value\", so the potential for confusion is\n> very great. \n> \n> I would prefer a name like ResolveExpr or CheckExpr.\n> \n> In the interests of progres, LG for now, but we should discuss with Rob.\n\nACK",
+			"disapproval": false,
+			"date": "2013-07-12 18:03:02.108860",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=70059fa0a39e&repo=tools ***\n\ngo.tools/go/types: implement New, Eval and EvalNode\n\nEval and EvalNode permit the evaluation of an expression\nor type literal string (or AST node in case of EvalNode)\nwithin a given context (package and scope).\n\nAlso:\n- track nested (children) scopes for all scopes\n- provide a mechanism to iterate over nested scopes\n- permit recursive printing of scopes\n\nTODO: more tests\n\nR=adonovan\nCC=golang-dev\nhttps://codereview.appspot.com/10748044",
+			"disapproval": false,
+			"date": "2013-07-12 18:03:38.157040",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 10748044: go.tools/go/types: implement Eval and EvalNode",
+	"created": "2013-07-12 01:08:53.217090",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		8001,
+		7013,
+		13001,
+		16001,
+		19001,
+		6002,
+		23001,
+		26001,
+		29001,
+		30001,
+		33002,
+		41001,
+		44001,
+		49001
+	],
+	"modified": "2013-07-12 18:03:39.591590",
+	"closed": true,
+	"issue": 10748044
+}

@@ -1,0 +1,134 @@
+{
+	"description": "go.text/transform: improve comments based on review of\nhttps://codereview.appspot.com/10538043.",
+	"cc": [
+		"r@golang.org",
+		"mpvl@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpvl@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello r@golang.org (cc: golang-dev@googlegroups.com, mpvl@golang.org),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.text",
+			"disapproval": false,
+			"date": "2013-07-08 06:05:59.431140",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpvl@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\nmuch clearer",
+			"disapproval": false,
+			"date": "2013-07-08 06:12:35.937160",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpvl@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10996043/diff/5001/transform/transform.go\nFile transform/transform.go (right):\n\nhttps://codereview.appspot.com/10996043/diff/5001/transform/transform.go#newcode45\ntransform/transform.go:45: // were written to dst. A nil error can be returned regardless of\nApart from documentation changes, I wonder if we should change the semantics so that a nil error should only be returned if atEOF is true. Otherwise, Transform should return ErrShortSrc.\n\nI don't think that this corresponds exactly to any of Options A, B, C, D or E on the earlier discussion at https://groups.google.com/d/msg/golang-dev/BvNYKGU_XRY/eaqNKkVNDEMJ but that started under the presumption that completion means \"return io.EOF\". The current semantics are that \"return nil\" means that this one Transform call was successful but not necessarily that the entire transformation is complete, and perhaps we should tighten it to mean the latter only.\n\nRob, Marcel, WDYT?",
+			"disapproval": false,
+			"date": "2013-07-08 06:14:59.604460",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpvl@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "that sounds better to me",
+			"disapproval": false,
+			"date": "2013-07-08 06:44:46.900190",
+			"approval": false
+		},
+		{
+			"sender": "mpvl@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"mpvl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10996043/diff/5001/transform/transform.go\nFile transform/transform.go (right):\n\nhttps://codereview.appspot.com/10996043/diff/5001/transform/transform.go#newcode45\ntransform/transform.go:45: // were written to dst. A nil error can be returned regardless of\nIt is Option B. :)  I thought only allowing it with atEOF was better too (Option C, which I meant to be a variant of B, not A, sorry about that). \nAllowing nil only with atEOF, however, almost always requires extra effort from Transformer writers.  Also, allowing nil conveys slightly more information to the caller.  It seems to make the code that uses Transforms a bit clearer, but not always:  Your Read seems to get slightly simpler. For the examples in CL 10964043 1 of 3 gets slightly simpler, the others are unchanged. Chain gets slightly simpler as well.  However, Write and Chain both make use of the extra information conveyed with the current meaning of nil and might be slightly slower as a result.\n\nI agree there are merits to not allowing nil with atEOF==false.  Intuitively it feels somewhat better.  It often simplifies code somewhat for users of Transformers, although they may need to write extra code to distinguish between the two cases.  It also adds a little bit of complexity to the Transformer implementations.\nIf you both think this is a fair tradeoff, I'm fine with the proposed change. I could go either way.\n\n\nOn 2013/07/08 06:14:59, nigeltao wrote:\n> Apart from documentation changes, I wonder if we should change the semantics so\n> that a nil error should only be returned if atEOF is true. Otherwise, Transform\n> should return ErrShortSrc.\n> \n> I don't think that this corresponds exactly to any of Options A, B, C, D or E on\n> the earlier discussion at\n> https://groups.google.com/d/msg/golang-dev/BvNYKGU_XRY/eaqNKkVNDEMJ but that\n> started under the presumption that completion means \"return io.EOF\". The current\n> semantics are that \"return nil\" means that this one Transform call was\n> successful but not necessarily that the entire transformation is complete, and\n> perhaps we should tighten it to mean the latter only.\n> \n> Rob, Marcel, WDYT?\n\nhttps://codereview.appspot.com/10996043/diff/5001/transform/transform.go#newcode52\ntransform/transform.go:52: // either error may be returned. Other than the error conditions listed\n//  If both conditions apply, then either error may be returned.\nWe should not allow this depending on how you interpret this.\n\nTransformers typically alternate between reading the next character or unit of processing and transforming them, writing the output to dst.  For the errors to be meaningful, an implementation should roughly return the first error encountered following this pattern.\n\nAssume that src ends with an incomplete character. Consider these cases:\n1) The converted bytes up to the incomplete segment cannot fit in dst: ErrShortDst should be returned. (I think ErrShortSrc is allowed with the current proposal)\n2) The converted bytes up to the incomplete segment do fit in dst and there is enough room left in dst to hold any next character: ErrShortSrc should be returned.\n3) Like 2, but dst may not or cannot hold the next character.  I predict a typical implementation to return ErrShortSrc here, but arguably, both errors could be returned in this case.\n\nAllowing ErrShortSrc in Case 1 would make the distinction between the two errors much less useful. It could be that ErrShortDst will only ever be returned if the source bytes happen to be at a character boundary, for example.\n\nSo maybe replace the above-quoted comment with something like:\n// ErrShortSrc may only be returned after all source bytes for which \n// there is complete data were consumed.\n\nTransformer implementations that alternate between reading and converting will naturally return the right error.  This definition allows for some flexibility by allowing either error in case 3.  This flexibility has no impact on Read, Write, Chain or any of the examples of CL 10964043.",
+			"disapproval": false,
+			"date": "2013-07-08 11:01:01.299630",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"mpvl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It looks like there are a couple of semantic points that are still up for debate.\n\nI'm happy to keep debating, but in the meantime, the three of us seem to be happy with the wordsmithing in this CL, so I'll submit this as is, and let's get your Writer in next. After that, I think we will have a better idea of the impact of some of these proposed semantic changes.\n\nhttps://codereview.appspot.com/10996043/diff/5001/transform/transform.go\nFile transform/transform.go (right):\n\nhttps://codereview.appspot.com/10996043/diff/5001/transform/transform.go#newcode45\ntransform/transform.go:45: // were written to dst. A nil error can be returned regardless of\nOn 2013/07/08 11:01:01, mpvl wrote:\n> I agree there are merits to not allowing nil with atEOF==false.  Intuitively it\n> feels somewhat better.  It often simplifies code somewhat for users of\n> Transformers, although they may need to write extra code to distinguish between\n> the two cases.  It also adds a little bit of complexity to the Transformer\n> implementations.\n\nIt sounds like you've thought more about this and I have, and that there's a trade-off. I'll hold of on changing the semantics until we've landed Write and Chain, so we can see what else needs to change if we disallow err==nil && atEOF==false.\n\nhttps://codereview.appspot.com/10996043/diff/5001/transform/transform.go#newcode52\ntransform/transform.go:52: // either error may be returned. Other than the error conditions listed\nOn 2013/07/08 11:01:01, mpvl wrote:\n> //  If both conditions apply, then either error may be returned.\n> We should not allow this depending on how you interpret this.\n\nIs this a matter of correctness or just performance?\n\n\n> Assume that src ends with an incomplete character. Consider these cases:\n> 1) The converted bytes up to the incomplete segment cannot fit in dst:\n> ErrShortDst should be returned. (I think ErrShortSrc is allowed with the current\n> proposal)\n\nIs returning ErrShortSrc really so bad here if nDst can still be > 0? If the Transfomer doesn't have any internal buffer for all of the dst bytes up to here then it really should have returned earlier with smaller nDst and with ErrShortDst.",
+			"disapproval": false,
+			"date": "2013-07-09 06:01:15.845070",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"mpvl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=532a8ad28720&repo=text ***\n\ngo.text/transform: improve comments based on review of\nhttps://codereview.appspot.com/10538043.\n\nR=r, mpvl\nCC=golang-dev\nhttps://codereview.appspot.com/10996043",
+			"disapproval": false,
+			"date": "2013-07-09 06:03:09.924230",
+			"approval": false
+		},
+		{
+			"sender": "mpvl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 9, 2013 at 8:01 AM, <nigeltao@golang.org> wrote:\r\n\r\n> It looks like there are a couple of semantic points that are still up\r\n> for debate.\r\n>\r\n> I'm happy to keep debating, but in the meantime, the three of us seem to\r\n> be happy with the wordsmithing in this CL, so I'll submit this as is,\r\n> and let's get your Writer in next. After that, I think we will have a\r\n> better idea of the impact of some of these proposed semantic changes.\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/10996043/diff/5001/**\r\n> transform/transform.go#**newcode52<https://codereview.appspot.com/10996043/diff/5001/transform/transform.go#newcode52>\r\n> transform/transform.go:52: // either error may be returned. Other than\r\n> the error conditions listed\r\n> On 2013/07/08 11:01:01, mpvl wrote:\r\n>\r\n>> //  If both conditions apply, then either error may be returned.\r\n>> We should not allow this depending on how you interpret this.\r\n>>\r\n>\r\n> Is this a matter of correctness or just performance?\r\n\r\nNot just performance.  You might run in to a situation where a buffer is\r\nmore than large enough, but no progress can be made.\r\n\r\n\r\n>  Assume that src ends with an incomplete character. Consider these\r\n>>\r\n> cases:\r\n>\r\n>> 1) The converted bytes up to the incomplete segment cannot fit in dst:\r\n>> ErrShortDst should be returned. (I think ErrShortSrc is allowed with\r\n>>\r\n> the current\r\n>\r\n>> proposal)\r\n>>\r\n>\r\n> Is returning ErrShortSrc really so bad here if nDst can still be > 0?\r\n\r\nIf the Transfomer doesn't have any internal buffer for all of the dst bytes\r\n> up to here then it really should have returned earlier with smaller nDst\r\n> and with ErrShortDst.\r\n>\r\nIt should, and that is fine.  It indeed doesn't matter much if it is merely\r\napproximate.  But the spec now allows returning well before that.  For\r\nexample, a Transformer could first check whether source ends with an open\r\nsegment and then return ErrShortSrc without doing any further processing.\r\n I agree this is a pedantic comment and not likely, but it seems to imply\r\nusers of Transformers should put in some effort to handle such extreme\r\ncases.\r\n\r\n\r\n>\r\n> https://codereview.appspot.**com/10996043/<https://codereview.appspot.com/10996043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-09 07:50:08.341090",
+			"approval": false
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 10996043: go.text/transform: improve comments based on review of",
+	"created": "2013-07-08 06:05:03.133240",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		14001
+	],
+	"modified": "2013-07-09 07:50:08.435930",
+	"closed": true,
+	"issue": 10996043
+}

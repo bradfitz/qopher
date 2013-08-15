@@ -1,0 +1,136 @@
+{
+	"description": "runtime: make cas64 like cas32 and casp\n\nThe current cas64 definition hard-codes the x86 behavior\nof updating *old with the new value when the cas fails.\nThis is inconsistent with cas32 and casp.\nMake it consistent.\n\nThis means that the cas64 uses will be epsilon less efficient\nthan they might be, because they have to do an unnecessary\nmemory load on x86. But so be it. Code clarity and consistency\nis more important.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [
+		"iant@golang.org",
+		"fullung@gmail.com",
+		"dave@cheney.net",
+		"dvyukov@google.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-07-11 16:51:20.797930",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n On Jul 12, 2013 2:51 AM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: make cas64 like cas32 and casp\r\n>\r\n> The current cas64 definition hard-codes the x86 behavior\r\n> of updating *old with the new value when the cas fails.\r\n> This is inconsistent with cas32 and casp.\r\n> Make it consistent.\r\n>\r\n> This means that the cas64 uses will be epsilon less efficient\r\n> than they might be, because they have to do an unnecessary\r\n> memory load on x86. But so be it. Code clarity and consistency\r\n> is more important.\r\n>\r\n> Please review this at https://codereview.appspot.**com/10909045/<https://codereview.appspot.com/10909045/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/asm_amd64.s\r\n>   M src/pkg/runtime/atomic_386.c\r\n>   M src/pkg/runtime/atomic_arm.c\r\n>   M src/pkg/runtime/lfstack.c\r\n>   M src/pkg/runtime/parfor.c\r\n>   M src/pkg/runtime/runtime.c\r\n>   M src/pkg/runtime/runtime.h\r\n>\r\n>\r\n> Index: src/pkg/runtime/asm_amd64.s\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/asm_amd64.s\r\n> +++ b/src/pkg/runtime/asm_amd64.s\r\n> @@ -374,13 +374,11 @@\r\n>  //             *val = new;\r\n>  //             return 1;\r\n>  //     } else {\r\n> -//             *old = *val\r\n>  //             return 0;\r\n>  //     }\r\n>  TEXT runtime\u00b7cas64(SB), 7, $0\r\n>         MOVQ    8(SP), BX\r\n> -       MOVQ    16(SP), BP\r\n> -       MOVQ    0(BP), AX\r\n> +       MOVQ    16(SP), AX\r\n>         MOVQ    24(SP), CX\r\n>         LOCK\r\n>         CMPXCHGQ        CX, 0(BX)\r\n> @@ -388,7 +386,6 @@\r\n>         MOVL    $1, AX\r\n>         RET\r\n>  cas64_fail:\r\n> -       MOVQ    AX, 0(BP)\r\n>         MOVL    $0, AX\r\n>         RET\r\n>\r\n> Index: src/pkg/runtime/atomic_386.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/atomic_386.c\r\n> +++ b/src/pkg/runtime/atomic_386.c\r\n> @@ -24,10 +24,10 @@\r\n>  {\r\n>         uint64 old;\r\n>\r\n> -       old = *addr;\r\n> -       while(!runtime\u00b7cas64(addr, &old, old+v)) {\r\n> -               // nothing\r\n> -       }\r\n> +       do\r\n> +               old = *addr;\r\n> +       while(!runtime\u00b7cas64(addr, old, old+v));\r\n> +\r\n>         return old+v;\r\n>  }\r\n>\r\n> @@ -37,9 +37,9 @@\r\n>  {\r\n>         uint64 old;\r\n>\r\n> -       old = *addr;\r\n> -       while(!runtime\u00b7cas64(addr, &old, v)) {\r\n> -               // nothing\r\n> -       }\r\n> +       do\r\n> +               old = addr;\r\n> +       while(!runtime\u00b7cas64(addr, old, v));\r\n> +\r\n>         return old;\r\n>  }\r\n> Index: src/pkg/runtime/atomic_arm.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/atomic_arm.c\r\n> +++ b/src/pkg/runtime/atomic_arm.c\r\n> @@ -92,16 +92,15 @@\r\n>\r\n>  #pragma textflag 7\r\n>  bool\r\n> -runtime\u00b7cas64(uint64 volatile *addr, uint64 *old, uint64 new)\r\n> +runtime\u00b7cas64(uint64 volatile *addr, uint64 old, uint64 new)\r\n>  {\r\n>         bool res;\r\n>\r\n>         runtime\u00b7lock(LOCK(addr));\r\n> -       if(*addr == *old) {\r\n> +       if(*addr == old) {\r\n>                 *addr = new;\r\n>                 res = true;\r\n>         } else {\r\n> -               *old = *addr;\r\n>                 res = false;\r\n>         }\r\n>         runtime\u00b7unlock(LOCK(addr));\r\n> Index: src/pkg/runtime/lfstack.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/lfstack.c\r\n> +++ b/src/pkg/runtime/lfstack.c\r\n> @@ -29,10 +29,10 @@\r\n>\r\n>         node->pushcnt++;\r\n>         new = (uint64)(uintptr)node|(((**uint64)node->pushcnt&CNT_MASK)**\r\n> <<PTR_BITS);\r\n> -       old = runtime\u00b7atomicload64(head);\r\n>         for(;;) {\r\n> +               old = runtime\u00b7atomicload64(head);\r\n>                 node->next = (LFNode*)(uintptr)(old&PTR_**MASK);\r\n> -               if(runtime\u00b7cas64(head, &old, new))\r\n> +               if(runtime\u00b7cas64(head, old, new))\r\n>                         break;\r\n>         }\r\n>  }\r\n> @@ -43,8 +43,8 @@\r\n>         LFNode *node, *node2;\r\n>         uint64 old, new;\r\n>\r\n> -       old = runtime\u00b7atomicload64(head);\r\n>         for(;;) {\r\n> +               old = runtime\u00b7atomicload64(head);\r\n>                 if(old == 0)\r\n>                         return nil;\r\n>                 node = (LFNode*)(uintptr)(old&PTR_**MASK);\r\n> @@ -52,7 +52,7 @@\r\n>                 new = 0;\r\n>                 if(node2 != nil)\r\n>                         new = (uint64)(uintptr)node2|(((**\r\n> uint64)node2->pushcnt&CNT_**MASK)<<PTR_BITS);\r\n> -               if(runtime\u00b7cas64(head, &old, new))\r\n> +               if(runtime\u00b7cas64(head, old, new))\r\n>                         return node;\r\n>         }\r\n>  }\r\n> Index: src/pkg/runtime/parfor.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/parfor.c\r\n> +++ b/src/pkg/runtime/parfor.c\r\n> @@ -144,9 +144,9 @@\r\n>                         if(victim >= tid)\r\n>                                 victim++;\r\n>                         victimpos = &desc->thr[victim].pos;\r\n> -                       pos = runtime\u00b7atomicload64(**victimpos);\r\n>                         for(;;) {\r\n>                                 // See if it has any work.\r\n> +                               pos = runtime\u00b7atomicload64(**victimpos);\r\n>                                 begin = (uint32)pos;\r\n>                                 end = (uint32)(pos>>32);\r\n>                                 if(begin+1 >= end) {\r\n> @@ -159,7 +159,7 @@\r\n>                                 }\r\n>                                 begin2 = begin + (end-begin)/2;\r\n>                                 newpos = (uint64)begin |\r\n> (uint64)begin2<<32;\r\n> -                               if(runtime\u00b7cas64(victimpos, &pos, newpos))\r\n> {\r\n> +                               if(runtime\u00b7cas64(victimpos, pos, newpos)) {\r\n>                                         begin = begin2;\r\n>                                         break;\r\n>                                 }\r\n> Index: src/pkg/runtime/runtime.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/runtime.c\r\n> +++ b/src/pkg/runtime/runtime.c\r\n> @@ -157,11 +157,12 @@\r\n>         z64 = 42;\r\n>         x64 = 0;\r\n>         PREFETCH(&z64);\r\n> -       if(runtime\u00b7cas64(&z64, &x64, 1))\r\n> +       if(runtime\u00b7cas64(&z64, x64, 1))\r\n>                 runtime\u00b7throw(\"cas64 failed\");\r\n> -       if(x64 != 42)\r\n> +       if(x64 != 0)\r\n>                 runtime\u00b7throw(\"cas64 failed\");\r\n> -       if(!runtime\u00b7cas64(&z64, &x64, 1))\r\n> +       x64 = 42;\r\n> +       if(!runtime\u00b7cas64(&z64, x64, 1))\r\n>                 runtime\u00b7throw(\"cas64 failed\");\r\n>         if(x64 != 42 || z64 != 1)\r\n>                 runtime\u00b7throw(\"cas64 failed\");\r\n> @@ -193,7 +194,7 @@\r\n>         uint64 h;\r\n>         float32 i, i1;\r\n>         float64 j, j1;\r\n> -       void* k;\r\n> +       byte *k, *k1;\r\n>         uint16* l;\r\n>         struct x1 {\r\n>                 byte x;\r\n> @@ -232,6 +233,17 @@\r\n>         if(z != 4)\r\n>                 runtime\u00b7throw(\"cas4\");\r\n>\r\n> +       k = (byte*)0xfedcb123;\r\n> +       if(sizeof(void*) == 8)\r\n> +               k = (byte*)((uintptr)k<<10);\r\n> +       if(runtime\u00b7casp((void**)&k, nil, nil))\r\n> +               runtime\u00b7throw(\"casp1\");\r\n> +       k1 = k+1;\r\n> +       if(!runtime\u00b7casp((void**)&k, k, k1))\r\n> +               runtime\u00b7throw(\"casp2\");\r\n> +       if(k != k1)\r\n> +               runtime\u00b7throw(\"casp3\");\r\n> +\r\n>         *(uint64*)&j = ~0ULL;\r\n>         if(j == j)\r\n>                 runtime\u00b7throw(\"float64nan\");\r\n> Index: src/pkg/runtime/runtime.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/runtime.h\r\n> +++ b/src/pkg/runtime/runtime.h\r\n> @@ -761,7 +761,7 @@\r\n>  int32  runtime\u00b7close(int32);\r\n>  int32  runtime\u00b7mincore(void*, uintptr, byte*);\r\n>  bool   runtime\u00b7cas(uint32*, uint32, uint32);\r\n> -bool   runtime\u00b7cas64(uint64*, uint64*, uint64);\r\n> +bool   runtime\u00b7cas64(uint64*, uint64, uint64);\r\n>  bool   runtime\u00b7casp(void**, void*, void*);\r\n>  // Don't confuse with XADD x86 instruction,\r\n>  // this one is actually 'addx', that is, add-and-fetch.\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-12 02:56:28.891570",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7fe684ce48ef ***\n\nruntime: make cas64 like cas32 and casp\n\nThe current cas64 definition hard-codes the x86 behavior\nof updating *old with the new value when the cas fails.\nThis is inconsistent with cas32 and casp.\nMake it consistent.\n\nThis means that the cas64 uses will be epsilon less efficient\nthan they might be, because they have to do an unnecessary\nmemory load on x86. But so be it. Code clarity and consistency\nis more important.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/10909045",
+			"disapproval": false,
+			"date": "2013-07-12 04:03:36.009280",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10909045/diff/10001/src/pkg/runtime/asm_amd64.s\nFile src/pkg/runtime/asm_amd64.s (right):\n\nhttps://codereview.appspot.com/10909045/diff/10001/src/pkg/runtime/asm_amd64.s#newcode371\nsrc/pkg/runtime/asm_amd64.s:371: // bool\truntime\u00b7cas64(uint64 *val, uint64 *old, uint64 new)\ns/*old/old/\n\nhttps://codereview.appspot.com/10909045/diff/10001/src/pkg/runtime/atomic_386.c\nFile src/pkg/runtime/atomic_386.c (right):\n\nhttps://codereview.appspot.com/10909045/diff/10001/src/pkg/runtime/atomic_386.c#newcode41\nsrc/pkg/runtime/atomic_386.c:41: old = addr;\nI don't see how this could be right.  Shouldn't it be\n    old = *addr;\n?\n\nhttps://codereview.appspot.com/10909045/diff/10001/src/pkg/runtime/runtime.c\nFile src/pkg/runtime/runtime.c (right):\n\nhttps://codereview.appspot.com/10909045/diff/10001/src/pkg/runtime/runtime.c#newcode162\nsrc/pkg/runtime/runtime.c:162: if(x64 != 0)\nThis test doesn't seem useful now.  We're not passing &x64 anywhere, so how could the local variable change?",
+			"disapproval": false,
+			"date": "2013-07-12 05:03:17.997390",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello\n\nFor some reason this change is causing a build failure on my trusty Fedora 16 x86_64 machine.\n\ngcc-4.6.3-2.fc16.x86_64\n\ngo/src/pkg/runtime/atomic_386.c:41 incompatible types: \"UVLONG\" and \"IND VOLATILE UVLONG\" for op \"AS\"",
+			"disapproval": false,
+			"date": "2013-07-12 07:35:58.967960",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/12 07:35:58, albert.strasheim wrote:\n> For some reason this change is causing a build failure on my trusty Fedora 16\n> x86_64 machine.\n> gcc-4.6.3-2.fc16.x86_64\n> go/src/pkg/runtime/atomic_386.c:41 incompatible types: \"UVLONG\" and \"IND\n> VOLATILE UVLONG\" for op \"AS\"\n\nMore context:\n\n+ ./make.bash\n# Building C bootstrap tool.\ncmd/dist\n\n# Building compilers and Go bootstrap tool for host, linux/386.\nlib9\nlibbio\nlibmach\nmisc/pprof\ncmd/addr2line\ncmd/nm\ncmd/objdump\ncmd/pack\ncmd/prof\ncmd/cc\ncmd/gc\ncmd/8l\ncmd/8a\ncmd/8c\ncmd/8g\npkg/runtime\n/build/go.386/go/src/pkg/runtime/atomic_386.c:41 incompatible types: \"UVLONG\" and \"IND VOLATILE UVLONG\" for op \"AS\"\ngo tool dist: FAILED: /build/go.386/go/pkg/tool/linux_386/8c -F -V -w -I $WORK -I /build/go.386/go/pkg/linux_386 -D GOOS_linux -D GOARCH_386 -o $WORK/atomic_386.o /build/go.386/go/src/pkg/runtime/atomic_386.c",
+			"disapproval": false,
+			"date": "2013-07-12 07:40:57.843770",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Should be fixed by \r\n\r\nhttps://code.google.com/p/go/source/detail?r=55872e4d71ab0b855ed3a03c4f49101bbbbd9e96\r\n\r\nBut their might be other breakage later in the build. \r\n\r\nOn 12/07/2013, at 17:40, fullung@gmail.com wrote:\r\n\r\n> On 2013/07/12 07:35:58, albert.strasheim wrote:\r\n>> For some reason this change is causing a build failure on my trusty\r\n> Fedora 16\r\n>> x86_64 machine.\r\n>> gcc-4.6.3-2.fc16.x86_64\r\n>> go/src/pkg/runtime/atomic_386.c:41 incompatible types: \"UVLONG\" and\r\n> \"IND\r\n>> VOLATILE UVLONG\" for op \"AS\"\r\n> \r\n> More context:\r\n> \r\n> + ./make.bash\r\n> # Building C bootstrap tool.\r\n> cmd/dist\r\n> \r\n> # Building compilers and Go bootstrap tool for host, linux/386.\r\n> lib9\r\n> libbio\r\n> libmach\r\n> misc/pprof\r\n> cmd/addr2line\r\n> cmd/nm\r\n> cmd/objdump\r\n> cmd/pack\r\n> cmd/prof\r\n> cmd/cc\r\n> cmd/gc\r\n> cmd/8l\r\n> cmd/8a\r\n> cmd/8c\r\n> cmd/8g\r\n> pkg/runtime\r\n> /build/go.386/go/src/pkg/runtime/atomic_386.c:41 incompatible types:\r\n> \"UVLONG\" and \"IND VOLATILE UVLONG\" for op \"AS\"\r\n> go tool dist: FAILED: /build/go.386/go/pkg/tool/linux_386/8c -F -V -w -I\r\n> $WORK -I /build/go.386/go/pkg/linux_386 -D GOOS_linux -D GOARCH_386 -o\r\n> $WORK/atomic_386.o /build/go.386/go/src/pkg/runtime/atomic_386.c\r\n> \r\n> https://codereview.appspot.com/10909045/\r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-07-12 08:20:20.372940",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"fullung@gmail.com",
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This makes me a bit sad:\nhttps://groups.google.com/d/msg/golang-nuts/zCk41s_RL3A/1AgR0e9gX2kJ\n\nThe plan was to make cas/casp as cas64.\n\nThis is not x86-specific behavior. In LL/SC implementation you also have the current value in a register, it's required to do the CMP part. So storing it back to *cmp is purely local operation, while re-loading the value is not.\n\nUpdating *cmp is also consistent with C standard. FWIW 6c is a C compiler.",
+			"disapproval": false,
+			"date": "2013-07-15 21:59:59.919500",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 10909045: runtime: make cas64 like cas32 and casp",
+	"created": "2013-07-11 16:50:55.422480",
+	"patchsets": [
+		1,
+		1002,
+		5001,
+		10001
+	],
+	"modified": "2013-07-15 22:00:00.597710",
+	"closed": true,
+	"issue": 10909045
+}

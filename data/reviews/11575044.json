@@ -1,0 +1,207 @@
+{
+	"description": "runtime: do not split stacks in syscall status\nSplit stack checks (morestack) corrupt g->sched,\nbut g->sched must be preserved consistent for GC/traceback.\nThe change implements runtime.notetsleepg function,\nwhich does entersyscall/exitsyscall and is carefully arranged\nto not call any split functions in between.",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/cgocall.c\nFile src/pkg/runtime/cgocall.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/cgocall.c#newcode241\nsrc/pkg/runtime/cgocall.c:241: #pragma textflag,7\ns/,/ /\nI am surprised the comma even works, but it's not what we usually write.\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/cgocall.c#newcode247\nsrc/pkg/runtime/cgocall.c:247: if(m->racecall) {\nI think this is wrong. If the code you are calling panics, the defer needs to be run so that unwindm will run. This is not a new bug. I think this should be:\n\nif(m->racecall)\n    runtime.cgocallbackg1();\nelse {\n    runtime.exitsyscall();\n    runtime.cgocallbackg1();\n    runtime.entersyscall();\n}\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/cgocall.c#newcode249\nsrc/pkg/runtime/cgocall.c:249: cb = (CallbackArgs*)((byte*)m->g0->sched.sp+4*sizeof(void*));\nshould be 3, right?\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/lock_futex.c\nFile src/pkg/runtime/lock_futex.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/lock_futex.c#newcode171\nsrc/pkg/runtime/lock_futex.c:171: int64 deadline, now;\nThis body needs some good comments about why the bodies above are inlined here.\nExplain the changes too: why are there no calls to setprof?\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/lock_sema.c\nFile src/pkg/runtime/lock_sema.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/lock_sema.c#newcode244\nsrc/pkg/runtime/lock_sema.c:244: M *mp;\nSame, and this one is even worse.\nDo we really need to make another copy of this code?\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/os_darwin.c\nFile src/pkg/runtime/os_darwin.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/os_darwin.c#newcode25\nsrc/pkg/runtime/os_darwin.c:25: #pragma textflag,7\ns/,/ /\nI'm going to stop marking these, but please grep for them.\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/os_freebsd.c\nFile src/pkg/runtime/os_freebsd.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/os_freebsd.c#newcode63\nsrc/pkg/runtime/os_freebsd.c:63: for(secs = 1LL<<30; secs != 0; secs >>= 2) {\nAre you sure it's >>= 2 and not >>= 1?\nYou should have enough stack to pull this into a function and call that one copy of the code from all the different os files.\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/proc.c#newcode1450\nsrc/pkg/runtime/proc.c:1450: // Try to re-acquire the last P.\nCan you refactor this slightly so that it can be\n\nif(exitsyscallp()) {\n    m->p->tick++;\n    g->status = Grunning;\n    ...\n    return;\n}\n\nand then exitsyscallp would do both the \"Try to re-acquire the last P\" and also \"Try to get any other idle P\".\nIt would return true on success, false on failure.\nThen there are not two copies of the success code.",
+			"disapproval": false,
+			"date": "2013-07-22 20:34:44.618390",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-07-24 15:19:42.788470",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/22 20:34:44, rsc wrote:\n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/cgocall.c\n> File src/pkg/runtime/cgocall.c (right):\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/cgocall.c#newcode241\n> src/pkg/runtime/cgocall.c:241: #pragma textflag,7\n> s/,/ /\n> I am surprised the comma even works, but it's not what we usually write.\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/cgocall.c#newcode247\n> src/pkg/runtime/cgocall.c:247: if(m->racecall) {\n> I think this is wrong. If the code you are calling panics, the defer needs to be\n> run so that unwindm will run. This is not a new bug. I think this should be:\n> \n> if(m->racecall)\n>     runtime.cgocallbackg1();\n> else {\n>     runtime.exitsyscall();\n>     runtime.cgocallbackg1();\n>     runtime.entersyscall();\n> }\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/cgocall.c#newcode249\n> src/pkg/runtime/cgocall.c:249: cb =\n> (CallbackArgs*)((byte*)m->g0->sched.sp+4*sizeof(void*));\n> should be 3, right?\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/lock_futex.c\n> File src/pkg/runtime/lock_futex.c (right):\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/lock_futex.c#newcode171\n> src/pkg/runtime/lock_futex.c:171: int64 deadline, now;\n> This body needs some good comments about why the bodies above are inlined here.\n> Explain the changes too: why are there no calls to setprof?\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/lock_sema.c\n> File src/pkg/runtime/lock_sema.c (right):\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/lock_sema.c#newcode244\n> src/pkg/runtime/lock_sema.c:244: M *mp;\n> Same, and this one is even worse.\n> Do we really need to make another copy of this code?\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/os_darwin.c\n> File src/pkg/runtime/os_darwin.c (right):\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/os_darwin.c#newcode25\n> src/pkg/runtime/os_darwin.c:25: #pragma textflag,7\n> s/,/ /\n> I'm going to stop marking these, but please grep for them.\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/os_freebsd.c\n> File src/pkg/runtime/os_freebsd.c (right):\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/os_freebsd.c#newcode63\n> src/pkg/runtime/os_freebsd.c:63: for(secs = 1LL<<30; secs != 0; secs >>= 2) {\n> Are you sure it's >>= 2 and not >>= 1?\n> You should have enough stack to pull this into a function and call that one copy\n> of the code from all the different os files.\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/proc.c\n> File src/pkg/runtime/proc.c (right):\n> \n> https://codereview.appspot.com/11575044/diff/2039/src/pkg/runtime/proc.c#newcode1450\n> src/pkg/runtime/proc.c:1450: // Try to re-acquire the last P.\n> Can you refactor this slightly so that it can be\n> \n> if(exitsyscallp()) {\n>     m->p->tick++;\n>     g->status = Grunning;\n>     ...\n>     return;\n> }\n> \n> and then exitsyscallp would do both the \"Try to re-acquire the last P\" and also\n> \"Try to get any other idle P\".\n> It would return true on success, false on failure.\n> Then there are not two copies of the success code.\n\n\nDone\nPTAL",
+			"disapproval": false,
+			"date": "2013-07-24 15:21:56.224890",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping",
+			"disapproval": false,
+			"date": "2013-07-26 10:17:13.913840",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11575044/diff/59001/src/pkg/runtime/os_windows.c\nFile src/pkg/runtime/os_windows.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/59001/src/pkg/runtime/os_windows.c#newcode175\nsrc/pkg/runtime/os_windows.c:175: ns = runtime\u00b7timediv(ns, 1000000, nil);\nnote to myself: add if(ns == 0) ns = 1;",
+			"disapproval": false,
+			"date": "2013-07-26 10:18:06.503770",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/26 10:18:06, dvyukov wrote:\n> https://codereview.appspot.com/11575044/diff/59001/src/pkg/runtime/os_windows.c\n> File src/pkg/runtime/os_windows.c (right):\n> \n> https://codereview.appspot.com/11575044/diff/59001/src/pkg/runtime/os_windows.c#newcode175\n> src/pkg/runtime/os_windows.c:175: ns = runtime\u00b7timediv(ns, 1000000, nil);\n> note to myself: add if(ns == 0) ns = 1;\n\ndone in patchset 24\n\nmore fixes after testing on windows in patchset 25",
+			"disapproval": false,
+			"date": "2013-07-26 13:12:39.829640",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/futex_test.go\nFile src/pkg/runtime/futex_test.go (right):\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/futex_test.go#newcode5\nsrc/pkg/runtime/futex_test.go:5: // Race detector emits calls to split stack functions between entersyscall/exitsyscall.\n// Futex is only available on Linux and FreeBSD.\n// The race detector emits calls to split stack functions so it breaks the test.\n// +build linux freebsd\n// +build !race\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/lock_sema.c\nFile src/pkg/runtime/lock_sema.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/lock_sema.c#newcode178\nsrc/pkg/runtime/lock_sema.c:178: // deadline and mp must be plain local vars in this function,\nGet rid of the stars.\nJust declare int64 deadline, M *mp in the argument list.\n\n// Conceptually, deadline and mp are local variables.\n// They are passed as arguments so that the space for them\n// does not count against our nosplit stack sequence.\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/stack.c#newcode253\nsrc/pkg/runtime/stack.c:253: if(oldstatus != Grunning || m->locks || m->mallocing || m->gcing || m->p->status != Prunning || m->racecall) {\nWhat sets m->racecall? Can it increment m->locks instead? Every new condition here makes this harder to think about.",
+			"disapproval": false,
+			"date": "2013-07-29 17:26:46.207300",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=cb7c919fe554 ***\n\nruntime: do not split stacks in syscall status\nSplit stack checks (morestack) corrupt g->sched,\nbut g->sched must be preserved consistent for GC/traceback.\nThe change implements runtime.notetsleepg function,\nwhich does entersyscall/exitsyscall and is carefully arranged\nto not call any split functions in between.\n\nR=rsc\nCC=golang-dev\nhttps://codereview.appspot.com/11575044",
+			"disapproval": false,
+			"date": "2013-07-29 18:22:44.978030",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/futex_test.go\nFile src/pkg/runtime/futex_test.go (right):\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/futex_test.go#newcode5\nsrc/pkg/runtime/futex_test.go:5: // Race detector emits calls to split stack functions between entersyscall/exitsyscall.\nOn 2013/07/29 17:26:46, rsc wrote:\n> // Futex is only available on Linux and FreeBSD.\n> // The race detector emits calls to split stack functions so it breaks the test.\n> // +build linux freebsd\n> // +build !race\n\nDone.\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/lock_sema.c\nFile src/pkg/runtime/lock_sema.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/lock_sema.c#newcode178\nsrc/pkg/runtime/lock_sema.c:178: // deadline and mp must be plain local vars in this function,\nOn 2013/07/29 17:26:46, rsc wrote:\n> Get rid of the stars.\n> Just declare int64 deadline, M *mp in the argument list.\n> \n> // Conceptually, deadline and mp are local variables.\n> // They are passed as arguments so that the space for them\n> // does not count against our nosplit stack sequence.\n\nAha!\nThis is a new not-yet-formed idiom :)\nDone\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/11575044/diff/80001/src/pkg/runtime/stack.c#newcode253\nsrc/pkg/runtime/stack.c:253: if(oldstatus != Grunning || m->locks || m->mallocing || m->gcing || m->p->status != Prunning || m->racecall) {\nOn 2013/07/29 17:26:46, rsc wrote:\n> What sets m->racecall? Can it increment m->locks instead? Every new condition\n> here makes this harder to think about.\n\n\nI've found a better place for this and added a comment explaining why we need it:\n\nruntime\u00b7cgocallbackg(void)\n{\n\tif(g != m->curg) {\n\t\truntime\u00b7prints(\"runtime: bad g in cgocallback\");\n\t\truntime\u00b7exit(2);\n\t}\n\n\tif(m->racecall) {\n\t\t// We were not in syscall, so no need to call runtime\u00b7exitsyscall.\n\t\t// However we must set m->locks for the following reason.\n\t\t// Race detector runtime makes __tsan_symbolize cgo callback\n\t\t// holding internal mutexes. The mutexes are not cooperative with Go scheduler.\n\t\t// So if we deschedule a goroutine that holds race detector internal mutex\n\t\t// (e.g. preempt it), another goroutine will deadlock trying to acquire the same mutex.\n\t\tm->locks++;\n\t\truntime\u00b7cgocallbackg1();\n\t\tm->locks--;\n\t} else {",
+			"disapproval": false,
+			"date": "2013-07-29 18:21:54.420390",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "crossing fingers and submitting",
+			"disapproval": false,
+			"date": "2013-07-29 18:22:18.538940",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jul 29, 2013 at 10:22 PM,  <dvyukov@google.com> wrote:\r\n> *** Submitted as\r\n> https://code.google.com/p/go/source/detail?r=cb7c919fe554 ***\r\n>\r\n>\r\n> runtime: do not split stacks in syscall status\r\n> Split stack checks (morestack) corrupt g->sched,\r\n> but g->sched must be preserved consistent for GC/traceback.\r\n> The change implements runtime.notetsleepg function,\r\n> which does entersyscall/exitsyscall and is carefully arranged\r\n> to not call any split functions in between.\r\n>\r\n> R=rsc\r\n> CC=golang-dev\r\n> https://codereview.appspot.com/11575044\r\n>\r\n>\r\n> https://codereview.appspot.com/11575044/\r\n\r\n\r\nNot sure whether this netbsd/amd64 failure is related or not:\r\nhttp://build.golang.org/log/d365fa6d033bc272a5662a5630b5ff03d8fb3d90\r\n\r\nnetbsd/386 failure seems to be unrelated:\r\nhttp://build.golang.org/log/51d557fdcbff67f0cb8e318be1a2c8c6e081c9f5\r\n",
+			"disapproval": false,
+			"date": "2013-07-29 18:48:55.130300",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This is a real one:\r\n\r\nfatal error: runtime: stack split during syscall\r\n\r\ngoroutine 2 [stack split]:\r\n_addv(0xb6fa0f28, 0xd0a5112e, 0x13156d6e, 0xf8475800, 0xd)\r\n/usr/local/go/src/pkg/runtime/vlrt_arm.c:66 fp=0xb6fa0ef8\r\nnotetsleep(0xb6fa0f9c, 0xf8475800, 0xd, 0x0, 0x0, ...)\r\n/usr/local/go/src/pkg/runtime/lock_futex.c:156 +0xd0 fp=0xb6fa0f18\r\nruntime.notetsleepg(0xb6fa0f9c, 0xf8475800, 0xd)\r\n/usr/local/go/src/pkg/runtime/lock_futex.c:197 +0x74 fp=0xb6fa0f3c\r\nruntime.MHeap_Scavenger()\r\n/usr/local/go/src/pkg/runtime/mheap.c:463 +0xec fp=0xb6fa0fcc\r\nruntime.goexit()\r\n/usr/local/go/src/pkg/runtime/proc.c:1332 fp=0xb6fa0fcc\r\ncreated by runtime.main\r\n/usr/local/go/src/pkg/runtime/proc.c:168\r\n\r\nhttp://build.golang.org/log/b01f70864b1feaeef16300bc14349f3ade7cbe6f\r\n\r\nAnd I don't know what to do with it yet.\r\n\r\n\r\n\r\nOn Mon, Jul 29, 2013 at 10:48 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n> On Mon, Jul 29, 2013 at 10:22 PM,  <dvyukov@google.com> wrote:\r\n>> *** Submitted as\r\n>> https://code.google.com/p/go/source/detail?r=cb7c919fe554 ***\r\n>>\r\n>>\r\n>> runtime: do not split stacks in syscall status\r\n>> Split stack checks (morestack) corrupt g->sched,\r\n>> but g->sched must be preserved consistent for GC/traceback.\r\n>> The change implements runtime.notetsleepg function,\r\n>> which does entersyscall/exitsyscall and is carefully arranged\r\n>> to not call any split functions in between.\r\n>>\r\n>> R=rsc\r\n>> CC=golang-dev\r\n>> https://codereview.appspot.com/11575044\r\n>>\r\n>>\r\n>> https://codereview.appspot.com/11575044/\r\n>\r\n>\r\n> Not sure whether this netbsd/amd64 failure is related or not:\r\n> http://build.golang.org/log/d365fa6d033bc272a5662a5630b5ff03d8fb3d90\r\n>\r\n> netbsd/386 failure seems to be unrelated:\r\n> http://build.golang.org/log/51d557fdcbff67f0cb8e318be1a2c8c6e081c9f5\r\n",
+			"disapproval": false,
+			"date": "2013-07-29 19:29:57.485120",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Try putting some #pragma textflag 7 in runtime/vlrt_arm.c.\r\n",
+			"disapproval": false,
+			"date": "2013-07-29 19:32:56.994020",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 11575044: runtime: do not split stacks in syscall status",
+	"created": "2013-07-20 13:09:53.911230",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		9001,
+		12001,
+		15001,
+		18001,
+		21001,
+		24002,
+		28001,
+		30001,
+		30002,
+		31030,
+		2039,
+		40001,
+		42001,
+		44001,
+		47001,
+		49001,
+		52001,
+		48016,
+		56001,
+		59001,
+		65001,
+		80001,
+		92001,
+		100001
+	],
+	"modified": "2013-07-29 19:32:57.051140",
+	"closed": true,
+	"issue": 11575044
+}

@@ -1,0 +1,61 @@
+{
+	"description": "http: add Location method to Response\n\nFixes issue 2300",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-23 17:46:00.062499",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn Fri, Sep 23, 2011 at 13:46,  <bradfitz@golang.org> wrote:\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> http: add Location method to Response\n>\n> Fixes issue 2300\n>\n> Please review this at http://codereview.appspot.com/5117041/\n>\n> Affected files:\n> \u00a0M src/pkg/http/response.go\n> \u00a0M src/pkg/http/response_test.go\n>\n>\n> Index: src/pkg/http/response.go\n> ===================================================================\n> --- a/src/pkg/http/response.go\n> +++ b/src/pkg/http/response.go\n> @@ -13,6 +13,7 @@\n> \u00a0 \u00a0 \u00a0 \u00a0\"os\"\n> \u00a0 \u00a0 \u00a0 \u00a0\"strconv\"\n> \u00a0 \u00a0 \u00a0 \u00a0\"strings\"\n> + \u00a0 \u00a0 \u00a0 \"url\"\n> \u00a0)\n>\n> \u00a0var respExcludeHeader = map[string]bool{\n> @@ -77,6 +78,23 @@\n> \u00a0 \u00a0 \u00a0 \u00a0return readSetCookies(r.Header)\n> \u00a0}\n>\n> +var ErrNoLocation = os.NewError(\"http: no Location header in response\")\n> +\n> +// Location returns the URL of the response's \"Location\" header,\n> +// if present. \u00a0Relative redirects are resolved relative to\n> +// the Response's Request. \u00a0ErrNoLocation is returned if no\n> +// Location header is present.\n> +func (r *Response) Location() (*url.URL, os.Error) {\n> + \u00a0 \u00a0 \u00a0 lv := r.Header.Get(\"Location\")\n> + \u00a0 \u00a0 \u00a0 if lv == \"\" {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 return nil, ErrNoLocation\n> + \u00a0 \u00a0 \u00a0 }\n> + \u00a0 \u00a0 \u00a0 if r.Request != nil && r.Request.URL != nil {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 return r.Request.URL.Parse(lv)\n> + \u00a0 \u00a0 \u00a0 }\n> + \u00a0 \u00a0 \u00a0 return url.Parse(lv)\n> +}\n> +\n> \u00a0// ReadResponse reads and returns an HTTP response from r. \u00a0The\n> \u00a0// req parameter specifies the Request that corresponds to\n> \u00a0// this Response. \u00a0Clients must call resp.Body.Close when finished\n> Index: src/pkg/http/response_test.go\n> ===================================================================\n> --- a/src/pkg/http/response_test.go\n> +++ b/src/pkg/http/response_test.go\n> @@ -15,6 +15,7 @@\n> \u00a0 \u00a0 \u00a0 \u00a0\"io/ioutil\"\n> \u00a0 \u00a0 \u00a0 \u00a0\"reflect\"\n> \u00a0 \u00a0 \u00a0 \u00a0\"testing\"\n> + \u00a0 \u00a0 \u00a0 \"url\"\n> \u00a0)\n>\n> \u00a0type respTest struct {\n> @@ -395,3 +396,52 @@\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0}\n> \u00a0 \u00a0 \u00a0 \u00a0}\n> \u00a0}\n> +\n> +type responseLocationTest struct {\n> + \u00a0 \u00a0 \u00a0 location string // Response's Location header or \"\"\n> + \u00a0 \u00a0 \u00a0 requrl \u00a0 string // Response.Request.URL or \"\"\n> + \u00a0 \u00a0 \u00a0 want \u00a0 \u00a0 string\n> + \u00a0 \u00a0 \u00a0 wantErr \u00a0os.Error\n> +}\n> +\n> +var responseLocationTests = []responseLocationTest{\n> + \u00a0 \u00a0 \u00a0 {\"/foo\", \"http://bar.com/baz\", \"http://bar.com/foo\", nil},\n> + \u00a0 \u00a0 \u00a0 {\"http://foo.com/\", \"http://bar.com/baz\", \"http://foo.com/\", nil},\n> + \u00a0 \u00a0 \u00a0 {\"\", \"http://bar.com/baz\", \"\", ErrNoLocation},\n> +}\n> +\n> +func TestLocationResponse(t *testing.T) {\n> + \u00a0 \u00a0 \u00a0 for i, tt := range responseLocationTests {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 res := new(Response)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 res.Header = make(Header)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 res.Header.Set(\"Location\", tt.location)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if tt.requrl != \"\" {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 res.Request = &Request{}\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 var err os.Error\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 res.Request.URL, err = url.Parse(tt.requrl)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if err != nil {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Fatalf(\"bad test URL %q: %v\", tt.requrl,\n> err)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n> +\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 got, err := res.Location()\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if tt.wantErr != nil {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if err == nil {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Errorf(\"%d. err=nil; want %q\", i,\n> tt.wantErr)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 continue\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if g, e := err.String(), tt.wantErr.String(); g != e\n> {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Errorf(\"%d. err=%q; want %q\", i, g, e)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 continue\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 continue\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if err != nil {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Errorf(\"%d. err=%q\", i, err)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 continue\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if g, e := got.String(), tt.want; g != e {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Errorf(\"%d. Location=%q; want %q\", i, g, e)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n> + \u00a0 \u00a0 \u00a0 }\n> +}\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-23 17:52:45.683781",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=9fd69d51a3bd ***\n\nhttp: add Location method to Response\n\nFixes issue 2300\n\nR=golang-dev, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5117041",
+			"disapproval": false,
+			"date": "2011-09-23 17:57:34.408502",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 5117041: http: add Location method to Response",
+	"created": "2011-09-23 17:45:42.520248",
+	"patchsets": [
+		1,
+		1002,
+		3001,
+		6001
+	],
+	"modified": "2011-09-23 17:57:35.724451",
+	"closed": true,
+	"issue": 5117041
+}

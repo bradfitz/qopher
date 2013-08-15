@@ -1,0 +1,246 @@
+{
+	"description": "exp/template/html: escape {{template}} calls and sets of templates\n\nThis adds support for {{template \"callee\"}} calls.\nIt recognizes that calls can appear in many contexts.\n\n{{if .ImageURL}}\n    <img src=\"{{.ImageURL}}\" alt=\"{{template \"description\"}}\">\n{{else}}\n    <p>{{template \"description\"}}</p>\n{{end}}\n\ncalls a template in two different contexts, first in an HTML attribute\ncontext, and second in an HTML text context.\n\nThose two contexts aren't very different, but when linking text\nto search terms, the escaping context can be materially different:\n\n<a href=\"/search?q={{template \"tags\"}}\">{{template \"tags\"}}</a>\n\nThis adds API:\nEscapeSet(*template.Set, names ...string) os.Error\n\ntakes a set of templates and the names of those which might be called\nin the default context as starting points.\n\nIt changes the escape* functions to be methods of an object which\nmaintains a conceptual mapping of\n(template names*input context) -> output context.\n\nThe actual mapping uses as key a mangled name which combines the\ntemplate name with the input context.\n\nThe mangled name when the input context is the default context is the\nsame as the unmangled name.\n\nWhen a template is called in multiple contexts, we clone the template.\n\n{{define \"tagLink\"}}\n  <a href=\"/search?q={{template \"tags\"}}\">{{template \"tags\"}}</a>\n{{end}}\n{{define \"tags\"}}\n  {{range .Tags}}{{.}},{{end}}\n{{end}}\n\ngiven []string{ \"foo\", \"O'Reilly\", \"bar\" } produces\n\n  <a href=\"/search?q=foo,O%27Reilly,bar\">foo,O&#39;Reilly,bar</a>\n\nThis involves rewriting the above to something like\n\n{{define \"tagLink\"}}\n  <a href=\"/search?q={{template \"tags$1\"}}\">{{template \"tags\"}}</a>\n{{end}}\n{{define \"tags\"}}\n  {{range .Tags}}{{. | html}},{{end}}\n{{end}}\n{{define \"tags$1\"}}\n  {{range .Tags}}{{. | urlquery}},{{end}}\n{{end}}\n\nclone.go provides a mechanism for cloning template \"tags\" to produce\n\"tags$1\".\n\nchanges to escape.go implement the new API and context propagation\naround the call graph.\n\ncontext.go includes minor changes to support name mangling and\ncontext_test.go tests those.\n\njs.go contains a bug-fix.",
+	"cc": [
+		"nigeltao@golang.org",
+		"r@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/clone.go\nFile src/pkg/exp/template/html/clone.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/clone.go#newcode13\nsrc/pkg/exp/template/html/clone.go:13: func cloneInto(src, dest *template.Template) *template.Template {\nOn 2011/09/12 00:14:21, nigeltao wrote:\n> Go parameter ordering is destination, then source. For example, see io.Copy, or\n> the built-in copy function. I'd also s/dest/dst/.\n> \n> What you have here seems a mix of copying (into an existing data structure) and\n> cloning (returning a new data structure). I would either have\n> func copyTree(dst, src *parse.Tree)\n> or\n> func cloneTree(t *parse.Tree) *parse.Tree\n\nI fixed dest/src ordering for cloneBranchInto, and got rid of cloneInto altogether.\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/context.go\nFile src/pkg/exp/template/html/context.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/context.go#newcode40\nsrc/pkg/exp/template/html/context.go:40: func (c context) packed() uint64 {\nOn 2011/09/12 00:14:21, nigeltao wrote:\n> If the only use for packed is to return something to pass to fmt as %d, then\n> maybe packed should just return a string.\n\nDone and changed name to nameSuffix().\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/context_test.go\nFile src/pkg/exp/template/html/context_test.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/context_test.go#newcode21\nsrc/pkg/exp/template/html/context_test.go:21: if d, seen := m[p]; seen {\nOn 2011/09/12 00:14:21, nigeltao wrote:\n> It confused me at first because the d variable here shadows the earlier one. I'd\n> call the two contexts c0 and c1 instead of c and d.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go#newcode92\nsrc/pkg/exp/template/html/escape.go:92: // dActions maps actions to commands they need to sanitize their inputs.\nOn 2011/09/12 00:14:21, nigeltao wrote:\n> It's not clear to me what the \"d\" in \"dActions\" and \"dCalls\" stands for.\n\nIt stands for delta.  Is there a naming convention for things that store pending changes?\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go#newcode331\nsrc/pkg/exp/template/html/escape.go:331: dname = fmt.Sprintf(\"%s$autoesc_%d\", name, c.packed())\nOn 2011/09/12 00:14:21, nigeltao wrote:\n> Maybe s/%d/%x/ would better show the structure.\n\nDone in context.go since the rewritten packed() now returns a string.",
+			"disapproval": false,
+			"date": "2011-09-12 05:28:02.244264",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode43\nsrc/pkg/exp/template/html/escape.go:43: panic(\"Must specify names of top level templates.\")\nI'd s/Must/must/ and drop the full stop. Go error messages typically do not form complete sentences, as they may be incorporated into other error messages.\n\nBut also, you could return an os.NewError instead of panicking.\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/clone.go\nFile src/pkg/exp/template/html/clone.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/clone.go#newcode62\nsrc/pkg/exp/template/html/clone.go:62: // The escaper does not modify pipe descendants in place so there's no\nThis sentence could be pulled up to the doc comment for clonePipe, closer to where you say \"shallow\" instead of \"deep\".\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go#newcode325\nsrc/pkg/exp/template/html/escape.go:325: c, s := e.escapeTree(c, n.Name, n.Line)\nMaybe s/s/name/ so that this is less likely to be confused with the \"c, s = ...\" used in the transition functions.\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go#newcode389\nsrc/pkg/exp/template/html/escape.go:389: errStr:  fmt.Sprintf(\"cannot compute output context for template %s in %v\", n, c),\nI forget if I've already asked this, but do we have a test case that tickles this?\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go#newcode458\nsrc/pkg/exp/template/html/escape.go:458: for _, t := range e.derived {\nMaybe move this for loop above the previous one, so that the two fooNodeEdits loops are adjacent.\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go#newcode475\nsrc/pkg/exp/template/html/escape.go:475: // transitionFunc is the array of context transition functions for text nodes.\nescape.go is getting long enough now that I'd consider splitting everything from here-on down to a separate transition.go file. This would be a separate CL, obviously.",
+			"disapproval": false,
+			"date": "2011-09-13 02:21:03.565973",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "It may be that the template cloning function in clone.go belongs in the template package instead of the exp/template/html package. I've added r as a reviewer for his opinion.",
+			"disapproval": false,
+			"date": "2011-09-11 23:05:00.528158",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "2011/9/12 Nigel Tao <nigeltao@golang.org>:\n> On 13 September 2011 02:12, \u00a0<mikesamuel@gmail.com> wrote:\n>> rsc guaranteed that there was no sub-tree cloning, but I added a check.\n>\n> For the record, can you point out where that check is? I think I missed it.\n\nI thought I had done put in something like the below, but can't find it.\n\n    if _, t := e.actionNodeEdits[n]; t {\n      panic(fmt.Sprintf(\"Node %s shared between templates\", n))\n    }\n\nbut hadn't.  I thought a panic was more appropriate than an error\ncontext since the problem would be with package template, not the\ntemplate author's code.\n\nSound good?\n",
+			"disapproval": false,
+			"date": "2011-09-13 02:30:00.528503",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/12 01:53:56, nigeltao wrote:\n> On 12 September 2011 10:14,  <mailto:nigeltao@golang.org> wrote:\n> > Mostly superficial comments for now. I need some time to think about the\n> > escaper design.\n> \n> For example, the Escape function currently modifies a template\n> in-place. What you're doing with template sets suggests that it might\n> be a better design for Escape to return a modified clone of its\n> argument, leaving the original template argument untouched.\n\nEscape and EscapeSet both modify in place where possible.\nI did this because rsc expressed a preference for it in http://codereview.appspot.com/4808089\n\n> Do you avoid the accessors if you just edit the template in place?\n\n> That's what I was expecting: it's more efficient, and we \n> made sure that each template is only referred to as\n> part of one *Set precisely so that editing them in place\n> would be valid.\n\nThe second part was in response to a question whether there was any subexpression sharing going on.",
+			"disapproval": false,
+			"date": "2011-09-12 05:27:35.081167",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Take a look at escape.go:301.  I added the shared node checks, but since we visit the {{range}} body twice, that required a bit of finangling to prevent spuriously concluding that clobbering was happening.\nI'm happy to remove the checks if you don't like the extra code in escapeRange.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode43\nsrc/pkg/exp/template/html/escape.go:43: panic(\"Must specify names of top level templates.\")\nOn 2011/09/13 02:21:03, nigeltao wrote:\n> I'd s/Must/must/ and drop the full stop. Go error messages typically do not form\n> complete sentences, as they may be incorporated into other error messages.\n\nDone.\n\n> But also, you could return an os.NewError instead of panicking.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/clone.go\nFile src/pkg/exp/template/html/clone.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/clone.go#newcode62\nsrc/pkg/exp/template/html/clone.go:62: // The escaper does not modify pipe descendants in place so there's no\nOn 2011/09/13 02:21:03, nigeltao wrote:\n> This sentence could be pulled up to the doc comment for clonePipe, closer to\n> where you say \"shallow\" instead of \"deep\".\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go#newcode325\nsrc/pkg/exp/template/html/escape.go:325: c, s := e.escapeTree(c, n.Name, n.Line)\nOn 2011/09/13 02:21:03, nigeltao wrote:\n> Maybe s/s/name/ so that this is less likely to be confused with the \"c, s = ...\"\n> used in the transition functions.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go#newcode389\nsrc/pkg/exp/template/html/escape.go:389: errStr:  fmt.Sprintf(\"cannot compute output context for template %s in %v\", n, c),\nOn 2011/09/13 02:21:03, nigeltao wrote:\n> I forget if I've already asked this, but do we have a test case that tickles\n> this?\n\nI included\n\t\t// A recursive template that ends in a different context.\n\t\t/*\n\t\t\t{\n\t\t\t\tmap[string]string{\n\t\t\t\t\t\"main\":   `<a href=\"/foo{{template \"helper\" .}}\">`,\n\t\t\t\t\t\"helper\": `{{if .Children}}{{range .Children}}{{template \"helper\" .}}{{end}}{{else}}?x={{.X}}{{end}}`,\n\t\t\t\t},\n\t\t\t\t`<a href=\"/foo?x=foo?x=%3cbar%3e?x=baz\">`,\n\t\t\t},\n\t\t*/\nas a known failure case, but I commented that out because I'm perfectly happy if it suddenly starts to pass.  It requires doing the \"TODO: If necessary, compute a fixed point...\" from escape.go:391 but I think it's of marginal value.\n\nso I added the below to TestErrors\n\t\t{\n\t\t\t`{{define \"z\"}}<script>reverseList = [{{template \"t\"}}]</script>{{end}}` +\n\t\t\t\t\t// Missing \" after recursive call.\n\t\t\t\t\t`{{define \"t\"}}{{if .Tail}}{{template \"t\" .Tail}}{{end}}{{.Head}}\",{{end}}`,\n\t\t\t`: cannot compute output context for template t$htmltemplate_stateJS_elementScript`,\n\t\t},\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go#newcode458\nsrc/pkg/exp/template/html/escape.go:458: for _, t := range e.derived {\nOn 2011/09/13 02:21:03, nigeltao wrote:\n> Maybe move this for loop above the previous one, so that the two fooNodeEdits\n> loops are adjacent.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/11/src/pkg/exp/template/html/escape.go#newcode475\nsrc/pkg/exp/template/html/escape.go:475: // transitionFunc is the array of context transition functions for text nodes.\nOn 2011/09/13 02:21:03, nigeltao wrote:\n> escape.go is getting long enough now that I'd consider splitting everything from\n> here-on down to a separate transition.go file. This would be a separate CL,\n> obviously.\n\nWill do.",
+			"disapproval": false,
+			"date": "2011-09-13 03:25:23.300825",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go#newcode92\nsrc/pkg/exp/template/html/escape.go:92: // dActions maps actions to commands they need to sanitize their inputs.\nOn 2011/09/12 05:28:02, MikeSamuel wrote:\n> On 2011/09/12 00:14:21, nigeltao wrote:\n> > It's not clear to me what the \"d\" in \"dActions\" and \"dCalls\" stands for.\n> \n> It stands for delta.  Is there a naming convention for things that store pending\n> changes?\n\nI would write:\n\n// actionNodeEdits and templateNodeEdits are the accumulated edits to\n// apply during commit. Such edits are not applied immediately in case\n// a template set executes a given template in different escaping contexts.\nactionNodeEdits   map[*parse.ActionNode][]string\ntemplateNodeEdits map[*parse.TemplateNode]string\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone.go\nFile src/pkg/exp/template/html/clone.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone.go#newcode61\nsrc/pkg/exp/template/html/clone.go:61: // The contextual autoescaper does not modify pipe descendants in place\nI'd s/The contextual autoescaper/The escaper/. There's only one sort of escaper in this package.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone.go#newcode74\nsrc/pkg/exp/template/html/clone.go:74: func cloneBranchInto(dest, src *parse.BranchNode, n parse.Node) parse.Node {\nI see what you're trying to do here, but it seems artificial to pass n just to return it.\n\nI'd call the function copyBranch. I'd also drop the parse.Node param and return value, and just pull the \"return b\" out at the call sites:\nfunc copyBranch(dst, src *parse.BranchNode) {\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone.go#newcode76\nsrc/pkg/exp/template/html/clone.go:76: *dest = parse.BranchNode{\ns/dest/dst/.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone_test.go\nFile src/pkg/exp/template/html/clone_test.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone_test.go#newcode14\nsrc/pkg/exp/template/html/clone_test.go:14: func TestCloneInto(t *testing.T) {\nDrop the \"Into\". It's either clone or copy.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/context.go\nFile src/pkg/exp/template/html/context.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/context.go#newcode41\nsrc/pkg/exp/template/html/context.go:41: return fmt.Sprintf(\"%x\",\nIf you're returning a string, you're not constrained to return a number-as-string. How about something more human-readable:\n----\nfunc (c context) mangle(templateName string) string {\n  if c.state == stateText {\n    return templateName\n  }\n  return fmt.Sprintf(\"%s$htmltemplate_%v_%v_%v_%v_%v\",\n      templateName, c.state, c.delim, c.urlPart, c.jsCtx, c.element)\n}\n----\nor\n----\nfunc (c context) mangle(templateName string) string {\n  if c.state == stateText {\n    return templateName\n  }\n  s := templateName + \"$htmltemplate_\" + c.state.String()\n  if c.delim != 0 {\n    s += \"_\" + c.delim.String()\n  }\n  if c.urlPart != 0 {\n    s += \"_\" + c.urlPart.String()\n  }\n  if c.jsCtx != 0 {\n    s += \"_\" + c.jsCtx.String()\n  }\n  if c.element != 0 {\n    s += \"_\" + c.element.String()\n  }\n  return s\n}\n----\nsure, all that string addition is ugly, but I expect that most of those if-guards won't fire. Or use a bytes.Buffer.\n\nIf so, context_test.go becomes less interesting, and I'm not sure if I'd bother with it.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode39\nsrc/pkg/exp/template/html/escape.go:39: func EscapeSet(s *template.Set, names ...string) os.Error {\nEscapeSet should return (*template.Set, os.Error), to match Escape.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode82\nsrc/pkg/exp/template/html/escape.go:82: // The template set being escaped.\nGo style is to start the doc comment with what you're naming: set is the template set being escaped.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode87\nsrc/pkg/exp/template/html/escape.go:87: // derived[templateName] maps mangled template names to template names\nThis comment says \"maps... to template names in specific contexts\", but the value type is a template, not a template name.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode121\nsrc/pkg/exp/template/html/escape.go:121: case *parse.TemplateNode:\nAbsent any other obvious ordering, I'd sort these cases alphabetically, so that TemplateNode comes between RangeNode and TextNode.\n\nSimilarly in clone.go.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode181\nsrc/pkg/exp/template/html/escape.go:181: e.dActions[n] = s\nIt's bad if e.dActions already contains an entry for n (if a template 'tree' merged common sub-expressions), right? I think that we should either return an error, or ensure that a duplicate entry is impossible and panic if we do find one.\n\nSimilarly for dCalls.\n\nWe may end up needing to return a new template after all, instead of editing a template in-place. Let me think some more about it.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode331\nsrc/pkg/exp/template/html/escape.go:331: dname = name + \"$autoesc_\" + c.nameSuffix()\nI'd s/autoesc/htmltemplate/. The package is not called \"autoesc\", and whilst it is currently called \"html\", I would expect it to eventually be renamed to \"htmltemplate\".\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode342\nsrc/pkg/exp/template/html/escape.go:342: errStr:  fmt.Sprintf(\"No such template %s\", name),\ns/No/no/. Similarly at line 378.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape_test.go\nFile src/pkg/exp/template/html/escape_test.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape_test.go#newcode620\nsrc/pkg/exp/template/html/escape_test.go:620: if len(test.input) >= 8 && test.input[0:8] == \"{{define\" {\nif strings.HasPrefix(test.input, \"{{define\") {",
+			"disapproval": false,
+			"date": "2011-09-12 07:20:15.831295",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-10 00:43:24.391635",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 13 September 2011 02:12,  <mikesamuel@gmail.com> wrote:\n> rsc guaranteed that there was no sub-tree cloning, but I added a check.\n\nFor the record, can you point out where that check is? I think I missed it.\n",
+			"disapproval": false,
+			"date": "2011-09-13 02:22:24.863774",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Mostly superficial comments for now. I need some time to think about the escaper design.\n\nI've also separated the JS regexp change out as http://codereview.appspot.com/4972063.\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/clone.go\nFile src/pkg/exp/template/html/clone.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/clone.go#newcode13\nsrc/pkg/exp/template/html/clone.go:13: func cloneInto(src, dest *template.Template) *template.Template {\nGo parameter ordering is destination, then source. For example, see io.Copy, or\nthe built-in copy function. I'd also s/dest/dst/.\n\nWhat you have here seems a mix of copying (into an existing data structure) and cloning (returning a new data structure). I would either have\nfunc copyTree(dst, src *parse.Tree)\nor\nfunc cloneTree(t *parse.Tree) *parse.Tree\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/context.go\nFile src/pkg/exp/template/html/context.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/context.go#newcode40\nsrc/pkg/exp/template/html/context.go:40: func (c context) packed() uint64 {\nIf the only use for packed is to return something to pass to fmt as %d, then maybe packed should just return a string.\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/context_test.go\nFile src/pkg/exp/template/html/context_test.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/context_test.go#newcode21\nsrc/pkg/exp/template/html/context_test.go:21: if d, seen := m[p]; seen {\nIt confused me at first because the d variable here shadows the earlier one. I'd call the two contexts c0 and c1 instead of c and d.\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go#newcode92\nsrc/pkg/exp/template/html/escape.go:92: // dActions maps actions to commands they need to sanitize their inputs.\nIt's not clear to me what the \"d\" in \"dActions\" and \"dCalls\" stands for.\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go#newcode156\nsrc/pkg/exp/template/html/escape.go:156: // A div operator can occur after a value but not a regexp.\nHmm... the `<script>/foo/ /=` test case seems to pass without this change. Do we need a different test case? Or am I missing something?\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go#newcode331\nsrc/pkg/exp/template/html/escape.go:331: dname = fmt.Sprintf(\"%s$autoesc_%d\", name, c.packed())\nMaybe s/%d/%x/ would better show the structure.",
+			"disapproval": false,
+			"date": "2011-09-12 00:14:21.544697",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 12 September 2011 10:14,  <nigeltao@golang.org> wrote:\n> Mostly superficial comments for now. I need some time to think about the\n> escaper design.\n\nFor example, the Escape function currently modifies a template\nin-place. What you're doing with template sets suggests that it might\nbe a better design for Escape to return a modified clone of its\nargument, leaving the original template argument untouched.\n",
+			"disapproval": false,
+			"date": "2011-09-12 01:53:56.882392",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Incremental diffs at http://codereview.appspot.com/4969072/diff2/15002:20002/src/pkg/exp/template/html/clone.go\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go#newcode92\nsrc/pkg/exp/template/html/escape.go:92: // dActions maps actions to commands they need to sanitize their inputs.\nOn 2011/09/12 07:20:15, nigeltao wrote:\n> On 2011/09/12 05:28:02, MikeSamuel wrote:\n> > On 2011/09/12 00:14:21, nigeltao wrote:\n> > > It's not clear to me what the \"d\" in \"dActions\" and \"dCalls\" stands for.\n> > \n> > It stands for delta.  Is there a naming convention for things that store\n> pending\n> > changes?\n> \n> I would write:\n> \n> // actionNodeEdits and templateNodeEdits are the accumulated edits to\n> // apply during commit. Such edits are not applied immediately in case\n> // a template set executes a given template in different escaping contexts.\n> actionNodeEdits   map[*parse.ActionNode][]string\n> templateNodeEdits map[*parse.TemplateNode]string\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/10001/src/pkg/exp/template/html/escape.go#newcode156\nsrc/pkg/exp/template/html/escape.go:156: // A div operator can occur after a value but not a regexp.\nOn 2011/09/12 00:14:21, nigeltao wrote:\n> Hmm... the `<script>/foo/ /=` test case seems to pass without this change. Do we\n> need a different test case? Or am I missing something?\n\nMy language is confusing.  I meant, a div operator can occur after a value, but a regexp literal cannot occur after a value.\n\nChanged to\n\n// A slash after a value starts a div operator.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone.go\nFile src/pkg/exp/template/html/clone.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone.go#newcode61\nsrc/pkg/exp/template/html/clone.go:61: // The contextual autoescaper does not modify pipe descendants in place\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> I'd s/The contextual autoescaper/The escaper/. There's only one sort of escaper\n> in this package.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone.go#newcode74\nsrc/pkg/exp/template/html/clone.go:74: func cloneBranchInto(dest, src *parse.BranchNode, n parse.Node) parse.Node {\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> I see what you're trying to do here, but it seems artificial to pass n just to\n> return it.\n> \n> I'd call the function copyBranch. I'd also drop the parse.Node param and return\n> value, and just pull the \"return b\" out at the call sites:\n> func copyBranch(dst, src *parse.BranchNode) {\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone.go#newcode76\nsrc/pkg/exp/template/html/clone.go:76: *dest = parse.BranchNode{\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> s/dest/dst/.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone_test.go\nFile src/pkg/exp/template/html/clone_test.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/clone_test.go#newcode14\nsrc/pkg/exp/template/html/clone_test.go:14: func TestCloneInto(t *testing.T) {\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> Drop the \"Into\". It's either clone or copy.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/context.go\nFile src/pkg/exp/template/html/context.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/context.go#newcode41\nsrc/pkg/exp/template/html/context.go:41: return fmt.Sprintf(\"%x\",\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> If you're returning a string, you're not constrained to return a\n> number-as-string. How about something more human-readable:\n> ----\n> func (c context) mangle(templateName string) string {\n>   if c.state == stateText {\n>     return templateName\n>   }\n>   return fmt.Sprintf(\"%s$htmltemplate_%v_%v_%v_%v_%v\",\n>       templateName, c.state, c.delim, c.urlPart, c.jsCtx, c.element)\n> }\n> ----\n> or\n> ----\n> func (c context) mangle(templateName string) string {\n>   if c.state == stateText {\n>     return templateName\n>   }\n>   s := templateName + \"$htmltemplate_\" + c.state.String()\n>   if c.delim != 0 {\n>     s += \"_\" + c.delim.String()\n>   }\n>   if c.urlPart != 0 {\n>     s += \"_\" + c.urlPart.String()\n>   }\n>   if c.jsCtx != 0 {\n>     s += \"_\" + c.jsCtx.String()\n>   }\n>   if c.element != 0 {\n>     s += \"_\" + c.element.String()\n>   }\n>   return s\n> }\n> ----\n> sure, all that string addition is ugly, but I expect that most of those\n> if-guards won't fire. Or use a bytes.Buffer.\n> \n> If so, context_test.go becomes less interesting, and I'm not sure if I'd bother\n> with it.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go\nFile src/pkg/exp/template/html/escape.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode39\nsrc/pkg/exp/template/html/escape.go:39: func EscapeSet(s *template.Set, names ...string) os.Error {\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> EscapeSet should return (*template.Set, os.Error), to match Escape.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode82\nsrc/pkg/exp/template/html/escape.go:82: // The template set being escaped.\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> Go style is to start the doc comment with what you're naming: set is the\n> template set being escaped.\n\nDone.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode87\nsrc/pkg/exp/template/html/escape.go:87: // derived[templateName] maps mangled template names to template names\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> This comment says \"maps... to template names in specific contexts\", but the\n> value type is a template, not a template name.\n\nRewrote.\n\n// derived[c.mangle(name)] maps to a template derived from the template\n// named name templateName for the start context c.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode121\nsrc/pkg/exp/template/html/escape.go:121: case *parse.TemplateNode:\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> Absent any other obvious ordering, I'd sort these cases alphabetically, so that\n> TemplateNode comes between RangeNode and TextNode.\n> \n> Similarly in clone.go.\n\nDone, and sorted function definitions in clone.go.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode181\nsrc/pkg/exp/template/html/escape.go:181: e.dActions[n] = s\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> It's bad if e.dActions already contains an entry for n (if a template 'tree'\n> merged common sub-expressions), right? I think that we should either return an\n> error, or ensure that a duplicate entry is impossible and panic if we do find\n> one.\n\n\n> Similarly for dCalls.\n> \n> We may end up needing to return a new template after all, instead of editing a\n> template in-place. Let me think some more about it.\n\n\nrsc guaranteed that there was no sub-tree cloning, but I added a check.\n\nhttp://codereview.appspot.com/4808089\nmikesamuel:\n> > > I was worried that exp/template/parse.go might (or might in the future) share\n> > > common sub-expressions.  I have run into parse \"trees\" that aren't really trees\n> > > for that reason, but I'm perfectly happy to do in-place transformations if\n> > > that's not unduly limiting the development of exp/template.\nrsc:\n> > we planned for modification from the start.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode331\nsrc/pkg/exp/template/html/escape.go:331: dname = name + \"$autoesc_\" + c.nameSuffix()\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> I'd s/autoesc/htmltemplate/. The package is not called \"autoesc\", and whilst it\n> is currently called \"html\", I would expect it to eventually be renamed to\n> \"htmltemplate\".\n\nDone in func (c context) mangle in context.go.\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape.go#newcode342\nsrc/pkg/exp/template/html/escape.go:342: errStr:  fmt.Sprintf(\"No such template %s\", name),\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> s/No/no/. Similarly at line 378.\n\nDone.  Is the panic at line 43 overly capitalized?\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape_test.go\nFile src/pkg/exp/template/html/escape_test.go (right):\n\nhttp://codereview.appspot.com/4969072/diff/15002/src/pkg/exp/template/html/escape_test.go#newcode620\nsrc/pkg/exp/template/html/escape_test.go:620: if len(test.input) >= 8 && test.input[0:8] == \"{{define\" {\nOn 2011/09/12 07:20:16, nigeltao wrote:\n> if strings.HasPrefix(test.input, \"{{define\") {\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-12 16:12:49.517626",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 13 September 2011 12:30, Mike Samuel <mikesamuel@gmail.com> wrote:\n> 2011/9/12 Nigel Tao <nigeltao@golang.org>:\n>> On 13 September 2011 02:12, \u00a0<mikesamuel@gmail.com> wrote:\n>>> rsc guaranteed that there was no sub-tree cloning, but I added a check.\n>>\n>> For the record, can you point out where that check is? I think I missed it.\n>\n> I thought I had done put in something like the below, but can't find it.\n>\n> \u00a0 \u00a0if _, t := e.actionNodeEdits[n]; t {\n> \u00a0 \u00a0 \u00a0panic(fmt.Sprintf(\"Node %s shared between templates\", n))\n> \u00a0 \u00a0}\n>\n> but hadn't. \u00a0I thought a panic was more appropriate than an error\n> context since the problem would be with package template, not the\n> template author's code.\n>\n> Sound good?\n\nSGTM, after renaming \"t\" to \"ok\", or just do \"if e.actionNodeEdits[n]\n!= nil {\". Also, in the error message, s/Node/node/.\n\nWe have to do the same thing for templateNodeEdits, right?\n",
+			"disapproval": false,
+			"date": "2011-09-13 03:02:58.374545",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/13 03:25:23, MikeSamuel wrote:\n> Take a look at escape.go:301.  I added the shared node checks, but since we\n> visit the {{range}} body twice, that required a bit of finangling to prevent\n> spuriously concluding that clobbering was happening.\n> I'm happy to remove the checks if you don't like the extra code in escapeRange.\n\nShould I separate out the shared node checks into a separate CL since they are entangled with range's double checking.",
+			"disapproval": false,
+			"date": "2011-09-13 18:24:40.977544",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 14 September 2011 04:24,  <mikesamuel@gmail.com> wrote:\n> Should I separate out the shared node checks into a separate CL since\n> they are entangled with range's double checking.\n\nSGTM.\n",
+			"disapproval": false,
+			"date": "2011-09-13 23:20:38.222265",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "2011/9/13 Nigel Tao <nigeltao@golang.org>:\n> On 14 September 2011 04:24, \u00a0<mikesamuel@gmail.com> wrote:\n>> Should I separate out the shared node checks into a separate CL since\n>> they are entangled with range's double checking.\n>\n> SGTM.\n>\n\nWill submit without those checks, and then send out two more CLs.  One\nto move the transition functions and table into a separate file, and\nanother with the checks.\n",
+			"disapproval": false,
+			"date": "2011-09-13 23:54:15.304318",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"nigeltao@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=fe9f0d3b9825 ***\n\nexp/template/html: escape {{template}} calls and sets of templates\n\nThis adds support for {{template \"callee\"}} calls.\nIt recognizes that calls can appear in many contexts.\n\n{{if .ImageURL}}\n    <img src=\"{{.ImageURL}}\" alt=\"{{template \"description\"}}\">\n{{else}}\n    <p>{{template \"description\"}}</p>\n{{end}}\n\ncalls a template in two different contexts, first in an HTML attribute\ncontext, and second in an HTML text context.\n\nThose two contexts aren't very different, but when linking text\nto search terms, the escaping context can be materially different:\n\n<a href=\"/search?q={{template \"tags\"}}\">{{template \"tags\"}}</a>\n\nThis adds API:\nEscapeSet(*template.Set, names ...string) os.Error\n\ntakes a set of templates and the names of those which might be called\nin the default context as starting points.\n\nIt changes the escape* functions to be methods of an object which\nmaintains a conceptual mapping of\n(template names*input context) -> output context.\n\nThe actual mapping uses as key a mangled name which combines the\ntemplate name with the input context.\n\nThe mangled name when the input context is the default context is the\nsame as the unmangled name.\n\nWhen a template is called in multiple contexts, we clone the template.\n\n{{define \"tagLink\"}}\n  <a href=\"/search?q={{template \"tags\"}}\">{{template \"tags\"}}</a>\n{{end}}\n{{define \"tags\"}}\n  {{range .Tags}}{{.}},{{end}}\n{{end}}\n\ngiven []string{ \"foo\", \"O'Reilly\", \"bar\" } produces\n\n  <a href=\"/search?q=foo,O%27Reilly,bar\">foo,O&#39;Reilly,bar</a>\n\nThis involves rewriting the above to something like\n\n{{define \"tagLink\"}}\n  <a href=\"/search?q={{template \"tags$1\"}}\">{{template \"tags\"}}</a>\n{{end}}\n{{define \"tags\"}}\n  {{range .Tags}}{{. | html}},{{end}}\n{{end}}\n{{define \"tags$1\"}}\n  {{range .Tags}}{{. | urlquery}},{{end}}\n{{end}}\n\nclone.go provides a mechanism for cloning template \"tags\" to produce\n\"tags$1\".\n\nchanges to escape.go implement the new API and context propagation\naround the call graph.\n\ncontext.go includes minor changes to support name mangling and\ncontext_test.go tests those.\n\njs.go contains a bug-fix.\n\nR=nigeltao, r\nCC=golang-dev\nhttp://codereview.appspot.com/4969072",
+			"disapproval": false,
+			"date": "2011-09-13 23:57:46.008974",
+			"approval": false
+		}
+	],
+	"owner_email": "mikesamuel@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "MikeSamuel",
+	"subject": "code review 4969072: exp/template/html: escape {{template}} calls and sets o...",
+	"created": "2011-09-09 23:41:53.163016",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		7002,
+		10001,
+		15002,
+		20002,
+		22001,
+		11,
+		17002,
+		27001
+	],
+	"modified": "2011-09-13 23:57:47.312903",
+	"closed": true,
+	"issue": 4969072
+}

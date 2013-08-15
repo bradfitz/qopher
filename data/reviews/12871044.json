@@ -1,0 +1,164 @@
+{
+	"description": "runtime.cmd/ld: Add ARM external linking and implement -shared in terms of external linking\r\n\r\nThis CL is an aggregate of 10271047, 10499043, 9733044. Descriptions of each follow:\r\n\r\n10499043\r\nruntime,cmd/ld: Merge TLS symbols and teach 5l about ARM TLS\r\n\r\nThis CL prepares for external linking support to ARM.\r\n\r\nThe pseudo-symbols runtime.g and runtime.m are merged into a single\r\nruntime.tlsgm symbol. When external linking, the offset of a thread local\r\nvariable is stored at a memory location instead of being embedded into a offset\r\nof a ldr instruction. With a single runtime.tlsgm symbol for both g and m, only\r\none such offset is needed.\r\n\r\nThe larger part of this CL moves TLS code from gcc compiled to internally\r\ncompiled. The TLS code now uses the modern MRC instruction, and 5l is taught\r\nabout TLS fallbacks in case the instruction is not available or appropriate.\r\n\r\n10271047\r\nThis CL adds support for -linkmode external to 5l.\r\n\r\nFor 5l itself, use addrel to allow for D_CALL relocations to be handled by the\r\nhost linker. Of the cases listed in rsc's comment in issue 4069, only case 5 and\r\n63 needed an update. One of the TODO: addrel cases was since replaced, and the\r\nrest of the cases are either covered by indirection through addpool (cases with\r\nLTO or LFROM flags) or stubs (case 74). The addpool cases are covered because\r\naddpool emits AWORD instructions, which in turn are handled by case 11.\r\n\r\nIn the runtime, change the argv argument in the rt0* functions slightly to be a\r\npointer to the argv list, instead of relying on a particular location of argv.\r\n\r\n9733044\r\nThe -shared flag to 6l outputs a shared library, implemented in Go\r\nand callable from non-Go programs such as C.\r\n\r\nThe main part of this CL change the thread local storage model.\r\nGo uses the fastest and least general mode, local exec. TLS data in shared\r\nlibraries normally requires at least the local dynamic mode, however, this CL\r\ninstead opts for using the initial exec mode. Initial exec mode is faster than\r\nlocal dynamic mode and can be used in linux since the linker has reserved a\r\nlimited amount of TLS space for performance sensitive TLS code.\r\n\r\nInitial exec mode requires an extra load from the GOT table to determine the\r\nTLS offset. This penalty will not be paid if ld is not in -shared mode, since\r\nTLS accesses will be reduced to local exec.\r\n\r\nThe elf sections .init_array and .rela.init_array are added to register the Go\r\nruntime entry with cgo at library load time.\r\n\r\nThe \"hidden\" attribute is added to Cgo functions called from Go, since Go\r\ndoes not generate call through the GOT table, and adding non-GOT relocations for\r\na global function is not supported by gcc. Cgo symbols don't need to be global\r\nand avoiding the GOT table is also faster.\r\n\r\nThe changes to 8l are only removes code relevant to the old -shared mode where\r\ninternal linking was used.\r\n\r\nThis CL only address the low level linker work. It can be submitted by itself,\r\nbut to be useful, the runtime changes in CL 9738047 is also needed.\r\n\r\nDesign discussion at\r\nhttps://groups.google.com/forum/?fromgroups#!topic/golang-nuts/zmjXkGrEx6Q\r\n\r\nFixes issue 5590.",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"capnm9@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"elias.naur@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nSplitting crosscall_arm2 into setmg + crosscall_arm2 is not okay. There's no guarantee that gcc will not smash r9 and r10 after setmg returns during the preparation of the call to crosscall_arm2. Most likely it will not, but it's not something I'd like to depend on. I will move the arguments back to crosscall2 before submitting.",
+			"disapproval": false,
+			"date": "2013-08-14 14:44:23.584650",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "NOT LGTM\r\n\r\nActually, I'm very confused by the TLS changes. I'm going to go back to the\r\noriginal CLs.\r\n",
+			"disapproval": true,
+			"date": "2013-08-14 14:58:16.185660",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"elias.naur@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI figured it out. Now I pass setmg_gcc to crosscall_arm2 and it does both calls.",
+			"disapproval": false,
+			"date": "2013-08-14 15:37:38.129240",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"elias.naur@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7b621e98c86e ***\n\nruntime.cmd/ld: Add ARM external linking and implement -shared in terms of external linking\n\nThis CL is an aggregate of 10271047, 10499043, 9733044. Descriptions of each follow:\n\n10499043\nruntime,cmd/ld: Merge TLS symbols and teach 5l about ARM TLS\n\nThis CL prepares for external linking support to ARM.\n\nThe pseudo-symbols runtime.g and runtime.m are merged into a single\nruntime.tlsgm symbol. When external linking, the offset of a thread local\nvariable is stored at a memory location instead of being embedded into a offset\nof a ldr instruction. With a single runtime.tlsgm symbol for both g and m, only\none such offset is needed.\n\nThe larger part of this CL moves TLS code from gcc compiled to internally\ncompiled. The TLS code now uses the modern MRC instruction, and 5l is taught\nabout TLS fallbacks in case the instruction is not available or appropriate.\n\n10271047\nThis CL adds support for -linkmode external to 5l.\n\nFor 5l itself, use addrel to allow for D_CALL relocations to be handled by the\nhost linker. Of the cases listed in rsc's comment in issue 4069, only case 5 and\n63 needed an update. One of the TODO: addrel cases was since replaced, and the\nrest of the cases are either covered by indirection through addpool (cases with\nLTO or LFROM flags) or stubs (case 74). The addpool cases are covered because\naddpool emits AWORD instructions, which in turn are handled by case 11.\n\nIn the runtime, change the argv argument in the rt0* functions slightly to be a\npointer to the argv list, instead of relying on a particular location of argv.\n\n9733044\nThe -shared flag to 6l outputs a shared library, implemented in Go\nand callable from non-Go programs such as C.\n\nThe main part of this CL change the thread local storage model.\nGo uses the fastest and least general mode, local exec. TLS data in shared\nlibraries normally requires at least the local dynamic mode, however, this CL\ninstead opts for using the initial exec mode. Initial exec mode is faster than\nlocal dynamic mode and can be used in linux since the linker has reserved a\nlimited amount of TLS space for performance sensitive TLS code.\n\nInitial exec mode requires an extra load from the GOT table to determine the\nTLS offset. This penalty will not be paid if ld is not in -shared mode, since\nTLS accesses will be reduced to local exec.\n\nThe elf sections .init_array and .rela.init_array are added to register the Go\nruntime entry with cgo at library load time.\n\nThe \"hidden\" attribute is added to Cgo functions called from Go, since Go\ndoes not generate call through the GOT table, and adding non-GOT relocations for\na global function is not supported by gcc. Cgo symbols don't need to be global\nand avoiding the GOT table is also faster.\n\nThe changes to 8l are only removes code relevant to the old -shared mode where\ninternal linking was used.\n\nThis CL only address the low level linker work. It can be submitted by itself,\nbut to be useful, the runtime changes in CL 9738047 is also needed.\n\nDesign discussion at\nhttps://groups.google.com/forum/?fromgroups#!topic/golang-nuts/zmjXkGrEx6Q\n\nFixes issue 5590.\n\nR=rsc\nCC=golang-dev\nhttps://codereview.appspot.com/12871044\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2013-08-14 15:39:07.534390",
+			"approval": false
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you very much. The builders are not quite happy with the change; I'm \r\nlooking into it.\r\n\r\n - elias\r\n\r\nOn Wednesday, August 14, 2013 5:39:07 PM UTC+2, rsc wrote:\r\n>\r\n> *** Submitted as \r\n> https://code.google.com/p/go/source/detail?r=7b621e98c86e *** \r\n>\r\n> runtime.cmd/ld: Add ARM external linking and implement -shared in terms \r\n> of external linking \r\n>\r\n> This CL is an aggregate of 10271047, 10499043, 9733044. Descriptions of \r\n> each follow: \r\n>\r\n> 10499043 \r\n> runtime,cmd/ld: Merge TLS symbols and teach 5l about ARM TLS \r\n>\r\n> This CL prepares for external linking support to ARM. \r\n>\r\n> The pseudo-symbols runtime.g and runtime.m are merged into a single \r\n> runtime.tlsgm symbol. When external linking, the offset of a thread \r\n> local \r\n> variable is stored at a memory location instead of being embedded into a \r\n> offset \r\n> of a ldr instruction. With a single runtime.tlsgm symbol for both g and \r\n> m, only \r\n> one such offset is needed. \r\n>\r\n> The larger part of this CL moves TLS code from gcc compiled to \r\n> internally \r\n> compiled. The TLS code now uses the modern MRC instruction, and 5l is \r\n> taught \r\n> about TLS fallbacks in case the instruction is not available or \r\n> appropriate. \r\n>\r\n> 10271047 \r\n> This CL adds support for -linkmode external to 5l. \r\n>\r\n> For 5l itself, use addrel to allow for D_CALL relocations to be handled \r\n> by the \r\n> host linker. Of the cases listed in rsc's comment in issue 4069, only \r\n> case 5 and \r\n> 63 needed an update. One of the TODO: addrel cases was since replaced, \r\n> and the \r\n> rest of the cases are either covered by indirection through addpool \r\n> (cases with \r\n> LTO or LFROM flags) or stubs (case 74). The addpool cases are covered \r\n> because \r\n> addpool emits AWORD instructions, which in turn are handled by case 11. \r\n>\r\n> In the runtime, change the argv argument in the rt0* functions slightly \r\n> to be a \r\n> pointer to the argv list, instead of relying on a particular location of \r\n> argv. \r\n>\r\n> 9733044 \r\n> The -shared flag to 6l outputs a shared library, implemented in Go \r\n> and callable from non-Go programs such as C. \r\n>\r\n> The main part of this CL change the thread local storage model. \r\n> Go uses the fastest and least general mode, local exec. TLS data in \r\n> shared \r\n> libraries normally requires at least the local dynamic mode, however, \r\n> this CL \r\n> instead opts for using the initial exec mode. Initial exec mode is \r\n> faster than \r\n> local dynamic mode and can be used in linux since the linker has \r\n> reserved a \r\n> limited amount of TLS space for performance sensitive TLS code. \r\n>\r\n> Initial exec mode requires an extra load from the GOT table to determine \r\n> the \r\n> TLS offset. This penalty will not be paid if ld is not in -shared mode, \r\n> since \r\n> TLS accesses will be reduced to local exec. \r\n>\r\n> The elf sections .init_array and .rela.init_array are added to register \r\n> the Go \r\n> runtime entry with cgo at library load time. \r\n>\r\n> The \"hidden\" attribute is added to Cgo functions called from Go, since \r\n> Go \r\n> does not generate call through the GOT table, and adding non-GOT \r\n> relocations for \r\n> a global function is not supported by gcc. Cgo symbols don't need to be \r\n> global \r\n> and avoiding the GOT table is also faster. \r\n>\r\n> The changes to 8l are only removes code relevant to the old -shared mode \r\n> where \r\n> internal linking was used. \r\n>\r\n> This CL only address the low level linker work. It can be submitted by \r\n> itself, \r\n> but to be useful, the runtime changes in CL 9738047 is also needed. \r\n>\r\n> Design discussion at \r\n> https://groups.google.com/forum/?fromgroups#!topic/golang-nuts/zmjXkGrEx6Q \r\n>\r\n> Fixes issue 5590. \r\n>\r\n> R=rsc \r\n> CC=golang-dev \r\n> https://codereview.appspot.com/12871044 \r\n>\r\n> Committer: Russ Cox <r...@golang.org <javascript:>> \r\n>\r\n>\r\n> https://codereview.appspot.com/12871044/ \r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 16:00:07.939730",
+			"approval": false
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12829044 should fix the windows failure.\r\n\r\nOn Wednesday, August 14, 2013 6:00:07 PM UTC+2, Elias Naur wrote:\r\n>\r\n> Thank you very much. The builders are not quite happy with the change; I'm \r\n> looking into it.\r\n>\r\n>  - elias\r\n>\r\n>\r\n \r\n",
+			"disapproval": false,
+			"date": "2013-08-14 16:05:20.990370",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks. Any idea about Darwin?\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 16:11:22.882020",
+			"approval": false
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Not yet, but it used to work fine on an iMac I tried it on when testing \r\ngoandroid. I'll get a hold on that again and see if I can reproduce the \r\nerror in the next few hours. Is that alright with you? If not, feel free to \r\nrevert the change and I'll come up with a better CL now that merging the 3 \r\nparts is ok.\r\n\r\n - elias\r\n\r\nOn Wednesday, August 14, 2013 6:11:21 PM UTC+2, rsc wrote:\r\n>\r\n> Thanks. Any idea about Darwin?\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 16:22:13.246400",
+			"approval": false
+		},
+		{
+			"sender": "capnm9@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The builder is somehow mixing different go paths:\r\n\r\nfatal error: cgocall nil\r\ngoroutine 8 [running]:\r\nruntime.throw(0x39d274)\r\n/usr/local/go/src/pkg/runtime/panic.c:504 +0x69 fp=0x4bba38\r\nruntime.cgocall(0x0, 0x4bba98)\r\n/usr/local/go/src/pkg/runtime/cgocall.c:111 +0x78 fp=0x4bba80\r\ncrypto/x509._Cfunc_FetchPEMRoots(0xc210000cd0, 0xc210000cd0)\r\ncrypto/x509/_test/_cgo_defun.c:74 +0x31 fp=0x4bba98\r\ncrypto/x509.initSystemRoots()\r\n/Users/builder/workspace/darwin-amd64-cheney-9ae06f9aca48/go/src/pkg/crypto/x509/root_darwin.go:72 \r\n+0xc6 fp=0x4bbae8\r\n...\r\n\r\nOn Wednesday, 14 August 2013 18:22:12 UTC+2, Elias Naur wrote:\r\n>\r\n> Not yet, but it used to work fine on an iMac I tried it on when testing \r\n> goandroid. I'll get a hold on that again and see if I can reproduce the \r\n> error in the next few hours. Is that alright with you? If not, feel free to \r\n> revert the change and I'll come up with a better CL now that merging the 3 \r\n> parts is ok.\r\n>\r\n>  - elias\r\n>\r\n> On Wednesday, August 14, 2013 6:11:21 PM UTC+2, rsc wrote:\r\n>>\r\n>> Thanks. Any idea about Darwin?\r\n>>\r\n>",
+			"disapproval": false,
+			"date": "2013-08-14 16:39:50.603990",
+			"approval": false
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12842044 should fix the bsds on arm.\r\n\r\n - elias\r\n\r\nOn Wednesday, August 14, 2013 6:00:07 PM UTC+2, Elias Naur wrote:\r\n>\r\n> Thank you very much. The builders are not quite happy with the change; I'm \r\n> looking into it.\r\n>\r\n>  - elias\r\n>\r\n>",
+			"disapproval": false,
+			"date": "2013-08-14 17:16:14.794480",
+			"approval": false
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12938043 should regain support on older ARM \r\nprocessors.\r\n\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 17:26:18.876930",
+			"approval": false
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\r\n\r\nOn Wednesday, August 14, 2013 7:26:18 PM UTC+2, Elias Naur wrote:\r\n>\r\n> https://codereview.appspot.com/12938043 should regain support on older \r\n> ARM processors.\r\n>\r\n>\r\nAlas, this only made it worse: While \"blx rX\" for register X works on newer \r\nARMs, \"bl rX\" apparently doesn't work at all in gcc. I'll investigate on my \r\nnexus10, but in if anybody knows the correct instruction for gcc, it would \r\nbe much appreciated. \r\n",
+			"disapproval": false,
+			"date": "2013-08-14 18:41:03.954930",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I sent a CL.\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 18:43:53.499480",
+			"approval": false
+		}
+	],
+	"owner_email": "elias.naur@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "elias.naur",
+	"subject": "runtime.cmd/ld: Add ARM external linking and implement ...",
+	"created": "2013-08-14 07:01:06.900360",
+	"patchsets": [
+		1,
+		3001
+	],
+	"modified": "2013-08-14 21:10:58.297360",
+	"closed": true,
+	"issue": 12871044
+}

@@ -1,0 +1,290 @@
+{
+	"description": "pkg/runtime: Plan 9 signal handling in Go\r\n\r\nThis adds proper note handling for Plan 9,\r\nand fixes the issue of properly killing go procs.\r\nWithout this change, the first go proc that dies\r\n(using runtime\u00b7exit()) would kill all the running\r\ngo procs. Proper signal handling is needed.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"ality@pbrane.org",
+		"rminnich@gmail.com",
+		"rsc@golang.org",
+		"john@jfloren.net",
+		"mirtchovski@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"ality@pbrane.org",
+				"nix-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: ality@pbrane.org, john@jfloren.net, mirtchovski@gmail.com, nix-dev@googlegroups.com, rminnich@gmail.com, rsc@golang.org),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-05 06:45:20.045539",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'd like to postpone all the Plan 9 work until after Go 1.\n\nThat said, this approach does not work quite right.\nAn exiting process needs to take down all the other\nprocs that have been created; notepg is the wrong\nway to do this but so is not doing it.  There needs to\nbe a list of the procs and their pids and then exit needs\nto signal all the other pids to exit.  See /sys/src/libthread.\n\nThanks.\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-06 17:47:27.829945",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Russ,\n\nJust to point out: creating a list of pids and\nsending them a signal is exactly what I'm doing\nat thread_plan9.c:162.\n\nWe can wait until after Go 1.\n\n\nThanks,\nAkshat\n\nOn 6 February 2012 09:47, Russ Cox <rsc@golang.org> wrote:\n> I'd like to postpone all the Plan 9 work until after Go 1.\n>\n> That said, this approach does not work quite right.\n> An exiting process needs to take down all the other\n> procs that have been created; notepg is the wrong\n> way to do this but so is not doing it. \u00a0There needs to\n> be a list of the procs and their pids and then exit needs\n> to signal all the other pids to exit. \u00a0See /sys/src/libthread.\n>\n> Thanks.\n> Russ\n",
+			"disapproval": false,
+			"date": "2012-02-06 18:36:10.560972",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 6, 2012 at 13:36, Akshat Kumar <seed@mail.nanosouffle.net> wrote:\n> Just to point out: creating a list of pids and\n> sending them a signal is exactly what I'm doing\n> at thread_plan9.c:162.\n\nIndeed, sorry about that.  The atomic stuff made me\nthink it was something else.\n",
+			"disapproval": false,
+			"date": "2012-02-06 18:38:26.988881",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/os_plan9.h\nFile src/pkg/runtime/os_plan9.h (right):\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/os_plan9.h#newcode16\nsrc/pkg/runtime/os_plan9.h:16: int32\truntime\u00b7plan9_notify(void (*fn)(void*, byte*));\nThere's no need for the plan9_ prefix on these\nones since they don't conflict with any other\nfunctions.\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/thread_plan9.c\nFile src/pkg/runtime/thread_plan9.c (right):\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/thread_plan9.c#newcode117\nsrc/pkg/runtime/thread_plan9.c:117: runtime\u00b7plan9_noted(NCONT);\nIs this really what we want? Shouldn't we be calling\nruntime\u00b7exits instead?\n\nAlso, we should name this \"go: exiting\" since there\nme be others in the future, especially once we start\nlooking at the os/signal package.\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/thread_plan9.c#newcode124\nsrc/pkg/runtime/thread_plan9.c:124: runtime\u00b7postnote(int32 pid, int8* msg, uint32 len)\nI would get rid of the length argument and just\ncall strlen before the write. I imagine most calls\nwill be passing in string constants.\n\nIt might also be a good idea to have it return\nzero on success and negative one on failure.\n\nSo:\n\nint32\nruntime\u00b7postnote(int32 pid, int8* msg)\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/thread_plan9.c#newcode131\nsrc/pkg/runtime/thread_plan9.c:131: if(pid == 0 || pid == _tos->pid)\nIf pid is zero (which means m->procid was also)\nthen there's a problem with the Tos information.\nIn this case we should just let the open fail\nand return an error.",
+			"disapproval": false,
+			"date": "2012-02-08 08:20:38.975649",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nI've updated how the note handling works, how we attain PIDs, and added an extra case in the note handler.\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/os_plan9.h\nFile src/pkg/runtime/os_plan9.h (right):\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/os_plan9.h#newcode16\nsrc/pkg/runtime/os_plan9.h:16: int32\truntime\u00b7plan9_notify(void (*fn)(void*, byte*));\nOn 2012/02/08 08:20:39, ality wrote:\n> There's no need for the plan9_ prefix on these\n> ones since they don't conflict with any other\n> functions.\n\nDone.\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/thread_plan9.c\nFile src/pkg/runtime/thread_plan9.c (right):\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/thread_plan9.c#newcode117\nsrc/pkg/runtime/thread_plan9.c:117: runtime\u00b7plan9_noted(NCONT);\nI've now implemented the proper behaviour.\nThe \"gointr\" case remains as a way to interrupt\nrunning go procs. This may be needed for future\nsignal handling, so I'm leaving it in there.\n\nAs such, the name \"gointr\" is appropriate here.\n\nOn 2012/02/08 08:20:39, ality wrote:\n> Is this really what we want? Shouldn't we be calling\n> runtime\u00b7exits instead?\n> \n> Also, we should name this \"go: exiting\" since there\n> me be others in the future, especially once we start\n> looking at the os/signal package.\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/thread_plan9.c#newcode124\nsrc/pkg/runtime/thread_plan9.c:124: runtime\u00b7postnote(int32 pid, int8* msg, uint32 len)\nOn 2012/02/08 08:20:39, ality wrote:\n> I would get rid of the length argument and just\n> call strlen before the write. I imagine most calls\n> will be passing in string constants.\n> \n> It might also be a good idea to have it return\n> zero on success and negative one on failure.\n> \n> So:\n> \n> int32\n> runtime\u00b7postnote(int32 pid, int8* msg)\n\nDone.\n\nhttps://codereview.appspot.com/5617048/diff/4001/src/pkg/runtime/thread_plan9.c#newcode131\nsrc/pkg/runtime/thread_plan9.c:131: if(pid == 0 || pid == _tos->pid)\nI disagree with this assessment: in the\ntopmost parent go proc, m->procid is 0\nbecause it has only been initialized. It\ntakes its value from the Tos structure\nonly during an rfork. Thus, new go procs\nwill have non-zero m->procid, but the\ninitial go proc will not.\n\n\nOn 2012/02/08 08:20:39, ality wrote:\n> If pid is zero (which means m->procid was also)\n> then there's a problem with the Tos information.\n> In this case we should just let the open fail\n> and return an error.",
+			"disapproval": false,
+			"date": "2012-02-14 18:44:18.001936",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/os_plan9.h\nFile src/pkg/runtime/os_plan9.h (right):\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/os_plan9.h#newcode20\nsrc/pkg/runtime/os_plan9.h:20: int32 runtime\u00b7strncmp(byte*, byte*, int32);\nPut this declaration in runtime.c.\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c\nFile src/pkg/runtime/thread_plan9.c (right):\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode11\nsrc/pkg/runtime/thread_plan9.c:11: int32 runtime\u00b7ppid;\nWhy not just set m->procid for the initial process during\nruntime\u00b7osinit? Then you can get rid of ppid and the check\nfor m->procid != 0 in goexitsall.\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode44\nsrc/pkg/runtime/thread_plan9.c:44: getpid(void)\nThis function is unnecessary. Just use _tos->pid.\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode158\nsrc/pkg/runtime/thread_plan9.c:158: if(runtime\u00b7strncmp(s, (byte*)\"sys:\", 4) == 0){\nI think we should just call noted(NDFLT) for this case since\nit might be useful to have the other processess alive when\ndebugging. What do you think?\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode187\nsrc/pkg/runtime/thread_plan9.c:187: for(q=tmp; pid > 0;) {\nSince we do this a few times it might be useful to\nhave a runtime\u00b7itoa function in runtime.c:\n\nint32\nruntime\u00b7atoi(num int32, buf *byte, size int32)\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode198\nsrc/pkg/runtime/thread_plan9.c:198: fd = runtime\u00b7open(buf, OWRITE);\nStyle nit. Ignore if you disagree. :)\n\nif((fd = runtime\u00b7open(buf, OWRITE)) < 0)\n    return -1;",
+			"disapproval": false,
+			"date": "2012-02-16 01:17:18.797256",
+			"approval": false
+		},
+		{
+			"sender": "rminnich@gmail.com",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"rsc@golang.org",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/16 01:17:18, ality wrote:\n\n> \n> https://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode44\n> src/pkg/runtime/thread_plan9.c:44: getpid(void)\n> This function is unnecessary. Just use _tos->pid.\n\nYes but be sure to create a test so we can be sure getpid() == _tos->pid, as this has been a continuing issue. It will save \nwasted time as from time to time tos has gotten broken. Don't do the change until you add this test please. I've wasted\ntoo much time on this problem! If the test fails I think the build should fail -- it's ridiculous that we keep fouling this up :-)\n\nron",
+			"disapproval": false,
+			"date": "2012-02-16 06:24:49.240926",
+			"approval": false
+		},
+		{
+			"sender": "rminnich@gmail.com",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"rsc@golang.org",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This looks great. And, yes, I am glad you do not use tos->pid. It's a cute idea but it's not been stable enough to rely on. Maybe later. \n\nLGTM",
+			"disapproval": false,
+			"date": "2012-04-14 00:23:58.591452",
+			"approval": true
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"rsc@golang.org",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/os_plan9.h\nFile src/pkg/runtime/os_plan9.h (right):\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/os_plan9.h#newcode20\nsrc/pkg/runtime/os_plan9.h:20: int32 runtime\u00b7strncmp(byte*, byte*, int32);\nOn 2012/02/16 01:17:19, ality wrote:\n> Put this declaration in runtime.c.\n\nI assume you mean runtime.h.\nDone.\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c\nFile src/pkg/runtime/thread_plan9.c (right):\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode11\nsrc/pkg/runtime/thread_plan9.c:11: int32 runtime\u00b7ppid;\nOn 2012/02/16 01:17:19, ality wrote:\n> Why not just set m->procid for the initial process during\n> runtime\u00b7osinit? Then you can get rid of ppid and the check\n> for m->procid != 0 in goexitsall.\n\nDone.\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode44\nsrc/pkg/runtime/thread_plan9.c:44: getpid(void)\nOn 2012/02/16 01:17:19, ality wrote:\n> This function is unnecessary. Just use _tos->pid.\n\nTos is unreliable. This is straightforward and works reliably.\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode158\nsrc/pkg/runtime/thread_plan9.c:158: if(runtime\u00b7strncmp(s, (byte*)\"sys:\", 4) == 0){\nOn 2012/02/16 01:17:19, ality wrote:\n> I think we should just call noted(NDFLT) for this case since\n> it might be useful to have the other processess alive when\n> debugging. What do you think?\n\nGo's fault-intolerant design dictates that if one go proc meets a gruesome demise from the system, then they all do. It may have children, but it's still monolithic.\n\nhttps://codereview.appspot.com/5617048/diff/12001/src/pkg/runtime/thread_plan9.c#newcode187\nsrc/pkg/runtime/thread_plan9.c:187: for(q=tmp; pid > 0;) {\nOn 2012/02/16 01:17:19, ality wrote:\n> Since we do this a few times it might be useful to\n> have a runtime\u00b7itoa function in runtime.c:\n> \n> int32\n> runtime\u00b7atoi(num int32, buf *byte, size int32)\n\nAdded the function, but since we're the only users, I'll keep it in here for now. If it looks good for general purpose, I can push it into runtime.c.",
+			"disapproval": false,
+			"date": "2012-04-14 00:13:31.747968",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"rsc@golang.org",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping!\n\nOther reviewers?\n\nThere are quite a few CLs\nfor Plan 9 now that are\nlingering.",
+			"disapproval": false,
+			"date": "2012-04-16 23:07:19.579823",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"rsc@golang.org",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c\nFile src/pkg/runtime/thread_plan9.c (right):\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode10\nsrc/pkg/runtime/thread_plan9.c:10: int8 *runtime\u00b7exitstatus;\nThis needs to be done, since we need to\nproperly set errstr on exit, depending\nupon whether we exited cleanly or if there\nwas an error of some sort. Tests will need\nthis, among other things.\n\nThe race will have to be fixed, but that\nshould be done in increments.\n\nOn 2012/04/17 00:15:52, ality wrote:\n> I think there's a potential data race with exitstatus.\n> Is it worth the extra code since the program is about\n> to die?\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode43\nsrc/pkg/runtime/thread_plan9.c:43: getpid(void)\nA separate CL will change that behaviour\nin sys_plan9_386.s as well.\n\nOn 2012/04/17 00:15:52, ality wrote:\n> This is fine with me but I want to point out\n> that runtime\u00b7rfork initializes m->procid with\n> _tos->pid.\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode57\nsrc/pkg/runtime/thread_plan9.c:57: n = runtime\u00b7atoi(c);\nOn 2012/04/17 00:15:52, ality wrote:\n> return runtime\u00b7atoi(c);\n\nDone.\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode137\nsrc/pkg/runtime/thread_plan9.c:137: runtime\u00b7itoa(int32 n, byte *p, uint32 len)\nOn 2012/04/17 00:15:52, ality wrote:\n> We should check writes into p against len.\n> Also, space before brace.\n\nDone.\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode223\nsrc/pkg/runtime/thread_plan9.c:223: if(runtime\u00b7write(fd, msg, len) != len){\nOn 2012/04/17 00:15:52, ality wrote:\n> Space before brace.\n\nDone.\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode238\nsrc/pkg/runtime/thread_plan9.c:238: else{\nOn 2012/04/17 00:15:52, ality wrote:\n> Same.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-04-17 06:12:16.861416",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"rsc@golang.org",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry for the slow response.\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c\nFile src/pkg/runtime/thread_plan9.c (right):\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode10\nsrc/pkg/runtime/thread_plan9.c:10: int8 *runtime\u00b7exitstatus;\nI think there's a potential data race with exitstatus.\nIs it worth the extra code since the program is about\nto die?\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode43\nsrc/pkg/runtime/thread_plan9.c:43: getpid(void)\nThis is fine with me but I want to point out\nthat runtime\u00b7rfork initializes m->procid with\n_tos->pid.\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode57\nsrc/pkg/runtime/thread_plan9.c:57: n = runtime\u00b7atoi(c);\nreturn runtime\u00b7atoi(c);\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode137\nsrc/pkg/runtime/thread_plan9.c:137: runtime\u00b7itoa(int32 n, byte *p, uint32 len)\nWe should check writes into p against len.\nAlso, space before brace.\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode223\nsrc/pkg/runtime/thread_plan9.c:223: if(runtime\u00b7write(fd, msg, len) != len){\nSpace before brace.\n\nhttps://codereview.appspot.com/5617048/diff/29001/src/pkg/runtime/thread_plan9.c#newcode238\nsrc/pkg/runtime/thread_plan9.c:238: else{\nSame.",
+			"disapproval": false,
+			"date": "2012-04-17 00:15:52.082842",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nDoes anyone else have comments?\r\n\r\nI'll submit this on Monday if there\r\nare no objections.\r\n\r\nCheers,\r\n  Anthony\r\n",
+			"disapproval": false,
+			"date": "2012-04-28 05:49:27.388398",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nLet's drop strncmp.\r\nThe one place you use it could just as well be runtime\u00b7mcmp.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-03 21:51:41.996411",
+			"approval": true
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"rsc@golang.org",
+				"mirtchovski@gmail.com",
+				"john@jfloren.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nDone.\nThe only reservation I had about using\nruntime\u00b7mcmp was that it doesn't check\nfor hitting an end of string on s1 before\nn hits zero. Of course, this makes\nsense for its intended use.\n\n\nThanks,\nAkshat\n\nOn 2012/05/03 21:51:41, rsc wrote:\n> LGTM\n> \n> Let's drop strncmp.\n> The one place you use it could just as well be runtime\u00b7mcmp.\n> \n> Russ",
+			"disapproval": false,
+			"date": "2012-05-04 01:22:08.629545",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"golang-dev@googlegroups.com",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"rsc@golang.org",
+				"john@jfloren.net",
+				"mirtchovski@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=9233f811c522 ***\n\npkg/runtime: Plan 9 signal handling in Go\n\nThis adds proper note handling for Plan 9,\nand fixes the issue of properly killing go procs.\nWithout this change, the first go proc that dies\n(using runtime\u00b7exit()) would kill all the running\ngo procs. Proper signal handling is needed.\n\nR=golang-dev, ality, rminnich, rsc\nCC=golang-dev, john, mirtchovski\nhttp://codereview.appspot.com/5617048\n\nCommitter: Anthony Martin <ality@pbrane.org>",
+			"disapproval": false,
+			"date": "2012-05-04 10:48:43.893723",
+			"approval": false
+		}
+	],
+	"owner_email": "seed@mail.nanosouffle.net",
+	"private": false,
+	"base_url": "",
+	"owner": "akumar",
+	"subject": "code review 5617048: pkg/runtime: Plan 9 signal handling in Go",
+	"created": "2012-02-02 05:08:59.945206",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		12001,
+		21001,
+		25001,
+		29001,
+		33002,
+		42001,
+		47001
+	],
+	"modified": "2012-05-17 22:50:12.008579",
+	"closed": true,
+	"issue": 5617048
+}

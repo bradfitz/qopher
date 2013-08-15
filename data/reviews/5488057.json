@@ -1,0 +1,141 @@
+{
+	"description": "math: regularize build\n\nThis will be nicer to the automatic tools.\nIt requires a few more assembly stubs\nbut fewer Go files.\n\nThere are a few instances where it looks like\nthere are new blobs of code, but they are just\nbeing copied out of deleted files.\n\nThere is no new code here.\n\nSuppose you have a portable implementation for Sin\nand a 386-specific assembly one.  The old way to\ndo this was to write three files\n\nsin_decl.go\n   func Sin(x float64) float64  // declaration only\nsin_386.s\n   assembly implementation\n\nsin_port.go\n   func Sin(x float64) float64 { ... }  // pure-Go impl\n\nand then link in either sin_decl.go+sin_386.s or\njust sin_port.go.  The Makefile actually did the magic\nof linking in only the _port.go files for those without\nassembly and only the _decl.go files for those with\nassembly, or at least some of that magic.\n\nThe biggest problem with this, beyond being hard\nto explain to the build system, is that once you do\nexplain it to the build system, godoc knows which\nof sin_port.go or sin_decl.go are involved on a given\narchitecture, and it (correctly) ignores the other.\nThat means you have to put identical doc comments\nin both files.\n\nThe new approach, which is more like what we did\nin the later packages math/big and sync/atomic,\nis to have\n\nsin.go\n   func Sin(x float64) float64  // decl only\n   func sin(x float64) float64 {...}  // pure-Go impl\n\nsin_386.s\n   // assembly for Sin (ignores sin)\nsin_amd64.s\n   // assembly for Sin: jmp sin\nsin_arm.s\n   // assembly for Sin: jmp sin\n\nOnce we abandon Makefiles we can put all the assembly\nstubs in one source file, so the number of files will\nactually go down.\n\nChris asked whether the branches cost anything.\nGiven that they are branching to pure-Go implementations\nthat are not typically known for their speed, the single\ndirect branch is not going to be noticeable.  That is,\nit's on the slow path.\n\nAn alternative would have been to preserve the old\n\"only write assembly files when there's an implementation\"\nand still have just one copy of the declaration of Sin\n(and thus one doc comment) by doing:\n\nsin.go\n   func Sin(x float64) float64 { return sin(x) }\n\nsin_decl.go\n   func sin(x float64) float64 // declaration only\nsin_386.s\n   // assembly for sin\n\nsin_port.go\n   func sin(x float64) float64 { portable code }\n\nIn this version everyone would link in sin.go and\nthen either sin_decl.go+sin_386.s or sin_port.go.\n\nThis has an extra function call on all paths, including\nthe \"fast path\" to get to assembly, and it triples the\nnumber of Go files involved compared to what I did\nin this CL.  On the other hand you don't have to\nwrite assembly stubs.  After starting down this path\nI decided that the assembly stubs were the easier\napproach.\n\nAs for generating the assembly stubs on the fly, much\nof the goal here is to eliminate magic from the build\nprocess, so that zero-configuration tools like goinstall\nor the new go tool can handle this package.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"r@google.com",
+		"cw@f00f.org",
+		"iant@golang.org",
+		"r@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Dec 13, 2011 at 01:30, Rob 'Commander' Pike <r@google.com> wrote:\n> Can you please explain what you did, and why?\n\nSuppose you have a portable implementation for Sin\nand a 386-specific assembly one.  The old way to\ndo this was to write three files\n\nsin_decl.go\n    func Sin(x float64) float64  // declaration only\nsin_386.s\n    assembly implementation\n\nsin_port.go\n    func Sin(x float64) float64 { ... }  // pure-Go impl\n\nand then link in either sin_decl.go+sin_386.s or\njust sin_port.go.  The Makefile actually did the magic\nof linking in only the _port.go files for those without\nassembly and only the _decl.go files for those with\nassembly, or at least some of that magic.\n\nThe biggest problem with this, beyond being hard\nto explain to the build system, is that once you do\nexplain it to the build system, godoc knows which\nof sin_port.go or sin_decl.go are involved on a given\narchitecture, and it (correctly) ignores the other.\nThat means you have to put identical doc comments\nin both files.\n\nThe new approach, which is more like what we did\nin the later packages math/big and sync/atomic,\nis to have\n\nsin.go\n    func Sin(x float64) float64  // decl only\n    func sin(x float64) float64 {...}  // pure-Go impl\n\nsin_386.s\n    // assembly for Sin (ignores sin)\nsin_amd64.s\n    // assembly for Sin: jmp sin\nsin_arm.s\n    // assembly for Sin: jmp sin\n\nOnce we abandon Makefiles we can put all the assembly\nstubs in one source file, so the number of files will\nactually go down.\n\nChris asked whether the branches cost anything.\nGiven that they are branching to pure-Go implementations\nthat are not typically known for their speed, the single\ndirect branch is not going to be noticeable.  That is,\nit's on the slow path.\n\nAn alternative would have been to preserve the old\n\"only write assembly files when there's an implementation\"\nand still have just one copy of the declaration of Sin\n(and thus one doc comment) by doing:\n\nsin.go\n    func Sin(x float64) float64 { return sin(x) }\n\nsin_decl.go\n    func sin(x float64) float64 // declaration only\nsin_386.s\n    // assembly for sin\n\nsin_port.go\n    func sin(x float64) float64 { portable code }\n\nIn this version everyone would link in sin.go and\nthen either sin_decl.go+sin_386.s or sin_port.go.\n\nThis has an extra function call on all paths, including\nthe \"fast path\" to get to assembly, and it triples the\nnumber of Go files involved compared to what I did\nin this CL.  On the other hand you don't have to\nwrite assembly stubs.  After starting down this path\nI decided that the assembly stubs were the easier\napproach.\n\nAs for generating the assembly stubs on the fly, much\nof the goal here is to eliminate magic from the build\nprocess, so that zero-configuration tools like goinstall\nor the new go tool can handle this package.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-12-13 18:17:23.937456",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "thanks. can you put this text into the CL please? \n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2011-12-13 18:19:05.564875",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Dec 13, 2011 at 13:19, Rob 'Commander' Pike <r@google.com> wrote:\n> thanks. can you put this text into the CL please?\n\ndone\n",
+			"disapproval": false,
+			"date": "2011-12-13 18:22:12.229226",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@google.com",
+				"cw@f00f.org",
+				"iant@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=af839530a31e ***\n\nmath: regularize build\n\nThis will be nicer to the automatic tools.\nIt requires a few more assembly stubs\nbut fewer Go files.\n\nThere are a few instances where it looks like\nthere are new blobs of code, but they are just\nbeing copied out of deleted files.\n\nThere is no new code here.\n\nSuppose you have a portable implementation for Sin\nand a 386-specific assembly one.  The old way to\ndo this was to write three files\n\nsin_decl.go\n   func Sin(x float64) float64  // declaration only\nsin_386.s\n   assembly implementation\n\nsin_port.go\n   func Sin(x float64) float64 { ... }  // pure-Go impl\n\nand then link in either sin_decl.go+sin_386.s or\njust sin_port.go.  The Makefile actually did the magic\nof linking in only the _port.go files for those without\nassembly and only the _decl.go files for those with\nassembly, or at least some of that magic.\n\nThe biggest problem with this, beyond being hard\nto explain to the build system, is that once you do\nexplain it to the build system, godoc knows which\nof sin_port.go or sin_decl.go are involved on a given\narchitecture, and it (correctly) ignores the other.\nThat means you have to put identical doc comments\nin both files.\n\nThe new approach, which is more like what we did\nin the later packages math/big and sync/atomic,\nis to have\n\nsin.go\n   func Sin(x float64) float64  // decl only\n   func sin(x float64) float64 {...}  // pure-Go impl\n\nsin_386.s\n   // assembly for Sin (ignores sin)\nsin_amd64.s\n   // assembly for Sin: jmp sin\nsin_arm.s\n   // assembly for Sin: jmp sin\n\nOnce we abandon Makefiles we can put all the assembly\nstubs in one source file, so the number of files will\nactually go down.\n\nChris asked whether the branches cost anything.\nGiven that they are branching to pure-Go implementations\nthat are not typically known for their speed, the single\ndirect branch is not going to be noticeable.  That is,\nit's on the slow path.\n\nAn alternative would have been to preserve the old\n\"only write assembly files when there's an implementation\"\nand still have just one copy of the declaration of Sin\n(and thus one doc comment) by doing:\n\nsin.go\n   func Sin(x float64) float64 { return sin(x) }\n\nsin_decl.go\n   func sin(x float64) float64 // declaration only\nsin_386.s\n   // assembly for sin\n\nsin_port.go\n   func sin(x float64) float64 { portable code }\n\nIn this version everyone would link in sin.go and\nthen either sin_decl.go+sin_386.s or sin_port.go.\n\nThis has an extra function call on all paths, including\nthe \"fast path\" to get to assembly, and it triples the\nnumber of Go files involved compared to what I did\nin this CL.  On the other hand you don't have to\nwrite assembly stubs.  After starting down this path\nI decided that the assembly stubs were the easier\napproach.\n\nAs for generating the assembly stubs on the fly, much\nof the goal here is to eliminate magic from the build\nprocess, so that zero-configuration tools like goinstall\nor the new go tool can handle this package.\n\nR=golang-dev, r, cw, iant, r\nCC=golang-dev\nhttp://codereview.appspot.com/5488057",
+			"disapproval": false,
+			"date": "2011-12-13 20:20:14.855592",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you please explain what you did, and why?\n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2011-12-13 06:30:45.118911",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-12-13 04:50:25.538546",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@google.com",
+				"cw@f00f.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I like the consistency of the filenames with this, but I wonder do the introduced branches cost anything in practical performance? (My guess is on x86 it will be below the noise threshold, is that true for A8 arm cores as well?)\n\nCan we  auto-generate the asm stubs that contain only a single branch/jmp?  It seems we know the filenames, the functions and can check if there is an actual implementation (filename_arch.s) and generate these on the fly",
+			"disapproval": false,
+			"date": "2011-12-13 06:38:12.915161",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@google.com",
+				"cw@f00f.org",
+				"iant@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2011-12-13 18:22:33.957818",
+			"approval": true
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@google.com",
+				"cw@f00f.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2011-12-13 06:40:46.146147",
+			"approval": true
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5488057: math: regularize build",
+	"created": "2011-12-13 04:48:35.707320",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		1002
+	],
+	"modified": "2011-12-13 20:20:16.226080",
+	"closed": true,
+	"issue": 5488057
+}

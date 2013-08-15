@@ -1,0 +1,121 @@
+{
+	"description": "net/rpc: fix data race on Call.Error\n+eliminates a possibility of sending a call to Done several times.\n+fixes memory leak in case of temporal Write errors.\n+fixes data race on Client.shutdown.\n+fixes data race on Client.closing.\n+fixes comments.\nFixes issue 2780.",
+	"cc": [
+		"r@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com",
+		"mpimenov@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5571063/diff/4001/src/pkg/net/rpc/client.go\nFile src/pkg/net/rpc/client.go (right):\n\nhttp://codereview.appspot.com/5571063/diff/4001/src/pkg/net/rpc/client.go#newcode68\nsrc/pkg/net/rpc/client.go:68: func (client *Client) send(c *Call) {\nto make this easier for me next time, while you're hear please change the argument s/c/call/ so i don't confuse it with client.\n\nhttp://codereview.appspot.com/5571063/diff/4001/src/pkg/net/rpc/client.go#newcode91\nsrc/pkg/net/rpc/client.go:91: if c.Error == nil {\nyou're reading from the call here, but the client may already have it in hand.\n\na safer approach would be to take sending.Lock at the top of send(), and also in input() after \"// Terminate pending calls\".",
+			"disapproval": false,
+			"date": "2012-01-25 18:45:08.597650",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=4b46957eb40a ***\n\nnet/rpc: fix data race on Call.Error\n+eliminates a possibility of sending a call to Done several times.\n+fixes memory leak in case of temporal Write errors.\n+fixes data race on Client.shutdown.\n+fixes data race on Client.closing.\n+fixes comments.\nFixes issue 2780.\n\nR=r, rsc\nCC=golang-dev, mpimenov\nhttp://codereview.appspot.com/5571063",
+			"disapproval": false,
+			"date": "2012-01-27 07:27:55.339665",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, mpimenov@google.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-25 14:48:56.753898",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-01-26 15:59:33.134166",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org (cc: golang-dev@googlegroups.com, mpimenov@google.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-26 08:49:28.709322",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/25 18:45:08, r wrote:\n> http://codereview.appspot.com/5571063/diff/4001/src/pkg/net/rpc/client.go\n> File src/pkg/net/rpc/client.go (right):\n> \n> http://codereview.appspot.com/5571063/diff/4001/src/pkg/net/rpc/client.go#newcode68\n> src/pkg/net/rpc/client.go:68: func (client *Client) send(c *Call) {\n> to make this easier for me next time, while you're hear please change the\n> argument s/c/call/ so i don't confuse it with client.\n\nDone.\nI've also renamed it in input().\n\n> http://codereview.appspot.com/5571063/diff/4001/src/pkg/net/rpc/client.go#newcode91\n> src/pkg/net/rpc/client.go:91: if c.Error == nil {\n> you're reading from the call here, but the client may already have it in hand.\n> \n> a safer approach would be to take sending.Lock at the top of send(), and also in\n> input() after \"// Terminate pending calls\".\n\nDo you mean that if a user supply own Done and kick off a separate goroutine that polls Done, then he can have Call in hand even before Call()/Go() returns, and then he can reuse Call.err for own purposes and we have the race again? Oh, boy...\nDone.\n\nI've also take the liberty and removed Call.seq variable. If it's meant for debugging or something I will move it back, but as-is a local func var looks better than an unexported struct member.",
+			"disapproval": false,
+			"date": "2012-01-26 08:56:04.813790",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 5571063: net/rpc: fix data race on Call.Error",
+	"created": "2012-01-25 14:24:50.537320",
+	"patchsets": [
+		1,
+		2001,
+		3001,
+		4001,
+		5001,
+		8001,
+		9002,
+		1003,
+		7003
+	],
+	"modified": "2012-01-27 07:27:56.857208",
+	"closed": true,
+	"issue": 5571063
+}

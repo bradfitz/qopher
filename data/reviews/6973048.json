@@ -1,0 +1,70 @@
+{
+	"description": "testing: only capture stdout when running examples\n\nFixes issue 4550.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Wed, Dec 19, 2012 at 2:46 PM, <adg@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> testing: only capture stdout when running examples\r\n>\r\n> Fixes issue 4550.\r\n>\r\n> Please review this at https://codereview.appspot.**com/6973048/<https://codereview.appspot.com/6973048/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/go/doc.go\r\n>   M src/cmd/go/test.go\r\n>   M src/pkg/testing/example.go\r\n>\r\n>\r\n> Index: src/cmd/go/doc.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/go/doc.go\r\n> +++ b/src/cmd/go/doc.go\r\n> @@ -76,7 +76,13 @@\r\n>                 do not delete it when exiting.\r\n>         -x\r\n>                 print the commands.\r\n> +       -race\r\n> +               enable data race detection.\r\n> +               Currently supported only on linux/amd64,\r\n> +               darwin/amd64 and windows/amd64.\r\n>\r\n> +       -ccflags 'arg list'\r\n> +               arguments to pass on each 5c, 6c, or 8c compiler invocation\r\n>         -compiler name\r\n>                 name of compiler to use, as in runtime.Compiler (gccgo or\r\n> gc)\r\n>         -gccgoflags 'arg list'\r\n> @@ -121,6 +127,7 @@\r\n>         DIR(.exe)        from go build\r\n>         DIR.test(.exe)   from go test -c\r\n>         MAINFILE(.exe)   from go build MAINFILE.go\r\n> +       *.so             from SWIG\r\n>\r\n>  In the list, DIR represents the final path element of the\r\n>  directory, and MAINFILE is the base name of any Go source\r\n> @@ -276,10 +283,10 @@\r\n>      code.google.com/p/goauth2/**oauth<http://code.google.com/p/goauth2/oauth>\r\n>      code.google.com/p/sqlite\r\n>\r\n> -The -f flag specifies an alternate format for the list,\r\n> -using the syntax of package template.  The default output\r\n> -is equivalent to -f '{{.ImportPath}}'.  The struct\r\n> -being passed to the template is:\r\n> +The -f flag specifies an alternate format for the list, using the\r\n> +syntax of package template.  The default output is equivalent to -f\r\n> +'{{.ImportPath}}'.  One extra template function is available, \"join\",\r\n> +which calls strings.Join. The struct being passed to the template is:\r\n>\r\n>      type Package struct {\r\n>          Dir        string // directory containing package sources\r\n> @@ -679,6 +686,9 @@\r\n>             Run benchmarks matching the regular expression.\r\n>             By default, no benchmarks run.\r\n>\r\n> +       -test.benchmem\r\n> +           Print memory allocation statistics for benchmarks.\r\n> +\r\n>         -test.cpuprofile cpu.out\r\n>             Write a CPU profile to the specified file before exiting.\r\n>\r\n> @@ -694,6 +704,18 @@\r\n>             garbage collector, provided the test can run in the available\r\n>             memory without garbage collection.\r\n>\r\n> +       -test.blockprofile block.out\r\n> +           Write a goroutine blocking profile to the specified file\r\n> +           when all tests are complete.\r\n> +\r\n> +       -test.blockprofilerate n\r\n> +           Control the detail provided in goroutine blocking profiles by\r\n> setting\r\n> +           runtime.BlockProfileRate to n.  See 'godoc runtime\r\n> BlockProfileRate'.\r\n> +           The profiler aims to sample, on average, one blocking event\r\n> every\r\n> +           n nanoseconds the program spends blocked.  By default,\r\n> +           if -test.blockprofile is set without this flag, all blocking\r\n> events\r\n> +           are recorded, equivalent to -test.blockprofilerate=1.\r\n> +\r\n>         -test.parallel n\r\n>             Allow parallel execution of test functions that call\r\n> t.Parallel.\r\n>             The value of this flag is the maximum number of tests to run\r\n> Index: src/cmd/go/test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/go/test.go\r\n> +++ b/src/cmd/go/test.go\r\n> @@ -175,8 +175,8 @@\r\n>\r\n>         func BenchmarkXXX(b *testing.B) { ... }\r\n>\r\n> -An example function is similar to a test function but, instead of using\r\n> *testing.T\r\n> -to report success or failure, prints output to os.Stdout and os.Stderr.\r\n> +An example function is similar to a test function but, instead of using\r\n> +*testing.T to report success or failure, prints output to os.Stdout.\r\n>  That output is compared against the function's \"Output:\" comment, which\r\n>  must be the last comment in the function body (see example below). An\r\n>  example with no such comment, or with no text after \"Output:\" is compiled\r\n> Index: src/pkg/testing/example.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/testing/example.go\r\n> +++ b/src/pkg/testing/example.go\r\n> @@ -24,7 +24,7 @@\r\n>\r\n>         var eg InternalExample\r\n>\r\n> -       stdout, stderr := os.Stdout, os.Stderr\r\n> +       stdout := os.Stdout\r\n>\r\n>         for _, eg = range examples {\r\n>                 matched, err := matchString(*match, eg.Name)\r\n> @@ -39,19 +39,19 @@\r\n>                         fmt.Printf(\"=== RUN: %s\\n\", eg.Name)\r\n>                 }\r\n>\r\n> -               // capture stdout and stderr\r\n> +               // capture stdout\r\n>                 r, w, err := os.Pipe()\r\n>                 if err != nil {\r\n>                         fmt.Fprintln(os.Stderr, err)\r\n>                         os.Exit(1)\r\n>                 }\r\n> -               os.Stdout, os.Stderr = w, w\r\n> +               os.Stdout = w\r\n>                 outC := make(chan string)\r\n>                 go func() {\r\n>                         buf := new(bytes.Buffer)\r\n>                         _, err := io.Copy(buf, r)\r\n>                         if err != nil {\r\n> -                               fmt.Fprintf(stderr, \"testing: copying\r\n> pipe: %v\\n\", err)\r\n> +                               fmt.Fprintf(os.Stderr, \"testing: copying\r\n> pipe: %v\\n\", err)\r\n>                                 os.Exit(1)\r\n>                         }\r\n>                         outC <- buf.String()\r\n> @@ -62,9 +62,9 @@\r\n>                 eg.F()\r\n>                 dt := time.Now().Sub(t0)\r\n>\r\n> -               // close pipe, restore stdout/stderr, get output\r\n> +               // close pipe, restore stdout, get output\r\n>                 w.Close()\r\n> -               os.Stdout, os.Stderr = stdout, stderr\r\n> +               os.Stdout = stdout\r\n>                 out := <-outC\r\n>\r\n>                 // report any errors\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-19 23:04:31.149260",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "thanks very much\r\n",
+			"disapproval": false,
+			"date": "2012-12-20 19:30:03.854970",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-12-19 22:46:37.727790",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=1481cdef28a6 ***\n\ntesting: only capture stdout when running examples\n\nFixes issue 4550.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/6973048",
+			"disapproval": false,
+			"date": "2012-12-19 23:48:43.673390",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 6973048: testing: only capture stdout when running examples",
+	"created": "2012-12-19 22:46:26.208260",
+	"patchsets": [
+		1,
+		3001
+	],
+	"modified": "2012-12-20 19:30:03.909050",
+	"closed": true,
+	"issue": 6973048
+}

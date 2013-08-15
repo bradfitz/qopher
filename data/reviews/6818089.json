@@ -1,0 +1,137 @@
+{
+	"description": "net/http/cookiejar: new package.\n\nThis CL defines the API. Implementation will come in follow-up CLs.\n\nUpdate issue 1960.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org"
+	],
+	"reviewers": [
+		"bradfitz@golang.org",
+		"rsc@golang.org",
+		"dr.volker.dobler@gmail.com",
+		"adg@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/jar.go\nFile src/pkg/net/http/cookiejar/jar.go (right):\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode6\nsrc/pkg/net/http/cookiejar/jar.go:6: // with RFC 6265.\nRFC 6265 forbids cookies on IP addresses,\nsomething which browsers do allow.  If\ncookiejar is really meant to provide everything\nneeded to implement a browser, than Jar might need\nadditional fields like IPCookies bool.\nCan we add such stuff later?\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode27\nsrc/pkg/net/http/cookiejar/jar.go:27: // cookie on any domain.\nNitpicking: Not on any domain, \"just\" on any domain\nunder his own TLD as settable domains are public suffix\nplus one more label.\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode35\nsrc/pkg/net/http/cookiejar/jar.go:35: // TODO: should the return value have a leading dot: \".com\" or \"com\"?\nNo leading dot.\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode40\nsrc/pkg/net/http/cookiejar/jar.go:40: type Jar struct {\nJar couples a Storage and a PublicSuffixList.\nThe Storage might be persistent and used by a\ndifferent (later) Jar which might use an other\n(e.g. a newer) PublicSuffixList.\nWhat should happen to cookies currently in Storage\nwhich would not be permitted according to the\ncurrent PublicSuffixList?\nPossible ways to handle this:\n- Jar tracks changes to PublicSuffixList and\n  scans/cleans Storage after instantiation or\n  change.\n- Ignore.\n- Document that users of Jar which want to be\n  sure should manually scan the Jar's Storage\n  anytime the PSL could have changed.\n  Maybe even provide such a cleanup function.\nI would opt for the last.\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/jar.go#newcode48\nsrc/pkg/net/http/cookiejar/jar.go:48: // TODO: ErrorFunc for handling storage errors?\nI see two alternatives:\n - retrying after some time\n - logging the error\nRetrying is complicated as an error might be cleared\nby a successfully stored cookie and thus needs bookkeeping.\nHow about a simple\n    // Logger logs storage errors if non nil. \n    Logger *log.Logger\n?\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode16\nsrc/pkg/net/http/cookiejar/storage.go:16: // setting a cookie's creation time or checking for cookie expiration. Those\nDoes \"not responsible\" just mean \"may keep an unlimited\nnumber of expired cookies until told by Jar\" or\nwould it prevent reusing allocated memory from an \nexpired cookie?\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode16\nsrc/pkg/net/http/cookiejar/storage.go:16: // setting a cookie's creation time or checking for cookie expiration. Those\nIf creation time is not handled by Storage it must be\nhandled by Jar, but Jar doesn't know if the cookie is\na new one or not: Jar would have to use Storage's Cookie\nmethod to find out; this is unnecessarily complicated.\nAdditional: As Cookies updates last access time of the\ncookie, this might trigger a write to the underlying\nDB/filesystem of Storage.\n\nStorage should be responsible for handling creation and\nlast access time.\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode25\nsrc/pkg/net/http/cookiejar/storage.go:25: // filter is equivalent to one that always returns Accept. Filters should not\nWhy not s/should/must/? (Same below.)\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode34\nsrc/pkg/net/http/cookiejar/storage.go:34: // TODO: should \"\"-means-all instead be \"*\"-means-all? An HTTP Set-Cookie\n\"\"-means-all is fine. An empty or missing domain attribute\nis a host-only cookie. I do not think this might lead\nto confusion. \"\"-means-all looks natural.\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode38\nsrc/pkg/net/http/cookiejar/storage.go:38: // the argument \"example.com\" match a cookie for \"subdomain.example.com\".\nNo, the other way around, at least for Cookies:\n\"subdomain.example.com\" must match \"example.com\" as \ndomain cookies from example.com are sent in a request\nto subdomain.example.com.\nIf not this way around, or if example.com matches only\nexample.com, then Jar has to make 4 calls to\nCookies to collect all cookies to be sent to \nfoo.bar.example.com (assuming a domain cookie on com).\n \nFor RemoveDomain it should mean \"exactly this domain\"\nwhich results in a slightly inconsistent API.\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode45\nsrc/pkg/net/http/cookiejar/storage.go:45: Add(...*http.Cookie) error\nIs Storage required to store (and return) the non-RFC 6265\nfields of a http.Cookie, e.g. Raw, Unparsed and even MaxAge?\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode56\nsrc/pkg/net/http/cookiejar/storage.go:56: RemoveDomain(domain string) error\nRemoveDomain and Domains could be merged to a\n  Domains(domain string, filter func(string) Action) ...\nThis could possibly be as fast as RemoveDomain.\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode59\nsrc/pkg/net/http/cookiejar/storage.go:59: // domain. It updates the last access time and returns all cookies for\n\"all cookies for which the filter returns true\" would\ninclude expired cookies. RFC 6365 is pretty strict \non that (see 5.3) and disallows even the storage of\nsuch a cookie.\n\nCookies should not return expired cookies.\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode63\nsrc/pkg/net/http/cookiejar/storage.go:63: Cookies(domain string, filter func(*http.Cookie) Action) ([]*http.Cookie, error)\nWith a Cookies method like this it is impossible to\nretrieve cookies from the storage without modifying\ntheir last access time.\nMy understanding of RFC 6265 is that e.g. displaying\ncookies in a GUI should not update last access, only\nsetting or sending the cookie does.\nPushing such functionality into the implementation of\nStorage seems wrong to me, it is too far from Jar.\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode88\nsrc/pkg/net/http/cookiejar/storage.go:88: // TODO: should NewMemStorage take arguments like maxCookieLength,\nIf these are limits on MemStorage only, than only\na Jar with MemStorage as Storage will benefit from\nthese safeguards.",
+			"disapproval": false,
+			"date": "2012-11-06 00:45:34.853380",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode16\nsrc/pkg/net/http/cookiejar/storage.go:16: // setting a cookie's creation time or checking for cookie expiration. Those\nWhy shouldn't the Storage be responsible for cookie expiration?\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode56\nsrc/pkg/net/http/cookiejar/storage.go:56: RemoveDomain(domain string) error\nWhat's the rationale for this and Domains? How often does one do this?",
+			"disapproval": false,
+			"date": "2012-11-05 12:52:38.785530",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, rsc@golang.org, dr.volker.dobler@gmail.com (cc: golang-dev@googlegroups.com, r@golang.org),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-04 07:22:21.032160",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go\nFile src/pkg/net/http/cookiejar/storage.go (right):\n\nhttps://codereview.appspot.com/6818089/diff/10001/src/pkg/net/http/cookiejar/storage.go#newcode45\nsrc/pkg/net/http/cookiejar/storage.go:45: Add(...*http.Cookie) error\nOn 2012/11/06 00:45:35, volker.dobler wrote:\n> Is Storage required to store (and return) the non-RFC 6265\n> fields of a http.Cookie, e.g. Raw, Unparsed and even MaxAge?\n\nYeah, I almost wonder if the Storage interface shouldn't even be given the cookie.\n\nWhat if there was instead:\n\ntype StoredCookie struct {\n    Domain        string\n    EncodedCookie []byte  // opaque\n}\n\nAnd the Storage only worked in terms of StoredCookies and the CookieJar was responsible for encoding, decoding, and (still) filtering.\n\nThe callback filter function seems fine.",
+			"disapproval": false,
+			"date": "2012-11-06 09:53:12.884280",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 6, 2012 at 8:53 PM,  <bradfitz@golang.org> wrote:\r\n> Yeah, I almost wonder if the Storage interface shouldn't even be given\r\n> the cookie.\r\n>\r\n> What if there was instead:\r\n>\r\n> type StoredCookie struct {\r\n>     Domain        string\r\n>     EncodedCookie []byte  // opaque\r\n> }\r\n>\r\n> And the Storage only worked in terms of StoredCookies and the CookieJar\r\n> was responsible for encoding, decoding, and (still) filtering.\r\n\r\nHmm... RFC 6265 section 5.3 step 11 says that when storing a cookie\r\nthat matches (same name/domain/path) a previously stored cookie, the\r\nold one is removed but the new one is stored with the creation time of\r\nthe old one. The section goes on about the need to remove expired\r\ncookies. Storage might need to be more time-aware than a simple bucket\r\nof bytes. More thought required...\r\n",
+			"disapproval": false,
+			"date": "2012-11-07 13:36:25.213780",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 6, 2012 at 8:53 PM,  <bradfitz@golang.org> wrote:\r\n> What if there was instead:\r\n>\r\n> type StoredCookie struct {\r\n>     Domain        string\r\n>     EncodedCookie []byte  // opaque\r\n> }\r\n\r\nI've explored this idea in a separate changelist:\r\nhttp://codereview.appspot.com/6849092\r\n\r\nWhat do you think?\r\n",
+			"disapproval": false,
+			"date": "2012-11-23 06:49:59.233090",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-01-31 10:46:24.539880",
+			"approval": false
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 6818089: net/http/cookiejar: new package.",
+	"created": "2012-11-04 07:10:56.396850",
+	"patchsets": [
+		1,
+		2001,
+		3,
+		2004,
+		2005,
+		4,
+		10001
+	],
+	"modified": "2013-01-31 10:46:28.436300",
+	"closed": true,
+	"issue": 6818089
+}

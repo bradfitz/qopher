@@ -1,0 +1,345 @@
+{
+	"description": "log/syslog: correct message format\n\nThe syslog implementation was not correctly implementing the\ntraditional syslog format because it had a confused notion of\n'priority'.  syslog priority is not a single number but is, in\nfact, the combination of a facility number and a severity. The\nprevious Go syslog implementation had a single Priority that\nappeared to be the syslog severity and no way of setting the\nfacility.  That meant that all syslog messages from Go\nprograms appeared to have a facility of 0 (LOG_KERN) which\nmeant they all appeared to come from the kernel.\n\nAlso, the 'prefix' was in fact the syslog tag (changed the\ninternal name for clarity as the term tag is more widely used)\nand the timestamp and hostname values were missing from\nmessages.\n\nWith this change syslog messages are generated in the correct\nformat with facility and severity combined into a priority,\nthe timestamp in RFC3339 format, the hostname, the tag (with\nthe PID in [] appened) and the message.\n\nThe format is now:\n\n   <PRI>1 TIMESTAMP HOSTNAME TAG[PID]: MSG\n\nThe TIMESTAMP, HOSTNAME and PID fields are filled in\nautomatically by the package. The TAG and the MSG are supplied\nby the user. This is what rsyslogd calls TraditionalFormat and\nshould be compatible with multiple systems.",
+	"cc": [
+		"rsc@golang.org",
+		"jgc@jgc.org",
+		"0xjnml@gmail.com",
+		"mikioh.mikioh@gmail.com",
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "jgc@jgc.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 2:35 PM, <rsc@golang.org> wrote:\r\n\r\n> One possibility is to make the Go numbers different from the raw system\r\n> numbers, so that we can treat Priority as a merged space, with constants\r\n> that are half facility and half severity, and then split them (and remap\r\n> to system numbers) during the actual call.\r\n>\r\n> const (\r\n>     LOG_EMERG Priority = iota\r\n>     LOG_ALERT\r\n>     LOG_CRIT\r\n>     LOG_ERR\r\n>     LOG_WARNING\r\n>     LOG_NOTICE\r\n>     LOG_INFO\r\n>     LOG_DEBUG\r\n> )\r\n>\r\n> const (\r\n>     LOG_USER Priority = iota<<16\r\n>     LOG_KERN\r\n>     LOG_MAIL\r\n>     LOG_DAEMON\r\n>     ...\r\n> )\r\n>\r\n> I've swapped LOG_USER and LOG_KERN so that LOG_USER is zero. That will\r\n> mean that calls using, say, LOG_ERR end up automatically using\r\n> LOG_USER|LOG_ERR, but if you want to do something different you can do\r\n> LOG_DEBUG|LOG_MAIL, say.\r\n\r\n\r\nOK. I can certainly modify my code to do that. It'll require a little\r\ndocumentation so that people know how to set the priority in New/NewLogger\r\nbut should work. The only thing I don't like is that you've swapped\r\nLOG_USER and LOG_KERN.  I don't think there's any need to change the\r\ndefault behaviour. If we leave LOG_KERN as 0 then people using the package\r\nwill see no difference in behaviour.\r\n\r\nI will modify and resubmit.\r\n\r\nJohn.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 14:45:45.595700",
+			"approval": false
+		},
+		{
+			"sender": "jgc@jgc.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 3:04 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> > I think it's well within the goal of backwards compatibility to not\r\n> change\r\n> > that. Going forward people will do syslog.New(LOG_DEBUG | LOG_USER,\r\n> \"foo\").\r\n>\r\n> As long as you change the arguments used in the Emerg, Alert, Crit,\r\n> etc wrappers, sure.\r\n>\r\n\r\nSo, those functions only let the user specify the severity (implied by the\r\nfunction name). I think the right way to do that is to inherit the facility\r\nfrom the facility set up in New/NewLogger (just as we do today with the\r\ndefault of kernel).\r\n\r\nThat actually allows a rather nice usage where the facility is supplied in\r\nthe New and the severity by calling the right function:\r\n\r\nw, err := syslog.New(LOG_USER, \"foo\")\r\nw.Emerg(\"bad thing\")\r\n\r\nwould send a syslog message to the user facility with severity LOG_EMERG.\r\n\r\nJohn.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 15:07:51.733180",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6782118/diff/11001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782118/diff/11001/src/pkg/log/syslog/syslog.go#newcode28\nsrc/pkg/log/syslog/syslog.go:28: \ndelete this line, otherwise the preceding comment isn't attached to the type in godoc.\n\nhttps://codereview.appspot.com/6782118/diff/11001/src/pkg/log/syslog/syslog.go#newcode68\nsrc/pkg/log/syslog/syslog.go:68: )\nno need to end and close this const block.  just replace these two lines with a blank line.\n\nhttps://codereview.appspot.com/6782118/diff/11001/src/pkg/log/syslog/syslog.go#newcode110\nsrc/pkg/log/syslog/syslog.go:110: if priority < 0 || priority > (LOG_LOCAL7 | LOG_DEBUG) {\nno need for the parens.  gofmt should make it look correct once you remove them.\n\nhttps://codereview.appspot.com/6782118/diff/11001/src/pkg/log/syslog/syslog.go#newcode134\nsrc/pkg/log/syslog/syslog.go:134: return &Writer{priority, tag, hostname, conn}, err\nnow that you have two struct members of the same type (string and string), don't list them positionally here.  name the struct fields instead.  and don't then hide a dangling err at the end.  I'd if err != nil and return early with a nil Writer in that case, and then you can dangle a nil at the end of your return statement.\n\nhttps://codereview.appspot.com/6782118/diff/11001/src/pkg/log/syslog/syslog.go#newcode152\nsrc/pkg/log/syslog/syslog.go:152: // by the call to New\nend in a period, here and the 4 or so cases below.\n\nhttps://codereview.appspot.com/6782118/diff/11001/src/pkg/log/syslog/syslog.go#newcode213\nsrc/pkg/log/syslog/syslog.go:213: tagWithPid := fmt.Sprintf(\"%s[%d]\", tag, os.Getpid())\nwhy not just put this printf into the next printf?",
+			"disapproval": false,
+			"date": "2012-11-26 16:19:55.288670",
+			"approval": false
+		},
+		{
+			"sender": "jgrahamc@gmail.com",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, jgc@jgc.org, 0xjnml@gmail.com, mikioh.mikioh@gmail.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-26 17:25:36.885630",
+			"approval": false
+		},
+		{
+			"sender": "0xjnml@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 4:02 PM, John Graham-Cumming <jgc@jgc.org> wrote:\r\n> I think it's well within the goal of backwards compatibility to not change\r\n> that.\r\n\r\nI don't think that the Go 1 promise covers keeping bugs \"backward\r\ncompatible\". It's a pity that instead of an early bug report a\r\nworkaround code was somewhere put to production, but IMO any bug has\r\nto be fixed, not preserved.\r\n\r\n-j\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 15:08:43.014300",
+			"approval": false
+		},
+		{
+			"sender": "jgrahamc@gmail.com",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode22\nsrc/pkg/log/syslog/syslog.go:22: // severity. To set the facility and severity merge bitwise OR a\nOn 2012/11/26 17:07:59, rsc wrote:\n> the \"To set...\" can be shortened to \"For example, LOG_ALERT | LOG_FTP ...\"\n\nDone.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode24\nsrc/pkg/log/syslog/syslog.go:24: // priority message from the FTP facility. If no severity is included\nOn 2012/11/26 17:07:59, rsc wrote:\n> s/If no.../The default severity is LOG_EMERG; the default facility is LOG_KERN.\n\nDone.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode33\nsrc/pkg/log/syslog/syslog.go:33: \nOn 2012/11/26 17:07:59, rsc wrote:\n> Delete blank line.\n\nDone.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode34\nsrc/pkg/log/syslog/syslog.go:34: // The syslog severity\nOn 2012/11/26 17:07:59, rsc wrote:\n> We're in package syslog so this can shorten to\n> \n> // Severity.\n> \n\nDone.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode49\nsrc/pkg/log/syslog/syslog.go:49: \nOn 2012/11/26 17:07:59, rsc wrote:\n> Delete blank line.\n\nDone.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode50\nsrc/pkg/log/syslog/syslog.go:50: // The syslog facility\nOn 2012/11/26 17:07:59, rsc wrote:\n> // Facility.\n\nDone.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode54\nsrc/pkg/log/syslog/syslog.go:54: LOG_KERN Priority = iota << 3\nOn 2012/11/26 17:07:59, rsc wrote:\n> I'd like to avoid changing these constants in the future. Let's use 8 or 16 and\n> then there is plenty of room to grow on both sides.\n\nDoing that would mean that the package would have to internally translate from these values to the actual values used in syslog itself. Given that these values are drawn from /usr/include/sys/syslog.h I think it's better and clearer to leave them as is.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode67\nsrc/pkg/log/syslog/syslog.go:67: LOG_LOCAL0 Priority = (iota + 16) << 3\nThat's a mistake I introduced following a change suggested by bradfitz. I have corrected it and added a test case.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode95\nsrc/pkg/log/syslog/syslog.go:95: // specifies the facility and default severity. The default severity\nOn 2012/11/26 17:07:59, rsc wrote:\n> Let's avoid explaining facility and severity multiple times. The docs on\n> Priority make it clear. Also, I think we can leave the special case descriptions\n> of Emerg, Alert, Crit, etc to those method comments, so I think we can just\n> leave this comment as it was (the rewrite lost the information about each write\n> generating a message):\n> \n> // New establishes a new connection to the system log daemon.\n> // Each write to the returned writer sends a log message with\n> // the given priority and prefix.\n\nDone.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode115\nsrc/pkg/log/syslog/syslog.go:115: hostname, err := os.Hostname()\nOn 2012/11/26 17:07:59, rsc wrote:\n> You don't appear to use err here. Make that clear.\n> hostname, _ := os.Hostname()\n> var err error below\n\nDone.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode145\nsrc/pkg/log/syslog/syslog.go:145: // Emerg logs a message using the LOG_EMERG severity and facility set\nOn 2012/11/26 17:07:59, rsc wrote:\n> // Emerg logs a message with severity LOG_EMERG, ignoring the severity passed to\n> New.\n> \n> etc\n\nDone.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode226\nsrc/pkg/log/syslog/syslog.go:226: // system log service with the specified facility and severity. The\nOn 2012/11/26 17:07:59, rsc wrote:\n> This comment can be reverted too.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-26 17:24:08.087860",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> but should work. The only thing I don't like is that you've swapped LOG_USER\r\n> and LOG_KERN.  I don't think there's any need to change the default\r\n> behaviour. If we leave LOG_KERN as 0 then people using the package will see\r\n> no difference in behaviour.\r\n\r\nBut the current behavior is a bug, right? I mean, Go programs are not\r\nthe kernel. We could also just drop LOG_KERN entirely.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 14:58:15.002610",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Getting close, thanks.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode22\nsrc/pkg/log/syslog/syslog.go:22: // severity. To set the facility and severity merge bitwise OR a\nthe \"To set...\" can be shortened to \"For example, LOG_ALERT | LOG_FTP ...\"\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode24\nsrc/pkg/log/syslog/syslog.go:24: // priority message from the FTP facility. If no severity is included\ns/If no.../The default severity is LOG_EMERG; the default facility is LOG_KERN.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode33\nsrc/pkg/log/syslog/syslog.go:33: \nDelete blank line.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode34\nsrc/pkg/log/syslog/syslog.go:34: // The syslog severity\nWe're in package syslog so this can shorten to\n\n// Severity.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode49\nsrc/pkg/log/syslog/syslog.go:49: \nDelete blank line.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode50\nsrc/pkg/log/syslog/syslog.go:50: // The syslog facility\n// Facility.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode54\nsrc/pkg/log/syslog/syslog.go:54: LOG_KERN Priority = iota << 3\nI'd like to avoid changing these constants in the future. Let's use 8 or 16 and then there is plenty of room to grow on both sides.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode67\nsrc/pkg/log/syslog/syslog.go:67: LOG_LOCAL0 Priority = (iota + 16) << 3\niota here is 12, not 0, so LOG_LOCAL0 is 28<<3. Is that what you intend, or were you going for 16<<3?\nIf the latter, you might do\n\nLOG_FTP\n_ // unused\n_ // unused\n_ // unused\n_ // unused\n\nLOG_LOCAL0\nLOG_LOCAL1\n...\n\nThe _ lines bump iota but do not declare anything (because _ never declares anything).\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode95\nsrc/pkg/log/syslog/syslog.go:95: // specifies the facility and default severity. The default severity\nLet's avoid explaining facility and severity multiple times. The docs on Priority make it clear. Also, I think we can leave the special case descriptions of Emerg, Alert, Crit, etc to those method comments, so I think we can just leave this comment as it was (the rewrite lost the information about each write generating a message):\n\n// New establishes a new connection to the system log daemon.\n// Each write to the returned writer sends a log message with\n// the given priority and prefix.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode115\nsrc/pkg/log/syslog/syslog.go:115: hostname, err := os.Hostname()\nYou don't appear to use err here. Make that clear.\nhostname, _ := os.Hostname()\nvar err error below\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode145\nsrc/pkg/log/syslog/syslog.go:145: // Emerg logs a message using the LOG_EMERG severity and facility set\n// Emerg logs a message with severity LOG_EMERG, ignoring the severity passed to New.\n\netc\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode226\nsrc/pkg/log/syslog/syslog.go:226: // system log service with the specified facility and severity. The\nThis comment can be reverted too.",
+			"disapproval": false,
+			"date": "2012-11-26 17:07:58.966060",
+			"approval": false
+		},
+		{
+			"sender": "jgrahamc@gmail.com",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-11-26 13:33:36.482120",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm sorry, but the Go 1 compatibility promise means we cannot remove existing types. functions, constants, global variables, methods, or exported struct fields. We can add new ones if necessary. So while we may have gotten what's there wrong, we're stuck with it.\n\nOne possibility is to make the Go numbers different from the raw system numbers, so that we can treat Priority as a merged space, with constants that are half facility and half severity, and then split them (and remap to system numbers) during the actual call.\n\nconst (\n    LOG_EMERG Priority = iota\n    LOG_ALERT\n    LOG_CRIT\n    LOG_ERR\n    LOG_WARNING\n    LOG_NOTICE\n    LOG_INFO\n    LOG_DEBUG\n)\n\nconst (\n    LOG_USER Priority = iota<<16\n    LOG_KERN\n    LOG_MAIL\n    LOG_DAEMON\n    ...\n)\n\nI've swapped LOG_USER and LOG_KERN so that LOG_USER is zero. That will mean that calls using, say, LOG_ERR end up automatically using LOG_USER|LOG_ERR, but if you want to do something different you can do LOG_DEBUG|LOG_MAIL, say.",
+			"disapproval": false,
+			"date": "2012-11-26 14:35:36.115810",
+			"approval": false
+		},
+		{
+			"sender": "jgc@jgc.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have incorporated all bradfitz's suggested changes.\r\n\r\nJohn.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 16:40:17.750640",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Wow. I had no idea that was the RFC encoding when I suggested it\r\nearlier today. Great.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 21:55:13.261200",
+			"approval": false
+		},
+		{
+			"sender": "jgc@jgc.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 2:58 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> > but should work. The only thing I don't like is that you've swapped\r\n> LOG_USER\r\n> > and LOG_KERN.  I don't think there's any need to change the default\r\n> > behaviour. If we leave LOG_KERN as 0 then people using the package will\r\n> see\r\n> > no difference in behaviour.\r\n>\r\n> But the current behavior is a bug, right? I mean, Go programs are not\r\n> the kernel. We could also just drop LOG_KERN entirely.\r\n>\r\n\r\nIt's a bug in that Go programs are not (currently) the kernel (although one\r\nday they might be). The trouble with making the change that you propose is\r\nthat programs that are using the syslog facility as is will have worked\r\naround this (we did this internally initially with a separate syslogd\r\ninstance just for grabbing data from Go programs).\r\n\r\nI think it's well within the goal of backwards compatibility to not change\r\nthat. Going forward people will do syslog.New(LOG_DEBUG | LOG_USER, \"foo\").\r\n\r\nJohn.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 15:02:52.021450",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I think it's well within the goal of backwards compatibility to not change\r\n> that. Going forward people will do syslog.New(LOG_DEBUG | LOG_USER, \"foo\").\r\n\r\nAs long as you change the arguments used in the Emerg, Alert, Crit,\r\netc wrappers, sure.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 15:04:15.099500",
+			"approval": false
+		},
+		{
+			"sender": "jgc@jgc.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've updated the CL so that it is backwards-compatible and uses ORing of\r\nthe severity and facility as you suggest.\r\n\r\nJohn.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 15:32:29.761470",
+			"approval": false
+		},
+		{
+			"sender": "jgrahamc@gmail.com",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, jgc@jgc.org, 0xjnml@gmail.com, mikioh.mikioh@gmail.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-26 16:39:43.286880",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "How about another option; making new packet go.net/syslog\r\nthat implements RFC 5424 The Syslog Protocol?\r\n\r\nOn Tue, Nov 27, 2012 at 12:07 AM, John Graham-Cumming <jgc@jgc.org> wrote:\r\n> On Mon, Nov 26, 2012 at 3:04 PM, Russ Cox <rsc@golang.org> wrote:\r\n>>\r\n>> > I think it's well within the goal of backwards compatibility to not\r\n>> > change\r\n>> > that. Going forward people will do syslog.New(LOG_DEBUG | LOG_USER,\r\n>> > \"foo\").\r\n>>\r\n>> As long as you change the arguments used in the Emerg, Alert, Crit,\r\n>> etc wrappers, sure.\r\n>\r\n>\r\n> So, those functions only let the user specify the severity (implied by the\r\n> function name). I think the right way to do that is to inherit the facility\r\n> from the facility set up in New/NewLogger (just as we do today with the\r\n> default of kernel).\r\n>\r\n> That actually allows a rather nice usage where the facility is supplied in\r\n> the New and the severity by calling the right function:\r\n>\r\n> w, err := syslog.New(LOG_USER, \"foo\")\r\n> w.Emerg(\"bad thing\")\r\n>\r\n> would send a syslog message to the user facility with severity LOG_EMERG.\r\n>\r\n> John.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 15:29:00.432710",
+			"approval": false
+		},
+		{
+			"sender": "jgc@jgc.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 8:46 PM, <rsc@golang.org> wrote:\r\n\r\n> Looks good except that I'd still like to expand the shift count (or\r\n> understand why we can't).\r\n>\r\n> Thanks.\r\n>\r\n>>\r\n>> [snip]\r\n>\r\n>\r\n> I am not sure we're talking about the same thing. I am talking about\r\n> using <<8 or <<16 instead of <<3 in the encoding of Severity,Facility ->\r\n> Priority. Since I don't believe the two get merged in syslog.h I don't\r\n> believe the <<3 is from there.\r\n>\r\n> https://codereview.appspot.**com/6782118/<https://codereview.appspot.com/6782118/>\r\n>\r\n\r\nsyslog itself (and the RFC's specify this) makes the priority from facility\r\n<< 3 | severity. Given that we don't have separate concepts of facility and\r\nseverity in the Go syslog package because we've encoded them both in the\r\nPriority const it makes most sense to me to use exactly the same method as\r\nsyslog. That way there's no internal translation needed to get the priority\r\nvalue that is sent to syslog and the user can simply OR together a facility\r\nand severity drawn from the Priority. The priority value passed to\r\nNew/NewLogger is exactly what syslog needs.\r\n\r\nOf course, we could change the encoding in an arbitrary manner to allow\r\nspace, but I don't think that's particularly useful given that for us to\r\nneed extra space (say for more severities) syslog itself would have to\r\nchange encoding.\r\n\r\nJohn.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 21:26:59.538600",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=a041b45cc418 ***\n\nlog/syslog: correct message format\n\nThe syslog implementation was not correctly implementing the\ntraditional syslog format because it had a confused notion of\n'priority'.  syslog priority is not a single number but is, in\nfact, the combination of a facility number and a severity. The\nprevious Go syslog implementation had a single Priority that\nappeared to be the syslog severity and no way of setting the\nfacility.  That meant that all syslog messages from Go\nprograms appeared to have a facility of 0 (LOG_KERN) which\nmeant they all appeared to come from the kernel.\n\nAlso, the 'prefix' was in fact the syslog tag (changed the\ninternal name for clarity as the term tag is more widely used)\nand the timestamp and hostname values were missing from\nmessages.\n\nWith this change syslog messages are generated in the correct\nformat with facility and severity combined into a priority,\nthe timestamp in RFC3339 format, the hostname, the tag (with\nthe PID in [] appened) and the message.\n\nThe format is now:\n\n   <PRI>1 TIMESTAMP HOSTNAME TAG[PID]: MSG\n\nThe TIMESTAMP, HOSTNAME and PID fields are filled in\nautomatically by the package. The TAG and the MSG are supplied\nby the user. This is what rsyslogd calls TraditionalFormat and\nshould be compatible with multiple systems.\n\nR=rsc, jgc, 0xjnml, mikioh.mikioh, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6782118\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2012-11-27 15:22:59.179260",
+			"approval": false
+		},
+		{
+			"sender": "jgc@jgc.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 9:55 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Wow. I had no idea that was the RFC encoding when I suggested it\r\n> earlier today. Great.\r\n>\r\n\r\nAnd there I was thinking \"what a brilliant idea\" when I saw your suggestion\r\n:-)\r\n\r\nJohn.\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 07:50:35.211360",
+			"approval": false
+		},
+		{
+			"sender": "jgrahamc@gmail.com",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, jgc@jgc.org, 0xjnml@gmail.com, mikioh.mikioh@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-26 15:29:29.131770",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks good except that I'd still like to expand the shift count (or understand why we can't).\n\nThanks.\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782118/diff/3004/src/pkg/log/syslog/syslog.go#newcode54\nsrc/pkg/log/syslog/syslog.go:54: LOG_KERN Priority = iota << 3\nOn 2012/11/26 17:24:08, jgc wrote:\n> On 2012/11/26 17:07:59, rsc wrote:\n> > I'd like to avoid changing these constants in the future. Let's use 8 or 16\n> and\n> > then there is plenty of room to grow on both sides.\n> \n> Doing that would mean that the package would have to internally translate from\n> these values to the actual values used in syslog itself. Given that these values\n> are drawn from /usr/include/sys/syslog.h I think it's better and clearer to\n> leave them as is.\n\nI am not sure we're talking about the same thing. I am talking about using <<8 or <<16 instead of <<3 in the encoding of Severity,Facility -> Priority. Since I don't believe the two get merged in syslog.h I don't believe the <<3 is from there.",
+			"disapproval": false,
+			"date": "2012-11-26 20:46:51.279160",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-11-27 15:21:27.109170",
+			"approval": true
+		},
+		{
+			"sender": "jgrahamc@gmail.com",
+			"recipients": [
+				"jgrahamc@gmail.com",
+				"rsc@golang.org",
+				"jgc@jgc.org",
+				"0xjnml@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-01-04 14:44:51.439990",
+			"approval": false
+		}
+	],
+	"owner_email": "jgrahamc@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jgc",
+	"subject": "code review 6782118: log/syslog: correct message format",
+	"created": "2012-11-26 13:21:13.940000",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		11001,
+		3004,
+		7003
+	],
+	"modified": "2013-01-04 14:44:54.220750",
+	"closed": true,
+	"issue": 6782118
+}

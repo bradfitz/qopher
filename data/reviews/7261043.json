@@ -1,0 +1,116 @@
+{
+	"description": "cmd/5l, cmd/ld: support generating ELF binaries for NetBSD/ARM",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm getting the latest Jan 30 image ready ATM. Freebsd/arm eabi support\r\nrecently landed, but I don't know if this is enabled in this image, or if\r\nit even works.\r\nOn 1 Feb 2013 09:53, <minux.ma@gmail.com> wrote:\r\n\r\n> I suspect we can't set EABI flag for FreeBSD either.\r\n> @dfc, could you please take a look as you're running\r\n> the builder with latest kernel?\r\n>\r\n>\r\n> https://codereview.appspot.**com/7261043/diff/5001/src/cmd/**ld/elf.c<https://codereview.appspot.com/7261043/diff/5001/src/cmd/ld/elf.c>\r\n> File src/cmd/ld/elf.c (right):\r\n>\r\n> https://codereview.appspot.**com/7261043/diff/5001/src/cmd/**\r\n> ld/elf.c#newcode60<https://codereview.appspot.com/7261043/diff/5001/src/cmd/ld/elf.c#newcode60>\r\n> src/cmd/ld/elf.c:60: if(HEADTYPE != Hnetbsd)\r\n> @dfc, could you please take a look at this?\r\n>\r\n> https://codereview.appspot.**com/7261043/<https://codereview.appspot.com/7261043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-31 22:56:28.621730",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I like how enabling NetBSD mostly involves _removing_ code.  I will try to\r\ntrust this today on the NetBSD image from the RPI website.\r\nOn 1 Feb 2013 09:51, <minux.ma@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> cmd/5l, cmd/ld: support generating ELF binaries for NetBSD/ARM\r\n>\r\n> Please review this at https://codereview.appspot.**com/7261043/<https://codereview.appspot.com/7261043/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/5l/asm.c\r\n>   M src/cmd/5l/obj.c\r\n>   M src/cmd/ld/elf.c\r\n>\r\n>\r\n> Index: src/cmd/5l/asm.c\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/5l/asm.c\r\n> +++ b/src/cmd/5l/asm.c\r\n> @@ -40,7 +40,7 @@\r\n>  char linuxdynld[] = \"/lib/ld-linux.so.3\"; // 2 for OABI, 3 for EABI\r\n>  char freebsddynld[] = \"/usr/libexec/ld-elf.so.1\";\r\n>  char openbsddynld[] = \"XXX\";\r\n> -char netbsddynld[] = \"XXX\";\r\n> +char netbsddynld[] = \"/libexec/ld.elf_so\";\r\n>\r\n>  int32\r\n>  entryvalue(void)\r\n> @@ -581,9 +581,6 @@\r\n>                 case Hplan9x32:\r\n>                         symo = HEADR+segtext.len+segdata.**filelen;\r\n>                         break;\r\n> -               case Hnetbsd:\r\n> -                       symo = rnd(segdata.filelen, 4096);\r\n> -                       break;\r\n>                 ElfSym:\r\n>                         symo = rnd(HEADR+segtext.filelen,\r\n> INITRND)+segdata.filelen;\r\n>                         symo = rnd(symo, INITRND);\r\n> Index: src/cmd/5l/obj.c\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/5l/obj.c\r\n> +++ b/src/cmd/5l/obj.c\r\n> @@ -48,21 +48,22 @@\r\n>     \"noheader\", Hnoheader,\r\n>     \"risc\", Hrisc,\r\n>     \"plan9\", Hplan9x32,\r\n> -   \"netbsd\", Hnetbsd,\r\n>     \"ixp1200\", Hixp1200,\r\n>     \"ipaq\", Hipaq,\r\n>     \"linux\", Hlinux,\r\n>     \"freebsd\", Hfreebsd,\r\n> +   \"netbsd\", Hnetbsd,\r\n>     0, 0\r\n>  };\r\n>\r\n>  /*\r\n>   *     -Hrisc -T0x10005000 -R4         is aif for risc os\r\n>   *     -Hplan9 -T4128 -R4096           is plan9 format\r\n> - *     -Hnetbsd -T0xF0000020 -R4       is NetBSD format\r\n>   *     -Hixp1200                       is IXP1200 (raw)\r\n>   *     -Hipaq -T0xC0008010 -R1024      is ipaq\r\n>   *     -Hlinux -Tx -Rx                 is linux elf\r\n> + *     -Hfreebsd                       is freebsd elf\r\n> + *     -Hnetbsd                        is netbsd elf\r\n>   */\r\n>\r\n>  void\r\n> @@ -166,15 +167,6 @@\r\n>                 if(INITRND == -1)\r\n>                         INITRND = 4096;\r\n>                 break;\r\n> -       case Hnetbsd:   /* boot for NetBSD */\r\n> -               HEADR = 32L;\r\n> -               if(INITTEXT == -1)\r\n> -                       INITTEXT = 0xF0000020L;\r\n> -               if(INITDAT == -1)\r\n> -                       INITDAT = 0;\r\n> -               if(INITRND == -1)\r\n> -                       INITRND = 4096;\r\n> -               break;\r\n>         case Hixp1200: /* boot for IXP1200 */\r\n>                 HEADR = 0L;\r\n>                 if(INITTEXT == -1)\r\n> @@ -195,6 +187,7 @@\r\n>                 break;\r\n>         case Hlinux:    /* arm elf */\r\n>         case Hfreebsd:\r\n> +       case Hnetbsd:\r\n>                 debug['d'] = 0; // with dynamic linking\r\n>                 tlsoffset = -8; // hardcoded number, first 4-byte word for\r\n> g, and then 4-byte word for m\r\n>                                 // this number is known to\r\n> ../../pkg/runtime/cgo/gcc_**linux_arm.c\r\n> Index: src/cmd/ld/elf.c\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/ld/elf.c\r\n> +++ b/src/cmd/ld/elf.c\r\n> @@ -55,7 +55,10 @@\r\n>\r\n>         // 32-bit architectures\r\n>         case '5':\r\n> -               hdr.flags = 0x5000002; // has entry point, Version5 EABI\r\n> +               // we only use EABI on linux/arm\r\n> +               // TODO(minux): do we need to exclude FreeBSD here?\r\n> +               if(HEADTYPE != Hnetbsd)\r\n> +                       hdr.flags = 0x5000002; // has entry point,\r\n> Version5 EABI\r\n>                 // fallthrough\r\n>         default:\r\n>                 hdr.phoff = ELF32HDRSIZE;       /* Must be be\r\n> ELF32HDRSIZE: first PHdr must follow ELF header */\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-31 22:54:13.236620",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Feb 1, 2013 at 6:54 AM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> I like how enabling NetBSD mostly involves _removing_ code.  I will try to\r\n> trust this today on the NetBSD image from the RPI website.\r\n>\r\nbecause 5l originally supports generating NetBSD boot image, but not ELF.\r\nThanks to the fact that all ELF related code is shared between linkers, the\r\nlinker\r\nchanges are pretty minimal.\r\n\r\nthe WIP code (no cgo yet) is here:\r\nhttps://codereview.appspot.com/7227066\r\n",
+			"disapproval": false,
+			"date": "2013-01-31 22:57:55.589600",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-01-31 22:51:01.306910",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2013-01-31 22:52:28.596110",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I suspect we can't set EABI flag for FreeBSD either.\n@dfc, could you please take a look as you're running\nthe builder with latest kernel?\n\nhttps://codereview.appspot.com/7261043/diff/5001/src/cmd/ld/elf.c\nFile src/cmd/ld/elf.c (right):\n\nhttps://codereview.appspot.com/7261043/diff/5001/src/cmd/ld/elf.c#newcode60\nsrc/cmd/ld/elf.c:60: if(HEADTYPE != Hnetbsd)\n@dfc, could you please take a look at this?",
+			"disapproval": false,
+			"date": "2013-01-31 22:53:32.175990",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Do you want to submit this piece ? I can test on netbsd today\r\n\r\nOn Fri, Feb 1, 2013 at 9:52 AM, Russ Cox <rsc@golang.org> wrote:\r\n> LGTM\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-01 01:07:00.558090",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=437d7aefea45 ***\n\ncmd/5l, cmd/ld: support generating ELF binaries for NetBSD/ARM\n\nR=golang-dev, dave\nCC=golang-dev\nhttps://codereview.appspot.com/7261043",
+			"disapproval": false,
+			"date": "2013-02-03 16:40:24.655260",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 7261043: cmd/5l, cmd/ld: support generating ELF binaries for Net...",
+	"created": "2013-01-31 22:49:26.008530",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		12001,
+		20001
+	],
+	"modified": "2013-02-03 16:40:29.500600",
+	"closed": true,
+	"issue": 7261043
+}

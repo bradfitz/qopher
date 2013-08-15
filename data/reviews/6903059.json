@@ -1,0 +1,222 @@
+{
+	"description": "cmd/gc: don't import the same package multiple times.\n\nImplementation suggested by DMorsing.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"daniel.morsing@gmail.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sounds promising. Let me know when you've processed Daniel's suggestions.",
+			"disapproval": false,
+			"date": "2012-12-10 03:33:08.632570",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Nice. However, You're still reading in the package file. I worked on this independently and came up with a solution that gets around hitting the disk.\n\nhttps://codereview.appspot.com/6903059/diff/4001/src/cmd/gc/lex.c\nFile src/cmd/gc/lex.c (right):\n\nhttps://codereview.appspot.com/6903059/diff/4001/src/cmd/gc/lex.c#newcode691\nsrc/cmd/gc/lex.c:691: importpkg = mkpkg(path);\nAfter this line add:\n\nif(importpkg->imported) {\n    file = strdup(namebuf);\n    p = smprint(\"package %s\\n$$\\n\", importpkg->name);\n    cannedimports(file, p);\n    return;\n}\nimportpkg->imported = 1;\n\nand remove the changes from go.y",
+			"disapproval": false,
+			"date": "2012-12-09 20:23:48.642430",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-12-09 19:04:10.939030",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/09 19:04:10, remyoudompheng wrote:\n> Hello mailto:golang-dev@googlegroups.com (cc: mailto:golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n\nThis is really impressive, time to go build pkg/net has dropped from 3.91 seconds to 2.88 (and that includes the cgo time). The high water mark for memory has dropped from 95mb to 43mb.\n\nTested on linux/arm arm5",
+			"disapproval": false,
+			"date": "2012-12-09 20:22:01.566320",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/09 20:23:48, DMorsing wrote:\n> if(importpkg->imported) {\n>     file = strdup(namebuf);\n>     p = smprint(\"package %s\\n$$\\n\", importpkg->name);\n>     cannedimports(file, p);\n>     return;\n> }\n> importpkg->imported = 1;\n> \n> and remove the changes from go.y\n\nThat's indeed less ugly.",
+			"disapproval": false,
+			"date": "2012-12-09 20:40:02.911860",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/10 03:33:08, rsc wrote:\n> Sounds promising. Let me know when you've processed Daniel's suggestions.\n\n\nHere are some quick results from a dual core pandaboard, taking the best of a few runs to eliminate disk io as much as possible (hopefully all the source was cached, and $TMP is a tmpfs)\n\nrev: 78ed3c237603\npandaboard(~/go/src) % time go build -a std\n\nreal    1m9.945s\nuser    1m52.859s\nsys     0m19.148s\n\nrev: 3c932286e5f5\npandaboard(~/go/src) % time go build -a std\n\nreal    1m3.129s\nuser    1m41.320s\nsys     0m17.477s\n\nrev: 7b9e9fc59eb5 + CL 6903059 patch set #3\npandaboard(~/go/src) % time go build -a std\n\nreal    0m59.224s\nuser    1m34.648s\nsys     0m15.914s\n\n18 seconds of user time saved !\n\nThe pandaboard has 1gb of ram, so swapping is not an issue on this machine. As mal batches mallocs, malloc is virtually free in terms of user CPU time. I attribute most of the performance improvements here to less work by the kernel satisfying allocations, less memory footprint (hopefully better cache utilisation) and less time spent in memclr.",
+			"disapproval": false,
+			"date": "2012-12-11 01:56:45.215180",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nFantastic.",
+			"disapproval": false,
+			"date": "2012-12-12 03:59:04.922460",
+			"approval": true
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/11 01:56:45, dfc wrote:\n> The pandaboard has 1gb of ram, so swapping is not an issue on this machine. As\n> mal batches mallocs, malloc is virtually free in terms of user CPU time. I\n> attribute most of the performance improvements here to less work by the kernel\n> satisfying allocations, less memory footprint (hopefully better cache\n> utilisation) and less time spent in memclr.\n\nI think the reasons are much simpler. Previously, we were spending a lot of time reparsing imports sections. For a package like os where every file imports syscall, we were reading in 2000 lines of declarations for each file. All of that parsing takes time, not to mention all the queries to the symbol table.\n\nI'd be interested to see if there's a drop in system time with my fix.",
+			"disapproval": false,
+			"date": "2012-12-11 09:41:36.786740",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-12-11 22:25:52.901990",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "A sound explanation. I will retest once the next patch set lands. \r\n\r\nOn 11/12/2012, at 20:41, daniel.morsing@gmail.com wrote:\r\n\r\n> On 2012/12/11 01:56:45, dfc wrote:\r\n>> The pandaboard has 1gb of ram, so swapping is not an issue on this\r\n> machine. As\r\n>> mal batches mallocs, malloc is virtually free in terms of user CPU\r\n> time. I\r\n>> attribute most of the performance improvements here to less work by\r\n> the kernel\r\n>> satisfying allocations, less memory footprint (hopefully better cache\r\n>> utilisation) and less time spent in memclr.\r\n> \r\n> I think the reasons are much simpler. Previously, we were spending a lot\r\n> of time reparsing imports sections. For a package like os where every\r\n> file imports syscall, we were reading in 2000 lines of declarations for\r\n> each file. All of that parsing takes time, not to mention all the\r\n> queries to the symbol table.\r\n> \r\n> I'd be interested to see if there's a drop in system time with my fix.\r\n> \r\n> https://codereview.appspot.com/6903059/\r\n",
+			"disapproval": false,
+			"date": "2012-12-11 11:33:33.517540",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=f593af463c17 ***\n\ncmd/gc: don't import the same package multiple times.\n\nImplementation suggested by DMorsing.\n\nR=golang-dev, dave, daniel.morsing, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/6903059",
+			"disapproval": false,
+			"date": "2012-12-12 07:53:12.299700",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, daniel.morsing@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-11 22:00:16.279120",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/11 22:00:16, remyoudompheng wrote:\n> Hello mailto:golang-dev@googlegroups.com, mailto:dave@cheney.net, mailto:daniel.morsing@gmail.com,\n> mailto:rsc@golang.org (cc: mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nLGTM\n\nBest result at rev ec3ae5b98922 + patchset 4\n\nreal    0m58.414s\nuser    1m34.063s\nsys     0m15.328s\n\nWhich is pretty much the same as the previous patchset in terms of performance. I think i'm probably at the limit of precision for this simple test.",
+			"disapproval": false,
+			"date": "2012-12-11 22:31:36.403630",
+			"approval": true
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 6903059: cmd/gc: don't import the same package multiple times.",
+	"created": "2012-12-09 19:03:27.958160",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		13001,
+		17001
+	],
+	"modified": "2012-12-15 09:28:12.630060",
+	"closed": true,
+	"issue": 6903059
+}

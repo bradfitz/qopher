@@ -1,0 +1,193 @@
+{
+	"description": "cmd/gc: fix escape analysis bug.\n\nIt used to not mark parameters as escaping if only one of the\nfields it points to leaks out of the function. This causes\nproblems when importing from another package.\n\nFixes issue 4964.",
+	"cc": [
+		"rsc@golang.org",
+		"lvd@gmail.com",
+		"dvyukov@google.com",
+		"daniel.morsing@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"lvd@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7648045/diff/5001/src/cmd/gc/esc.c\nFile src/cmd/gc/esc.c (right):\n\nhttps://codereview.appspot.com/7648045/diff/5001/src/cmd/gc/esc.c#newcode1036\nsrc/cmd/gc/esc.c:1036: if(src->class == PPARAM && (leaks || dst->escloopdepth < 0) && src->esc != EscHeap) {\nI couldn't find a more refined criteria. Maybe the esc value should remember the level of indirection that reaches an escaping reference (that is, the value of 'level').\n\nIt would avoid creating too many false positives because a field three layers below the argument escapes.",
+			"disapproval": false,
+			"date": "2013-03-09 00:52:52.884480",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"lvd@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/09 11:30:25, dvyukov wrote:\n> \n> I am not an expert here, but does it actually leak yyy? It seems to be\n> leaking what yyy points to, which is a different thing. What I am\n> missing?\n\nThat's what I say in my comment: current we only have 3 qualifiers:\n * yyy is on heap\n * yyy leaks\n * yyy does not escape\n\nWe have no way to signal to callers that \"something below yyy but not yyy itself leaks\". Currently such parameters as markes as \"does not escape\", so that callers from an outside package do not know at all what it happening and put everything on stack.\n\nThis is why I suggest the tag should be changed to an integer indicating the level of indirection where the leakage happens. This is however a more complex change. Is it OK to do that for Go 1 and how to encode it?",
+			"disapproval": false,
+			"date": "2013-03-09 11:49:20.262620",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"lvd@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, lvd@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-03-09 00:50:25.088250",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Mar 9, 2013 at 4:50 AM,  <remyoudompheng@gmail.com> wrote:\r\n> Reviewers: rsc, lvd2,\r\n>\r\n> Message:\r\n> Hello rsc@golang.org, lvd@gmail.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> cmd/gc: fix escape analysis bug.\r\n>\r\n> It used to not mark parameters as escaping if only one of the\r\n> fields it points to leaks out of the function. This causes\r\n> problems when importing from another package.\r\n>\r\n> Fixes issue 4964.\r\n>\r\n> Please review this at https://codereview.appspot.com/7648045/\r\n>\r\n> Affected files:\r\n>   M src/cmd/gc/esc.c\r\n>   M test/escape2.go\r\n>\r\n>\r\n> Index: src/cmd/gc/esc.c\r\n> ===================================================================\r\n> --- a/src/cmd/gc/esc.c\r\n> +++ b/src/cmd/gc/esc.c\r\n> @@ -1033,7 +1033,7 @@\r\n>\r\n>         switch(src->op) {\r\n>         case ONAME:\r\n> -               if(src->class == PPARAM && leaks && src->esc != EscHeap) {\r\n> +               if(src->class == PPARAM && (leaks || dst->escloopdepth < 0)\r\n> && src->esc != EscHeap) {\r\n>                         src->esc = EscScope;\r\n>                         if(debug['m'])\r\n>                                 warnl(src->lineno, \"leaking param: %hN\",\r\n> src);\r\n> Index: test/escape2.go\r\n> ===================================================================\r\n> --- a/test/escape2.go\r\n> +++ b/test/escape2.go\r\n> @@ -80,7 +80,7 @@\r\n>         xxx = yyy\r\n>  }\r\n>\r\n> -func foo13(yyy **int) { // ERROR \"yyy does not escape\"\r\n> +func foo13(yyy **int) { // ERROR \"leaking param: yyy\"\r\n>         *xxx = *yyy\r\n\r\nI am not an expert here, but does it actually leak yyy? It seems to be\r\nleaking what yyy points to, which is a different thing. What I am\r\nmissing?\r\n",
+			"disapproval": false,
+			"date": "2013-03-09 11:30:25.060250",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"lvd@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/09 11:49:20, remyoudompheng wrote:\n> On 2013/03/09 11:30:25, dvyukov wrote:\n> > \n> > I am not an expert here, but does it actually leak yyy? It seems to be\n> > leaking what yyy points to, which is a different thing. What I am\n> > missing?\n> \n> That's what I say in my comment: current we only have 3 qualifiers:\n>  * yyy is on heap\n>  * yyy leaks\n>  * yyy does not escape\n> \n> We have no way to signal to callers that \"something below yyy but not yyy itself\n> leaks\". Currently such parameters as markes as \"does not escape\", so that\n> callers from an outside package do not know at all what it happening and put\n> everything on stack.\n> \n> This is why I suggest the tag should be changed to an integer indicating the\n> level of indirection where the leakage happens. This is however a more complex\n> change. Is it OK to do that for Go 1 and how to encode it?\n\nAny opinion about how to proceed?",
+			"disapproval": false,
+			"date": "2013-03-12 06:10:44.983710",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 12, 2013 at 7:10 AM,  <remyoudompheng@gmail.com> wrote:\r\n> Any opinion about how to proceed?\r\n>\r\n\r\nI think the way to encode it would be to make the escapes tag into a\r\nstring containing the top level fields that escape. Something like\r\n\".Foo.Bar,.Quux.Foobar\", where only Bar and Foobar escapes.\r\n\r\nBut that is a major change and with go1.1 coming up, I think it would\r\nbe better to commit this and work on optimizing the escape analysis\r\nafter release.\r\n",
+			"disapproval": false,
+			"date": "2013-03-12 07:51:14.626880",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I haven't had a chance to dig in and really understand this yet. I hope to\r\nhave time today. It sounds terrible.\r\n",
+			"disapproval": false,
+			"date": "2013-03-12 16:00:27.858640",
+			"approval": false
+		},
+		{
+			"sender": "lvd@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "leaking a double indirection is safe because anything pointed to by that\r\nwill be considered leaking as soon as it is assigned to *yyy. so you should\r\nnot be able to trigger a bug this way and more information on the\r\nparameters should not be needed.\r\n\r\nif you want to trace leaks trhough *x=&y the graph walking becomes a lot\r\nmore expensive and i never figured out how to terminate in cases where the\r\nlevel skews like in\r\ntype t struct {*t}\r\n\r\n\r\n\r\nOn Tuesday, March 12, 2013, Russ Cox wrote:\r\n\r\n> I haven't had a chance to dig in and really understand this yet. I hope to\r\n> have time today. It sounds terrible.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-12 16:11:47.154330",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"lvd@gmail.com",
+				"dvyukov@google.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, lvd@gmail.com, dvyukov@google.com, daniel.morsing@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-03-14 07:11:51.115540",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"lvd@gmail.com",
+				"dvyukov@google.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/12 16:11:47, lvd2 wrote:\n> leaking a double indirection is safe because anything pointed to by that\n> will be considered leaking as soon as it is assigned to *yyy. so you should\n> not be able to trigger a bug this way and more information on the\n> parameters should not be needed.\n\nWhat do you mean by this sentence?\nAnyway, the example on issue 4964 does not work. The analysis is correct when doing intra-package analysis, but when importing the leaking function, the refined analysis is no longer possible and only the escape tag can be used.\n\nI have added the test program from issue 4964.",
+			"disapproval": false,
+			"date": "2013-03-14 07:12:05.483840",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"lvd@gmail.com",
+				"dvyukov@google.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/7648045/diff/13001/test/escape2.go\nFile test/escape2.go (right):\n\nhttps://codereview.appspot.com/7648045/diff/13001/test/escape2.go#newcode82\ntest/escape2.go:82: \nPlease add a comment\n// Must treat yyy as leaking because *yyy leaks, and the escape analysis\n// summaries in exported metadata do not distinguish these two cases.\n\nhttps://codereview.appspot.com/7648045/diff/13001/test/escape2.go#newcode302\ntest/escape2.go:302: func (f *Foo) foo46() { // ERROR \"leaking param: f\"\ninsert comment above this line\n// See foo13 above for explanation.",
+			"disapproval": false,
+			"date": "2013-03-15 04:05:19.549140",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"lvd@gmail.com",
+				"dvyukov@google.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=5957d9d08900 ***\n\ncmd/gc: fix escape analysis bug.\n\nIt used to not mark parameters as escaping if only one of the\nfields it points to leaks out of the function. This causes\nproblems when importing from another package.\n\nFixes issue 4964.\n\nR=rsc, lvd, dvyukov, daniel.morsing\nCC=golang-dev\nhttps://codereview.appspot.com/7648045\n\nhttps://codereview.appspot.com/7648045/diff/13001/test/escape2.go\nFile test/escape2.go (right):\n\nhttps://codereview.appspot.com/7648045/diff/13001/test/escape2.go#newcode82\ntest/escape2.go:82: \nOn 2013/03/15 04:05:19, rsc wrote:\n> Please add a comment\n> // Must treat yyy as leaking because *yyy leaks, and the escape analysis\n> // summaries in exported metadata do not distinguish these two cases.\n\nDone.\n\nhttps://codereview.appspot.com/7648045/diff/13001/test/escape2.go#newcode302\ntest/escape2.go:302: func (f *Foo) foo46() { // ERROR \"leaking param: f\"\nOn 2013/03/15 04:05:19, rsc wrote:\n> insert comment above this line\n> // See foo13 above for explanation.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-03-15 08:03:56.789680",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 7648045: cmd/gc: fix escape analysis bug.",
+	"created": "2013-03-09 00:49:43.720420",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		13001,
+		20001,
+		22001,
+		25001
+	],
+	"modified": "2013-03-15 08:03:58.282450",
+	"closed": true,
+	"issue": 7648045
+}

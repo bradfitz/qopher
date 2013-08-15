@@ -1,0 +1,123 @@
+{
+	"description": "reflect: add ArrayType.Slice, ArrayValue.Slice\r\n\r\nRight now it's not possible to use the data within a\r\nreflect.ArrayValue as an array without copying element by\r\nelement individually out of the array, or knowing the array\r\ntype and dimension in advance, which defeats the purpose of\r\nreflection.\r\n\r\nThis changeset solves that problem by:\r\n\r\na) Modifying the compiler to dump the slice type next to the\r\n   array type itself, adding an extra element to\r\n   {reflect,runtime}.ArrayType\r\n\r\nb) Introducing the Slice() method on ArrayType, giving access\r\n   to its respective SliceType (analog to Elem()).\r\n\r\nc) Introducing Slice(beg, end) method on ArrayValue, giving\r\n   access to a dynamic SliceValue (analog to SliceValue's\r\n   Slice method).\r\n\r\nd) Adding the extra Slice(beg, end) SliceValue method into the\r\n   ArrayOrSliceValue interface, since both of them are able to\r\n   handle it correctly.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"nigel.tao.gnome@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> I just wanted to point out that our change description style should\n> start with a one-line summary of the change, prefixed by the primary\n\nWill keep that in mind, thanks.",
+			"disapproval": false,
+			"date": "2010-12-12 23:14:27.108341",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello r, rsc (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change.",
+			"disapproval": false,
+			"date": "2010-12-12 22:02:12.907178",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Rob and Russ are more qualified to make a technical review of this change.\n\nI just wanted to point out that our change description style should\nstart with a one-line summary of the change, prefixed by the primary\naffected package (or e.g. \"doc\" for documentation changes). This makes\nit easier to scan changelist summaries in a mail reader, and to\nprepare the release notes for the weekly releases.\n\nFor example, this change could start with: \"reflect: add Slice methods\nto Array{Type,Value}.\"\n",
+			"disapproval": false,
+			"date": "2010-12-12 22:41:11.348077",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "The short summary as I understand it is\n\nreflect: add ArrayType.Slice, ArrayValue.Slice\n\nI'm not sure what I think of this.  You claimed that\nit's impossible to use the data inside a reflect.ArrayValue\nwithout knowing the size and type of the array, but\nthat's definitely false.  You can use the data via the\nreflection interface; the same is true of structs, maps,\nand any other type.\n\nAdding Slice means that you can then use Interface()\nto get an interface value with the slice, so if you know\nthe type but not the size then you can get back to a\nnon-reflected Go value.  But how often does that happen?\n\nI'm also a bit concerned about starting to add cross-links\nbetween related types, like Array -> Slice.  Where does\nit stop?  Here they are very clearly related, but what will\nbe the next one?\n\nAnother potentially useful cross-link would be T -> *T\nbut that adds a whole host of other issues to the reflection\ninterface, like when it's okay to call Addr() and when not.\n\nI am leaning toward leaving this out of the current reflect\nbut treating this CL as something to keep in mind when\nwe do the next redesign of reflect (the redesign should also\naddress the T -> *T question, among others).\n\nWhat is the use case you have where this Array -> Slice\nfunctionality is important now?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2010-12-13 02:42:22.387904",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "you managed to put in words what's been subconsciously bothering me.\nthe analogy with T and *T came to me too but i didn't know which way\nto take it.  \"later\" does seem like a reasonable resolution for now.\n\n-rob\n",
+			"disapproval": false,
+			"date": "2010-12-13 05:17:20.456184",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"nigel.tao.gnome@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hi Russ,\n\n> I'm not sure what I think of this.  You claimed that\n> it's impossible to use the data inside a reflect.ArrayValue\n> without knowing the size and type of the array, but\n> that's definitely false.  You can use the data via the\n> reflection interface; the same is true of structs, maps,\n> and any other type.\n\nI claimed it is impossible without knowing the array size\n*or* iterating element by element individually, which is\nwhat you suggest above.\n\n> Adding Slice means that you can then use Interface()\n> to get an interface value with the slice, so if you know\n> the type but not the size then you can get back to a\n> non-reflected Go value.  But how often does that happen?\n\nMy use case is this: I'm writing a serialization package,\nand would like to support structures similar to the\nfollowing:\n\n    type UnknownType struct {\n        v [N]byte\n    }\n\nThis can't be done through reflection today without iterating\nelement by element the byte array, which feels like a very\ncostly operation for what is going on.  Extracting a []byte\n(or []int32, etc) type out of this would solve the issue in\nan elegant way.\n\n> I'm also a bit concerned about starting to add cross-links\n> between related types, like Array -> Slice.  Where does\n> it stop?  Here they are very clearly related, but what will\n> be the next one?\n> \n> Another potentially useful cross-link would be T -> *T\n> but that adds a whole host of other issues to the reflection\n> interface, like when it's okay to call Addr() and when not.\n\nIt does sound like a useful feature as well, to be honest, and\none I won't be surprised if someone comes up with a compelling\nuse case for, but I don't have one.\n\n> I am leaning toward leaving this out of the current reflect\n> but treating this CL as something to keep in mind when\n> we do the next redesign of reflect (the redesign should also\n> address the T -> *T question, among others).\n\nThat sounds reasonable to me.  Right now I'm forbidding dumping\narrays entirely and forcing the use of slices.  If that bothers\nme too much in real use, I can play unsafe games to grab the\nunderlying memory.\n\nMy main motivation with this CL *right now* was indeed to explain\na real problem which exists with reflection today, and bring up\nthat this approach is feasible and clean.  I failed to do\nthat without code, in the mailing list.\n\n> What is the use case you have where this Array -> Slice\n> functionality is important now?\n\nI hope this makes the problem clearer.",
+			"disapproval": false,
+			"date": "2010-12-13 12:35:13.935703",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"nigel.tao.gnome@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "(updated the short summary)",
+			"disapproval": false,
+			"date": "2010-12-13 12:36:34.893168",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "removing reviewers.  \ncreated http://code.google.com/p/go/issues/detail?id=1432",
+			"disapproval": false,
+			"date": "2011-01-19 19:43:53.061433",
+			"approval": false
+		}
+	],
+	"owner_email": "n13m3y3r@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "niemeyer",
+	"subject": "code review 3608041: reflect: add ArrayType.Slice, ArrayValue.Slice",
+	"created": "2010-12-12 21:58:32.362200",
+	"patchsets": [
+		1,
+		2001
+	],
+	"modified": "2011-09-23 18:15:24.647639",
+	"closed": true,
+	"issue": 3608041
+}

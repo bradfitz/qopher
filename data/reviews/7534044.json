@@ -1,0 +1,119 @@
+{
+	"description": "runtime: fix misaligned 64-bit atomic\nFixes issue 4869.\nFixes issue 5007.\nUpdate issue 5005.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"0xe2.0x9a.0x9b@gmail.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [
+		"dave@cheney.net",
+		"fullung@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"dave@cheney.net",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"0xe2.0x9a.0x9b@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/10 16:46:22, dvyukov wrote:\n> *** Submitted as https://code.google.com/p/go/source/detail?r=9fb011139c2b ***\n> runtime: fix misaligned 64-bit atomic\n> Fixes issue 4869.\n> Fixes issue 5007.\n> Update issue 5005.\n\nStress test update:\n\nThings are looking much better, but a few issues remain.\n\nissue 5005: sporadic test failures on linux/386\n\nissue 5025: timeouts in runtime tests that I mentioned in issue 5007\n\nI think we have internal tests that are also hitting the same problem as issue 5025. It always includes a goroutine that seems to be hanging while doing a system call.\n\nCheers\n\nAlbert",
+			"disapproval": false,
+			"date": "2013-03-11 05:34:14.144890",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-10 12:06:24.207810",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xe2.0x9a.0x9b@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7534044/diff/8001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/7534044/diff/8001/src/pkg/runtime/runtime.h#newcode486\nsrc/pkg/runtime/runtime.h:486: uint32 pad;\t\t\t// to align ParForThread.pos for 64-bit atomic operations\nIn my opinion, it would be conceptually simpler to use two allocations in parforalloc.",
+			"disapproval": false,
+			"date": "2013-03-10 12:37:30.049870",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Sun, Mar 10, 2013 at 5:06 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: fix misaligned 64-bit atomic\r\n> Fixes issue 4869.\r\n> Fixes issue 5007.\r\n> Update issue 5005.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7534044/<https://codereview.appspot.com/7534044/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/mgc0.c\r\n>   M src/pkg/runtime/parfor.c\r\n>   M src/pkg/runtime/runtime.h\r\n>\r\n>\r\n> Index: src/pkg/runtime/mgc0.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mgc0.c\r\n> +++ b/src/pkg/runtime/mgc0.c\r\n> @@ -1757,6 +1757,8 @@\r\n>         // a problem in the past.\r\n>         if((((uintptr)&work.empty) & 7) != 0)\r\n>                 runtime\u00b7throw(\"runtime: gc work buffer is misaligned\");\r\n> +       if((((uintptr)&work.full) & 7) != 0)\r\n> +               runtime\u00b7throw(\"runtime: gc work buffer is misaligned\");\r\n>\r\n>         // The gc is turned off (via enablegc) until\r\n>         // the bootstrap has completed.\r\n> Index: src/pkg/runtime/parfor.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/parfor.c\r\n> +++ b/src/pkg/runtime/parfor.c\r\n> @@ -46,6 +46,7 @@\r\n>  runtime\u00b7parforsetup(ParFor *desc, uint32 nthr, uint32 n, void *ctx, bool\r\n> wait, void (*body)(ParFor*, uint32))\r\n>  {\r\n>         uint32 i, begin, end;\r\n> +       uint64 *pos;\r\n>\r\n>         if(desc == nil || nthr == 0 || nthr > desc->nthrmax || body ==\r\n> nil) {\r\n>                 runtime\u00b7printf(\"desc=%p nthr=%d count=%d body=%p\\n\", desc,\r\n> nthr, n, body);\r\n> @@ -67,7 +68,10 @@\r\n>         for(i=0; i<nthr; i++) {\r\n>                 begin = (uint64)n*i / nthr;\r\n>                 end = (uint64)n*(i+1) / nthr;\r\n> -               desc->thr[i].pos = (uint64)begin | (((uint64)end)<<32);\r\n> +               pos = &desc->thr[i].pos;\r\n> +               if(((uintptr)pos & 7) != 0)\r\n> +                       runtime\u00b7throw(\"parforsetup: pos is not aligned\");\r\n> +               *pos = (uint64)begin | (((uint64)end)<<32);\r\n>         }\r\n>  }\r\n>\r\n> Index: src/pkg/runtime/runtime.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/runtime.h\r\n> +++ b/src/pkg/runtime/runtime.h\r\n> @@ -483,6 +483,7 @@\r\n>         bool wait;                      // if true, wait while all threads\r\n> finish processing,\r\n>                                         // otherwise parfor may return\r\n> while other threads are still working\r\n>         ParForThread *thr;              // array of thread descriptors\r\n> +       uint32 pad;                     // to align ParForThread.pos for\r\n> 64-bit atomic operations\r\n>         // stats\r\n>         uint64 nsteal;\r\n>         uint64 nstealcnt;\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-10 15:12:49.451420",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xe2.0x9a.0x9b@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=9fb011139c2b ***\n\nruntime: fix misaligned 64-bit atomic\nFixes issue 4869.\nFixes issue 5007.\nUpdate issue 5005.\n\nR=golang-dev, 0xe2.0x9a.0x9b, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/7534044",
+			"disapproval": false,
+			"date": "2013-03-10 16:46:22.267740",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xe2.0x9a.0x9b@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7534044/diff/8001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/7534044/diff/8001/src/pkg/runtime/runtime.h#newcode486\nsrc/pkg/runtime/runtime.h:486: uint32 pad;\t\t\t// to align ParForThread.pos for 64-bit atomic operations\nOn 2013/03/10 12:37:30, atom wrote:\n> In my opinion, it would be conceptually simpler to use two allocations in\n> parforalloc.\n\nI don't have a strong opinion here. But I want to fix it finally. And since I've added the runtime check for alignment, even if this is fragile we should notice the bug quickly.",
+			"disapproval": false,
+			"date": "2013-03-10 16:51:02.086350",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you\r\n\r\n\r\n\r\nOn 11/03/2013, at 2:12 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n\r\n> LGTM\r\n> \r\n> On Sun, Mar 10, 2013 at 5:06 AM, <dvyukov@google.com> wrote:\r\n>> Reviewers: golang-dev1,\r\n>> \r\n>> Message:\r\n>> Hello golang-dev@googlegroups.com,\r\n>> \r\n>> I'd like you to review this change to\r\n>> https://dvyukov%40google.com@code.google.com/p/go/\r\n>> \r\n>> \r\n>> Description:\r\n>> runtime: fix misaligned 64-bit atomic\r\n>> Fixes issue 4869.\r\n>> Fixes issue 5007.\r\n>> Update issue 5005.\r\n>> \r\n>> Please review this at https://codereview.appspot.com/7534044/\r\n>> \r\n>> Affected files:\r\n>>   M src/pkg/runtime/mgc0.c\r\n>>   M src/pkg/runtime/parfor.c\r\n>>   M src/pkg/runtime/runtime.h\r\n>> \r\n>> \r\n>> Index: src/pkg/runtime/mgc0.c\r\n>> ===================================================================\r\n>> --- a/src/pkg/runtime/mgc0.c\r\n>> +++ b/src/pkg/runtime/mgc0.c\r\n>> @@ -1757,6 +1757,8 @@\r\n>>         // a problem in the past.\r\n>>         if((((uintptr)&work.empty) & 7) != 0)\r\n>>                 runtime\u00b7throw(\"runtime: gc work buffer is misaligned\");\r\n>> +       if((((uintptr)&work.full) & 7) != 0)\r\n>> +               runtime\u00b7throw(\"runtime: gc work buffer is misaligned\");\r\n>> \r\n>>         // The gc is turned off (via enablegc) until\r\n>>         // the bootstrap has completed.\r\n>> Index: src/pkg/runtime/parfor.c\r\n>> ===================================================================\r\n>> --- a/src/pkg/runtime/parfor.c\r\n>> +++ b/src/pkg/runtime/parfor.c\r\n>> @@ -46,6 +46,7 @@\r\n>>  runtime\u00b7parforsetup(ParFor *desc, uint32 nthr, uint32 n, void *ctx, bool wait, void (*body)(ParFor*, uint32))\r\n>>  {\r\n>>         uint32 i, begin, end;\r\n>> +       uint64 *pos;\r\n>> \r\n>>         if(desc == nil || nthr == 0 || nthr > desc->nthrmax || body == nil) {\r\n>>                 runtime\u00b7printf(\"desc=%p nthr=%d count=%d body=%p\\n\", desc, nthr, n, body);\r\n>> @@ -67,7 +68,10 @@\r\n>>         for(i=0; i<nthr; i++) {\r\n>>                 begin = (uint64)n*i / nthr;\r\n>>                 end = (uint64)n*(i+1) / nthr;\r\n>> -               desc->thr[i].pos = (uint64)begin | (((uint64)end)<<32);\r\n>> +               pos = &desc->thr[i].pos;\r\n>> +               if(((uintptr)pos & 7) != 0)\r\n>> +                       runtime\u00b7throw(\"parforsetup: pos is not aligned\");\r\n>> +               *pos = (uint64)begin | (((uint64)end)<<32);\r\n>>         }\r\n>>  }\r\n>> \r\n>> Index: src/pkg/runtime/runtime.h\r\n>> ===================================================================\r\n>> --- a/src/pkg/runtime/runtime.h\r\n>> +++ b/src/pkg/runtime/runtime.h\r\n>> @@ -483,6 +483,7 @@\r\n>>         bool wait;                      // if true, wait while all threads finish processing,\r\n>>                                         // otherwise parfor may return while other threads are still working\r\n>>         ParForThread *thr;              // array of thread descriptors\r\n>> +       uint32 pad;                     // to align ParForThread.pos for 64-bit atomic operations\r\n>>         // stats\r\n>>         uint64 nsteal;\r\n>>         uint64 nstealcnt;\r\n>> \r\n>> \r\n>> -- \r\n>> \r\n>> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n>> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> -- \r\n>  \r\n> --- \r\n> You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>  \r\n>  \r\n",
+			"disapproval": false,
+			"date": "2013-03-11 00:04:33.330980",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 7534044: runtime: fix misaligned 64-bit atomic",
+	"created": "2013-03-10 12:00:31.420460",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		14001
+	],
+	"modified": "2013-03-11 05:34:14.289710",
+	"closed": true,
+	"issue": 7534044
+}

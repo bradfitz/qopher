@@ -1,0 +1,89 @@
+{
+	"description": "crypto/rc4: faster amd64, 386 implementations\n\n-- amd64 --\n\nOn a MacBookPro10,2 (Core i5):\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128          470          421  -10.43%\nBenchmarkRC4_1K          3123         3275   +4.87%\nBenchmarkRC4_8K         26351        25866   -1.84%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128       272.22       303.40    1.11x\nBenchmarkRC4_1K        327.80       312.58    0.95x\nBenchmarkRC4_8K        307.24       313.00    1.02x\n\nFor comparison, on the same machine, openssl 0.9.8r reports\nits rc4 speed as somewhat under 350 MB/s for both 1K and 8K.\nThe Core i5 performance can be boosted another 20%, but only\nby making the Xeon performance significantly slower.\n\nOn an Intel Xeon E5520:\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128          774          417  -46.12%\nBenchmarkRC4_1K          6121         3200  -47.72%\nBenchmarkRC4_8K         48394        25151  -48.03%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128       165.18       306.84    1.86x\nBenchmarkRC4_1K        167.28       319.92    1.91x\nBenchmarkRC4_8K        167.29       321.89    1.92x\n\nFor comparison, on the same machine, openssl 1.0.1\n(which uses a different implementation than 0.9.8r)\nreports its rc4 speed as 587 MB/s for 1K and 601 MB/s for 8K.\nIt is using SIMD instructions to do more in parallel.\n\nSo there's still some improvement to be had, but even so,\nthis is almost 2x faster than what it replaced.\n\n-- 386 --\n\nOn a MacBookPro10,2 (Core i5):\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128         3491          421  -87.94%\nBenchmarkRC4_1K         28063         3205  -88.58%\nBenchmarkRC4_8K        220392        25228  -88.55%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128        36.66       303.81    8.29x\nBenchmarkRC4_1K         36.49       319.42    8.75x\nBenchmarkRC4_8K         36.73       320.90    8.74x\n\nOn an Intel Xeon E5520:\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128         2268          524  -76.90%\nBenchmarkRC4_1K         18161         4137  -77.22%\nBenchmarkRC4_8K        142396        32350  -77.28%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128        56.42       244.13    4.33x\nBenchmarkRC4_1K         56.38       247.46    4.39x\nBenchmarkRC4_8K         56.86       250.26    4.40x",
+	"cc": [
+		"agl@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello agl@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-21 05:30:57.263310",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This seems to fix an issue with the old amd64 asm on older Intel CPUs, so LGTM.\n\nhttps://codereview.appspot.com/7547050/diff/16001/src/pkg/crypto/rc4/rc4_386.s\nFile src/pkg/crypto/rc4/rc4_386.s (right):\n\nhttps://codereview.appspot.com/7547050/diff/16001/src/pkg/crypto/rc4/rc4_386.s#newcode1\nsrc/pkg/crypto/rc4/rc4_386.s:1: // Copyright 2013 The Go Authors. All rights reserved.\nThis looks like a port of the old amd64 code. If mercurial can be convinced that it's a copy without too much effort, that would be nice, but not important.",
+			"disapproval": false,
+			"date": "2013-03-21 11:11:59.605370",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Mar 21, 2013 at 7:11 AM, <agl@golang.org> wrote:\r\n\r\n> This seems to fix an issue with the old amd64 asm on older Intel CPUs,\r\n> so LGTM.\r\n>\r\n\r\nBy an issue do you mean performance? The magic word to unlock the Xeon was\r\nthe no-op MOVBLZX (aka EXTEND macro). If I just add those to the original\r\nthat you wrote, that's enough to get something like 1.5x. But the new\r\nversion also does one-round-early loads, which gives the rest of the almost\r\n2x.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-03-21 13:51:21.742600",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Mar 21, 2013 at 9:51 AM, Russ Cox <rsc@golang.org> wrote:\r\n> By an issue do you mean performance? The magic word to unlock the Xeon was\r\n> the no-op MOVBLZX (aka EXTEND macro). If I just add those to the original\r\n> that you wrote, that's enough to get something like 1.5x. But the new\r\n> version also does one-round-early loads, which gives the rest of the almost\r\n> 2x.\r\n\r\nYes. The \"MacBookPro10,2\" appears to be an Ivy Bridge core and the\r\ndifference is small. But it's doing much better on the Nehalem core in\r\nthe E5520.\r\n\r\n\r\nCheers\r\n\r\nAGL\r\n",
+			"disapproval": false,
+			"date": "2013-03-21 14:25:07.077220",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=97e26e028a6e ***\n\ncrypto/rc4: faster amd64, 386 implementations\n\n-- amd64 --\n\nOn a MacBookPro10,2 (Core i5):\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128          470          421  -10.43%\nBenchmarkRC4_1K          3123         3275   +4.87%\nBenchmarkRC4_8K         26351        25866   -1.84%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128       272.22       303.40    1.11x\nBenchmarkRC4_1K        327.80       312.58    0.95x\nBenchmarkRC4_8K        307.24       313.00    1.02x\n\nFor comparison, on the same machine, openssl 0.9.8r reports\nits rc4 speed as somewhat under 350 MB/s for both 1K and 8K.\nThe Core i5 performance can be boosted another 20%, but only\nby making the Xeon performance significantly slower.\n\nOn an Intel Xeon E5520:\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128          774          417  -46.12%\nBenchmarkRC4_1K          6121         3200  -47.72%\nBenchmarkRC4_8K         48394        25151  -48.03%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128       165.18       306.84    1.86x\nBenchmarkRC4_1K        167.28       319.92    1.91x\nBenchmarkRC4_8K        167.29       321.89    1.92x\n\nFor comparison, on the same machine, openssl 1.0.1\n(which uses a different implementation than 0.9.8r)\nreports its rc4 speed as 587 MB/s for 1K and 601 MB/s for 8K.\nIt is using SIMD instructions to do more in parallel.\n\nSo there's still some improvement to be had, but even so,\nthis is almost 2x faster than what it replaced.\n\n-- 386 --\n\nOn a MacBookPro10,2 (Core i5):\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128         3491          421  -87.94%\nBenchmarkRC4_1K         28063         3205  -88.58%\nBenchmarkRC4_8K        220392        25228  -88.55%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128        36.66       303.81    8.29x\nBenchmarkRC4_1K         36.49       319.42    8.75x\nBenchmarkRC4_8K         36.73       320.90    8.74x\n\nOn an Intel Xeon E5520:\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128         2268          524  -76.90%\nBenchmarkRC4_1K         18161         4137  -77.22%\nBenchmarkRC4_8K        142396        32350  -77.28%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128        56.42       244.13    4.33x\nBenchmarkRC4_1K         56.38       247.46    4.39x\nBenchmarkRC4_8K         56.86       250.26    4.40x\n\nR=agl\nCC=golang-dev\nhttps://codereview.appspot.com/7547050\n\nhttps://codereview.appspot.com/7547050/diff/16001/src/pkg/crypto/rc4/rc4_386.s\nFile src/pkg/crypto/rc4/rc4_386.s (right):\n\nhttps://codereview.appspot.com/7547050/diff/16001/src/pkg/crypto/rc4/rc4_386.s#newcode1\nsrc/pkg/crypto/rc4/rc4_386.s:1: // Copyright 2013 The Go Authors. All rights reserved.\nOn 2013/03/21 11:11:59, agl1 wrote:\n> This looks like a port of the old amd64 code. If mercurial can be convinced that\n> it's a copy without too much effort, that would be nice, but not important.\n\nDone. (Thought I'd already done it but maybe Mercurial forgot somehow.)",
+			"disapproval": false,
+			"date": "2013-03-21 15:25:15.598880",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 7547050: crypto/rc4: faster amd64, 386 implementations",
+	"created": "2013-03-20 13:06:12.243450",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		7001,
+		10001,
+		13001,
+		16001,
+		22001,
+		25001
+	],
+	"modified": "2013-03-21 15:25:16.678940",
+	"closed": true,
+	"issue": 7547050
+}

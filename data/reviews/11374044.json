@@ -1,0 +1,159 @@
+{
+	"description": "runtime: use new frame argument size information\n\nWith this CL, I believe the runtime always knows\nthe frame size during the gc walk. There is no fallback\nto \"assume entire stack frame of caller\" anymore.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"khr@golang.org",
+		"cshapiro@google.com",
+		"dvyukov@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"cshapiro@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/16 21:14:53, rsc wrote:\n> On 2013/07/16 21:04:18, cshapiro1 wrote:\n> > There were a number of changes related to this one that have gone by.  I am\n> > somewhat concerned about the handling of varargs routines.  Rather than having\n> a\n> > varargs call on the stack, we can avoid the use of varargs by passing a\n> pointer.\n> >  I am not sure what the design motiviation is for this change, but it would\n> help\n> > to have some additional context, at least in this regard.\n> \n> The runtime is now written such that it needs to know the size of the argument\n> frame, yet today it does not for many important cases. This CL, combined with\n> the 6c and 6g changes, makes the runtime actually have the answer 100% of the\n> time (and if not it will crash loudly).\n> \n> There are a few cases, as outlined in the traceback comments:\n> \n>   * If the function has a fixed-size argument block, that number is used.\n>   * If the function is at the top of a stack segment, stk->argsize records\n>     the size of the argument block. That number is used.\n>   * Otherwise, it's a variadic C function, and we require the caller to have\n>     recorded the argument size as PCDATA $0. That number is used.\n> \n> In order to make that work:\n>   * All Go and non-variadic C functions record their argument size\n>     (even if textflag==7).\n>   * I annotated many textflag-7 assembly functions to record the true\n>     argument size.\n>   * All C function calls record the argument size at the time of the call\n>     as PCDATA $0 metadata.\n>   * All Go calls into package runtime do the same.\n> \n> These last two are a bit conservative: we could limit the C calls to just \n> variadic functions and we could limit the Go calls to just the ones that\n> we know are polymorphic.\n> \n> In the longer term it is probably possible to eliminate some or all of the\n> variadic functions. We should have that discussion at some point.\n> It is not my intent today to make such a sweeping change.\n> I am only trying to make the traceback that is already there and depends\n> on having correct argument sizes work 100% of the time.\n\nThanks, I appreciate the additional detail.",
+			"disapproval": false,
+			"date": "2013-07-16 21:35:01.594660",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-07-16 20:25:56.338580",
+			"approval": false
+		},
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11374044/diff/8001/src/pkg/runtime/panic.c\nFile src/pkg/runtime/panic.c (right):\n\nhttps://codereview.appspot.com/11374044/diff/8001/src/pkg/runtime/panic.c#newcode161\nsrc/pkg/runtime/panic.c:161: runtime\u00b7deferreturn(uintptr arg0, ...)\nWhy is this necessary?  Deferreturn's argument area contains dead values.  Is it because data is copied in there before the calls to popdefer/freedefer?\n\nWhat argsize does the compiler annotate a deferreturn call with?",
+			"disapproval": false,
+			"date": "2013-07-16 20:58:53.028960",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"cshapiro@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "There were a number of changes related to this one that have gone by.  I am somewhat concerned about the handling of varargs routines.  Rather than having a varargs call on the stack, we can avoid the use of varargs by passing a pointer.  I am not sure what the design motiviation is for this change, but it would help to have some additional context, at least in this regard.",
+			"disapproval": false,
+			"date": "2013-07-16 21:04:18.308570",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"cshapiro@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/16 21:04:18, cshapiro1 wrote:\n> There were a number of changes related to this one that have gone by.  I am\n> somewhat concerned about the handling of varargs routines.  Rather than having a\n> varargs call on the stack, we can avoid the use of varargs by passing a pointer.\n>  I am not sure what the design motiviation is for this change, but it would help\n> to have some additional context, at least in this regard.\n\nThe runtime is now written such that it needs to know the size of the argument frame, yet today it does not for many important cases. This CL, combined with the 6c and 6g changes, makes the runtime actually have the answer 100% of the time (and if not it will crash loudly).\n\nThere are a few cases, as outlined in the traceback comments:\n\n  * If the function has a fixed-size argument block, that number is used.\n  * If the function is at the top of a stack segment, stk->argsize records\n    the size of the argument block. That number is used.\n  * Otherwise, it's a variadic C function, and we require the caller to have\n    recorded the argument size as PCDATA $0. That number is used.\n\nIn order to make that work:\n  * All Go and non-variadic C functions record their argument size\n    (even if textflag==7).\n  * I annotated many textflag-7 assembly functions to record the true\n    argument size.\n  * All C function calls record the argument size at the time of the call\n    as PCDATA $0 metadata.\n  * All Go calls into package runtime do the same.\n\nThese last two are a bit conservative: we could limit the C calls to just \nvariadic functions and we could limit the Go calls to just the ones that\nwe know are polymorphic.\n\nIn the longer term it is probably possible to eliminate some or all of the\nvariadic functions. We should have that discussion at some point.\nIt is not my intent today to make such a sweeping change.\nI am only trying to make the traceback that is already there and depends\non having correct argument sizes work 100% of the time.",
+			"disapproval": false,
+			"date": "2013-07-16 21:14:53.969500",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"cshapiro@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Not sure what this one didn't send.\n\nhttps://codereview.appspot.com/11374044/diff/8001/src/pkg/runtime/panic.c\nFile src/pkg/runtime/panic.c (right):\n\nhttps://codereview.appspot.com/11374044/diff/8001/src/pkg/runtime/panic.c#newcode161\nsrc/pkg/runtime/panic.c:161: runtime\u00b7deferreturn(uintptr arg0, ...)\nOn 2013/07/16 20:58:53, khr wrote:\n> Why is this necessary?  Deferreturn's argument area contains dead values.  Is it\n> because data is copied in there before the calls to popdefer/freedefer?\n> \n> What argsize does the compiler annotate a deferreturn call with?\n\nHaving a ... means that the compiler does not annotate the deferreturn with an arg size, so that if the runtime asks for one it will not find one, so that if it really needs one (it should not ask), it will fail, and we can debug.",
+			"disapproval": false,
+			"date": "2013-07-16 21:15:34.152330",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"cshapiro@google.com",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/11374044/diff/8001/src/pkg/runtime/panic.c\nFile src/pkg/runtime/panic.c (right):\n\nhttps://codereview.appspot.com/11374044/diff/8001/src/pkg/runtime/panic.c#newcode161\nsrc/pkg/runtime/panic.c:161: runtime\u00b7deferreturn(uintptr arg0, ...)\nplease add a comment\n\nhttps://codereview.appspot.com/11374044/diff/8001/src/pkg/runtime/softfloat_arm.c\nFile src/pkg/runtime/softfloat_arm.c (right):\n\nhttps://codereview.appspot.com/11374044/diff/8001/src/pkg/runtime/softfloat_arm.c#newcode581\nsrc/pkg/runtime/softfloat_arm.c:581: runtime\u00b7_sfloat2(uint32 *lr, uint32 r0, ...)\nthe same reason as in deferreturn?\nadd a short comment as well, this is tricky",
+			"disapproval": false,
+			"date": "2013-07-17 09:17:16.116910",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I commented both.\r\n\r\nsfloat2 is a different reason: the actual arguments are uint32 r0, uint32\r\nr1, uint32 r2, and so on, and the author of the code was too lazy to list\r\nthem all and used ... instead.\r\n",
+			"disapproval": false,
+			"date": "2013-07-17 16:43:26.817220",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Or I should say, used nothing instead, but I am adding the ... to make that\r\nomission explicit.\r\n",
+			"disapproval": false,
+			"date": "2013-07-17 16:43:43.651650",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"cshapiro@google.com",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=c31a59b119ad ***\n\nruntime: use new frame argument size information\n\nWith this CL, I believe the runtime always knows\nthe frame size during the gc walk. There is no fallback\nto \"assume entire stack frame of caller\" anymore.\n\nR=golang-dev, khr, cshapiro, dvyukov\nCC=golang-dev\nhttps://codereview.appspot.com/11374044",
+			"disapproval": false,
+			"date": "2013-07-17 16:47:21.159810",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 11374044: runtime: use new frame argument size information",
+	"created": "2013-07-16 20:06:51.476980",
+	"patchsets": [
+		1,
+		2,
+		4001,
+		8001,
+		19001
+	],
+	"modified": "2013-07-17 16:47:23.101300",
+	"closed": true,
+	"issue": 11374044
+}

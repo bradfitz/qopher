@@ -1,0 +1,95 @@
+{
+	"description": "net: Return error from CloseRead and CloseWrite.",
+	"cc": [
+		"bradfitz@golang.org",
+		"rsc@golang.org",
+		"iant@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"fullung@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello all\n\nHere is the basic change to make CloseRead and CloseWrite return an error. I only did fd.go for now, I'll do fd_windows.go too if we can address a few questions I have:\n\n1. Where is CloseReadWrite? If a user needs to Shutdown sockets, he might need any one of the three possibilities exposed via the API.\n\n2. Is Close really the best name? For me, having Close in the name means it does something with the file descriptor, whereas Shutdown specifically does not close the file descriptor.\n\nLooking forward to your comments.\n\nRegards\n\nAlbert",
+			"disapproval": false,
+			"date": "2011-09-30 08:47:33.391264",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "fullung@gmail.com writes:\n\n> 1. Where is CloseReadWrite? If a user needs to Shutdown sockets, he\n> might need any one of the three possibilities exposed via the API.\n\nHow does CloseReadWrite differ meaningfully from Close?\n\n\n> -func (fd *netFD) CloseRead() os.Error {\n> +func (fd *netFD) shutdown(how int) os.Error {\n>  \tif fd == nil || fd.sysfile == nil {\n>  \t\treturn os.EINVAL\n>  \t}\n> -\tsyscall.Shutdown(fd.sysfd, syscall.SHUT_RD)\n> +\terrno := syscall.Shutdown(fd.sysfd, how)\n> +\tvar oserr os.Error\n> +\tif errno != 0 {\n> +\t\toserr = os.Errno(errno)\n> +\t}\n> +\tif oserr != nil {\n> +\t\treturn &OpError{\"shutdown\", fd.net, fd.laddr, oserr}\n> +\t}\n\nHow about\n\tif errno := syscall.Shutdown(fd.sysfd, how); errno != 0 {\n\t\treturn &OpError(\"shutdown\", fd.net, fd.laddr, os.Errno(errno))\n\t}\n\nIan\n",
+			"disapproval": false,
+			"date": "2011-09-30 13:15:43.228764",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello\n\nOn Fri, Sep 30, 2011 at 3:15 PM, Ian Lance Taylor <iant@google.com> wrote:\n> fullung@gmail.com writes:\n>\n>> 1. Where is CloseReadWrite? If a user needs to Shutdown sockets, he\n>> might need any one of the three possibilities exposed via the API.\n> How does CloseReadWrite differ meaningfully from Close?\n\nYou make a valid point. I'm just keen to avoid any confusion between\nShutdown and Close. Shutdown is a socket-level thing. Close operates\non file descriptors.\n\nAs soon as you start passing file descriptors between processes, it\nbecomes very important not to confuse the two.\n\n>> -func (fd *netFD) CloseRead() os.Error {\n>> +func (fd *netFD) shutdown(how int) os.Error {\n>> \u00a0 \u00a0 \u00a0 if fd == nil || fd.sysfile == nil {\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 return os.EINVAL\n>> \u00a0 \u00a0 \u00a0 }\n>> - \u00a0 \u00a0 syscall.Shutdown(fd.sysfd, syscall.SHUT_RD)\n>> + \u00a0 \u00a0 errno := syscall.Shutdown(fd.sysfd, how)\n>> + \u00a0 \u00a0 var oserr os.Error\n>> + \u00a0 \u00a0 if errno != 0 {\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 oserr = os.Errno(errno)\n>> + \u00a0 \u00a0 }\n>> + \u00a0 \u00a0 if oserr != nil {\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 return &OpError{\"shutdown\", fd.net, fd.laddr, oserr}\n>> + \u00a0 \u00a0 }\n>\n> How about\n> \u00a0 \u00a0 \u00a0 \u00a0if errno := syscall.Shutdown(fd.sysfd, how); errno != 0 {\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return &OpError(\"shutdown\", fd.net, fd.laddr, os.Errno(errno))\n> \u00a0 \u00a0 \u00a0 \u00a0}\n\nWill do.\n\nRegards\n\nAlbert\n",
+			"disapproval": false,
+			"date": "2011-09-30 13:44:13.620354",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 30, 2011 at 1:47 AM, <fullung@gmail.com> wrote:\n\n> Reviewers: bradfitz, rsc,\n>\n> Message:\n> Hello all\n>\n> Here is the basic change to make CloseRead and CloseWrite return an\n> error. I only did fd.go for now, I'll do fd_windows.go too if we can\n> address a few questions I have:\n>\n> 1. Where is CloseReadWrite? If a user needs to Shutdown sockets, he\n> might need any one of the three possibilities exposed via the API.\n>\n> 2. Is Close really the best name? For me, having Close in the name means\n> it does something with the file descriptor, whereas Shutdown\n> specifically does not close the file descriptor.\n>\n\nI picked CloseRead and CloseWrite because they were shorter than\nShutdownRead and ShutdownWrite.  If I added Shutdown(flags int), then I'd\nneed to define flags somewhere.  *shrug*\n\nI don't care too much if people want to rename them Shutdown{Read,Write} but\nI'd rather not have the flags version.\n\nIt sounds like you want shutdown more than I did and know more so I'll defer\nto you.  I just wanted it for completeness and for this test:\n\nhttp://code.google.com/p/go/source/detail?r=b1e0821538e1e29ee0ff431531e6516ba0e047c6\n\n\n\n\n>\n> Looking forward to your comments.\n>\n> Regards\n>\n> Albert\n>\n> Description:\n> net: Return error from CloseRead and CloseWrite.\n>\n> Please review this at http://codereview.appspot.com/**5167043/<http://codereview.appspot.com/5167043/>\n>\n> Affected files:\n>  M src/pkg/net/fd.go\n>\n>\n> Index: src/pkg/net/fd.go\n> ==============================**==============================**=======\n> --- a/src/pkg/net/fd.go\n> +++ b/src/pkg/net/fd.go\n> @@ -358,20 +358,27 @@\n>        return nil\n>  }\n>\n> -func (fd *netFD) CloseRead() os.Error {\n> +func (fd *netFD) shutdown(how int) os.Error {\n>        if fd == nil || fd.sysfile == nil {\n>                return os.EINVAL\n>        }\n> -       syscall.Shutdown(fd.sysfd, syscall.SHUT_RD)\n> +       errno := syscall.Shutdown(fd.sysfd, how)\n> +       var oserr os.Error\n> +       if errno != 0 {\n> +               oserr = os.Errno(errno)\n> +       }\n> +       if oserr != nil {\n> +               return &OpError{\"shutdown\", fd.net, fd.laddr, oserr}\n> +       }\n>        return nil\n>  }\n>\n> +func (fd *netFD) CloseRead() os.Error {\n> +       return fd.shutdown(syscall.SHUT_RD)\n> +}\n> +\n>  func (fd *netFD) CloseWrite() os.Error {\n> -       if fd == nil || fd.sysfile == nil {\n> -               return os.EINVAL\n> -       }\n> -       syscall.Shutdown(fd.sysfd, syscall.SHUT_WR)\n> -       return nil\n> +       return fd.shutdown(syscall.SHUT_WR)\n>  }\n>\n>  func (fd *netFD) Read(p []byte) (n int, err os.Error) {\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-30 15:54:07.035656",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM (without CloseReadWrite)\n",
+			"disapproval": false,
+			"date": "2011-10-12 17:44:52.598644",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"fullung@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=32f2ae42dbfd ***\n\nnet: Return error from CloseRead and CloseWrite.\n\nR=bradfitz, rsc, iant\nCC=golang-dev\nhttp://codereview.appspot.com/5167043\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2011-10-12 17:45:27.980251",
+			"approval": false
+		}
+	],
+	"owner_email": "fullung@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "albert.strasheim",
+	"subject": "net: Return error from CloseRead and CloseWrite.",
+	"created": "2011-09-30 08:34:37.483238",
+	"patchsets": [
+		1,
+		2001,
+		1002
+	],
+	"modified": "2011-10-31 09:33:58.098682",
+	"closed": true,
+	"issue": 5167043
+}

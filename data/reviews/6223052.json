@@ -1,0 +1,201 @@
+{
+	"description": "net: make socketclose wait for io to complete on windows\n\nThis is to fix broken build at 97d027b3aa68.\n97d027b3aa68 has been reverted and need to be\nreapplied again after this CL is submitted.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"bradfitz@golang.org",
+		"rsc@golang.org",
+		"gustavo@niemeyer.net"
+	],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/05/22 04:04:46, rsc wrote:\n> In the light of the information I now understand about TCP, I believe\n> that TestServerExpect is just broken. ...\n\nMy original point exactly.\n\n> In that test, the if statement after sendf should begin if\n> test.readBody &&, so that the client only sends the body if we expect\n> the server to ask for it. ...\n\nThat should do it. But, like the article you quoted says, even that is not enough. If you want to be sure about final data is send, you must employ shutdown function and wait for peer to send you EOF.\n\nI fiddle with TestServerExpect and I get different behavior even if I use real ip address instead of 127.0.0.1. Confusing, yes. But we assume too much.\n\nAnyway, I do not think I need to change fd_windows.go to use different linger option anymore. I think default, which will have closesocket return immediately and will have connection try and shutdown gracefully (but will abort eventually, if no luck), is good enough.\n\nShould I still go ahead and fix broken syscall.Linger?\n\nAlex",
+			"disapproval": false,
+			"date": "2012-05-22 04:16:44.627705",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 22, 2012 at 12:53 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> No, the test that's failing is not sending an expectation header. \u00a0It's\r\n> acting like an HTTP/1.0 client and blasting the whole request + body away at\r\n> once, without negotiating.\r\n\r\nDid you reproduce the failure?  I don't see how you concluded that\r\nfrom the failure logs from a month ago.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 17:10:20.053578",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-05-21 03:04:18.190318",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please, do not review yet.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-05-21 07:31:55.423287",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 22, 2012 at 1:04 AM, Russ Cox <rsc@golang.org> wrote:\r\n> In the light of the information I now understand about TCP, I believe\r\n> that TestServerExpect is just broken. \u00a0We can't tell from the failure\r\n> log which test was failing (itself a bug in the test), but I think it\r\n> one of the tests with readBody=false. \u00a0The interaction goes like this:\r\n>\r\n> C->S: POST blah blah\\r\\nExpect: 100-continue\\r\\n\\r\\n\r\n> S->C: 401 Unauthorized\\r\\n<close connection>\r\n> C->S: more data!\r\n\r\nNote that the test doesn't actually blow up on \"C->S: more data!\", but\r\non the client trying to read the \"S->C: 401\". I'd expect that a client\r\nshould be able to read the fact a server is shutting the door because\r\nit was a 401, rather than getting a \"connection reset by peer\" on the\r\n*read* side. Maybe that's a violation of the HTTP spec for some\r\nreason, and maybe the test is broken, but it still looks like\r\nmisbehavior to me.\r\n\r\nThis is the kind of behavior I would expect from TCP:\r\n\r\nhttp://play.golang.org/p/jLkE0DmUFM\r\n\r\n2012/05/22 08:03:56 Client writing...\r\n2012/05/22 08:03:56 Server closing...\r\n2012/05/22 08:03:56 Client writing...\r\n2012/05/22 08:03:56 Write failed: write tcp 127.0.0.1:60560:\r\nconnection reset by peer\r\n2012/05/22 08:03:56 Client read data=\"401 Unauthorized\\n\", err=<nil>\r\n\r\nIs my expectation wrong?  Why is the Windows test not behaving like that?\r\n\r\n\r\ngustavo @ http://niemeyer.net\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 11:11:16.869905",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 22, 2012 at 1:16 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> The only sketchy test is:\r\n>\r\n> \u00a0 \u00a0 \u00a0 \u00a0 // Likewise without 100-continue:\r\n> \u00a0 \u00a0 \u00a0 \u00a0 {100, \"\", false, \"401 Unauthorized\"},\r\n>\r\n> That sends a 100 byte body without a 100-continue and asks the server to\r\n> hang up the connection (likely before/while we write the 100 bytes).\r\n\r\nAgreed.  Misread the code last time.\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 17:19:08.503845",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Unfortunately, I couldn't add test mentioned here:\n\nhttps://groups.google.com/d/msg/golang-dev/UXJ_a03MhcU/HcTwv224qpUJ\n\nbecause sometimes it PASSes and sometimes it FAILes for me.\n\nI also need help with:\n\n...\n-pkg syscall (windows-amd64), func SetNonblock(Handle, bool) error\n...\n-pkg syscall, type Linger struct, Linger int32\n-pkg syscall, type Linger struct, Onoff int32\ngo tool api: exit status 1\n\nHow should I proceed to change these?\n\nThank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-05-21 03:05:06.521577",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, May 20, 2012 at 8:05 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> Unfortunately, I couldn't add test mentioned here:\r\n>\r\n> https://groups.google.com/d/**msg/golang-dev/UXJ_a03MhcU/**HcTwv224qpUJ<https://groups.google.com/d/msg/golang-dev/UXJ_a03MhcU/HcTwv224qpUJ>\r\n>\r\n> because sometimes it PASSes and sometimes it FAILes for me.\r\n>\r\n> I also need help with:\r\n>\r\n> ...\r\n> -pkg syscall (windows-amd64), func SetNonblock(Handle, bool) error\r\n> ...\r\n> -pkg syscall, type Linger struct, Linger int32\r\n> -pkg syscall, type Linger struct, Onoff int32\r\n> go tool api: exit status 1\r\n>\r\n> How should I proceed to change these?\r\n>\r\n\r\nYou can't change those.  The promise has been made.  Pick new names?  Or\r\nre-use those old names?  But if you pick new names, make sure the old APIs\r\nfunction roughly equivalently in terms of the new one.\r\n",
+			"disapproval": false,
+			"date": "2012-05-21 16:30:04.522442",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6223052/diff/4001/src/pkg/syscall/syscall_windows.go\nFile src/pkg/syscall/syscall_windows.go (right):\n\nhttp://codereview.appspot.com/6223052/diff/4001/src/pkg/syscall/syscall_windows.go#newcode661\nsrc/pkg/syscall/syscall_windows.go:661: type Linger struct {\nI'm sorry, but this can't be changed now.\nInstead, leave Linger as it was and introduce\n\ntype sysLinger struct {\n    Onoff uint16\n    Linger uint16\n}\n\nand then make SetsockoptLinger copy its argument into a sysLinger and pass that to the system call.",
+			"disapproval": false,
+			"date": "2012-05-22 03:43:09.323290",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "+gustavo, moving the discussion here I guess.\r\n\r\nSeparate from the API issue, I do not believe that forcing a linger\r\nsetting is appropriate in general, and it may not fix the problem\r\nanyway.  You tried setting linger=0 on Linux and provoked a bug, from\r\nwhich you reasonably concluded that the default must be non-zero, but\r\nin fact the default is no linger at all (onoff=0), meaning let close\r\nfinish but keep sending the buffered data in the background.\r\n\r\nI believe this page identifies the problem: the situation it describes\r\nis exactly the one in your test: the client has sent some data that\r\nthe server fails to read before closing the connection.\r\nhttp://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable\r\n\r\nIn the case where the client and server disagree about how much data\r\nshould be pending (like in that page and in your test), I am inclined\r\nto accept the misbehavior rather than try to guess an appropriate\r\nlinger setting.  Also, setting linger requires additional threads,\r\nwhich is unfortunate in its own way.\r\n\r\nOn the other hand, it would be nice if the http server actually\r\ndelivered the data in the case where it wants to send+close and the\r\nother side wants to send a second request.  Doing so seems to require\r\neither linger or doing CloseWrite+a read from the connection.  Neither\r\nsolution seems right in a general-purpose server.\r\n\r\nHave I mentioned recently that I hate how badly BSD screwed up sockets?\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 03:57:02.039108",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 22, 2012 at 7:10 AM, Gustavo Niemeyer <gustavo@niemeyer.net> wrote:\r\n> Note that the test doesn't actually blow up on \"C->S: more data!\", but\r\n> on the client trying to read the \"S->C: 401\".\r\n\r\nThe client writing more than expected surprised the server, which tore\r\ndown the connection.  Hence the read failed.\r\n\r\n> I'd expect that a client\r\n> should be able to read the fact a server is shutting the door because\r\n> it was a 401, rather than getting a \"connection reset by peer\" on the\r\n> *read* side. Maybe that's a violation of the HTTP spec for some\r\n> reason, and maybe the test is broken, but it still looks like\r\n> misbehavior to me.\r\n\r\nThe client _can_ read that, as long as the client reads when it is\r\nsupposed to instead of writing more data.  The point of an expect\r\nheader is that it gives the client and server a chance to agree on\r\nwhether the client should send data.  This test does not make its\r\nsending of data conditional on what the expect header says, so the\r\nclient ends up writing when the server thinks the client should not be\r\nwriting.  That's the case that causes lost data in TCP.\r\n\r\n> This is the kind of behavior I would expect from TCP:\r\n>\r\n> http://play.golang.org/p/jLkE0DmUFM\r\n>\r\n> 2012/05/22 08:03:56 Client writing...\r\n> 2012/05/22 08:03:56 Server closing...\r\n> 2012/05/22 08:03:56 Client writing...\r\n> 2012/05/22 08:03:56 Write failed: write tcp 127.0.0.1:60560:\r\n> connection reset by peer\r\n> 2012/05/22 08:03:56 Client read data=\"401 Unauthorized\\n\", err=<nil>\r\n>\r\n> Is my expectation wrong? \u00a0Why is the Windows test not behaving like that?\r\n\r\nYes, your expectation is wrong.  At the time when the server closes\r\nthe connection, there is data waiting for it to read (because the\r\nclient has misbehaved and sent too early).  Quoting the article I\r\nlinked to, quoting RFC 1122:\r\n\r\nhttp://tools.ietf.org/html/rfc1122#page-88\r\n\r\n            A host MAY implement a \"half-duplex\" TCP close sequence, so\r\n            that an application that has called CLOSE cannot continue to\r\n            read data from the connection.  If such a host issues a\r\n            CLOSE call while received data is still pending in TCP, or\r\n            if new data is received after CLOSE is called, its TCP\r\n            SHOULD send a RST to show that data was lost.\r\n\r\nWhen a socket is closed with data waiting to be read, compliant TCP\r\nstacks abort the connection instead of doing a graceful close.  So the\r\ndata that the server has just written (the 401 Unauthorized) before\r\nthe close, if it hasn't yet been sent, is discarded, the TCP stack\r\nsends a RST, and the client is unable to read the 401 Unauthorized.\r\nThe moral of this story is that the client and server need to agree\r\nabout who should be sending and how much, and in fact they do if they\r\nboth follow the HTTP spec.  But the test does not follow the spec: it\r\nwrites data without waiting to inspect the Expect:ed header.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 16:35:50.397763",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "In the light of the information I now understand about TCP, I believe\r\nthat TestServerExpect is just broken.  We can't tell from the failure\r\nlog which test was failing (itself a bug in the test), but I think it\r\none of the tests with readBody=false.  The interaction goes like this:\r\n\r\nC->S: POST blah blah\\r\\nExpect: 100-continue\\r\\n\\r\\n\r\nS->C: 401 Unauthorized\\r\\n<close connection>\r\nC->S: more data!\r\n\r\nIn that test, the if statement after sendf should begin if\r\ntest.readBody &&, so that the client only sends the body if we expect\r\nthe server to ask for it.  I believe if you make this change, then\r\nGustavo's original CL should not trigger the Windows failure.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 04:04:46.597658",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 22, 2012 at 12:16 AM,  <alex.brainman@gmail.com> wrote:\r\n> That should do it. But, like the article you quoted says, even that is\r\n> not enough. If you want to be sure about final data is send, you must\r\n> employ shutdown function and wait for peer to send you EOF.\r\n\r\nHTTP is designed so that both sides should be pretty clear about\r\nwhether the other should be sending data.  In this case, the test is\r\nviolating the HTTP spec.  I believe that if we make the test actually\r\nrespect those parts of the HTTP spec, namely that it doesn't send\r\ndata it doesn't know the server will read, then we don't have to worry\r\nabout this.\r\n\r\n> Anyway, I do not think I need to change fd_windows.go to use different\r\n> linger option anymore. I think default, which will have closesocket\r\n> return immediately and will have connection try and shutdown gracefully\r\n> (but will abort eventually, if no luck), is good enough.\r\n>\r\n> Should I still go ahead and fix broken syscall.Linger?\r\n\r\nYes, please do, in a separate CL (as I suggested, with the sysLinger\r\nstructure hidden underneath).\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 04:20:04.544026",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 22, 2012 at 9:35 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n>  But the test does not follow the spec: it\r\n> writes data without waiting to inspect the Expect:ed header.\r\n>\r\n\r\nNo, the test that's failing is not sending an expectation header.  It's\r\nacting like an HTTP/1.0 client and blasting the whole request + body away\r\nat once, without negotiating.\r\n\r\nThe server could read the whole request body even on 403, but that's a\r\npotential DoS attack, so it doesn't [always].  I'm surprised it's not here,\r\nthough.\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 16:53:44.519332",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 22, 2012 at 10:09 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> On Tue, May 22, 2012 at 12:53 PM, Brad Fitzpatrick <bradfitz@golang.org>\r\n> wrote:\r\n> > No, the test that's failing is not sending an expectation header.  It's\r\n> > acting like an HTTP/1.0 client and blasting the whole request + body\r\n> away at\r\n> > once, without negotiating.\r\n>\r\n> Did you reproduce the failure?\r\n\r\n\r\nNo.\r\n\r\n\r\n> I don't see how you concluded that\r\n> from the failure logs from a month ago.\r\n\r\n\r\nI concluded that from reading this thread and your proposed fix and knowing\r\nwhat the http client and server does.\r\n\r\nThe only sketchy test is:\r\n\r\n        // Likewise without 100-continue:\r\n\r\n\r\n        {100, \"\", false, \"401 Unauthorized\"},\r\n\r\nThat sends a 100 byte body without a 100-continue and asks the server to\r\nhang up the connection (likely before/while we write the 100 bytes).\r\n\r\nThe other ones shouldn't involve any concurrency.\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 17:16:30.599036",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks. I missed that indeed.\r\n\r\nIt's ironic that we're reproducing a thread that happened on the\r\nlinux-c list a month ago:\r\n\r\nhttp://www.spinics.net/lists/linux-c-programming/msg01348.html\r\n\r\nWish I had seen that before.\r\n\r\nOn Tue, May 22, 2012 at 1:35 PM, Russ Cox <rsc@golang.org> wrote:\r\n> Yes, your expectation is wrong. \u00a0At the time when the server closes\r\n> the connection, there is data waiting for it to read (because the\r\n> client has misbehaved and sent too early). \u00a0Quoting the article I\r\n> linked to, quoting RFC 1122:\r\n>\r\n> http://tools.ietf.org/html/rfc1122#page-88\r\n>\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0A host MAY implement a \"half-duplex\" TCP close sequence, so\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0that an application that has called CLOSE cannot continue to\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0read data from the connection. \u00a0If such a host issues a\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0CLOSE call while received data is still pending in TCP, or\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0if new data is received after CLOSE is called, its TCP\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0SHOULD send a RST to show that data was lost.\r\n>\r\n> When a socket is closed with data waiting to be read, compliant TCP\r\n> stacks abort the connection instead of doing a graceful close. \u00a0So the\r\n> data that the server has just written (the 401 Unauthorized) before\r\n> the close, if it hasn't yet been sent, is discarded, the TCP stack\r\n> sends a RST, and the client is unable to read the 401 Unauthorized.\r\n> The moral of this story is that the client and server need to agree\r\n> about who should be sending and how much, and in fact they do if they\r\n> both follow the HTTP spec. \u00a0But the test does not follow the spec: it\r\n> writes data without waiting to inspect the Expect:ed header.\r\n>\r\n> Russ\r\n\r\n\r\ngustavo @ http://niemeyer.net\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 17:39:45.406455",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 6223052: net: make socketclose wait for io to complete on windows",
+	"created": "2012-05-21 03:02:07.432886",
+	"patchsets": [
+		1,
+		2001,
+		4001
+	],
+	"modified": "2012-07-23 00:30:50.579490",
+	"closed": true,
+	"issue": 6223052
+}

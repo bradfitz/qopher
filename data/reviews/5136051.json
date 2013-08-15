@@ -1,0 +1,77 @@
+{
+	"description": "exp/ssh: introduce general purpose ssh.Conn\n\n*** For discussion ***\n\nIntroduce a Conn interface similar to crypto/tls. See\nconn_test.go for examples of client and server usage.\n\nssh.Dial returns an ssh.Conn in client mode, ssh.Listen\nopens a net.Listener style listener which returns ssh.Conns\nin server mode, but require conn.Handshake() to be called to\ncomplete the handshaking.\n\nChannels are not implemented yet.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"agl@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go\nFile src/pkg/exp/ssh/conn.go (right):\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode344\nsrc/pkg/exp/ssh/conn.go:344: if c.testPubKey(userAuthReq.User, algo, pubKey) {\nYou seem to have removed the caching of public key results. That means that the callback is called twice for each public key which is likely to be surprising. In many implementations of the callback, folks are likely to want to cache the results themselves for a given connection, so it seems nicer to do it for them.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode376\nsrc/pkg/exp/ssh/conn.go:376: func (c *Conn) testPubKey(user, algo string, pubKey []byte) bool {\nThis function seems to do too little to justify its existence.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode466\nsrc/pkg/exp/ssh/conn.go:466: if packet[0] != msgNewKeys {\nDo we want to test the length of |packet| too?\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode505\nsrc/pkg/exp/ssh/conn.go:505: length := stringLength([]byte(c.config.Password)) + 1\nThis sends a password no matter what the method. Clearly this isn't complete yet, but should probably be marked up with TODOs to make that clear.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode626\nsrc/pkg/exp/ssh/conn.go:626: PasswordCallback func(user, password string) bool\n(no need now) I suspect that we need separate Config structs for client and server. Otherwise we have to name these \"ServerSidePasswordCallback\" or something. The Config structure probably share a common core however.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn_test.go\nFile src/pkg/exp/ssh/conn_test.go (right):\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn_test.go#newcode40\nsrc/pkg/exp/ssh/conn_test.go:40: var (\nprobably easier just to have \"var config\" for now.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn_test.go#newcode87\nsrc/pkg/exp/ssh/conn_test.go:87: // test handshaking without going via a\ndoesn't need to wrap.",
+			"disapproval": false,
+			"date": "2011-09-28 15:02:28.839814",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello agl@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-28 11:43:40.826373",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Dispute my desire to find a symmetric interface for both ends of the connection, the requirement for each end to offer channels with a method set specific for its role means there is virtually no intersection between client and server Conn methods.\n\nThank you for your feedback in this CL but I think I need to abandon it and resubmit with a new design. I've responded to your comments below and will endeavor to incorporate them into my next CL.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go\nFile src/pkg/exp/ssh/conn.go (right):\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode344\nsrc/pkg/exp/ssh/conn.go:344: if c.testPubKey(userAuthReq.User, algo, pubKey) {\nYes, this was deliberate. ssh.Conn represents the server's side of the connection, not the server itself, so I didn't think it was the right place to cache that information. I'm thinking that I should pass something like \n\ntype Authenticator interface { ... }\n\ninside the Config structure to consolidate that outside the Conn itself.\n\nOn 2011/09/28 15:02:28, agl1 wrote:\n> You seem to have removed the caching of public key results. That means that the\n> callback is called twice for each public key which is likely to be surprising.\n> In many implementations of the callback, folks are likely to want to cache the\n> results themselves for a given connection, so it seems nicer to do it for them.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode376\nsrc/pkg/exp/ssh/conn.go:376: func (c *Conn) testPubKey(user, algo string, pubKey []byte) bool {\nOn 2011/09/28 15:02:28, agl1 wrote:\n> This function seems to do too little to justify its existence.\n\nI think that is a copy and paste from server.go, I'll try to remove it.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode466\nsrc/pkg/exp/ssh/conn.go:466: if packet[0] != msgNewKeys {\nI'm not sure what you mean, readPacket() only returns full packets.\n\nOn 2011/09/28 15:02:28, agl1 wrote:\n> Do we want to test the length of |packet| too?\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode505\nsrc/pkg/exp/ssh/conn.go:505: length := stringLength([]byte(c.config.Password)) + 1\nYes, authentication is a big TODO\n\nOn 2011/09/28 15:02:28, agl1 wrote:\n> This sends a password no matter what the method. Clearly this isn't complete\n> yet, but should probably be marked up with TODOs to make that clear.\n\nDone.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn.go#newcode626\nsrc/pkg/exp/ssh/conn.go:626: PasswordCallback func(user, password string) bool\nI agree. Config's share a few things in common, mainly the supported Ciphers, etc, but there is a lot that doesn't overlap between the client and server end, like authn details on the client and function callbacks on the server.\n\nI will rethink this.\n\nOn 2011/09/28 15:02:28, agl1 wrote:\n> (no need now) I suspect that we need separate Config structs for client and\n> server. Otherwise we have to name these \"ServerSidePasswordCallback\" or\n> something. The Config structure probably share a common core however.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn_test.go\nFile src/pkg/exp/ssh/conn_test.go (right):\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn_test.go#newcode40\nsrc/pkg/exp/ssh/conn_test.go:40: var (\nI ended up having to split the client and server config into two structs anyway, but you're point is well taken.\n\nOn 2011/09/28 15:02:28, agl1 wrote:\n> probably easier just to have \"var config\" for now.\n\nhttp://codereview.appspot.com/5136051/diff/4001/src/pkg/exp/ssh/conn_test.go#newcode87\nsrc/pkg/exp/ssh/conn_test.go:87: // test handshaking without going via a\nOn 2011/09/28 15:02:28, agl1 wrote:\n> doesn't need to wrap.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-10-01 00:29:20.522381",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2011-10-01 00:31:41.718887",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 5136051: exp/ssh: introduce general purpose ssh.Conn",
+	"created": "2011-09-28 11:43:19.690638",
+	"patchsets": [
+		1,
+		2001,
+		4001
+	],
+	"modified": "2011-10-01 00:31:43.583165",
+	"closed": true,
+	"issue": 5136051
+}

@@ -1,0 +1,672 @@
+{
+	"description": "runtime: implement pprof support for windows\n\nCredit to jp for proof of concept.",
+	"cc": [
+		"alex.brainman@gmail.com",
+		"jp@webmaster.ms",
+		"rsc@golang.org",
+		"dvyukov@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/08 22:54:07, hector wrote:\n> Ok I've uploaded a new diff, hopefully this'll be good enough.\n> \n\nWould you mind to explain why you decided to use CreateTimerQueue in this last change. I suspect, it is performance related, but I couldn't find any specific details.\n\nI did find http://www.virtualdub.org/blog/pivot/entry.php?id=272 on the other hand. Perhaps, it is simpler just start a new thread ourselves and use Sleep() with precise time calculations.\n\nAlex",
+			"disapproval": false,
+			"date": "2011-09-09 01:19:38.108352",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/09 11:15:02, dvyukov wrote:\n\n> Does timer approach provides sufficient preciseness? \n\nAlso it would have sense to set up timer resolution using timeBeginPeriod()\n\n\"This function affects a global Windows setting. Windows uses the lowest value (that is, highest resolution) requested by any process. Setting a higher resolution can improve the accuracy of time-out intervals in wait functions. However, it can also reduce overall system performance, because the thread scheduler switches tasks more often.\"",
+			"disapproval": false,
+			"date": "2011-09-09 11:36:21.801722",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode61\nsrc/pkg/runtime/windows/thread.c:61: runtime\u00b7stdcall(runtime\u00b7DuplicateHandle, 7, (uintptr)-1, (uintptr)-2, (uintptr)-1, &m->thandle, (uintptr)0, (uintptr)0, (uintptr)2);\nOn 2011/09/07 07:04:22, brainman wrote:\n> Please, use name consts here, or some comments for the rest of use <g>. What\n> handle is -2?\n\nGetCurrentThread() always returns (HANDLE)(-2).\nIt is a \"pseudohandle\".\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode352\nsrc/pkg/runtime/windows/thread.c:352: r = (Context*)((uintptr)(&rbuf[15]) & ~15);\nOn 2011/09/07 07:04:22, brainman wrote:\n> Again, please, say here that you are just aligning r.\n\nThis came from my code as is, so I answer.\n\nGetThreadContext parameter must be 16-bytes aligned.\nIn Microsoft C it looks like:\ntypedef struct DECLSPEC_ALIGN(16) _CONTEXT {\n....\n};\nhttp://msdn.microsoft.com/en-us/library/ms679284(v=vs.85).aspx\n\nI suppose, this requirement is needed for storing XMM registers into CONTEXT, which have to be 16-byte aligned in memory. It is the same reason why we align the stack doing a syscall (oh, well, now we do in just by substracting 0x60 from SP, but try to substract inncent-looking 0x68 and it will eventually crash), Crypto API fuctions uses XMM on the stack and wants the stack pointer to be 16-bytes aligned.\n\nAs we do not ask for XMM registers content here (only CONTEXT_CONTROL), the alignment may be unnecessary here. But this assumption has to be carefully tested.",
+			"disapproval": false,
+			"date": "2011-09-07 07:20:18.546457",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/09 11:15:02, dvyukov wrote:\n> I do not see a problem here. The first M will release prof lock eventually, and\n> the program will continue without problems.\n\nI don't believe this is true. Here's the sequence again, assuming one timer for all threads:\n1. m1 enters setcpuprofilerate, calls resetcpuprofiler(0) to stop the timer.\n2. m2 is already in setcpuprofilerate and calls resetcpuprofiler(100), starting the timer.\n3. m1 calls runtime\u00b7lock(&prof), locking prof.\n4. The timer fires and all m's are suspended.  It calls runtime\u00b7sigprof for each m.\n5. In runtime\u00b7sigprof it tries to runtime\u00b7lock(&prof), but deadlocks because m1 is suspended and still holds the prof lock.\n\n> Does timer approach provides sufficient preciseness?\n\nI believe timer queues are sufficiently granular and timely.  We don't require real-time precision, and I think Linux itself is not sufficiently granular, which I gathered from this comment in runtime/pprof/pprof.go:\n\n   // The runtime routines allow a variable profiling rate,\n   // but in practice operating systems cannot trigger signals\n   // at more than about 500 Hz, and our processing of the\n   // signal is not cheap (mostly getting the stack trace).\n   // 100 Hz is a reasonable choice: it is frequent enough to\n   // produce useful data, rare enough not to bog down the\n   // system, and a nice round number to make it easy to\n   // convert sample counts to seconds.  Instead of requiring\n   // each client to specify the frequency, we hard code it.\n\n> I would consider the following approach.\n> Create single dedicated high priority thread. The thread sleeps for the required\n> duration, then wakes up, iterates over all Ms and obtains their contexts.\n\nThis implies one timer for all threads.  I have demonstrated above that this can deadlock.\n\n> As far as I see, it is not a problem. Suspend/Resume are recursive:\n> If the function succeeds, the return value is the thread's previous suspend\n> count...\n> Each thread has a suspend count. If the suspend count is greater than zero, the\n> thread is suspended; otherwise, the thread is not suspended and is eligible for\n> execution.\n\nThe problem with the scenario I outlined in the previous email is that if the first thread resumes m while the second thread just suspended it, then the second thread will try to read g's stack while m runs g.",
+			"disapproval": false,
+			"date": "2011-09-09 12:02:56.470875",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/09 13:01:04, hector wrote:\n> \n> ... I will remove the prof lock from M.\n\nDo you still plan to do that?\n\nAlex",
+			"disapproval": false,
+			"date": "2011-09-11 08:49:17.473446",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s\nFile src/pkg/runtime/windows/386/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s#newcode102\nsrc/pkg/runtime/windows/386/sys.s:102: CALL\truntime\u00b7externalthreadhandler(SB)\nPUSHL $runtime\u00b7ctrlhandler1(SB)\nJMP   runtime\u00b7externalthreadhandler(SB)\n?\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/amd64/sys.s\nFile src/pkg/runtime/windows/amd64/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/amd64/sys.s#newcode107\nsrc/pkg/runtime/windows/amd64/sys.s:107: RET\nJMP runtime\u00b7externalthreadhandler(SB) \n?\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode353\nsrc/pkg/runtime/windows/thread.c:353: r->ContextFlags = 0x100001; // CONTEXT_CONTROL\n0x00010001 on 386, 0x00100001 on AMD64 and ARM\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode366\nsrc/pkg/runtime/windows/thread.c:366: if((uintptr)runtime\u00b7stdcall(runtime\u00b7ResumeThread, 1, m->thandle) == -1)\nResumeThread may be called before runtime\u00b7dosigprof() to minimize the stop time.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode381\nsrc/pkg/runtime/windows/thread.c:381: ms = 1000 / hz;\nms can be zero.\nthen \"If this parameter is zero, the timer is signaled once. If this parameter is greater than zero, the timer is periodic.\"",
+			"disapproval": false,
+			"date": "2011-09-07 00:26:24.777504",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/07 07:30:49, brainman wrote:\n\n> But I didn't see anyone aligning their data in C this way.\n\nhttp://stackoverflow.com/questions/4696543/getthreadcontext-fails-after-a-successful-suspendthread-in-windows-7",
+			"disapproval": false,
+			"date": "2011-09-07 07:39:15.673730",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello alex.brainman@gmail.com, jp@webmaster.ms, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-07 00:10:29.469226",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I didn't quite get the same consistent results running Dmitry's test\nso I started looking at running our own thread and sleeping for\nappropriate intervals.  I'll let you all know how that goes once I've\nfinished evaluating it.\n\nOn 11 September 2011 09:49,  <alex.brainman@gmail.com> wrote:\n> On 2011/09/09 13:01:04, hector wrote:\n>\n>> ... I will remove the prof lock from M.\n>\n> Do you still plan to do that?\n>\n> Alex\n>\n> http://codereview.appspot.com/4960057/\n>\n",
+			"disapproval": false,
+			"date": "2011-09-11 09:00:01.888124",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Sep 9, 2011 2:19 AM, <alex.brainman@gmail.com> wrote:\n>\n> On 2011/09/08 22:54:07, hector wrote:\n>>\n>> Ok I've uploaded a new diff, hopefully this'll be good enough.\n>\n>\n>\n> Would you mind to explain why you decided to use CreateTimerQueue in\n> this last change. I suspect, it is performance related, but I couldn't\n> find any specific details.\n\nTimer queues are used to logically group related timers.  I don't want to\nallow other dlls to mix their timers with our ones, and I suspect Windows\ncreates a waitable timer for each queue.\n\n> I did find http://www.virtualdub.org/blog/pivot/entry.php?id=272 on the\n> other hand. Perhaps, it is simpler just start a new thread ourselves and\n> use Sleep() with precise time calculations.\n\nI think using the MM timers requires more coding effort for no discernible\nbenefit to timing accuracy.\n\n> Alex\n>\n>\n> http://codereview.appspot.com/4960057/\n",
+			"disapproval": false,
+			"date": "2011-09-09 07:36:59.048867",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM. Anyone else wants to comment?",
+			"disapproval": false,
+			"date": "2011-09-09 07:40:57.299563",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 9, 2011 at 4:02 PM, <hectorchu@gmail.com> wrote:\n\n>\n>> As far as I see, it is not a problem. Suspend/Resume are recursive:\n>> If the function succeeds, the return value is the thread's previous\n>>\n> suspend\n>\n>> count...\n>> Each thread has a suspend count. If the suspend count is greater than\n>>\n> zero, the\n>\n>> thread is suspended; otherwise, the thread is not suspended and is\n>>\n> eligible for\n>\n>> execution.\n>>\n>\n> The problem with the scenario I outlined in the previous email is that\n> if the first thread resumes m while the second thread just suspended it,\n>\n\nthen, it will just decrease thread's suspension count from 2 to 1, thread\nwon't be running.\n\n\n> then the second thread will try to read g's stack while m runs g.\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-09 12:22:13.720345",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 9, 2011 at 4:02 PM, <hectorchu@gmail.com> wrote:\n\n>\n>  Does timer approach provides sufficient preciseness?\n>>\n>\n> I believe timer queues are sufficiently granular and timely.  We don't\n> require real-time precision, and I think Linux itself is not\n> sufficiently granular, which I gathered from this comment in\n> runtime/pprof/pprof.go:\n>\n\nI mostly meant the following scenario:\n---\nTo elaborate on the preciseness issue. If we have only 1 hardware thread,\nand the program has some idle intervals (periods when it does not occupy the\nM), prof timers are likely to be scheduled exactly during that intervals,\nand so it will observe that the M is always blocked in scheduler. Higher\npriority of the profiling thread may solve the potential issue. However all\nthat requires further investigation.\n---\n",
+			"disapproval": false,
+			"date": "2011-09-09 12:20:09.645472",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Nice and simple. As always <g>.\n\nPlease, add \"Fixes issue 2041\" to CL description.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s\nFile src/pkg/runtime/windows/386/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s#newcode145\nsrc/pkg/runtime/windows/386/sys.s:145: MOVL\t0(SP), CX\nI don't think you have tested 386 version.\nI think you just want RET here, otherwise it crashes after first call into this function.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode61\nsrc/pkg/runtime/windows/thread.c:61: runtime\u00b7stdcall(runtime\u00b7DuplicateHandle, 7, (uintptr)-1, (uintptr)-2, (uintptr)-1, &m->thandle, (uintptr)0, (uintptr)0, (uintptr)2);\nPlease, use name consts here, or some comments for the rest of use <g>. What handle is -2?\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode352\nsrc/pkg/runtime/windows/thread.c:352: r = (Context*)((uintptr)(&rbuf[15]) & ~15);\nAgain, please, say here that you are just aligning r.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode373\nsrc/pkg/runtime/windows/thread.c:373: {\nI can see this function is called twice with hz!=0. First time from runtime/pprof.StartCPUProfile:\n\nruntime.resetcpuprofiler(0x64, 0x40e1c7)\n        /root/hg/go/src/pkg/runtime/windows/thread.c:392 +0xd0\nruntime.setcpuprofilerate(0x403a90, 0x64, 0x402a9c)\n        /root/hg/go/src/pkg/runtime/proc.c:1586 +0xb6\nruntime.SetCPUProfileRate(0x64, 0x0)\n        /root/hg/go/src/pkg/runtime/cpuprof.c:167 +0x16e\nruntime/pprof.StartCPUProfile(0x10a13040, 0x10a133a0, 0x0, 0x0)\n        /root/hg/go/src/pkg/runtime/pprof/pprof.go:147 +0x175\nmain.main()\n        /root/t2/test.go:16 +0xe5\nruntime.mainstart()\n        /root/hg/go/src/pkg/runtime/386/asm.s:96 +0xf\nruntime.goexit()\n        /root/hg/go/src/pkg/runtime/proc.c:246\n\nand then from schedule:\n\nruntime.gosched()\n        /root/hg/go/src/pkg/runtime/proc.c:804 +0x55\nruntime.exitsyscall()\n        /root/hg/go/src/pkg/runtime/proc.c:906 +0x7b\nruntime.cgocall(0x412268, 0x2715dc, 0x2715b8)\n        /root/hg/go/src/pkg/runtime/cgocall.c:136 +0xf0\nruntime.syscall(0x7c590cf7, 0x2, 0x27160c, 0x0, 0x2715f8, ...)\n        /root/hg/go/src/pkg/runtime/windows/thread.c:256 +0x49\nsyscall.getprocaddress(0x7c570000, 0x10a03f80, 0x10a03f80, 0xcb5dce80)\n        /root/hg/go/src/pkg/runtime/windows/syscall.c:18 +0x43\nsyscall.(*LazyProc).Addr(0x10a03660, 0x0, 0x1)\n        /root/hg/go/src/pkg/syscall/syscall_windows.go:139 +0xe4\nsyscall.GetSystemTimeAsFileTime(0x10a001f0, 0x10a001f0)\n        /root/hg/go/src/pkg/syscall/zsyscall_windows_386.go:465 +0x2a\nsyscall.Gettimeofday(0x2716c4, 0x0, 0xffffffff)\n        /root/hg/go/src/pkg/syscall/syscall_windows.go:420 +0x44\nos.Time(0x0, 0x0, 0x0, 0x0, 0x0, ...)\n        /root/hg/go/src/pkg/os/time.go:15 +0x58\ntime.Nanoseconds(0x5062f4, 0x40e1c7)\n        /root/hg/go/src/pkg/time/sys.go:22 +0x21\ntime.Sleep(0xd964b800, 0x45, 0x0, 0x0)\n        /root/hg/go/src/pkg/time/sys.go:33 +0x21\nmain.main()\n        /root/t2/test.go:19 +0x10b\nruntime.mainstart()\n        /root/hg/go/src/pkg/runtime/386/asm.s:96 +0xf\nruntime.goexit()\n        /root/hg/go/src/pkg/runtime/proc.c:246\n\nI don't think your function is designed for that. Is it?",
+			"disapproval": false,
+			"date": "2011-09-07 07:04:22.005943",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/07 07:20:18, jp wrote:\n> \n> GetCurrentThread() always returns (HANDLE)(-2).\n> It is a \"pseudohandle\".\n\nI didn't know that. And I will forget tomorrow.\nPlease, add a comment about it.\nOr use a MS const, if there is one.\nSomething that I could refer to next time I will look at this code.\n\n> \n> ..., the\n> alignment may be unnecessary here. But this assumption has to be carefully\n> tested.\n\nNo argument here.\nBut I didn't see anyone aligning their data in C this way. Perhaps it is me, but comment here will stop me wandering. If you think that comment is not necessary, just ignore my request.\n\nAlex",
+			"disapproval": false,
+			"date": "2011-09-07 07:30:49.292198",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode374\nsrc/pkg/runtime/windows/thread.c:374: static void *timer;\nMaybe runtime\u00b7lock() or another mutex to protect 'static void *timer;' and avoid the risk of creating two timers ?\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode377\nsrc/pkg/runtime/windows/thread.c:377: if(hz == 0) {\nif(timer != 0) { // old timer to be deleted even if hz != 0\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode380\nsrc/pkg/runtime/windows/thread.c:380: } else {\n}\nif(hz != 0) {",
+			"disapproval": false,
+			"date": "2011-09-07 07:34:41.900997",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/amd64/sys.s\nFile src/pkg/runtime/windows/amd64/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/amd64/sys.s#newcode137\nsrc/pkg/runtime/windows/amd64/sys.s:137: PUSHQ\t32(BP)\nWhat is suppose to be in 32(BP) ?\nThe parameter Windows ran the thread with ?\nIt was in CX (by amd64 calling convention)",
+			"disapproval": false,
+			"date": "2011-09-07 07:50:58.095731",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Can we hold off submitting this until I check that WT_EXECUTEINPERSISTENTTHREAD is not a better flag for CreateTimerQueueTimer?  I suspect the snapshot is not cheap, for example see comment in pprof.go:\n\n// at more than about 500 Hz, and our processing of the\n// signal is not cheap (mostly getting the stack trace).\n\nhttp://codereview.appspot.com/4960057/diff/14003/src/pkg/runtime/windows/386/sys.s\nFile src/pkg/runtime/windows/386/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/14003/src/pkg/runtime/windows/386/sys.s#newcode104\nsrc/pkg/runtime/windows/386/sys.s:104: JMP\tCX\nOn 2011/09/08 07:24:15, jp wrote:\n> looks like\n> POPL CX // to any register\n> RET  4\n\nUnfortunately the assembler doesn't support RETN n instructions.",
+			"disapproval": false,
+			"date": "2011-09-08 10:40:20.256240",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/07 22:40:23, hector wrote:\n> PTAL:\n> \n> I've changed it so that a timer is run for each M, due to the following comment\n> in setcpuprofilerate():\n> \n> \t// Stop profiler on this cpu so that it is safe to lock prof.\n> \t// if a profiling signal came in while we had prof locked,\n> \t// it would deadlock.\n> \truntime\u00b7resetcpuprofiler(0);\n> \n> The race is that one M stops the timer and enters the prof lock.  Another M\n> starts the timer again, and the timer fires.  Now no-one can enter sigprof()\n> because the first M still has the prof lock.\n\nI do not see a problem here. The first M will release prof lock eventually, and the program will continue without problems.\nThe problem is with UNIX *signals*. Namely, an M holds prof lock, and *it* receives prof signal, which tried to reacquire prof lock recursively, the lock is not recursive, so the program deadlocks.\nWin32 timers fire in separate threads, there is no such problem. As far as I see one time will do.\n\nDoes timer approach provides sufficient preciseness? I would consider the following approach.\nCreate single dedicated high priority thread. The thread sleeps for the required duration, then wakes up, iterates over all Ms and obtains their contexts.",
+			"disapproval": false,
+			"date": "2011-09-09 11:15:02.323037",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 9, 2011 at 3:36 PM, <jp@webmaster.ms> wrote:\n\n> On 2011/09/09 11:15:02, dvyukov wrote:\n>\n>  Does timer approach provides sufficient preciseness?\n>>\n>\n> Also it would have sense to set up timer resolution using\n> timeBeginPeriod()\n>\n> \"This function affects a global Windows setting. Windows uses the lowest\n> value (that is, highest resolution) requested by any process. Setting a\n> higher resolution can improve the accuracy of time-out intervals in wait\n> functions. However, it can also reduce overall system performance,\n> because the thread scheduler switches tasks more often.\"\n>\n>\nDefault Win32 scheduling interval seems to be 15ms, if we want more we need\nto increase frequency.\n\nTo elaborate on the preciseness issue. If we have only 1 hardware thread,\nand the program has some idle intervals (periods when it does not occupy the\nM), prof timers are likely to be scheduled exactly during that intervals,\nand so it will observe that the M is always blocked in scheduler. Higher\npriority of the profiling thread may solve the potential issue. However all\nthat requires further investigation.\n",
+			"disapproval": false,
+			"date": "2011-09-09 11:50:44.506668",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s\nFile src/pkg/runtime/windows/386/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s#newcode121\nsrc/pkg/runtime/windows/386/sys.s:121: SUBL\t$512, SP\t\t// space for M\nI suggest that you add \n\nuintptr end[0];\n\nto the bottom of both struct M and struct G.\nThen you can use\n\nSUBL $m_end, SP\n\nand\n\nSUBL $g_end, SP\n\nto carve out the right amount of space.",
+			"disapproval": false,
+			"date": "2011-09-07 18:28:36.237771",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL:\n\nI've changed it so that a timer is run for each M, due to the following comment in setcpuprofilerate():\n\n\t// Stop profiler on this cpu so that it is safe to lock prof.\n\t// if a profiling signal came in while we had prof locked,\n\t// it would deadlock.\n\truntime\u00b7resetcpuprofiler(0);\n\nThe race is that one M stops the timer and enters the prof lock.  Another M starts the timer again, and the timer fires.  Now no-one can enter sigprof() because the first M still has the prof lock.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s\nFile src/pkg/runtime/windows/386/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s#newcode102\nsrc/pkg/runtime/windows/386/sys.s:102: CALL\truntime\u00b7externalthreadhandler(SB)\nOn 2011/09/07 00:26:24, jp wrote:\n> PUSHL $runtime\u00b7ctrlhandler1(SB)\n> JMP   runtime\u00b7externalthreadhandler(SB)\n> ?\n\nWe need to return to Windows eventually.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s#newcode121\nsrc/pkg/runtime/windows/386/sys.s:121: SUBL\t$512, SP\t\t// space for M\nOn 2011/09/07 18:28:36, rsc wrote:\n> I suggest that you add \n> \n> uintptr end[0];\n> \n> to the bottom of both struct M and struct G.\n> Then you can use\n> \n> SUBL $m_end, SP\n> \n> and\n> \n> SUBL $g_end, SP\n> \n> to carve out the right amount of space.\n\nDone.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/386/sys.s#newcode145\nsrc/pkg/runtime/windows/386/sys.s:145: MOVL\t0(SP), CX\nOn 2011/09/07 07:04:22, brainman wrote:\n> I don't think you have tested 386 version.\n> I think you just want RET here, otherwise it crashes after first call into this\n> function.\n\nDone.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/amd64/sys.s\nFile src/pkg/runtime/windows/amd64/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/amd64/sys.s#newcode107\nsrc/pkg/runtime/windows/amd64/sys.s:107: RET\nOn 2011/09/07 00:26:24, jp wrote:\n> JMP runtime\u00b7externalthreadhandler(SB) \n> ?\n\nI'm not sure what you mean?  We need to eventually return to Windows.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/amd64/sys.s#newcode137\nsrc/pkg/runtime/windows/amd64/sys.s:137: PUSHQ\t32(BP)\nOn 2011/09/07 07:50:58, jp wrote:\n> What is suppose to be in 32(BP) ?\n> The parameter Windows ran the thread with ?\n> It was in CX (by amd64 calling convention)\n\nThanks.  I've added a spill in the caller just in case.\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/thread.c#newcode366\nsrc/pkg/runtime/windows/thread.c:366: if((uintptr)runtime\u00b7stdcall(runtime\u00b7ResumeThread, 1, m->thandle) == -1)\nOn 2011/09/07 00:26:24, jp wrote:\n> ResumeThread may be called before runtime\u00b7dosigprof() to minimize the stop time.\n\nThat would be unsafe.  The snapshot includes a stack trace, so we don't want it to be running while we do that.",
+			"disapproval": false,
+			"date": "2011-09-07 22:40:23.050768",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Ok I've uploaded a new diff, hopefully this'll be good enough.\n\nPTAL\n\nOn 8 September 2011 11:40,  <hectorchu@gmail.com> wrote:\n> Can we hold off submitting this until I check that\n> WT_EXECUTEINPERSISTENTTHREAD is not a better flag for\n> CreateTimerQueueTimer? \u00a0I suspect the snapshot is not cheap, for example\n> see comment in pprof.go:\n>\n> // at more than about 500 Hz, and our processing of the\n> // signal is not cheap (mostly getting the stack trace).\n>\n>\n> http://codereview.appspot.com/4960057/diff/14003/src/pkg/runtime/windows/386/sys.s\n> File src/pkg/runtime/windows/386/sys.s (right):\n>\n> http://codereview.appspot.com/4960057/diff/14003/src/pkg/runtime/windows/386/sys.s#newcode104\n> src/pkg/runtime/windows/386/sys.s:104: JMP \u00a0 \u00a0 \u00a0CX\n> On 2011/09/08 07:24:15, jp wrote:\n>>\n>> looks like\n>> POPL CX // to any register\n>> RET \u00a04\n>\n> Unfortunately the assembler doesn't support RETN n instructions.\n>\n> http://codereview.appspot.com/4960057/\n>\n",
+			"disapproval": false,
+			"date": "2011-09-08 22:54:07.383659",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 9, 2011 at 5:48 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\n\n> On Fri, Sep 9, 2011 at 5:01 PM, <hectorchu@gmail.com> wrote:\n>\n>> On 2011/09/09 12:18:53, dvyukov wrote:\n>>\n>>> Youre right. But then can't the following scenario happen?\n>>> 1. m1 calls resetcpuprofiler(100)\n>>> 2. prof timer callback for m1 started executing\n>>> 3. m1 calls resetcpuprofiler(0)\n>>>\n>>\n>> After this point, the timer thread will cancel the timer.  It will also\n>> wait for any callbacks to finish.\n>\n>\n> Youre right again. Don't know why I assumed that timer callbacks can still\n> be running.\n>\n>\n>>\n>>\n>>  4. m1 locks prof lock\n>>> 5. the callback suspends m1\n>>>\n>>\n>> Now this isn't possible because the callback will not be running.\n>>\n>>\n>>  To elaborate on the preciseness issue. If we have only 1 hardware\n>>>\n>> thread,\n>>\n>>> and the program has some idle intervals (periods when it does not\n>>>\n>> occupy the\n>>\n>>> M), prof timers are likely to be scheduled exactly during that\n>>>\n>> intervals,\n>>\n>>> and so it will observe that the M is always blocked in scheduler.\n>>>\n>>\n>> This assumes the worker threads run at a lower priority?\n>> Here is how I understand it:\n>> 1. Timer thread runs a waitable timer for each timer queue and waits on\n>> it.  I assume timer thread is at least normal priority.\n>> 2. When the timer is signalled, the timer thread will wake up and then\n>> queue an APC to a ready worker thread.\n>> 3. The worker thread dequeues the APC which will end up calling our\n>> function.\n>>\n>\n> Yeah, but all that can happen only when Go thread is not running. That is,\n> it is either idle/blocked or preempted. Now the question is will OS preempt\n> a thread of the same priority to run another thread?\n>\n> May you please profile the following program and post the results:\n>\n> func TestFoobar(t *testing.T) {\n>         for i := 0; i < 3e2; i++ {\n>                 start := time. Nanoseconds()\n>                 for time.Nanoseconds() - start < 3e6 {\n>                         for j := 0; j < 1e3; j++ {\n>                                 func() {\n>                                 }()\n>                         }\n>                         for j := 0; j < 1e3; j++ {\n>                                 func() {\n>                                 }()\n>                         }\n>                 }\n>                 time.Sleep(10e6)\n>         }\n> }\n>\n> Linux profiler says:\n>       45  50.6%  50.6%       89 100.0% _xtest_.TestFoobar\n>       23  25.8%  76.4%       23  25.8% _xtest_._func_009\n>       21  23.6% 100.0%       21  23.6% _xtest_._func_008\n>\n>\n\n... and it should be run on a singlecore machine. Or alternatively you may\nput SetProcessAffinityMask() into osinit(), or use TaskManager to restrict\naffinity to single cpu.\n",
+			"disapproval": false,
+			"date": "2011-09-09 13:56:15.769859",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/amd64/sys.s\nFile src/pkg/runtime/windows/amd64/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/4/src/pkg/runtime/windows/amd64/sys.s#newcode107\nsrc/pkg/runtime/windows/amd64/sys.s:107: RET\nOn 2011/09/07 22:40:23, hector wrote:\n> On 2011/09/07 00:26:24, jp wrote:\n> > JMP runtime\u00b7externalthreadhandler(SB) \n> > ?\n> \n> I'm not sure what you mean?  We need to eventually return to Windows.\n\nI mean runtime\u00b7externalthreadhandler(SB) to be not a C-compatible function (it is never called from C) but a common part of runtime\u00b7ctrlhandler(SB) and\nruntime\u00b7timerhandler(SB).\nThus, RET in runtime\u00b7externalthreadhandler(SB) will return to Windows.\n\nTEXT runtime\u00b7ctrlhandler(SB),7,$8\n\tMOVQ\t$runtime\u00b7ctrlhandler1(SB), CX\n        JMP     start_of_the_common_part\nTEXT runtime\u00b7timerhandler(SB),7,$8\n\tMOVQ\t$runtime\u00b7timerhandler1(SB), CX\nstart_of_the_common_part:\n\tMOVQ\tCX, 0(SP)\n//TEXT runtime\u00b7externalthreadhandler(SB),7,$0\n\nNevermind, this optimization will work only on amd64, there are different RETs on 386.\n\nhttp://codereview.appspot.com/4960057/diff/14003/src/pkg/runtime/windows/386/sys.s\nFile src/pkg/runtime/windows/386/sys.s (right):\n\nhttp://codereview.appspot.com/4960057/diff/14003/src/pkg/runtime/windows/386/sys.s#newcode104\nsrc/pkg/runtime/windows/386/sys.s:104: JMP\tCX\nlooks like\nPOPL CX // to any register\nRET  4\n\nhttp://codereview.appspot.com/4960057/diff/14003/src/pkg/runtime/windows/386/sys.s#newcode111\nsrc/pkg/runtime/windows/386/sys.s:111: JMP\tCX\nlooks like\nPOPL CX // to any register\nRET  8",
+			"disapproval": false,
+			"date": "2011-09-08 07:24:15.168171",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 9, 2011 at 5:01 PM, <hectorchu@gmail.com> wrote:\n\n> On 2011/09/09 12:18:53, dvyukov wrote:\n>\n>> Youre right. But then can't the following scenario happen?\n>> 1. m1 calls resetcpuprofiler(100)\n>> 2. prof timer callback for m1 started executing\n>> 3. m1 calls resetcpuprofiler(0)\n>>\n>\n> After this point, the timer thread will cancel the timer.  It will also\n> wait for any callbacks to finish.\n\n\nYoure right again. Don't know why I assumed that timer callbacks can still\nbe running.\n\n\n>\n>\n>  4. m1 locks prof lock\n>> 5. the callback suspends m1\n>>\n>\n> Now this isn't possible because the callback will not be running.\n>\n>\n>  To elaborate on the preciseness issue. If we have only 1 hardware\n>>\n> thread,\n>\n>> and the program has some idle intervals (periods when it does not\n>>\n> occupy the\n>\n>> M), prof timers are likely to be scheduled exactly during that\n>>\n> intervals,\n>\n>> and so it will observe that the M is always blocked in scheduler.\n>>\n>\n> This assumes the worker threads run at a lower priority?\n> Here is how I understand it:\n> 1. Timer thread runs a waitable timer for each timer queue and waits on\n> it.  I assume timer thread is at least normal priority.\n> 2. When the timer is signalled, the timer thread will wake up and then\n> queue an APC to a ready worker thread.\n> 3. The worker thread dequeues the APC which will end up calling our\n> function.\n>\n\nYeah, but all that can happen only when Go thread is not running. That is,\nit is either idle/blocked or preempted. Now the question is will OS preempt\na thread of the same priority to run another thread?\n\nMay you please profile the following program and post the results:\n\nfunc TestFoobar(t *testing.T) {\n        for i := 0; i < 3e2; i++ {\n                start := time. Nanoseconds()\n                for time.Nanoseconds() - start < 3e6 {\n                        for j := 0; j < 1e3; j++ {\n                                func() {\n                                }()\n                        }\n                        for j := 0; j < 1e3; j++ {\n                                func() {\n                                }()\n                        }\n                }\n                time.Sleep(10e6)\n        }\n}\n\nLinux profiler says:\n      45  50.6%  50.6%       89 100.0% _xtest_.TestFoobar\n      23  25.8%  76.4%       23  25.8% _xtest_._func_009\n      21  23.6% 100.0%       21  23.6% _xtest_._func_008\n\n\n\n> Hence I do not see the reason why the worker threads are more likely to\n> be scheduled during idle periods, unless they are running with lower\n> priority.\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-09 13:48:51.692332",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM. Nice.",
+			"disapproval": false,
+			"date": "2011-09-08 00:09:06.947082",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c#newcode361\nsrc/pkg/runtime/windows/thread.c:361: if((uintptr)runtime\u00b7stdcall(runtime\u00b7SuspendThread, 1, m->hthread) == -1)\nThe return type is int32.\n\nhttp://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c#newcode367\nsrc/pkg/runtime/windows/thread.c:367: if((uintptr)runtime\u00b7stdcall(runtime\u00b7GetThreadContext, 2, m->hthread, r) == 0)\nThe return type is int32.\n\nhttp://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c#newcode371\nsrc/pkg/runtime/windows/thread.c:371: if((uintptr)runtime\u00b7stdcall(runtime\u00b7ResumeThread, 1, m->hthread) == -1)\nThe return type is int32.\n\nhttp://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c#newcode388\nsrc/pkg/runtime/windows/thread.c:388: ok = (uintptr)runtime\u00b7stdcall(runtime\u00b7CreateTimerQueueTimer, 7,\nThe return type is int32.",
+			"disapproval": false,
+			"date": "2011-09-09 10:52:19.601023",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c#newcode360\nsrc/pkg/runtime/windows/thread.c:360: runtime\u00b7lock(&m->proflock);\nOn 2011/09/09 10:57:30, dvyukov wrote:\n> Why we need this lock?\n\nIn case two worker threads run this function on the same m concurrently, which is possible because the timer thread does not wait for a previous callback to finish before dispatching the next tick.  In that case the first thread could resume m just after the second thread suspends it.",
+			"disapproval": false,
+			"date": "2011-09-09 11:08:56.025057",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c#newcode360\nsrc/pkg/runtime/windows/thread.c:360: runtime\u00b7lock(&m->proflock);\nWhy we need this lock?",
+			"disapproval": false,
+			"date": "2011-09-09 10:57:30.154992",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 9, 2011 at 4:02 PM, <hectorchu@gmail.com> wrote:\n\n> On 2011/09/09 11:15:02, dvyukov wrote:\n>\n>> I do not see a problem here. The first M will release prof lock\n>>\n> eventually, and\n>\n>> the program will continue without problems.\n>>\n>\n> I don't believe this is true. Here's the sequence again, assuming one\n> timer for all threads:\n> 1. m1 enters setcpuprofilerate, calls resetcpuprofiler(0) to stop the\n> timer.\n> 2. m2 is already in setcpuprofilerate and calls resetcpuprofiler(100),\n> starting the timer.\n> 3. m1 calls runtime\u00b7lock(&prof), locking prof.\n> 4. The timer fires and all m's are suspended.  It calls runtime\u00b7sigprof\n> for each m.\n> 5. In runtime\u00b7sigprof it tries to runtime\u00b7lock(&prof), but deadlocks\n> because m1 is suspended and still holds the prof lock.\n\n\nYoure right. But then can't the following scenario happen?\n1. m1 calls resetcpuprofiler(100)\n2. prof timer callback for m1 started executing\n3. m1 calls resetcpuprofiler(0)\n4. m1 locks prof lock\n5. the callback suspends m1\n6. the callback tries to lock prof lock\n7. deadlock\n",
+			"disapproval": false,
+			"date": "2011-09-09 12:18:53.345343",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/09 11:08:56, hector wrote:\n> http://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c\n> File src/pkg/runtime/windows/thread.c (right):\n> \n> http://codereview.appspot.com/4960057/diff/24001/src/pkg/runtime/windows/thread.c#newcode360\n> src/pkg/runtime/windows/thread.c:360: runtime\u00b7lock(&m->proflock);\n> On 2011/09/09 10:57:30, dvyukov wrote:\n> > Why we need this lock?\n> \n> In case two worker threads run this function on the same m concurrently, which\n> is possible because the timer thread does not wait for a previous callback to\n> finish before dispatching the next tick.  In that case the first thread could\n> resume m just after the second thread suspends it.\n\nAs far as I see, it is not a problem. Suspend/Resume are recursive:\n\nIf the function succeeds, the return value is the thread's previous suspend count...\nEach thread has a suspend count. If the suspend count is greater than zero, the thread is suspended; otherwise, the thread is not suspended and is eligible for execution.",
+			"disapproval": false,
+			"date": "2011-09-09 11:18:04.205228",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/09 12:18:53, dvyukov wrote:\n> Youre right. But then can't the following scenario happen?\n> 1. m1 calls resetcpuprofiler(100)\n> 2. prof timer callback for m1 started executing\n> 3. m1 calls resetcpuprofiler(0)\n\nAfter this point, the timer thread will cancel the timer.  It will also wait for any callbacks to finish.\n\n> 4. m1 locks prof lock\n> 5. the callback suspends m1\n\nNow this isn't possible because the callback will not be running.\n\n> To elaborate on the preciseness issue. If we have only 1 hardware thread,\n> and the program has some idle intervals (periods when it does not occupy the\n> M), prof timers are likely to be scheduled exactly during that intervals,\n> and so it will observe that the M is always blocked in scheduler.\n\nThis assumes the worker threads run at a lower priority?\nHere is how I understand it:\n1. Timer thread runs a waitable timer for each timer queue and waits on it.  I assume timer thread is at least normal priority.\n2. When the timer is signalled, the timer thread will wake up and then queue an APC to a ready worker thread.\n3. The worker thread dequeues the APC which will end up calling our function.\n\nHence I do not see the reason why the worker threads are more likely to be scheduled during idle periods, unless they are running with lower priority.\n\n> then, it will just decrease thread's suspension count from 2 to 1, thread\n> won't be running.\n\nYou are correct, I will remove the prof lock from M.",
+			"disapproval": false,
+			"date": "2011-09-09 13:01:04.942913",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Synced with latest, PTAL.\n\nhttp://codereview.appspot.com/4960057/diff/30002/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/30002/src/pkg/runtime/windows/thread.c#newcode70\nsrc/pkg/runtime/windows/thread.c:70: runtime\u00b7stdcall(runtime\u00b7timeBeginPeriod, 1, (uintptr)1);\nOn 2011/09/15 02:45:40, brainman wrote:\n> I would delay it until you really need it. Not every program will by profiled.\n\nYes, but the tick rate will also affect the accuracy elsewhere, for example time.Sleep(10e6) actually sleeps for 15ms without this line.",
+			"disapproval": false,
+			"date": "2011-09-15 06:17:30.780113",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM, but I could not test it\n\ncodereview issue 4960057 is out of date: patch and recent changes conflict (805742b53bf3->af0ac80bbb92)\n\nhttp://codereview.appspot.com/4960057/diff/30002/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/30002/src/pkg/runtime/windows/thread.c#newcode70\nsrc/pkg/runtime/windows/thread.c:70: runtime\u00b7stdcall(runtime\u00b7timeBeginPeriod, 1, (uintptr)1);\nI would delay it until you really need it. Not every program will by profiled.",
+			"disapproval": false,
+			"date": "2011-09-15 02:45:40.155428",
+			"approval": true
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Ok I've determined that the most accurate way to run the timer is to\nuse a single thread and a waitable timer, with thread priority set to\nhighest and timer resolution set to 1ms.  Please take another look.\n\nOn 11 September 2011 09:59, Hector Chu <hectorchu@gmail.com> wrote:\n> I didn't quite get the same consistent results running Dmitry's test\n> so I started looking at running our own thread and sleeping for\n> appropriate intervals. \u00a0I'll let you all know how that goes once I've\n> finished evaluating it.\n>\n> On 11 September 2011 09:49, \u00a0<alex.brainman@gmail.com> wrote:\n>> On 2011/09/09 13:01:04, hector wrote:\n>>\n>>> ... I will remove the prof lock from M.\n>>\n>> Do you still plan to do that?\n>>\n>> Alex\n>>\n>> http://codereview.appspot.com/4960057/\n>>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-14 23:59:11.648066",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/15 06:17:30, hector wrote:\n> Synced with latest, PTAL.\n\npackage main\n\nimport (\n\t\"fmt\"\n\t\"log\"\n\t\"os\"\n\t\"time\"\n\t\"runtime/pprof\"\n)\n\nfunc main() {\n\tf, err := os.Create(\"a.prof\")\n\tif err != nil {\n\t\tlog.Fatal(err)\n\t}\n\tpprof.StartCPUProfile(f)\n\tdefer pprof.StopCPUProfile()\n\n\ttime.Sleep(3e9)\n\n\tfmt.Printf(\"All good\\n\")\n}\n\nprints:\n\npanic during panic\n\nwindows/386\n\n> Yes, but the tick rate will also affect the accuracy elsewhere, for example\n> time.Sleep(10e6) actually sleeps for 15ms without this line.\n\nBut, according to doco, it is \"global\" setting. Should we change it, unless we have to?\n\nAlex",
+			"disapproval": false,
+			"date": "2011-09-15 06:49:52.520808",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 15 September 2011 07:49, <alex.brainman@gmail.com> wrote:\n> panic during panic\n> windows/386\n\nThanks.  I found and fixed a couple of issues, you shouldn't see this\npanic anymore.\n\n> But, according to doco, it is \"global\" setting. Should we change it,\n> unless we have to?\n\nI think we should, because programs written on other OSes might change\ntheir timing when we run them on Windows. The timing error can be\nsignificant if time.Sleep() is called in a loop. We shouldn't make\npeople insert a syscall(timeBeginPeriod) if they want better accuracy.\niTunes also calls this function, and programs using Sleep can change\ntheir timing depending on whether iTunes is running or not.\n\nOn 15 September 2011 16:43, Russ Cox <rsc@golang.org> wrote:\n>\u00a0Maybe we can\u00a0adjust the current code if we make it not include\n>\u00a0goroutines\u00a0that are not executing. \u00a0The easiest way to do that\n>\u00a0appears\u00a0to be to refine the condition in profilem to\n>\u00a0if(gp != nil && gp != mp->g0 && gp->status != Gsyscall)\n\nThanks, done.\n",
+			"disapproval": false,
+			"date": "2011-09-15 23:16:40.620935",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I am worried about this approach.  This is using real time ticks\nto do the profiling, but if you do that you end up overcounting\nthings that are just sitting there sleeping.  This is the same thing\n6prof does, and it does not produce terribly useful aggregate\nresults.  If you profile a mostly idle program for 30 seconds at 10 Hz,\nyou should get significantly fewer than 300 samples.\n\nThe profiling on Linux uses an execution-based timer: every\ntime the whole process uses up another 10ms of CPU time\n(or whatever it is), the thread that was responsible for crossing\nthat line gets a signal and causes a single profiling record.\nThis way the executing threads get profiled - and only in\nproportion to how much they execute - and the ones\nthat just sit there are ignored.\n\nI looked around the MSDN docs and I agree that there's\nno apparent way to do what Linux does.  Maybe we can\nadjust the current code if we make it not include goroutines\nthat are not executing.  The easiest way to do that appears\nto be to refine the condition in profilem to\n\nif(gp != nil && gp != mp->g0 && gp->status != Gsyscall)\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-15 15:43:19.661569",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I think I'm stammering, but it LGTM.\n\nhttp://codereview.appspot.com/4960057/diff/39002/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4960057/diff/39002/src/pkg/runtime/windows/thread.c#newcode391\nsrc/pkg/runtime/windows/thread.c:391: thread = runtime\u00b7atomicloadp(&mp->thread);\nWhy do you prefer that to starting new thread suspended, like you had it before.",
+			"disapproval": false,
+			"date": "2011-09-16 02:56:42.857040",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 16, 2011 at 14:09,  <dvyukov@google.com> wrote:\n> It's really unpleasant when profiling results are skewed. What I\n> currently observe on Mac is well... sometimes I can make *some* sense\n> out of it and sometimes I can't.\n\npprof is broken on the Mac, full stop.\nsomething like what this CL does might\nhelp it start working better.\n\nruss\n",
+			"disapproval": false,
+			"date": "2011-09-16 20:38:15.931508",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 16, 2011 at 16:51, Dmitry Vyukov <dvyukov@google.com> wrote:\n> Yeah, but with GOMAXPROCS>1 it produces results that I can make some sense\n> of... sometimes. So for me as a user it's essentially the same as having\n> pprof that is officially declared as working but produces skewed results.\n\nI official declare pprof on OS X not working.  :-)\nIt's Apple's fault, too.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-16 21:10:54.617056",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Sep 16, 2011 3:56 AM, <alex.brainman@gmail.com> wrote:\n>\n> I think I'm stammering, but it LGTM.\n\nHeh :).  It almost was good enough until Dmitry came along.  Lucky for us he\nis busy with other work now ;).\n\n> http://codereview.appspot.com/4960057/diff/39002/src/pkg/runtime/windows/\n>\n> File src/pkg/runtime/windows/thread.c (right):\n>\n>\nhttp://codereview.appspot.com/4960057/diff/39002/src/pkg/runtime/windows/thread.c#newcode391\n> src/pkg/runtime/windows/thread.c:391: thread =\n> runtime\u00b7atomicloadp(&mp->thread);\n> Why do you prefer that to starting new thread suspended, like you had it\n> before.\n\nBecause I realised that starting it suspended wouldn't have stopped the race\nof the profile thread from reading mp->thread, because the new M is added to\nallm before newosproc is called.\n\n> http://codereview.appspot.com/4960057/\n",
+			"disapproval": false,
+			"date": "2011-09-16 06:55:08.345484",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2011-09-16 14:20:28.596726",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 16, 2011 at 1:38 PM, Russ Cox <rsc@golang.org> wrote:\n\n> On Fri, Sep 16, 2011 at 14:09,  <dvyukov@google.com> wrote:\n> > It's really unpleasant when profiling results are skewed. What I\n> > currently observe on Mac is well... sometimes I can make *some* sense\n> > out of it and sometimes I can't.\n>\n> pprof is broken on the Mac, full stop.\n> something like what this CL does might\n> help it start working better.\n>\n>\nYeah, but with GOMAXPROCS>1 it produces results that I can make some sense\nof... sometimes. So for me as a user it's essentially the same as having\npprof that is officially declared as working but produces skewed results.\n",
+			"disapproval": false,
+			"date": "2011-09-16 20:51:53.926378",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/16 06:55:08, hector wrote:\n> On Sep 16, 2011 3:56 AM, <mailto:alex.brainman@gmail.com> wrote:\n> >\n> > I think I'm stammering, but it LGTM.\n> \n> Heh :).  It almost was good enough until Dmitry came along.  Lucky for us he\n> is busy with other work now ;).\n\n:)\nLGTM\nIt's really unpleasant when profiling results are skewed. What I currently observe on Mac is well... sometimes I can make *some* sense out of it and sometimes I can't.",
+			"disapproval": false,
+			"date": "2011-09-16 18:09:59.326635",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=9c5c0cbadb4d ***\n\nruntime: implement pprof support for windows\n\nCredit to jp for proof of concept.\n\nR=alex.brainman, jp, rsc, dvyukov\nCC=golang-dev\nhttp://codereview.appspot.com/4960057\n\nCommitter: Alex Brainman <alex.brainman@gmail.com>",
+			"disapproval": false,
+			"date": "2011-09-17 07:58:10.437420",
+			"approval": false
+		}
+	],
+	"owner_email": "hectorchu@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "hector",
+	"subject": "code review 4960057: runtime: implement pprof support for windows",
+	"created": "2011-09-06 23:24:17.416326",
+	"patchsets": [
+		1,
+		4,
+		14003,
+		24001,
+		30002,
+		37002,
+		39002
+	],
+	"modified": "2011-09-17 08:10:08.032337",
+	"closed": true,
+	"issue": 4960057
+}

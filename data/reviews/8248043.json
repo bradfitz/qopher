@@ -1,0 +1,683 @@
+{
+	"description": "cmd/go: Add support for including C++ files in packages\n\n* Add a CXXFiles field to Package, which includes .cc, .cpp and .cxx  files.\n* CXXFiles are compiled using g++, which can be overridden using the CXX environment variable.\n* Include .hh, .hpp and .hxx files in HFiles.\n* Add support for CPPFLAGS (used for both C and C++) and CXXFLAGS (used only for C++) in cgo directive.\n* Changed pkg-config cgo directive to modify CPPFLAGS rather than CFLAGS, so both C and C++ files get any flag returned by pkg-config --cflags.\n\nFixes issue 1476.",
+	"cc": [
+		"iant@golang.org",
+		"r@golang.org",
+		"bradfitz@golang.org",
+		"gobot@golang.org",
+		"golang-dev@googlegroups.com",
+		"minux.ma@gmail.com",
+		"remyoudompheng@gmail.com",
+		"seb.binet@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-04-02 02:37:01.433500",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry, too late for Go 1.1.\r\n\r\nPlease bring this up again once Go 1.1 is out and we've branched.\r\n\r\n\r\n\r\nOn Mon, Apr 1, 2013 at 7:37 PM, <alberto.garcia.hierro@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> cmd/cgo: Add support for including C++ files in packages\r\n>\r\n> Add a CPPFiles field to Package, which includes any .cc or .cpp files in\r\n> the package\r\n> directory. These files are built exactly in the same way than .c files,\r\n> since gcc\r\n> is smart enough to figure the type of the file by its extension. This\r\n> enables go code\r\n> to call C++ code (although embedded in a C interface using extern \"C\"\r\n> declared\r\n> functions) without using SWIG. Also, this patch would fix issue 1476.\r\n>\r\n> TODO: Support CXXFLAGS directive in cgo files.\r\n>\r\n> Please review this at https://codereview.appspot.**com/8248043/<https://codereview.appspot.com/8248043/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/dist/build.c\r\n>   M src/cmd/go/build.go\r\n>   M src/cmd/go/doc.go\r\n>   M src/cmd/go/list.go\r\n>   M src/cmd/go/pkg.go\r\n>   M src/cmd/godoc/index.go\r\n>   M src/pkg/go/build/build.go\r\n>\r\n>\r\n> Index: src/cmd/dist/build.c\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/dist/build.c\r\n> +++ b/src/cmd/dist/build.c\r\n> @@ -539,6 +539,8 @@\r\n>  // depsuffix records the allowed suffixes for source files.\r\n>  char *depsuffix[] = {\r\n>         \".c\",\r\n> +       \".cc\",\r\n> +       \".cpp\",\r\n>         \".h\",\r\n>         \".s\",\r\n>         \".go\",\r\n> @@ -883,7 +885,7 @@\r\n>\r\n>         // Compile the files.\r\n>         for(i=0; i<files.len; i++) {\r\n> -               if(!hassuffix(files.p[i], \".c\") && !hassuffix(files.p[i],\r\n> \".s\"))\r\n> +               if(!hassuffix(files.p[i], \".c\") && !hassuffix(files.p[i],\r\n> \".cc\") && !hassuffix(files.p[i], \".cpp\") && !hassuffix(files.p[i], \".s\"))\r\n>                         continue;\r\n>                 name = lastelem(files.p[i]);\r\n>\r\n> Index: src/cmd/go/build.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/go/build.go\r\n> +++ b/src/cmd/go/build.go\r\n> @@ -766,11 +766,12 @@\r\n>         var gofiles, cfiles, sfiles, objects, cgoObjects []string\r\n>         gofiles = append(gofiles, a.p.GoFiles...)\r\n>         cfiles = append(cfiles, a.p.CFiles...)\r\n> +       cfiles = append(cfiles, a.p.CPPFiles...)\r\n>         sfiles = append(sfiles, a.p.SFiles...)\r\n>\r\n>         // Run cgo.\r\n>         if len(a.p.CgoFiles) > 0 {\r\n> -               // In a package using cgo, cgo compiles the C and assembly\r\n> files with gcc.\r\n> +               // In a package using cgo, cgo compiles the C, C++ and\r\n> assembly files with gcc.\r\n>                 // There is one exception: runtime/cgo's job is to bridge\r\n> the\r\n>                 // cgo and non-cgo worlds, so it necessarily has files in\r\n> both.\r\n>                 // In that case gcc only gets the gcc_* files.\r\n> @@ -871,7 +872,7 @@\r\n>         }\r\n>\r\n>         for _, file := range cfiles {\r\n> -               out := file[:len(file)-len(\".c\")] + \".\" + objExt\r\n> +               out := file[:strings.LastIndex(file, \".\")] + \".\" + objExt\r\n>                 if err := buildToolchain.cc(b, a.p, obj, obj+out, file);\r\n> err != nil {\r\n>                         return err\r\n>                 }\r\n> @@ -1434,7 +1435,7 @@\r\n>         // so that it can give good error messages about forward\r\n> declarations.\r\n>         // Exceptions: a few standard packages have forward declarations\r\n> for\r\n>         // pieces supplied behind-the-scenes by package runtime.\r\n> -       extFiles := len(p.CgoFiles) + len(p.CFiles) + len(p.SFiles) +\r\n> len(p.SysoFiles) + len(p.SwigFiles) + len(p.SwigCXXFiles)\r\n> +       extFiles := len(p.CgoFiles) + len(p.CFiles) + len(p.CPPFiles) +\r\n> len(p.SFiles) + len(p.SysoFiles) + len(p.SwigFiles) + len(p.SwigCXXFiles)\r\n>         if p.Standard {\r\n>                 switch p.ImportPath {\r\n>                 case \"os\", \"runtime/pprof\", \"sync\", \"time\":\r\n> Index: src/cmd/go/doc.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/go/doc.go\r\n> +++ b/src/cmd/go/doc.go\r\n> @@ -318,6 +318,7 @@\r\n>          CgoFiles []string       // .go sources files that import \"C\"\r\n>          IgnoredGoFiles []string // .go sources ignored due to build\r\n> constraints\r\n>          CFiles   []string       // .c source files\r\n> +        CPPFiles []string       // .cc or .cpp source files\r\n>          HFiles   []string       // .h source files\r\n>          SFiles   []string       // .s source files\r\n>          SysoFiles []string      // .syso object files to add to archive\r\n> Index: src/cmd/go/list.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/go/list.go\r\n> +++ b/src/cmd/go/list.go\r\n> @@ -46,6 +46,7 @@\r\n>          CgoFiles []string       // .go sources files that import \"C\"\r\n>          IgnoredGoFiles []string // .go sources ignored due to build\r\n> constraints\r\n>          CFiles   []string       // .c source files\r\n> +        CPPFiles []string       // .cc or .cpp source files\r\n>          HFiles   []string       // .h source files\r\n>          SFiles   []string       // .s source files\r\n>          SysoFiles []string      // .syso object files to add to archive\r\n> Index: src/cmd/go/pkg.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/go/pkg.go\r\n> +++ b/src/cmd/go/pkg.go\r\n> @@ -40,6 +40,7 @@\r\n>         CgoFiles       []string `json:\",omitempty\"` // .go sources files\r\n> that import \"C\"\r\n>         IgnoredGoFiles []string `json:\",omitempty\"` // .go sources ignored\r\n> due to build constraints\r\n>         CFiles         []string `json:\",omitempty\"` // .c source files\r\n> +       CPPFiles       []string `json:\",omitempty\"` // .cc or .cpp source\r\n> files\r\n>         HFiles         []string `json:\",omitempty\"` // .h source files\r\n>         SFiles         []string `json:\",omitempty\"` // .s source files\r\n>         SysoFiles      []string `json:\",omitempty\"` // .syso system object\r\n> files added to package\r\n> @@ -98,6 +99,7 @@\r\n>         p.CgoFiles = pp.CgoFiles\r\n>         p.IgnoredGoFiles = pp.IgnoredGoFiles\r\n>         p.CFiles = pp.CFiles\r\n> +       p.CPPFiles = pp.CPPFiles\r\n>         p.HFiles = pp.HFiles\r\n>         p.SFiles = pp.SFiles\r\n>         p.SysoFiles = pp.SysoFiles\r\n> @@ -389,6 +391,7 @@\r\n>                 p.CgoFiles,\r\n>                 p.IgnoredGoFiles,\r\n>                 p.CFiles,\r\n> +               p.CPPFiles,\r\n>                 p.HFiles,\r\n>                 p.SFiles,\r\n>                 p.SysoFiles,\r\n> @@ -611,7 +614,7 @@\r\n>                 return false\r\n>         }\r\n>\r\n> -       srcs := stringList(p.GoFiles, p.CFiles, p.HFiles, p.SFiles,\r\n> p.CgoFiles, p.SysoFiles)\r\n> +       srcs := stringList(p.GoFiles, p.CFiles, p.CPPFiles, p.HFiles,\r\n> p.SFiles, p.CgoFiles, p.SysoFiles)\r\n>         for _, src := range srcs {\r\n>                 if olderThan(filepath.Join(p.Dir, src)) {\r\n>                         return true\r\n> Index: src/cmd/godoc/index.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/godoc/index.go\r\n> +++ b/src/cmd/godoc/index.go\r\n> @@ -657,6 +657,8 @@\r\n>  var whitelisted = map[string]bool{\r\n>         \".bash\":        true,\r\n>         \".c\":           true,\r\n> +       \".cc\":          true,\r\n> +       \".cpp\":         true,\r\n>         \".css\":         true,\r\n>         \".go\":          true,\r\n>         \".goc\":         true,\r\n> Index: src/pkg/go/build/build.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/go/build/build.go\r\n> +++ b/src/pkg/go/build/build.go\r\n> @@ -347,6 +347,7 @@\r\n>         CgoFiles       []string // .go source files that import \"C\"\r\n>         IgnoredGoFiles []string // .go source files ignored for this build\r\n>         CFiles         []string // .c source files\r\n> +       CPPFiles       []string // .cc or .cpp source files\r\n>         HFiles         []string // .h source files\r\n>         SFiles         []string // .s source files\r\n>         SysoFiles      []string // .syso system object files to add to\r\n> archive\r\n> @@ -594,7 +595,7 @@\r\n>                 }\r\n>\r\n>                 switch ext {\r\n> -               case \".go\", \".c\", \".s\", \".h\", \".S\", \".swig\", \".swigcxx\":\r\n> +               case \".go\", \".c\", \".cc\", \".cpp\", \".s\", \".h\", \".S\",\r\n> \".swig\", \".swigcxx\":\r\n>                         // tentatively okay - read to make sure\r\n>                 case \".syso\":\r\n>                         // binary objects to add to package archive\r\n> @@ -637,6 +638,9 @@\r\n>                 case \".c\":\r\n>                         p.CFiles = append(p.CFiles, name)\r\n>                         continue\r\n> +               case \".cc\", \".cpp\":\r\n> +                       p.CPPFiles = append(p.CPPFiles, name)\r\n> +                       continue\r\n>                 case \".h\":\r\n>                         p.HFiles = append(p.HFiles, name)\r\n>                         continue\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-02 02:40:18.147560",
+			"approval": false
+		},
+		{
+			"sender": "seb.binet@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/07 12:26:10, Hierro wrote:\n> I've implemented binet's suggestions (except for the .C extension, since it\n> could cause problems in OSes with case insensitive filesystems) and added\n> support for calling g++ rather than gcc for C++ files. This last patchset also\n> adds support for CPPFLAGS (used for both C and C++) and CXXFLAGS (used only for\n> C++). As a consequence, the pkg-config cgo directive now modifies CPPFLAGS\n> rather than CFLAGS.\n\nah, yes. good call on the .C extension.\n\nsebastien.",
+			"disapproval": false,
+			"date": "2013-04-07 12:30:44.384060",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/02 02:40:18, bradfitz wrote:\n> Sorry, too late for Go 1.1.\n> \n> Please bring this up again once Go 1.1 is out and we've branched.\n\nHi Brad,\n\nUnderstood. When is 1.1 supposed to be released? (so I can set a reminder, otherwise I might forget about this patch :-)).",
+			"disapproval": false,
+			"date": "2013-04-02 03:00:44.590990",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Set a reminder to poll https://code.google.com/p/go/downloads/list in two\r\nweeks.  If go1.1 isn't there, repeat.  :-)\r\n\r\n\r\nOn Mon, Apr 1, 2013 at 8:00 PM, <alberto.garcia.hierro@gmail.com> wrote:\r\n\r\n> On 2013/04/02 02:40:18, bradfitz wrote:\r\n>\r\n>> Sorry, too late for Go 1.1.\r\n>>\r\n>\r\n>  Please bring this up again once Go 1.1 is out and we've branched.\r\n>>\r\n>\r\n> Hi Brad,\r\n>\r\n> Understood. When is 1.1 supposed to be released? (so I can set a\r\n> reminder, otherwise I might forget about this patch :-)).\r\n>\r\n>\r\n> https://codereview.appspot.**com/8248043/<https://codereview.appspot.com/8248043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-02 03:20:30.767600",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm pretty sure it used to not work so simply in the past, the linker improvements probably played a role. Now it seems to work with both \"-linkmode external\" and \"-linkmode internal\".",
+			"disapproval": false,
+			"date": "2013-04-02 05:28:17.070130",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/02 03:20:30, bradfitz wrote:\n> Set a reminder to poll https://code.google.com/p/go/downloads/list in two\n> weeks.  If go1.1 isn't there, repeat.  :-)\n\nI was under the impression that it would be a matter of days, rather than weeks. If we're at least two weeks from release, I think there's enough time to finish the missing pieces of this patchset (support CXXFLAGS and call g++ rather than gcc) and update the documentation. Keep in mind that, as Remy pointed out, most of the code for supporting linking C++ is already in Go, so this patchset would only add the remaining ~10% without modifying any existing functionalities, only adding new ones (the possibility of introducing bugs to working code is almost negligible).\n\nFurthermore, I think this could be interesting to have in Go 1.1 because it's an important missing feature right now. There are a lot of C++ libraries with functionality not available in Go (in fact, I added support for C++ because I wanted to manipulate PDF files from Go and libpoppler seemed to be the only option), and currently there's no way to interact with them.\n\nOnce basic support for linking CPP files is merged, we could also start working on full C++ support (e.g. having a CPP pseudo package which enables calls to functions with C++ linkage, like the C pseudo package does for C).\n\nWith that said, would you reconsider your decision if I submit the missing pieces and the updated documentation within ~24 hours?\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-04-02 13:44:46.304230",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Apr 2, 2013 at 9:44 PM,  <alberto.garcia.hierro@gmail.com> wrote:\r\n> I was under the impression that it would be a matter of days, rather\r\n> than weeks. If we're at least two weeks from release, I think there's\r\n> enough time to finish the missing pieces of this patchset (support\r\n> CXXFLAGS and call g++ rather than gcc) and update the documentation.\r\n> Keep in mind that, as Remy pointed out, most of the code for supporting\r\n> linking C++ is already in Go, so this patchset would only add the\r\n> remaining ~10% without modifying any existing functionalities, only\r\n> adding new ones (the possibility of introducing bugs to working code is\r\n> almost negligible).\r\nGo 1.1 is feature frozen now.\r\n\r\nhttp://golang.org/s/go11freeze\r\n",
+			"disapproval": false,
+			"date": "2013-04-02 13:50:54.340930",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "message: On 2013/04/02 13:50:54, minux wrote:\n> Go 1.1 is feature frozen now.\n> \n> http://golang.org/s/go11freeze\n\nOuch, I wasn't aware of that. Thanks!",
+			"disapproval": false,
+			"date": "2013-04-05 07:01:38.858300",
+			"approval": false
+		},
+		{
+			"sender": "seb.binet@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "minor cosmetics suggestions (CPPFiles -> CXXFiles) and add missing popular extensions (.cxx, .hxx, .hh and .C)\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/cmd/dist/build.c\nFile src/cmd/dist/build.c (right):\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/cmd/dist/build.c#newcode543\nsrc/cmd/dist/build.c:543: \".cpp\",\nI think I would also add \".cxx\", \".hh\" and \".hxx\" which are pretty popular extension names for C++ files. Maybe also \".C\" ?\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/cmd/dist/build.c#newcode888\nsrc/cmd/dist/build.c:888: if(!hassuffix(files.p[i], \".c\") && !hassuffix(files.p[i], \".cc\") && !hassuffix(files.p[i], \".cpp\") && !hassuffix(files.p[i], \".s\"))\nadd \".cxx\" ? (and perhaps \".C\" too ?)\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/cmd/go/doc.go\nFile src/cmd/go/doc.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/cmd/go/doc.go#newcode321\nsrc/cmd/go/doc.go:321: CPPFiles []string       // .cc or .cpp source files\nfor symmetry with SwigCXXFiles, CPPFiles should probably be spelled out CXXFiles.\nI for one am always unsure when presented with CPPsomething, whether it stands for C preprocessor or C++...\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/cmd/go/list.go\nFile src/cmd/go/list.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/cmd/go/list.go#newcode49\nsrc/cmd/go/list.go:49: CPPFiles []string       // .cc or .cpp source files\nditto: probably call this CXXFiles instead of CPPFiles.\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/cmd/godoc/index.go\nFile src/cmd/godoc/index.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/cmd/godoc/index.go#newcode661\nsrc/cmd/godoc/index.go:661: \".cpp\":         true,\nditto: add .cxx, .hh, .hxx and perhaps .C too.\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/pkg/go/build/build.go\nFile src/pkg/go/build/build.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/pkg/go/build/build.go#newcode598\nsrc/pkg/go/build/build.go:598: case \".go\", \".c\", \".cc\", \".cpp\", \".s\", \".h\", \".S\", \".swig\", \".swigcxx\":\nditto: .cxx and perhaps .C too\n\nhttps://codereview.appspot.com/8248043/diff/5001/src/pkg/go/build/build.go#newcode641\nsrc/pkg/go/build/build.go:641: case \".cc\", \".cpp\":\nditto: .cxx and perhaps .C too.",
+			"disapproval": false,
+			"date": "2013-04-05 12:20:33.678640",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've implemented binet's suggestions (except for the .C extension, since it could cause problems in OSes with case insensitive filesystems) and added support for calling g++ rather than gcc for C++ files. This last patchset also adds support for CPPFLAGS (used for both C and C++) and CXXFLAGS (used only for C++). As a consequence, the pkg-config cgo directive now modifies CPPFLAGS rather than CFLAGS.",
+			"disapproval": false,
+			"date": "2013-04-07 12:26:10.557700",
+			"approval": false
+		},
+		{
+			"sender": "seb.binet@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "hi,\n\njust one last minor comment: the new CgoCPPFLAGS and CgoCXXFLAGS fields are missing from the command line doc.\n\nhttps://codereview.appspot.com/8248043/diff/21001/src/cmd/go/list.go\nFile src/cmd/go/list.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/21001/src/cmd/go/list.go#newcode57\nsrc/cmd/go/list.go:57: CgoCFLAGS    []string // cgo: flags for C compiler\nthe new CgoCPPFLAGS and CgoCXXFLAGS members are missing",
+			"disapproval": false,
+			"date": "2013-04-07 12:53:24.501010",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Sebastien,\n\nNice catch :-). I've just updated the patchset and also added a few files that I forgot to 'hg file' in the previous upload. PTAL.\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-04-07 16:37:40.362800",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've just updated this CL with the current tip, since there were some commits affecting these files.\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-04-12 07:52:58.208980",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Now that Go 1.1 is out, it would be nice if we could discuss this CL.",
+			"disapproval": false,
+			"date": "2013-05-14 13:02:56.320080",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, remyoudompheng@gmail.com, minux.ma@gmail.com, seb.binet@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-05-16 07:42:34.563770",
+			"approval": false
+		},
+		{
+			"sender": "seb.binet@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/16 07:42:34, Hierro wrote:\n> Hello mailto:golang-dev@googlegroups.com, mailto:bradfitz@golang.org,\n> mailto:remyoudompheng@gmail.com, mailto:minux.ma@gmail.com, mailto:seb.binet@gmail.com (cc:\n> mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nLGTM",
+			"disapproval": false,
+			"date": "2013-05-16 07:55:05.482720",
+			"approval": true
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8248043/diff/52001/misc/dist/bindist.go\nFile misc/dist/bindist.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/52001/misc/dist/bindist.go#newcode859\nmisc/dist/bindist.go:859: \"Mingw g++; http://sourceforge.net/projects/mingw/files/Installer/mingw-get-inst/\",\nI don't understand why it matters that this tool, which is used to build Go distributions, be able to find g++ somewhere.\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/cmd/dist/build.c\nFile src/cmd/dist/build.c (right):\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/cmd/dist/build.c#newcode543\nsrc/cmd/dist/build.c:543: \".cpp\",\nWhy do we need this?  This command is used to build the Go distribution itself.  We don't expect to find C++ files in the Go distribution.\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go\nFile src/cmd/go/build.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode188\nsrc/cmd/go/build.go:188: // fileExtSplit expects a filename without slashes\nThis comment needs tweaking.  This will do the right thing if the filename has slashes.  On the other hand, it will fail if filename has no extension.  That is probably OK but the comment should be fixed.\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1706\nsrc/cmd/go/build.go:1706: func (b *builder) gplusplus(p *Package, out string, flags []string, cplusplusfile string) error {\nLet's call this method gxx.  Call the last parameter cxxfile.\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1733\nsrc/cmd/go/build.go:1733: func (b *builder) gplusplusCmd(objdir string) []string {\nCall this gxxCmd.\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1925\nsrc/cmd/go/build.go:1925: cgocflags := stringList(cgoCPPFLAGS, cgoCFLAGS)\nLet's not use both cgocflags and cgoCFLAGS, that just seems confusing.  Name cgocflags something else.\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1946\nsrc/cmd/go/build.go:1946: cgocxxflags := stringList(cgoCPPFLAGS, cgoCXXFLAGS)\nSimilarly rename cgocxxflags.  Maybe just use cflags for both.\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1949\nsrc/cmd/go/build.go:1949: ofile := obj + cgoRe.ReplaceAllString(file, \"_\") + \".o\"\nIs this going to produce \"file..o\"?  That doesn't seem like a good idea.  Either uniquify the names in some simple way or fail.\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/pkg/go/build/build.go\nFile src/pkg/go/build/build.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/pkg/go/build/build.go#newcode860\nsrc/pkg/go/build/build.go:860: // These lines set CPP, CFLAGS, CXXFLAGS and LDFLAGS and pkg-config directives\ns/CPP/CPPFLAGS/\n\nhttps://codereview.appspot.com/8248043/diff/52001/src/pkg/go/build/build.go#newcode919\nsrc/pkg/go/build/build.go:919: case \"CPPFLAGS\":\nThese need to be documented in cmd/cgo/doc.go.",
+			"disapproval": false,
+			"date": "2013-05-22 20:56:21.156660",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Ian,\n\nThanks for the review, I've added some comments below.\n\nOn 2013/05/22 20:56:21, iant wrote:\n> https://codereview.appspot.com/8248043/diff/52001/misc/dist/bindist.go\n> File misc/dist/bindist.go (right):\n> \n> https://codereview.appspot.com/8248043/diff/52001/misc/dist/bindist.go#newcode859\n> misc/dist/bindist.go:859: \"Mingw g++;\n> http://sourceforge.net/projects/mingw/files/Installer/mingw-get-inst/%22,\n> I don't understand why it matters that this tool, which is used to build Go\n> distributions, be able to find g++ somewhere.\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/cmd/dist/build.c\n> File src/cmd/dist/build.c (right):\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/cmd/dist/build.c#newcode543\n> src/cmd/dist/build.c:543: \".cpp\",\n> Why do we need this?  This command is used to build the Go distribution itself. \n> We don't expect to find C++ files in the Go distribution.\n\nSince g++ is usually installed along gcc, I thought allowing C++ to be used in the Go standard library wouldn't hurt. Also, I didn't knew that C++ files weren't expected in the Go distribution once support for them was added. I'll take out that code.\n\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go\n> File src/cmd/go/build.go (right):\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode188\n> src/cmd/go/build.go:188: // fileExtSplit expects a filename without slashes\n> This comment needs tweaking.  This will do the right thing if the filename has\n> slashes.  On the other hand, it will fail if filename has no extension.  That is\n> probably OK but the comment should be fixed.\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1706\n> src/cmd/go/build.go:1706: func (b *builder) gplusplus(p *Package, out string,\n> flags []string, cplusplusfile string) error {\n> Let's call this method gxx.  Call the last parameter cxxfile.\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1733\n> src/cmd/go/build.go:1733: func (b *builder) gplusplusCmd(objdir string) []string\n> {\n> Call this gxxCmd.\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1925\n> src/cmd/go/build.go:1925: cgocflags := stringList(cgoCPPFLAGS, cgoCFLAGS)\n> Let's not use both cgocflags and cgoCFLAGS, that just seems confusing.  Name\n> cgocflags something else.\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1946\n> src/cmd/go/build.go:1946: cgocxxflags := stringList(cgoCPPFLAGS, cgoCXXFLAGS)\n> Similarly rename cgocxxflags.  Maybe just use cflags for both.\n\nNoted all name changes.\n\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/cmd/go/build.go#newcode1949\n> src/cmd/go/build.go:1949: ofile := obj + cgoRe.ReplaceAllString(file, \"_\") +\n> \".o\"\n> Is this going to produce \"file..o\"?  That doesn't seem like a good idea.  Either\n> uniquify the names in some simple way or fail.\n\nThat's a bug. The idea was producing file.c.o from file.c and file.cpp.o from file.cpp. This way a package can have both file.c and file.cpp and build without issues. I'll fix that.\n\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/pkg/go/build/build.go\n> File src/pkg/go/build/build.go (right):\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/pkg/go/build/build.go#newcode860\n> src/pkg/go/build/build.go:860: // These lines set CPP, CFLAGS, CXXFLAGS and\n> LDFLAGS and pkg-config directives\n> s/CPP/CPPFLAGS/\n> \n> https://codereview.appspot.com/8248043/diff/52001/src/pkg/go/build/build.go#newcode919\n> src/pkg/go/build/build.go:919: case \"CPPFLAGS\":\n> These need to be documented in cmd/cgo/doc.go.\n\nRoger that.",
+			"disapproval": false,
+			"date": "2013-05-23 16:11:33.922400",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, remyoudompheng@gmail.com, minux.ma@gmail.com, seb.binet@gmail.com, iant@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-05-23 16:32:10.710970",
+			"approval": false
+		},
+		{
+			"sender": "gobot@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=rsc (assigned by dsymonds)",
+			"disapproval": false,
+			"date": "2013-05-27 00:54:14.751610",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/27 00:54:14, gobot wrote:\n> R=rsc (assigned by dsymonds)\n\nPing",
+			"disapproval": false,
+			"date": "2013-05-31 13:54:56.453000",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2013-05-31 14:07:00.022010",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm seeing \"chunk mismatch\" in rietveld.  Sorry, but can you upload the CL again?",
+			"disapproval": false,
+			"date": "2013-05-31 14:21:29.075080",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8248043/diff/80003/src/cmd/cgo/doc.go\nFile src/cmd/cgo/doc.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/cgo/doc.go#newcode27\nsrc/cmd/cgo/doc.go:27: CPPFLAGS, CFLAGS, CXXFLAGS and LDFLAGS may be defined with pseudo #cgo directives\nwhat is CPPFLAGS? what is CXXFLAGS?\n\ni guess these flags are defined by gcc and g++ but it wouldn't hurt to explain that. they're confusing out of context.\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/cgo/doc.go#newcode39\nsrc/cmd/cgo/doc.go:39: Alternatively, CPPFLAGS and LDFLAGS may be obtained via the pkg-config\nwhere did CFLAGS go?\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go\nFile src/cmd/go/build.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode188\nsrc/cmd/go/build.go:188: // fileExtSplit expects a filename and returns the name\n\"expects\"?\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode192\nsrc/cmd/go/build.go:192: dotExt := path.Ext(file)\nyou should be using path/filepath. also i think the library can help more here than you're letting it.",
+			"disapproval": false,
+			"date": "2013-05-31 15:42:29.877360",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nPlease wait for r.\n\nhttps://codereview.appspot.com/8248043/diff/102001/src/cmd/go/build.go\nFile src/cmd/go/build.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/102001/src/cmd/go/build.go#newcode748\nsrc/cmd/go/build.go:748: return fmt.Errorf(\"Can't build package %s because it contains C++ files (%s) but it's not using cgo nor SWIG\",\ns/Can't/can't/\nError strings start with lower case letters.",
+			"disapproval": false,
+			"date": "2013-05-31 18:16:26.857890",
+			"approval": true
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/31 14:21:29, iant wrote:\n> I'm seeing \"chunk mismatch\" in rietveld.  Sorry, but can you upload the CL\n> again?\n\nI Ian,\n\nI've just uploaded it (after hg sync).\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-05-31 14:57:01.687770",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "-rsc +iant\r\n",
+			"disapproval": false,
+			"date": "2013-05-31 14:07:49.444490",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please run\n\nhg mail 8248043\n\nto refresh the codereview repository.",
+			"disapproval": false,
+			"date": "2013-05-31 14:08:10.103270",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Ian,\n\nThanks for the review. Comments are below. I've also uploaded a new patchset with these changes.\n\nRegards,\nAlberto\n\nOn 2013/05/31 15:44:05, iant wrote:\n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/dist/build.c\n> File src/cmd/dist/build.c (right):\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/dist/build.c#newcode889\n> src/cmd/dist/build.c:889: if(!hassuffix(files.p[i], \".c\") &&\n> !hassuffix(files.p[i], \".cc\") && !hassuffix(files.p[i], \".cpp\") &&\n> !hassuffix(files.p[i], \".cxx\") && !hassuffix(files.p[i], \".s\"))\n> We don't need this change.  Please drop it.\n\nDone\n\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go\n> File src/cmd/go/build.go (right):\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode829\n> src/cmd/go/build.go:829: outGo, outObj, err := b.swig(a.p, obj, gccfiles)\n> Please add a TODO comment saying that we should handle a.p.CXXFiles with swig\n> (it doesn't currently handle .c files reasonably either).\n\nDone\n\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode836\n> src/cmd/go/build.go:836: \n> If this package uses neither cgo nor swig, it looks a.p.CXXFiles is ignored. \n> That doesn't seem right.  We should probably give an error in that case.\n\nDone\n\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode1962\n> src/cmd/go/build.go:1962: ofile := obj + cgoRe.ReplaceAllString(file, \"_\") +\n> \".o\"\n> I thought this was going to be changed.  It seems like it will produce file..o.\n\nI reviewed the code and it was already working as intended. \"file\" variable contains the absolute path to the file, so file.cpp produces file.cpp.o.  Maybe you're getting confused with the previous for loop (the one acting on .c files) which uses file[:len(file)-1]? Just ran go build -x on a package using .cpp files, to make sure:\n\nfiam@ubuntu:~/gocode/src/poppler$ go build -x\n...\ng++ -I . -g -O2 -fPIC -m64 -pthread -I/usr/include/poppler -I $WORK/poppler/_obj/ -o $WORK/poppler/_obj/poppler.cpp.o -c ./poppler.cpp\n\u2026",
+			"disapproval": false,
+			"date": "2013-05-31 16:50:25.470190",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8248043/diff/80003/src/cmd/dist/build.c\nFile src/cmd/dist/build.c (right):\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/dist/build.c#newcode889\nsrc/cmd/dist/build.c:889: if(!hassuffix(files.p[i], \".c\") && !hassuffix(files.p[i], \".cc\") && !hassuffix(files.p[i], \".cpp\") && !hassuffix(files.p[i], \".cxx\") && !hassuffix(files.p[i], \".s\"))\nWe don't need this change.  Please drop it.\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go\nFile src/cmd/go/build.go (right):\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode829\nsrc/cmd/go/build.go:829: outGo, outObj, err := b.swig(a.p, obj, gccfiles)\nPlease add a TODO comment saying that we should handle a.p.CXXFiles with swig (it doesn't currently handle .c files reasonably either).\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode836\nsrc/cmd/go/build.go:836: \nIf this package uses neither cgo nor swig, it looks a.p.CXXFiles is ignored.  That doesn't seem right.  We should probably give an error in that case.\n\nhttps://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode1962\nsrc/cmd/go/build.go:1962: ofile := obj + cgoRe.ReplaceAllString(file, \"_\") + \".o\"\nI thought this was going to be changed.  It seems like it will produce file..o.",
+			"disapproval": false,
+			"date": "2013-05-31 15:44:05.461900",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/31 15:42:29, r wrote:\n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/cgo/doc.go\n> File src/cmd/cgo/doc.go (right):\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/cgo/doc.go#newcode27\n> src/cmd/cgo/doc.go:27: CPPFLAGS, CFLAGS, CXXFLAGS and LDFLAGS may be defined\n> with pseudo #cgo directives\n> what is CPPFLAGS? what is CXXFLAGS?\n\nNowhere in that page are CFLAGS and LDFLAGS explained, and I think anyone interested in linking C code into a Go program already knows what those are (yup, including CPPFLAGS and CXXFLAGS).\n\n> \n> i guess these flags are defined by gcc and g++ but it wouldn't hurt to explain\n> that. they're confusing out of context.\n\nIt wouldn't hurt, but documenting CPPFLAGS, CFLAGS, CXXFLAGS and LDFLAGS is not in the scope of this CL. CFLAGS and LDFLAGS have been mentioned in that document since before Go 1.0 and they aren't documented.\n\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/cgo/doc.go#newcode39\n> src/cmd/cgo/doc.go:39: Alternatively, CPPFLAGS and LDFLAGS may be obtained via\n> the pkg-config\n> where did CFLAGS go?\n\nCPPFLAGS are passed to both C and C++ files (it stands for C preprocessor flags), as I explained in the description of this CL, so pkg-config now sets CPPFLAGS rather than CFLAGS.\n\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go\n> File src/cmd/go/build.go (right):\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode188\n> src/cmd/go/build.go:188: // fileExtSplit expects a filename and returns the name\n> \"expects\"?\n\nEnglish is not my first nor my second language. You're welcome to s/expects/whatever/ in that comment if you think of a better verb.\n\n> \n> https://codereview.appspot.com/8248043/diff/80003/src/cmd/go/build.go#newcode192\n> src/cmd/go/build.go:192: dotExt := path.Ext(file)\n> you should be using path/filepath. also i think the library can help more here\n> than you're letting it.\n\nJust changed path to filepath (although only files with an extension are passed to that function, so it won't make any difference). On the other hand, I can't find any function in path nor path/filepath which returns the name of a file minus the extension. I'll gladly use it if it's available (and if it's not, it would be a welcome addition).",
+			"disapproval": false,
+			"date": "2013-05-31 17:17:14.770000",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"gobot@golang.org",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=24596e5bca7d ***\n\ncmd/go: Add support for including C++ files in packages\n\n* Add a CXXFiles field to Package, which includes .cc, .cpp and .cxx  files.\n* CXXFiles are compiled using g++, which can be overridden using the CXX environment variable.\n* Include .hh, .hpp and .hxx files in HFiles.\n* Add support for CPPFLAGS (used for both C and C++) and CXXFLAGS (used only for C++) in cgo directive.\n* Changed pkg-config cgo directive to modify CPPFLAGS rather than CFLAGS, so both C and C++ files get any flag returned by pkg-config --cflags.\n\nFixes issue 1476.\n\nR=iant, r\nCC=bradfitz, gobot, golang-dev, iant, minux.ma, remyoudompheng, seb.binet\nhttps://codereview.appspot.com/8248043\n\nCommitter: Ian Lance Taylor <iant@golang.org>",
+			"disapproval": false,
+			"date": "2013-05-31 18:33:45.473430",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nyou're right - it seems there is a gap in the path and filepath APIs.",
+			"disapproval": false,
+			"date": "2013-05-31 18:20:16.057920",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, May 31, 2013 at 6:54 PM, minux <minux.ma@gmail.com> wrote:\r\n> Should we update doc/go1.2.txt?\r\n\r\nYes!\r\n",
+			"disapproval": false,
+			"date": "2013-05-31 19:02:16.784790",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"seb.binet@gmail.com",
+				"iant@golang.org",
+				"gobot@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/31 18:16:26, iant wrote:\n> LGTM\n> \n> Please wait for r.\n> \n> https://codereview.appspot.com/8248043/diff/102001/src/cmd/go/build.go\n> File src/cmd/go/build.go (right):\n> \n> https://codereview.appspot.com/8248043/diff/102001/src/cmd/go/build.go#newcode748\n> src/cmd/go/build.go:748: return fmt.Errorf(\"Can't build package %s because it\n> contains C++ files (%s) but it's not using cgo nor SWIG\",\n> s/Can't/can't/\n> Error strings start with lower case letters.\n\nI wasn't aware of that. Thanks! I've just updated the CL.\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-05-31 18:28:43.336170",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"gobot@golang.org",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/31 18:20:16, r wrote:\n> LGTM\n> \n> you're right - it seems there is a gap in the path and filepath APIs.\n\nThanks! Let's try to close that gap. How does this CL look like  https://codereview.appspot.com/9908043 ?\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-05-31 18:54:04.070330",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Should we update doc/go1.2.txt?\r\n\r\nOn Sat, Jun 1, 2013 at 2:33 AM, <iant@golang.org> wrote:\r\n\r\n> *** Submitted as\r\n> https://code.google.com/p/go/**source/detail?r=24596e5bca7d<https://code.google.com/p/go/source/detail?r=24596e5bca7d>***\r\n>\r\n> cmd/go: Add support for including C++ files in packages\r\n>\r\n> * Add a CXXFiles field to Package, which includes .cc, .cpp and .cxx\r\n> files.\r\n> * CXXFiles are compiled using g++, which can be overridden using the CXX\r\n> environment variable.\r\n> * Include .hh, .hpp and .hxx files in HFiles.\r\n> * Add support for CPPFLAGS (used for both C and C++) and CXXFLAGS (used\r\n> only for C++) in cgo directive.\r\n> * Changed pkg-config cgo directive to modify CPPFLAGS rather than\r\n> CFLAGS, so both C and C++ files get any flag returned by pkg-config\r\n> --cflags.\r\n>\r\n> Fixes issue 1476.\r\n>\r\n> R=iant, r\r\n> CC=bradfitz, gobot, golang-dev, iant, minux.ma, remyoudompheng,\r\n> seb.binet\r\n> https://codereview.appspot.**com/8248043<https://codereview.appspot.com/8248043>\r\n>\r\n> Committer: Ian Lance Taylor <iant@golang.org>\r\n>\r\n>\r\n> https://codereview.appspot.**com/8248043/<https://codereview.appspot.com/8248043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-31 18:54:38.136390",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"gobot@golang.org",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"remyoudompheng@gmail.com",
+				"seb.binet@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-06-20 11:35:52.403240",
+			"approval": false
+		}
+	],
+	"owner_email": "alberto.garcia.hierro@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Hierro",
+	"subject": "code review 8248043: cmd/go: Add support for including C++ files in packages",
+	"created": "2013-04-02 02:36:36.521360",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		21001,
+		26001,
+		30001,
+		46001,
+		52001,
+		67001,
+		69001,
+		80003,
+		100001,
+		102001,
+		108001
+	],
+	"modified": "2013-06-20 11:35:56.146230",
+	"closed": true,
+	"issue": 8248043
+}

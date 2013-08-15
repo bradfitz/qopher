@@ -1,0 +1,178 @@
+{
+	"description": "exp/ssh: messages now contain remote channel's id instead of local id\n\nAccording to http://www.ietf.org/rfc/rfc4254.txt most channel messages contain the channel id of the recipient channel, not the sender id. This allows the recipient connection multiplexer to route the message to the correct channel.\n\nThis changeset fixes several messages that incorrectly send the local channel id instead of the remote channel's id.\n\nWhile sessions were being created and closed in sequence channels in the channel pool were freed and reused on the server side of the connection at the same rate as was done on the client, so the channel local and remote channel ids always corresponded. As soon as I had concurrent sessions on the same clientConn the server started to complain of 'uknown channel id N' where N is the local channel id, which is actually paired with server channel id K.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"rsc@golang.org",
+		"agl@golang.org"
+	],
+	"reviewers": [
+		"bradfitz@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Nov 24, 2011 at 10:21 AM, Gustav Paul <gustav.paul@gmail.com> wrote:\n> Will do, I'm about to leave for home but I'll modify it first thing in the\n> morning.\n\n(Waiting for contributor agreement before landing.)\n\n\nAGL\n",
+			"disapproval": false,
+			"date": "2011-11-24 19:33:02.104139",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Gustav,\n\nThank you for submitting this patch, I think you have identified a serious issue. If I add a few \n\nconn.newChan(conn.transport) \n\ncalls into client.go:line36 to seed the chanlist then I can recreate your error. \n\nI'll reply to your CL when I get back in WiFi range. \n\n\nSent from my iPhone\n\nOn 24/11/2011, at 18:37, gustav.paul@gmail.com wrote:\n\n> Reviewers: golang-dev_googlegroups.com, dfc, rsc, agl1,\n> \n> Message:\n> Hello golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org,\n> agl@golang.org (cc: golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n> \n> \n> Description:\n> exp/ssh: messages now contain remote channel's id instead of local id\n> \n> According to http://www.ietf.org/rfc/rfc4254.txt most channel messages\n> contain the channel id of the recipient channel, not the sender id. This\n> allows the recipient connection multiplexer to route the message to the\n> correct channel.\n> \n> This changeset fixes several messages that incorrectly send the local\n> channel id instead of the remote channel's id.\n> \n> While sessions were being created and closed in sequence channels in the\n> channel pool were freed and reused on the server side of the connection\n> at the same rate as was done on the client, so the channel local and\n> remote channel ids always corresponded. As soon as I had concurrent\n> sessions on the same clientConn the server started to complain of\n> 'uknown channel id N' where N is the local channel id, which is actually\n> paired with server channel id K.\n> \n> Please review this at http://codereview.appspot.com/5433063/\n> \n> Affected files:\n>  M src/pkg/exp/ssh/client.go\n>  M src/pkg/exp/ssh/session.go\n>  M src/pkg/exp/ssh/tcpip.go\n> \n> \n> Index: src/pkg/exp/ssh/client.go\n> ===================================================================\n> --- a/src/pkg/exp/ssh/client.go\n> +++ b/src/pkg/exp/ssh/client.go\n> @@ -338,7 +338,7 @@\n> // Close closes the channel. This does not close the underlying connection.\n> func (c *clientChan) Close() error {\n>    return c.writePacket(marshal(msgChannelClose, channelCloseMsg{\n> -        PeersId: c.id,\n> +        PeersId: c.peersId,\n>    }))\n> }\n> \n> @@ -385,6 +385,7 @@\n> type chanWriter struct {\n>    win          chan int // receives window adjustments\n>    id           uint32   // this channel's id\n> +    peersId      uint32   // the server channel's id\n>    rwin         int      // current rwin size\n>    packetWriter          // for sending channelDataMsg\n> }\n> @@ -403,7 +404,7 @@\n>        n = len(data)\n>        packet := make([]byte, 0, 9+n)\n>        packet = append(packet, msgChannelData,\n> -            byte(w.id)>>24, byte(w.id)>>16, byte(w.id)>>8, byte(w.id),\n> +            byte(w.peersId)>>24, byte(w.peersId)>>16, byte(w.peersId)>>8, byte(w.peersId),\n>            byte(n)>>24, byte(n)>>16, byte(n)>>8, byte(n))\n>        err = w.writePacket(append(packet, data...))\n>        w.rwin -= n\n> @@ -413,7 +414,7 @@\n> }\n> \n> func (w *chanWriter) Close() error {\n> -    return w.writePacket(marshal(msgChannelEOF, channelEOFMsg{w.id}))\n> +    return w.writePacket(marshal(msgChannelEOF, channelEOFMsg{w.peersId}))\n> }\n> \n> // A chanReader represents stdout or stderr of a remote process.\n> @@ -422,8 +423,9 @@\n>    // If writes to this channel block, they will block mainLoop, making\n>    // it unable to receive new messages from the remote side.\n>    data         chan []byte // receives data from remote\n> -    id           uint32\n> -    packetWriter // for sending windowAdjustMsg\n> +    id           uint32      // this channel's id\n> +    peersId      uint32      // the server channel's id\n> +    packetWriter             // for sending windowAdjustMsg\n>    buf          []byte\n> }\n> \n> @@ -435,7 +437,7 @@\n>            n := copy(data, r.buf)\n>            r.buf = r.buf[n:]\n>            msg := windowAdjustMsg{\n> -                PeersId:         r.id,\n> +                PeersId:         r.peersId,\n>                AdditionalBytes: uint32(n),\n>            }\n>            return n, r.writePacket(marshal(msgChannelWindowAdjust, msg))\n> @@ -449,5 +451,5 @@\n> }\n> \n> func (r *chanReader) Close() error {\n> -    return r.writePacket(marshal(msgChannelEOF, channelEOFMsg{r.id}))\n> +    return r.writePacket(marshal(msgChannelEOF, channelEOFMsg{r.peersId}))\n> }\n> Index: src/pkg/exp/ssh/session.go\n> ===================================================================\n> --- a/src/pkg/exp/ssh/session.go\n> +++ b/src/pkg/exp/ssh/session.go\n> @@ -53,7 +53,7 @@\n> // command executed by Shell or Exec.\n> func (s *Session) Setenv(name, value string) error {\n>    req := setenvRequest{\n> -        PeersId:   s.id,\n> +        PeersId:   s.peersId,\n>        Request:   \"env\",\n>        WantReply: true,\n>        Name:      name,\n> @@ -84,7 +84,7 @@\n> // RequestPty requests the association of a pty with the session on the remote host.\n> func (s *Session) RequestPty(term string, h, w int) error {\n>    req := ptyRequestMsg{\n> -        PeersId:   s.id,\n> +        PeersId:   s.peersId,\n>        Request:   \"pty-req\",\n>        WantReply: true,\n>        Term:      term,\n> @@ -116,7 +116,7 @@\n>        return errors.New(\"ssh: session already started\")\n>    }\n>    req := execMsg{\n> -        PeersId:   s.id,\n> +        PeersId:   s.peersId,\n>        Request:   \"exec\",\n>        WantReply: true,\n>        Command:   cmd,\n> @@ -140,7 +140,7 @@\n>        return errors.New(\"ssh: session already started\")\n>    }\n>    req := channelRequestMsg{\n> -        PeersId:   s.id,\n> +        PeersId:   s.peersId,\n>        Request:   \"shell\",\n>        WantReply: true,\n>    }\n> Index: src/pkg/exp/ssh/tcpip.go\n> ===================================================================\n> --- a/src/pkg/exp/ssh/tcpip.go\n> +++ b/src/pkg/exp/ssh/tcpip.go\n> @@ -87,11 +87,13 @@\n>        Reader: &chanReader{\n>            packetWriter: ch,\n>            id:           ch.id,\n> +            peersId:      ch.peersId,\n>            data:         ch.data,\n>        },\n>        Writer: &chanWriter{\n>            packetWriter: ch,\n>            id:           ch.id,\n> +            peersId:      ch.peersId,\n>            win:          ch.win,\n>        },\n>    }, nil\n> \n> \n",
+			"disapproval": false,
+			"date": "2011-11-24 09:26:58.395768",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM (with comments), leaving for rsc and agl.\n\nIf you haven't already done so, you should complete the Google CLA agreement.\n\nHave a think about some possibly changes you could make to the test cases the catch this. I've simulated the error by throwing a few \n\n        conn.newChan(conn.transport)\n\nlines into client.go:Client, to throw the id's between the local and remote out of sync. However, please don't delay this CL, you can submit a later one with the test cases.\n\nhttp://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go\nFile src/pkg/exp/ssh/client.go (right):\n\nhttp://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode341\nsrc/pkg/exp/ssh/client.go:341: PeersId: c.peersId,\nboy is my face red.\n\nhttp://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode387\nsrc/pkg/exp/ssh/client.go:387: id           uint32   // this channel's id\nDrop id\n\nhttp://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode388\nsrc/pkg/exp/ssh/client.go:388: peersId      uint32   // the server channel's id\nthe peers id.\n\nhttp://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode426\nsrc/pkg/exp/ssh/client.go:426: id           uint32      // this channel's id\ndrop id\n\nhttp://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode427\nsrc/pkg/exp/ssh/client.go:427: peersId      uint32      // the server channel's id\nsee above\n\nhttp://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode455\nsrc/pkg/exp/ssh/client.go:455: }\nnit: you can delete this method if you like. It is not currently used.\n\nhttp://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/tcpip.go\nFile src/pkg/exp/ssh/tcpip.go (right):\n\nhttp://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/tcpip.go#newcode89\nsrc/pkg/exp/ssh/tcpip.go:89: id:           ch.id,\ndrop id, and again below.",
+			"disapproval": false,
+			"date": "2011-11-24 15:18:27.584695",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"agl@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=0a947e1cd2e2 ***\n\nexp/ssh: messages now contain remote channel's id instead of local id\n\nAccording to http://www.ietf.org/rfc/rfc4254.txt most channel messages contain the channel id of the recipient channel, not the sender id. This allows the recipient connection multiplexer to route the message to the correct channel.\n\nThis changeset fixes several messages that incorrectly send the local channel id instead of the remote channel's id.\n\nWhile sessions were being created and closed in sequence channels in the channel pool were freed and reused on the server side of the connection at the same rate as was done on the client, so the channel local and remote channel ids always corresponded. As soon as I had concurrent sessions on the same clientConn the server started to complain of 'uknown channel id N' where N is the local channel id, which is actually paired with server channel id K.\n\nR=golang-dev, dave, rsc, agl\nCC=golang-dev\nhttp://codereview.appspot.com/5433063\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2011-11-27 14:59:17.308134",
+			"approval": false
+		},
+		{
+			"sender": "gustav.paul@gmail.com",
+			"recipients": [
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I just signed the Google CLA. It said 'processing...' which I'm assuming really means 'done.'",
+			"disapproval": false,
+			"date": "2011-11-25 09:00:29.638693",
+			"approval": false
+		},
+		{
+			"sender": "gustav.paul@gmail.com",
+			"recipients": [
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org, agl@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-11-24 07:37:12.081173",
+			"approval": false
+		},
+		{
+			"sender": "gustav.paul@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Dave,\n\nGreat, glad its not just me.\n\nThanks for the quick responses,\nGustav\n\nOn Thu, Nov 24, 2011 at 11:26 AM, Dave Cheney <dave@cheney.net> wrote:\n\n> Hi Gustav,\n>\n> Thank you for submitting this patch, I think you have identified a serious\n> issue. If I add a few\n>\n> conn.newChan(conn.transport)\n>\n> calls into client.go:line36 to seed the chanlist then I can recreate your\n> error.\n>\n> I'll reply to your CL when I get back in WiFi range.\n>\n>\n> Sent from my iPhone\n>\n> On 24/11/2011, at 18:37, gustav.paul@gmail.com wrote:\n>\n> > Reviewers: golang-dev_googlegroups.com, dfc, rsc, agl1,\n> >\n> > Message:\n> > Hello golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org,\n> > agl@golang.org (cc: golang-dev@googlegroups.com),\n> >\n> > I'd like you to review this change to\n> > https://go.googlecode.com/hg/\n> >\n> >\n> > Description:\n> > exp/ssh: messages now contain remote channel's id instead of local id\n> >\n> > According to http://www.ietf.org/rfc/rfc4254.txt most channel messages\n> > contain the channel id of the recipient channel, not the sender id. This\n> > allows the recipient connection multiplexer to route the message to the\n> > correct channel.\n> >\n> > This changeset fixes several messages that incorrectly send the local\n> > channel id instead of the remote channel's id.\n> >\n> > While sessions were being created and closed in sequence channels in the\n> > channel pool were freed and reused on the server side of the connection\n> > at the same rate as was done on the client, so the channel local and\n> > remote channel ids always corresponded. As soon as I had concurrent\n> > sessions on the same clientConn the server started to complain of\n> > 'uknown channel id N' where N is the local channel id, which is actually\n> > paired with server channel id K.\n> >\n> > Please review this at http://codereview.appspot.com/5433063/\n> >\n> > Affected files:\n> >  M src/pkg/exp/ssh/client.go\n> >  M src/pkg/exp/ssh/session.go\n> >  M src/pkg/exp/ssh/tcpip.go\n> >\n> >\n> > Index: src/pkg/exp/ssh/client.go\n> > ===================================================================\n> > --- a/src/pkg/exp/ssh/client.go\n> > +++ b/src/pkg/exp/ssh/client.go\n> > @@ -338,7 +338,7 @@\n> > // Close closes the channel. This does not close the underlying\n> connection.\n> > func (c *clientChan) Close() error {\n> >    return c.writePacket(marshal(msgChannelClose, channelCloseMsg{\n> > -        PeersId: c.id,\n> > +        PeersId: c.peersId,\n> >    }))\n> > }\n> >\n> > @@ -385,6 +385,7 @@\n> > type chanWriter struct {\n> >    win          chan int // receives window adjustments\n> >    id           uint32   // this channel's id\n> > +    peersId      uint32   // the server channel's id\n> >    rwin         int      // current rwin size\n> >    packetWriter          // for sending channelDataMsg\n> > }\n> > @@ -403,7 +404,7 @@\n> >        n = len(data)\n> >        packet := make([]byte, 0, 9+n)\n> >        packet = append(packet, msgChannelData,\n> > -            byte(w.id)>>24, byte(w.id)>>16, byte(w.id)>>8, byte(w.id),\n> > +            byte(w.peersId)>>24, byte(w.peersId)>>16,\n> byte(w.peersId)>>8, byte(w.peersId),\n> >            byte(n)>>24, byte(n)>>16, byte(n)>>8, byte(n))\n> >        err = w.writePacket(append(packet, data...))\n> >        w.rwin -= n\n> > @@ -413,7 +414,7 @@\n> > }\n> >\n> > func (w *chanWriter) Close() error {\n> > -    return w.writePacket(marshal(msgChannelEOF, channelEOFMsg{w.id}))\n> > +    return w.writePacket(marshal(msgChannelEOF,\n> channelEOFMsg{w.peersId}))\n> > }\n> >\n> > // A chanReader represents stdout or stderr of a remote process.\n> > @@ -422,8 +423,9 @@\n> >    // If writes to this channel block, they will block mainLoop, making\n> >    // it unable to receive new messages from the remote side.\n> >    data         chan []byte // receives data from remote\n> > -    id           uint32\n> > -    packetWriter // for sending windowAdjustMsg\n> > +    id           uint32      // this channel's id\n> > +    peersId      uint32      // the server channel's id\n> > +    packetWriter             // for sending windowAdjustMsg\n> >    buf          []byte\n> > }\n> >\n> > @@ -435,7 +437,7 @@\n> >            n := copy(data, r.buf)\n> >            r.buf = r.buf[n:]\n> >            msg := windowAdjustMsg{\n> > -                PeersId:         r.id,\n> > +                PeersId:         r.peersId,\n> >                AdditionalBytes: uint32(n),\n> >            }\n> >            return n, r.writePacket(marshal(msgChannelWindowAdjust, msg))\n> > @@ -449,5 +451,5 @@\n> > }\n> >\n> > func (r *chanReader) Close() error {\n> > -    return r.writePacket(marshal(msgChannelEOF, channelEOFMsg{r.id}))\n> > +    return r.writePacket(marshal(msgChannelEOF,\n> channelEOFMsg{r.peersId}))\n> > }\n> > Index: src/pkg/exp/ssh/session.go\n> > ===================================================================\n> > --- a/src/pkg/exp/ssh/session.go\n> > +++ b/src/pkg/exp/ssh/session.go\n> > @@ -53,7 +53,7 @@\n> > // command executed by Shell or Exec.\n> > func (s *Session) Setenv(name, value string) error {\n> >    req := setenvRequest{\n> > -        PeersId:   s.id,\n> > +        PeersId:   s.peersId,\n> >        Request:   \"env\",\n> >        WantReply: true,\n> >        Name:      name,\n> > @@ -84,7 +84,7 @@\n> > // RequestPty requests the association of a pty with the session on the\n> remote host.\n> > func (s *Session) RequestPty(term string, h, w int) error {\n> >    req := ptyRequestMsg{\n> > -        PeersId:   s.id,\n> > +        PeersId:   s.peersId,\n> >        Request:   \"pty-req\",\n> >        WantReply: true,\n> >        Term:      term,\n> > @@ -116,7 +116,7 @@\n> >        return errors.New(\"ssh: session already started\")\n> >    }\n> >    req := execMsg{\n> > -        PeersId:   s.id,\n> > +        PeersId:   s.peersId,\n> >        Request:   \"exec\",\n> >        WantReply: true,\n> >        Command:   cmd,\n> > @@ -140,7 +140,7 @@\n> >        return errors.New(\"ssh: session already started\")\n> >    }\n> >    req := channelRequestMsg{\n> > -        PeersId:   s.id,\n> > +        PeersId:   s.peersId,\n> >        Request:   \"shell\",\n> >        WantReply: true,\n> >    }\n> > Index: src/pkg/exp/ssh/tcpip.go\n> > ===================================================================\n> > --- a/src/pkg/exp/ssh/tcpip.go\n> > +++ b/src/pkg/exp/ssh/tcpip.go\n> > @@ -87,11 +87,13 @@\n> >        Reader: &chanReader{\n> >            packetWriter: ch,\n> >            id:           ch.id,\n> > +            peersId:      ch.peersId,\n> >            data:         ch.data,\n> >        },\n> >        Writer: &chanWriter{\n> >            packetWriter: ch,\n> >            id:           ch.id,\n> > +            peersId:      ch.peersId,\n> >            win:          ch.win,\n> >        },\n> >    }, nil\n> >\n> >\n>\n",
+			"disapproval": false,
+			"date": "2011-11-24 09:40:11.178568",
+			"approval": false
+		},
+		{
+			"sender": "gustav.paul@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Will do, I'm about to leave for home but I'll modify it first thing in the\nmorning.\n\nGustav\n\nOn Thu, Nov 24, 2011 at 5:18 PM, <dave@cheney.net> wrote:\n\n> LGTM (with comments), leaving for rsc and agl.\n>\n> If you haven't already done so, you should complete the Google CLA\n> agreement.\n>\n> Have a think about some possibly changes you could make to the test\n> cases the catch this. I've simulated the error by throwing a few\n>\n>        conn.newChan(conn.transport)\n>\n> lines into client.go:Client, to throw the id's between the local and\n> remote out of sync. However, please don't delay this CL, you can submit\n> a later one with the test cases.\n>\n>\n> http://codereview.appspot.com/**5433063/diff/2002/src/pkg/exp/**\n> ssh/client.go<http://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go>\n> File src/pkg/exp/ssh/client.go (right):\n>\n> http://codereview.appspot.com/**5433063/diff/2002/src/pkg/exp/**\n> ssh/client.go#newcode341<http://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode341>\n> src/pkg/exp/ssh/client.go:341: PeersId: c.peersId,\n> boy is my face red.\n>\n> http://codereview.appspot.com/**5433063/diff/2002/src/pkg/exp/**\n> ssh/client.go#newcode387<http://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode387>\n> src/pkg/exp/ssh/client.go:387: id           uint32   // this channel's\n> id\n> Drop id\n>\n> http://codereview.appspot.com/**5433063/diff/2002/src/pkg/exp/**\n> ssh/client.go#newcode388<http://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode388>\n> src/pkg/exp/ssh/client.go:388: peersId      uint32   // the server\n> channel's id\n> the peers id.\n>\n> http://codereview.appspot.com/**5433063/diff/2002/src/pkg/exp/**\n> ssh/client.go#newcode426<http://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode426>\n> src/pkg/exp/ssh/client.go:426: id           uint32      // this\n> channel's id\n> drop id\n>\n> http://codereview.appspot.com/**5433063/diff/2002/src/pkg/exp/**\n> ssh/client.go#newcode427<http://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode427>\n> src/pkg/exp/ssh/client.go:427: peersId      uint32      // the server\n> channel's id\n> see above\n>\n> http://codereview.appspot.com/**5433063/diff/2002/src/pkg/exp/**\n> ssh/client.go#newcode455<http://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/client.go#newcode455>\n> src/pkg/exp/ssh/client.go:455: }\n> nit: you can delete this method if you like. It is not currently used.\n>\n> http://codereview.appspot.com/**5433063/diff/2002/src/pkg/exp/**\n> ssh/tcpip.go<http://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/tcpip.go>\n> File src/pkg/exp/ssh/tcpip.go (right):\n>\n> http://codereview.appspot.com/**5433063/diff/2002/src/pkg/exp/**\n> ssh/tcpip.go#newcode89<http://codereview.appspot.com/5433063/diff/2002/src/pkg/exp/ssh/tcpip.go#newcode89>\n> src/pkg/exp/ssh/tcpip.go:89: id:           ch.id,\n> drop id, and again below.\n>\n> http://codereview.appspot.com/**5433063/<http://codereview.appspot.com/5433063/>\n>\n",
+			"disapproval": false,
+			"date": "2011-11-24 15:21:32.996563",
+			"approval": false
+		},
+		{
+			"sender": "gustav.paul@gmail.com",
+			"recipients": [
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org, agl@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-25 08:55:46.658462",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It seems like there is a crucial apostrophe missing\nin \"the peers id\" unless this is an id denoting a set\nof peers.\n",
+			"disapproval": false,
+			"date": "2011-11-28 15:24:30.414857",
+			"approval": false
+		},
+		{
+			"sender": "gustav.paul@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Indeed! It refers to a single peer. What is the process for ammending the\nCL?\n\nOn Mon, Nov 28, 2011 at 5:24 PM, Russ Cox <rsc@golang.org> wrote:\n\n> It seems like there is a crucial apostrophe missing\n> in \"the peers id\" unless this is an id denoting a set\n> of peers.\n>\n",
+			"disapproval": false,
+			"date": "2011-11-28 15:26:12.064576",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 28, 2011 at 10:26 AM, Gustav Paul <gustav.paul@gmail.com> wrote:\n\n> Indeed! It refers to a single peer. What is the process for ammending the\n> CL?\n\n\nSending another CL.\n\nThere's no \"amending\", per se.\n",
+			"disapproval": false,
+			"date": "2011-11-28 15:31:34.304106",
+			"approval": false
+		}
+	],
+	"owner_email": "gustav.paul@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "gpaul",
+	"subject": "code review 5433063: exp/ssh: messages now contain remote channel's id inste...",
+	"created": "2011-11-24 07:31:55.980743",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		4004
+	],
+	"modified": "2011-11-29 15:06:41.894567",
+	"closed": true,
+	"issue": 5433063
+}

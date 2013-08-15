@@ -1,0 +1,95 @@
+{
+	"description": "cmd/api: compare multiple contexts",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I forgot to mail this out a few days ago.  I'm also not totally happy with\nit:\n\nCurrently when all contexts don't match, each context is printed for a\nfeature, even when it's pretty redundant:\n\npkg os (darwin-386), func NewFile(int, string) *File\npkg os (darwin-386-cgo), func NewFile(int, string) *File\npkg os (darwin-amd64), func NewFile(int, string) *File\npkg os (darwin-amd64-cgo), func NewFile(int, string) *File\npkg os (linux-386), func NewFile(int, string) *File\npkg os (linux-386-cgo), func NewFile(int, string) *File\npkg os (linux-amd64), func NewFile(int, string) *File\npkg os (linux-amd64-cgo), func NewFile(int, string) *File\npkg os (windows-386), func NewFile(syscall.Handle, string) *File\npkg os (windows-amd64), func NewFile(syscall.Handle, string) *File\n\nIt'd be nicer to dump it out smarter, with just unique prefixes that\ndiffer.  Like maybe:\n\npkg os (darwin-*), func NewFile(int, string) *File\npkg os (linux-*), func NewFile(int, string) *File\npkg os (windows-*), func NewFile(syscall.Handle, string) *File\n\nAnd then probably change \"linux-386\" to \"linux-386-nocgo\" instead, so it\nhas the same depth.\n\nBut I don't care enough, unless others do too.\n\n\nOn Fri, Feb 3, 2012 at 11:45 AM, <bradfitz@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg\n>\n>\n> Description:\n> cmd/api: compare multiple contexts\n>\n> Please review this at http://codereview.appspot.com/**5626045/<http://codereview.appspot.com/5626045/>\n>\n> Affected files:\n>  M src/cmd/api/goapi.go\n>\n>\n> Index: src/cmd/api/goapi.go\n> ==============================**==============================**=======\n> --- a/src/cmd/api/goapi.go\n> +++ b/src/cmd/api/goapi.go\n> @@ -34,6 +34,27 @@\n>        verbose   = flag.Bool(\"v\", false, \"Verbose debugging\")\n>  )\n>\n> +var contexts = []*build.Context{\n> +       {GOOS: \"linux\", GOARCH: \"386\", CgoEnabled: true},\n> +       {GOOS: \"linux\", GOARCH: \"386\"},\n> +       {GOOS: \"linux\", GOARCH: \"amd64\", CgoEnabled: true},\n> +       {GOOS: \"linux\", GOARCH: \"amd64\"},\n> +       {GOOS: \"darwin\", GOARCH: \"386\", CgoEnabled: true},\n> +       {GOOS: \"darwin\", GOARCH: \"386\"},\n> +       {GOOS: \"darwin\", GOARCH: \"amd64\", CgoEnabled: true},\n> +       {GOOS: \"darwin\", GOARCH: \"amd64\"},\n> +       {GOOS: \"windows\", GOARCH: \"amd64\"},\n> +       {GOOS: \"windows\", GOARCH: \"386\"},\n> +}\n> +\n> +func contextName(c *build.Context) string {\n> +       s := c.GOOS + \"-\" + c.GOARCH\n> +       if c.CgoEnabled {\n> +               return s + \"-cgo\"\n> +       }\n> +       return s\n> +}\n> +\n>  func main() {\n>        flag.Parse()\n>\n> @@ -48,28 +69,54 @@\n>                pkgs = strings.Fields(string(stds))\n>        }\n>\n> -       w := NewWalker()\n>        tree, _, err := build.FindTree(\"os\") // some known package\n>        if err != nil {\n>                log.Fatalf(\"failed to find tree: %v\", err)\n>        }\n> -       w.tree = tree\n>\n> -       for _, pkg := range pkgs {\n> -               w.wantedPkg[pkg] = true\n> +       var featureCtx = make(map[string]map[string]**bool) // feature ->\n> context name -> true\n> +       for _, context := range contexts {\n> +               w := NewWalker()\n> +               w.context = context\n> +               w.tree = tree\n> +\n> +               for _, pkg := range pkgs {\n> +                       w.wantedPkg[pkg] = true\n> +               }\n> +\n> +               for _, pkg := range pkgs {\n> +                       if strings.HasPrefix(pkg, \"cmd/\") ||\n> +                               strings.HasPrefix(pkg, \"exp/\") ||\n> +                               strings.HasPrefix(pkg, \"old/\") {\n> +                               continue\n> +                       }\n> +                       if !tree.HasSrc(pkg) {\n> +                               log.Fatalf(\"no source in tree for package\n> %q\", pkg)\n> +                       }\n> +                       w.WalkPackage(pkg)\n> +               }\n> +               ctxName := contextName(context)\n> +               for _, f := range w.Features() {\n> +                       if _, ok := featureCtx[f]; !ok {\n> +                               featureCtx[f] = make(map[string]bool)\n> +                       }\n> +                       featureCtx[f][ctxName] = true\n> +               }\n>        }\n>\n> -       for _, pkg := range pkgs {\n> -               if strings.HasPrefix(pkg, \"cmd/\") ||\n> -                       strings.HasPrefix(pkg, \"exp/\") ||\n> -                       strings.HasPrefix(pkg, \"old/\") {\n> +       var features []string\n> +       for f, cmap := range featureCtx {\n> +               if len(cmap) == len(contexts) {\n> +                       features = append(features, f)\n>                        continue\n>                }\n> -               if !tree.HasSrc(pkg) {\n> -                       log.Fatalf(\"no source in tree for package %q\", pkg)\n> +               comma := strings.Index(f, \",\")\n> +               for cname := range cmap {\n> +                       f2 := fmt.Sprintf(\"%s (%s)%s\", f[:comma], cname,\n> f[comma:])\n> +                       features = append(features, f2)\n>                }\n> -               w.WalkPackage(pkg)\n>        }\n> +       sort.Strings(features)\n>\n>        bw := bufio.NewWriter(os.Stdout)\n>        defer bw.Flush()\n> @@ -81,7 +128,7 @@\n>                }\n>                v1 := strings.Split(string(bs), \"\\n\")\n>                sort.Strings(v1)\n> -               v2 := w.Features()\n> +               v2 := features\n>                take := func(sl *[]string) string {\n>                        s := (*sl)[0]\n>                        *sl = (*sl)[1:]\n> @@ -99,7 +146,7 @@\n>                        }\n>                }\n>        } else {\n> -               for _, f := range w.Features() {\n> +               for _, f := range features {\n>                        fmt.Fprintf(bw, \"%s\\n\", f)\n>                }\n>        }\n> @@ -112,6 +159,7 @@\n>  }\n>\n>  type Walker struct {\n> +       context         *build.Context\n>        tree            *build.Tree\n>        fset            *token.FileSet\n>        scope           []string\n> @@ -221,8 +269,17 @@\n>        }()\n>        dir := filepath.Join(w.tree.SrcDir(), filepath.FromSlash(name))\n>\n> -       info, err := build.ScanDir(dir)\n> +       var info *build.DirInfo\n> +       var err error\n> +       if ctx := w.context; ctx != nil {\n> +               info, err = ctx.ScanDir(dir)\n> +       } else {\n> +               info, err = build.ScanDir(dir)\n> +       }\n>        if err != nil {\n> +               if strings.Contains(err.Error(), \"no Go source files\") {\n> +                       return\n> +               }\n>                log.Fatalf(\"pkg %q, dir %q: ScanDir: %v\", name, dir, err)\n>        }\n>\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-03 19:49:39.839582",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg",
+			"disapproval": false,
+			"date": "2012-02-03 19:45:09.050513",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "review away, then.\n\nOn Fri, Feb 3, 2012 at 11:50 AM, Russ Cox <rsc@golang.org> wrote:\n\n> I don't think it's worth the effort to shorten.\n>\n",
+			"disapproval": false,
+			"date": "2012-02-03 20:10:29.856122",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/5626045/diff/1002/src/cmd/api/goapi.go\nFile src/cmd/api/goapi.go (right):\n\nhttp://codereview.appspot.com/5626045/diff/1002/src/cmd/api/goapi.go#newcode100\nsrc/cmd/api/goapi.go:100: if _, ok := featureCtx[f]; !ok {\nif featureCtx[f] == nil {",
+			"disapproval": false,
+			"date": "2012-02-03 20:33:49.629720",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't think it's worth the effort to shorten.\n",
+			"disapproval": false,
+			"date": "2012-02-03 19:50:54.032661",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=73a4a2506d41 ***\n\ncmd/api: compare multiple contexts\n\nR=golang-dev, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5626045",
+			"disapproval": false,
+			"date": "2012-02-08 02:13:18.027904",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 5626045: cmd/api: compare multiple contexts",
+	"created": "2012-02-03 19:44:21.703151",
+	"patchsets": [
+		1,
+		2001,
+		1002,
+		8001
+	],
+	"modified": "2012-02-08 02:13:19.907866",
+	"closed": true,
+	"issue": 5626045
+}

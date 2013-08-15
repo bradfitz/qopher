@@ -1,0 +1,146 @@
+{
+	"description": "cmd/go: local import fixes\n\n1) The -D argument should always be a pseudo-import path,\nlike _/Users/rsc/foo/bar, never a standard import path,\nbecause we want local imports to always resolve to pseudo-paths.\n\n2) Disallow local imports in non-local packages.  Otherwise\neverything works but you get two copies of a package\n(the real one and the \"local\" one) in your binary.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"yiyu.jgl@gmail.com"
+	],
+	"reviewers": [
+		"rliebling@gmail.com",
+		"mirtchovski@gmail.com",
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-03-08 16:58:00.603648",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n On Mar 8, 2012 8:58 AM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> cmd/go: local import fixes\n>\n> 1) The -D argument should always be a pseudo-import path,\n> like _/Users/rsc/foo/bar, never a standard import path,\n> because we want local imports to always resolve to pseudo-paths.\n>\n> 2) Disallow local imports in non-local packages.  Otherwise\n> everything works but you get two copies of a package\n> (the real one and the \"local\" one) in your binary.\n>\n> Please review this at http://codereview.appspot.com/**5787055/<http://codereview.appspot.com/5787055/>\n>\n> Affected files:\n>  M src/cmd/go/build.go\n>  M src/cmd/go/pkg.go\n>\n>\n> Index: src/cmd/go/build.go\n> ==============================**==============================**=======\n> --- a/src/cmd/go/build.go\n> +++ b/src/cmd/go/build.go\n> @@ -383,6 +383,7 @@\n>\n>        bp, err := ctxt.ImportDir(dir, 0)\n>        pkg := new(Package)\n> +       pkg.local = true\n>        pkg.load(&stk, bp, err)\n>        pkg.localPrefix = dirToImportPath(dir)\n>        pkg.ImportPath = \"command-line-arguments\"\n> @@ -1202,7 +1203,7 @@\n>\n>  func (gcToolchain) ld(b *builder, p *Package, out string, allactions\n> []*action, mainpkg string, ofiles []string) error {\n>        importArgs := b.includeArgs(\"-L\", allactions)\n> -       return b.run(p.Dir, p.ImportPath, tool(archChar+\"l\"), \"-o\", out,\n> importArgs, buildLdflags, mainpkg)\n> +       return b.run(\".\", p.ImportPath, tool(archChar+\"l\"), \"-o\", out,\n> importArgs, buildLdflags, mainpkg)\n>  }\n>\n>  func (gcToolchain) cc(b *builder, p *Package, objdir, ofile, cfile\n> string) error {\n> @@ -1284,7 +1285,7 @@\n>                ldflags = append(ldflags, afile)\n>        }\n>        ldflags = append(ldflags, cgoldflags...)\n> -       return b.run(p.Dir, p.ImportPath, \"gccgo\", \"-o\", out,\n> buildGccgoflags, ofiles, \"-Wl,-(\", ldflags, \"-Wl,-)\")\n> +       return b.run(\".\", p.ImportPath, \"gccgo\", \"-o\", out,\n> buildGccgoflags, ofiles, \"-Wl,-(\", ldflags, \"-Wl,-)\")\n>  }\n>\n>  func (gccgcToolchain) cc(b *builder, p *Package, objdir, ofile, cfile\n> string) error {\n> Index: src/cmd/go/pkg.go\n> ==============================**==============================**=======\n> --- a/src/cmd/go/pkg.go\n> +++ b/src/cmd/go/pkg.go\n> @@ -279,9 +279,8 @@\n>        p.copyBuild(bp)\n>\n>        // The localPrefix is the path we interpret ./ imports relative to.\n> -       // Now that we've fixed the import path, it's just the import path.\n>        // Synthesized main packages sometimes override this.\n> -       p.localPrefix = p.ImportPath\n> +       p.localPrefix = dirToImportPath(p.Dir)\n>\n>        if err != nil {\n>                p.Incomplete = true\n> @@ -343,6 +342,16 @@\n>                }\n>                p1 := loadImport(path, p.Dir, stk, p.build.ImportPos[path])\n>                if p1.local {\n> +                       if !p.local && p.Error == nil {\n> +                               p.Error = &PackageError{\n> +                                       ImportStack: stk.copy(),\n> +                                       Err: fmt.Sprintf(\"local import %q\n> in non-local package\", path),\n> +                               }\n> +                               pos := p.build.ImportPos[path]\n> +                               if len(pos) > 0 {\n> +                                       p.Error.Pos = pos[0].String()\n> +                               }\n> +                       }\n>                        path = p1.ImportPath\n>                        importPaths[i] = path\n>                }\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-03-09 07:12:46.619036",
+			"approval": true
+		},
+		{
+			"sender": "yiyu.jgl@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\n\nOn Thursday, 8 March 2012 17:58:00 UTC+1, rsc wrote:\n>\n>\n> 2) Disallow local imports in non-local packages.  Otherwise\n> everything works but you get two copies of a package\n> (the real one and the \"local\" one) in your binary.\n>\n\nWouldn't it be possible to only install it as \"the real one\"?\n\nAs I said in go-nuts \n[https://groups.google.com/d/topic/golang-nuts/7t_KN1LdOSA/discussion], I \nthink there are some useful uses of relative import paths (I can explain \nthem if you want, maybe there are better ways to do what I have in mind).\n\nIf there is no clear decision on how local imports should work, may it be \nleft undefined in Go1 so it can be figured out later?\n",
+			"disapproval": false,
+			"date": "2012-03-09 08:29:53.939686",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Mar 9, 2012 at 03:29, yiyus <yiyu.jgl@gmail.com> wrote:\n> Wouldn't it be possible to only install it as \"the real one\"?\n>\n> As I said in go-nuts\n> [https://groups.google.com/d/topic/golang-nuts/7t_KN1LdOSA/discussion], I\n> think there are some useful uses of relative import paths (I can explain\n> them if you want, maybe there are better ways to do what I have in mind).\n>\n> If there is no clear\u00a0decision\u00a0on how local imports should work, may it be\n> left undefined in Go1 so it can be figured out later?\n\nI saw that discussion.  I wrote this CL so that people won't start doing that.\nSource files are significantly less portable if you are using relative imports,\nbecause now you can't resolve anything without knowing where the file\ncame from.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-03-09 17:45:06.526942",
+			"approval": false
+		},
+		{
+			"sender": "yiyu.jgl@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\n\nOn Friday, 9 March 2012 18:45:04 UTC+1, rsc wrote:\n>\n> I saw that discussion.  I wrote this CL so that people won't start doing \n> that.\n> Source files are significantly less portable if you are using relative \n> imports,\n>\n\nFair enough.\n\nAll my concerns with the go tool would have been solved using links. Since \nthat won't happen, I thought local paths may be a good way to have \n\"relocatable source\", but it looks like that is not possible and the go \ntool is not as flexible with source location as I would like.\n\nI guess that is a feature I will have to learn to appreciate instead of \ntrying to fight against it. You have been right in similar arguments \nbefore, so I will try.\n",
+			"disapproval": false,
+			"date": "2012-03-09 18:06:58.472880",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"yiyu.jgl@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as fc524d42fb8c ***\n\ncmd/go: local import fixes\n\n1) The -D argument should always be a pseudo-import path,\nlike _/Users/rsc/foo/bar, never a standard import path,\nbecause we want local imports to always resolve to pseudo-paths.\n\n2) Disallow local imports in non-local packages.  Otherwise\neverything works but you get two copies of a package\n(the real one and the \"local\" one) in your binary.\n\nR=golang-dev, bradfitz, yiyu.jgl\nCC=golang-dev\nhttp://codereview.appspot.com/5787055",
+			"disapproval": false,
+			"date": "2012-03-11 19:53:47.612434",
+			"approval": false
+		},
+		{
+			"sender": "rliebling@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm hoping I misunderstand this.  So, please correct me if so.  Let me give \r\nan example I think is important, and should be considered important in the \r\ndesign of Go.  \r\n\r\nSuppose i have a hypothetical project constant_time_sorting which has 3 \r\npackages, the main constant_time_sorting along with subpackages \r\nmagic_algorithm and utilities organized like so:\r\nconstant_time_sorting/\r\n    magic_algorithm/\r\n    utilities/\r\n\r\nAnd, i host this project on github at \r\ngithub.com/rliebling/constant_time_sorting\r\n\r\nIf i understand correctly, to import my subpackages (magic_algorithm and \r\nutilities) i will not be able to use a local import (since my project is \r\nhosted on github.com, obtained via go get \r\ngithub.com/rliebling/constant_time_sorting, it is not a local project). \r\n So, i have to specify the full import path for magic_algorithm and \r\nutilities.  \r\n\r\nNow, if someone else were to fork my project (say to fix a bug), they will \r\nhave to change the import paths before being able to build their copy of \r\nthis project (since it is also a remote project).  They fix the bug and \r\nkindly submit a pull request to me to incorporate into what will quickly \r\nbecome a popular Go project.  However, someone has to play some games with \r\nthe pull request (either the submitter or the receiver) since the changes \r\nthey had to make included changing import paths.\r\n\r\nThis seems like a serious impediment to a common github workflow.  And, \r\nit's not really unique to github either.  the point is that one cannot just \r\nfork a project and have it build without first making changes.  And, that \r\nseems like a bad call.  Admittedly, i don't understand what it would take \r\nto implement a solution that allows local (relative) imports within a \r\nremote project but it seems like a very important feature and I would \r\nencourage the team to make it happen.  I have not done much go programming, \r\nbut it's already negatively impacted me several times.\r\n\r\nbest\r\nrich\r\n\r\n\r\nOn Sunday, March 11, 2012 12:53:47 PM UTC-7, rsc wrote:\r\n>\r\n> *** Submitted as fc524d42fb8c ***\r\n>\r\n> cmd/go: local import fixes\r\n>\r\n> 1) The -D argument should always be a pseudo-import path,\r\n> like _/Users/rsc/foo/bar, never a standard import path,\r\n> because we want local imports to always resolve to pseudo-paths.\r\n>\r\n> 2) Disallow local imports in non-local packages.  Otherwise\r\n> everything works but you get two copies of a package\r\n> (the real one and the \"local\" one) in your binary.\r\n>\r\n> R=golang-dev, bradfitz, yiyu.jgl\r\n> CC=golang-dev\r\n> http://codereview.appspot.com/5787055\r\n>\r\n>\r\n> http://codereview.appspot.com/5787055/\r\n>\r\n>",
+			"disapproval": false,
+			"date": "2012-10-01 22:10:40.395210",
+			"approval": false
+		},
+		{
+			"sender": "mirtchovski@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Now, if someone else were to fork my project (say to fix a bug), they will\r\n> have to change the import paths before being able to build their copy of\r\n> this project (since it is also a remote project).  They fix the bug and\r\n> kindly submit a pull request to me to incorporate into what will quickly\r\n> become a popular Go project.  However, someone has to play some games with\r\n> the pull request (either the submitter or the receiver) since the changes\r\n> they had to make included changing import paths.\r\n\r\nthere is a trick to this which most go programmers working with github\r\nare aware of, say that i forked your github repo, my fork will be\r\ncalled 'github.com/mirtchovski/constant_time_sorting. to work with it\r\nwithout having to change any import paths i would:\r\n\r\n$ cd $GOROOT/src/github.com/rliebling/\r\n$ rm -rf constant_time_sorting\r\n$ git clone github.com/mirtchovski/constant_time_sorting\r\n\r\nthat replaces your repository with my fork but doesn't change any import paths.\r\n",
+			"disapproval": false,
+			"date": "2012-10-01 23:28:32.736130",
+			"approval": false
+		},
+		{
+			"sender": "mirtchovski@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> $ cd $GOROOT/src/github.com/rliebling/\r\n> $ rm -rf constant_time_sorting\r\n> $ git clone github.com/mirtchovski/constant_time_sorting\r\n\r\nthat's GOPATH, of course.\r\n",
+			"disapproval": false,
+			"date": "2012-10-01 23:30:06.442900",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> $ cd $GOROOT/src/github.com/rliebling/\r\n> $ rm -rf constant_time_sorting\r\n> $ git clone github.com/mirtchovski/constant_time_sorting\r\n>\r\n> that replaces your repository with my fork but doesn't change any import paths.\r\n\r\nOr even easier\r\n\r\ncd $PKG\r\ngit checkout master   #don't blame me for this git facepalm\r\nvim vim vim\r\ngit commit\r\ngit push $YOURFORK\r\n",
+			"disapproval": false,
+			"date": "2012-10-01 23:30:42.754530",
+			"approval": false
+		},
+		{
+			"sender": "rliebling@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks everyone for the suggestions of how to cope with this problem. \r\n However, while these approaches help an individual cope, they are, in my \r\nview, not well suited to team development where the team cannot wait for \r\nthe patch to be accepted.  \r\n\r\nThey will instead import their own fork of the 3rd party library until that \r\ntime. Meanwhile, they will have to have one version to submit a patch, as \r\ndescribed in the several responses to my original question, and another \r\nversion to actually reference in their code.  Consider also the case where \r\na hierarchy of repos is used for a project, with different gatekeepers at \r\nthe different levels (eg used by linux, but presumably used in other \r\nprojects, as well.)  In this case, again, one cannot simply accept standard \r\npatches from the lower repos because import statements will need to be \r\nchanged to move the code from one repo to another.\r\n\r\nRuss stated earlier:\r\n\r\n>   Source files are significantly less portable if you are using relative \r\n> imports,\r\n>   because now you can't resolve anything without knowing where the file \r\n> came from.\r\n\r\nMy contention is this addresses the wrong problem.  First, the standard \r\nunit of reuse should be the package, not the source file. Source files in \r\nGo are already hard to reuse just by copying to another package, as the \r\nfile likely depends on other files in the same package without any explicit \r\nreference to those files.  But, more importantly, i think the github \r\napproach to code reuse is significantly more common and more important.  In \r\nthis approach one uses some open source library (eg using rubygems/bundler \r\nin ruby), specifying some version constraint, btw. When the need arises to \r\nmake your own changes/fixes/enhancements to that, you fork it, and use your \r\nown fork up until your changes have been accepted by the original \r\nmaintainer (if ever).  This approach has led to flourishing development \r\ncommunities with constantly improving libraries.  Encouraging instead a \r\nsystem where developers merely appropriate individual source files for \r\ntheir own use runs counter to this approach.\r\n\r\nBut, maybe the point of all this is that we should just not use \"go get\" or \r\n\"go install\" because the package management aspects leads to these \r\ndifficulties.  I see two paths:\r\n  1.  never use 'remote imports': treat all packages as local so this \r\nrequirement vanishes.  Someone writes a package management tool for Go that \r\nbehaves this way and life gets better.\r\n  2. Separate the notion of the source repo for the code from the directory \r\nand import naming scheme.  Esssentially this is how java works, where \r\npackages might be named com.facebook.api.something, but the source code for \r\nit might come from your local fork of the project or someone else's. \r\n Again, someone needs to write a tool to make this easy to get code and \r\nbuild it.  (Please don't make everything xml, like java/maven/ant.)\r\nThe bottom line seems to be that \"go get\" and \"go install\" don't cut it.\r\n  \r\nThe current situation creates annoying friction to collaboration with Go. \r\n The result will be less collaboration, which will be a loss for the whole \r\nGo community.  I hope you will reconsider this issue.  The answer need not \r\nbe allowing local imports.  But, something in my view needs to be done to \r\neliminate the friction of forking a Go project involving multiple packages.\r\n\r\nbest,\r\nrich\r\n\r\n\r\nOn Monday, October 1, 2012 4:30:44 PM UTC-7, Dave Cheney wrote:\r\n>\r\n> > $ cd $GOROOT/src/github.com/rliebling/ \r\n> > $ rm -rf constant_time_sorting \r\n> > $ git clone github.com/mirtchovski/constant_time_sorting \r\n> > \r\n> > that replaces your repository with my fork but doesn't change any import \r\n> paths. \r\n>\r\n> Or even easier \r\n>\r\n> cd $PKG \r\n> git checkout master   #don't blame me for this git facepalm \r\n> vim vim vim \r\n> git commit \r\n> git push $YOURFORK \r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-02 16:26:54.495740",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5787055: cmd/go: local import fixes",
+	"created": "2012-03-08 16:38:44.216942",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		8001
+	],
+	"modified": "2012-10-01 23:30:42.856720",
+	"closed": true,
+	"issue": 5787055
+}

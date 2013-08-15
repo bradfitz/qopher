@@ -1,0 +1,230 @@
+{
+	"description": "cmd/cc, cmd/gc, runtime: emit bitmaps for scanning locals.\n\nPreviously, all word aligned locations in the local variables\narea were scanned as conservative roots.  With this change, a\nbitmap is generated describing the locations of pointer values\nin local variables.\n\nWith this change the argument bitmap information has been\nchanged to only store information about arguments.  The locals\nmember, has been removed.  In its place, the bitmap data for\nlocal variables is now used to store the size of locals.  If\nthe size is negative, the magnitude indicates the size of the\nlocal variables area.",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12328044/diff/5001/src/cmd/gc/pgen.c\nFile src/cmd/gc/pgen.c (right):\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/cmd/gc/pgen.c#newcode172\nsrc/cmd/gc/pgen.c:172: dumpgcargs(fn, gcargssym);\ncan this move down next to dumpglocals, so that all the gc stuff is together?\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/funcdata.h\nFile src/pkg/runtime/funcdata.h (right):\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/funcdata.h#newcode12\nsrc/pkg/runtime/funcdata.h:12: #define FUNCDATA_GCARGS 0 /* garbage collector blocks */\nGCArgs\nGCLocals\n\n(to match Go naming for the suffix, and PCDATA_ArgSize)\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1395\nsrc/pkg/runtime/mgc0.c:1395: typedef struct BitVector BitVector;\nmove above struct definition (that's just more common in this code)\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1399\nsrc/pkg/runtime/mgc0.c:1399: scanbitvector(byte* scanp, BitVector *bv)\ns/byte* /byte */\nEven better, though, use uintptr *scanp and then scanp increments as you need.\n\nI think the loop can be significantly tighter: j, remptrs, and scanp are operating in lock step and can be reduced to just scanp. The bit b can be removed by shifting w right instead of shifting b left.\n\nuint32 i;\nuintptr *endw, *end;\n\ni = 0;\nend = scanp + bv->n;\nwhile(scanp < end) {\n    // Process up to 32 pointers using next uint32 in bitmap.\n    w = bv->data[i++];\n    if(end - scanp < 32)\n        endw = end;\n    else\n        endw = scanp + 32;\n    for(; scanp < endw; scanp++) {\n        if(w & 1)\n            addroot((Obj){scanp, PtrSize, 0});\n        w >>= 1;\n    }\n}\n\nI believe this loop also fixes a bug in the current code: remptrs = bv->n implies that bv->n is the number of bits, while i < bv->n implies that bv->n is the number of uint32s. I think it is the number of bits, so the current test should be i*32 < bv->n. But that goes away in the rewrite.\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1428\nsrc/pkg/runtime/mgc0.c:1428: intptr sz;\nintptr is not declared on all of our operating systems, and it's hard to use correctly on 32-bit systems, although in this case i don't think you need to worry about 2 GB frames. Still, avoid it. Here you can replace sz > 0 with varp > sp, and then compute sz inside the if.\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1439\nsrc/pkg/runtime/mgc0.c:1439: } else if(locals->n >= 0) {\nPlease flip this so that the tiny cases are earlier. It just makes it a little easier to read because I don't have to remember the condition across the long body here. There's also a good opportunity to reuse sz, to make the cases clearly similar.\n\nif(locals == nil) {\n   addroot((Obj){frame->varp - sz, sz, 0});\n} else if(locals->n < 0) {\n   // No bitmap, only size of local block.\n   sz = -locals->n;\n   addroot((Obj){frame->varp - sz, sz, 0});\n} else {\n   // Bitmap present.\n   ...\n}\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1452\nsrc/pkg/runtime/mgc0.c:1452: if(f->args > 0 && args != nil && args->n > 0) {\nCan we drop f->args > 0 ?\nI'd like the option to remove that from the Func entirely.",
+			"disapproval": false,
+			"date": "2013-08-03 03:15:30.781190",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-03 00:10:11.557420",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks pretty good. \n\nI was hoping that there would be just a single FUNCDATA for garbage collection information. It should be straightforward to put the data in a single symbol, and doing so will keep the pcln table entries small, since they will not need pointers to multiple symbols. What do you think?",
+			"disapproval": false,
+			"date": "2013-08-03 01:01:36.207000",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12328044/diff/5001/src/cmd/gc/pgen.c\nFile src/cmd/gc/pgen.c (left):\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/cmd/gc/pgen.c#oldcode187\nsrc/cmd/gc/pgen.c:187: off = 0;\nSpecifically, if dumpgcargs and dumpgclocals return the number of words they wrote, you can do:\n\noff = 8;\nn = dumpgcargs(gcsym, off, curfn);\nduint32(gcsym, 0, n); // uint32 numargs\noff += 4*n;\nn = dumpgclocals(gcsym, off, curfn);\nduint32(gcsym, 4, n); // uint32 numlocals\noff += 4*n;\nggloblsym(gcsym, off, 0, 1);\n\nAnd it is still possible to add a pointer to a shared bitmap if we start coalescing.",
+			"disapproval": false,
+			"date": "2013-08-03 01:11:04.173360",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If I understand your comment in src/cmd/gc/pgen.c correctly, the data would end up looking like this\n\nstruct gcsym {\n  int32 args\n  uint32 data[args]\n  int32 locals\n  uint32 moredata[]\n}\n\nIs that right?\n\nI think the opportunities for coalescing are better when the data is kept separate.  However, combining the data as you describe is certainly an easy change to make.",
+			"disapproval": false,
+			"date": "2013-08-03 01:53:43.525330",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 2, 2013 at 9:53 PM, <cshapiro@google.com> wrote:\r\n\r\n> If I understand your comment in src/cmd/gc/pgen.c correctly, the data\r\n> would end up looking like this\r\n>\r\n> struct gcsym {\r\n>   int32 args\r\n>   uint32 data[args]\r\n>   int32 locals\r\n>   uint32 moredata[]\r\n> }\r\n>\r\n> Is that right?\r\n>\r\n\r\nAlmost. The data structure in my comment would end up being\r\n\r\nint32 numargs\r\nint32 numlocals\r\nuint32 args[numargs]\r\nuint32 locals[numlocals]\r\n\r\noff starts at 8 to reserve space for the first two, and then they are\r\nfilled in as they are learned.\r\n\r\nI do understand that coalescing will be slightly more difficult, but when\r\nwe get to pc-dependent bitmaps I don't believe we should emit a funcdata\r\nfor each bitmap, because it could require the entire space of identifiers.\r\nInstead I expect that this struct will evolve to include pointers to other\r\nsymbols, still using a single funcdata for the struct.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-03 02:06:22.968100",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 2, 2013 at 7:06 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Almost. The data structure in my comment would end up being\r\n>\r\n> int32 numargs\r\n> int32 numlocals\r\n> uint32 args[numargs]\r\n> uint32 locals[numlocals]\r\n>\r\n> off starts at 8 to reserve space for the first two, and then they are\r\n> filled in as they are learned.\r\n>\r\n\r\nGot it.\r\n\r\n\r\n> I do understand that coalescing will be slightly more difficult, but when\r\n> we get to pc-dependent bitmaps I don't believe we should emit a funcdata\r\n> for each bitmap, because it could require the entire space of identifiers.\r\n>\r\n\r\nThe data structure in that change is quite different.  A single bitmap is\r\nused that is an image of the entire frame.  It covers both local variables\r\nand arguments.  A single funcdata is used that contains the concatenation\r\nof all bitmaps for a function at each program counter location.  To\r\nretrieve a bitmap the corresponding pcdata is multiplied by the bitmap size\r\nto become an index into the array of bitmap values.\r\n\r\nI am not sure my decision to combine the local variables and arguments was\r\na good one.  Because the argument data varies less over time than the local\r\nvariable data, splitting the data structure in two has a strong advantage\r\nwhen coalescing.\r\n\r\nInstead I expect that this struct will evolve to include pointers to other\r\n> symbols, still using a single funcdata for the struct.\r\n>\r\n\r\nI understand the concern.  I believe there will not be a need for more than\r\ntwo funcdata structures.\r\n",
+			"disapproval": false,
+			"date": "2013-08-03 02:19:00.979010",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/cmd/gc/pgen.c\nFile src/cmd/gc/pgen.c (right):\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/cmd/gc/pgen.c#newcode172\nsrc/cmd/gc/pgen.c:172: dumpgcargs(fn, gcargssym);\nOn 2013/08/03 03:15:31, rsc wrote:\n> can this move down next to dumpglocals, so that all the gc stuff is together?\n\nDone.\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/funcdata.h\nFile src/pkg/runtime/funcdata.h (right):\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/funcdata.h#newcode12\nsrc/pkg/runtime/funcdata.h:12: #define FUNCDATA_GCARGS 0 /* garbage collector blocks */\nOn 2013/08/03 03:15:31, rsc wrote:\n> GCArgs\n> GCLocals\n> \n> (to match Go naming for the suffix, and PCDATA_ArgSize)\n\nDone.\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1395\nsrc/pkg/runtime/mgc0.c:1395: typedef struct BitVector BitVector;\nOn 2013/08/03 03:15:31, rsc wrote:\n> move above struct definition (that's just more common in this code)\n\nDone.\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1399\nsrc/pkg/runtime/mgc0.c:1399: scanbitvector(byte* scanp, BitVector *bv)\nI have rewritten this function to improve its brevity.  I originally used your code as is but it generated more object code.\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1428\nsrc/pkg/runtime/mgc0.c:1428: intptr sz;\nOn 2013/08/03 03:15:31, rsc wrote:\n> intptr is not declared on all of our operating systems, and it's hard to use\n> correctly on 32-bit systems, although in this case i don't think you need to\n> worry about 2 GB frames. Still, avoid it. Here you can replace sz > 0 with varp\n> > sp, and then compute sz inside the if.\n\nDone.\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1439\nsrc/pkg/runtime/mgc0.c:1439: } else if(locals->n >= 0) {\nOn 2013/08/03 03:15:31, rsc wrote:\n> Please flip this so that the tiny cases are earlier. It just makes it a little\n> easier to read because I don't have to remember the condition across the long\n> body here. There's also a good opportunity to reuse sz, to make the cases\n> clearly similar.\n> \n> if(locals == nil) {\n>    addroot((Obj){frame->varp - sz, sz, 0});\n> } else if(locals->n < 0) {\n>    // No bitmap, only size of local block.\n>    sz = -locals->n;\n>    addroot((Obj){frame->varp - sz, sz, 0});\n> } else {\n>    // Bitmap present.\n>    ...\n> }\n\nDone.\n\nhttps://codereview.appspot.com/12328044/diff/5001/src/pkg/runtime/mgc0.c#newcode1452\nsrc/pkg/runtime/mgc0.c:1452: if(f->args > 0 && args != nil && args->n > 0) {\nOn 2013/08/03 03:15:31, rsc wrote:\n> Can we drop f->args > 0 ?\n> I'd like the option to remove that from the Func entirely.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-08-06 00:05:36.659320",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM with changes\n\nI assume the next step (in a different CL) is to emit code at the beginning of Go functions to zero the pointer slots in the stack frame. At that point we should not have any uninitialized data being treated as pointers in Go frames.\n\nhttps://codereview.appspot.com/12328044/diff/21001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/12328044/diff/21001/src/pkg/runtime/mgc0.c#newcode1408\nsrc/pkg/runtime/mgc0.c:1408: for(i = MIN(remptrs, 32); i > 0; i--) {\nPlease just use a variable and an if statement instead of a macro.\nMacros make code harder to read and maintain.\nYou've already got the variable.\n\nhttps://codereview.appspot.com/12328044/diff/21001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/12328044/diff/21001/src/pkg/runtime/runtime.h#newcode546\nsrc/pkg/runtime/runtime.h:546: #define MIN(x, y)\t((x)<(y)?(x):(y))\nMore #define macros are not okay here. See the comment above.\nEven I don't have super-gopher-guru privilege to add to this list.",
+			"disapproval": false,
+			"date": "2013-08-06 17:11:40.653940",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "My panda has ~800 mb free, the rpi on to its right < 400\r\n\r\n[2196103.666107] Out of memory: Kill process 31904 (5g) score 843 or\r\nsacrifice child\r\n[2196103.674072] Killed process 31904 (5g) total-vm:846788kB,\r\nanon-rss:843692kB, file-rss:8kB\r\n\r\nOn Thu, Aug 8, 2013 at 11:03 AM, Carl Shapiro <cshapiro@google.com> wrote:\r\n> On Wed, Aug 7, 2013 at 5:50 PM, <dave@cheney.net> wrote:\r\n>>\r\n>> I think CL is triggering a large memory allocation in the compiler. Some\r\n>> of the arm builders, running without swap, are failing.\r\n>\r\n>\r\n> Thanks for the report, I will look into this.  How much memory do these\r\n> machines typically have free?\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 01:05:19.207510",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I will submit this change shortly.\n\nhttps://codereview.appspot.com/12328044/diff/21001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/12328044/diff/21001/src/pkg/runtime/mgc0.c#newcode1408\nsrc/pkg/runtime/mgc0.c:1408: for(i = MIN(remptrs, 32); i > 0; i--) {\nOn 2013/08/06 17:11:40, rsc wrote:\n> Please just use a variable and an if statement instead of a macro.\n> Macros make code harder to read and maintain.\n> You've already got the variable.\n> \n\nDone.\n\nhttps://codereview.appspot.com/12328044/diff/21001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/12328044/diff/21001/src/pkg/runtime/runtime.h#newcode546\nsrc/pkg/runtime/runtime.h:546: #define MIN(x, y)\t((x)<(y)?(x):(y))\nOn 2013/08/06 17:11:40, rsc wrote:\n> More #define macros are not okay here. See the comment above.\n> Even I don't have super-gopher-guru privilege to add to this list.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-08-07 19:36:25.580450",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=d91993212194 ***\n\ncmd/cc, cmd/gc, runtime: emit bitmaps for scanning locals.\n\nPreviously, all word aligned locations in the local variables\narea were scanned as conservative roots.  With this change, a\nbitmap is generated describing the locations of pointer values\nin local variables.\n\nWith this change the argument bitmap information has been\nchanged to only store information about arguments.  The locals\nmember, has been removed.  In its place, the bitmap data for\nlocal variables is now used to store the size of locals.  If\nthe size is negative, the magnitude indicates the size of the\nlocal variables area.\n\nR=rsc\nCC=golang-dev\nhttps://codereview.appspot.com/12328044",
+			"disapproval": false,
+			"date": "2013-08-07 19:47:04.757130",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"cshapiro@google.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/07 19:47:04, cshapiro1 wrote:\n> *** Submitted as https://code.google.com/p/go/source/detail?r=d91993212194 ***\n> \n> cmd/cc, cmd/gc, runtime: emit bitmaps for scanning locals.\n> \n> Previously, all word aligned locations in the local variables\n> area were scanned as conservative roots.  With this change, a\n> bitmap is generated describing the locations of pointer values\n> in local variables.\n> \n> With this change the argument bitmap information has been\n> changed to only store information about arguments.  The locals\n> member, has been removed.  In its place, the bitmap data for\n> local variables is now used to store the size of locals.  If\n> the size is negative, the magnitude indicates the size of the\n> local variables area.\n> \n> R=rsc\n> CC=golang-dev\n> https://codereview.appspot.com/12328044\n\nI think CL is triggering a large memory allocation in the compiler. Some of the arm builders, running without swap, are failing.",
+			"disapproval": false,
+			"date": "2013-08-08 00:50:10.965740",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 7, 2013 at 5:50 PM, <dave@cheney.net> wrote:\r\n\r\n> I think CL is triggering a large memory allocation in the compiler. Some\r\n> of the arm builders, running without swap, are failing.\r\n>\r\n\r\nThanks for the report, I will look into this.  How much memory do these\r\nmachines typically have free?\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 01:03:43.565880",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 7, 2013 at 6:05 PM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> My panda has ~800 mb free, the rpi on to its right < 400\r\n>\r\n> [2196103.666107] Out of memory: Kill process 31904 (5g) score 843 or\r\n> sacrifice child\r\n> [2196103.674072] Killed process 31904 (5g) total-vm:846788kB,\r\n> anon-rss:843692kB, file-rss:8kB\r\n>\r\n\r\nInteresting.  The ARM machine I use for testing has about 1.3gb free which\r\nmight explain why I have not observe an OOM.  I will take a close look at\r\nthis later tonight.  Hopefully, something will jump out.\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 01:13:06.022280",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think the other panda builder has some swap. Combined with the linux\r\novercommit behavior, means you can allocate gigabytes.\r\n\r\nOn Thu, Aug 8, 2013 at 11:12 AM, Carl Shapiro <cshapiro@google.com> wrote:\r\n> On Wed, Aug 7, 2013 at 6:05 PM, Dave Cheney <dave@cheney.net> wrote:\r\n>>\r\n>> My panda has ~800 mb free, the rpi on to its right < 400\r\n>>\r\n>> [2196103.666107] Out of memory: Kill process 31904 (5g) score 843 or\r\n>> sacrifice child\r\n>> [2196103.674072] Killed process 31904 (5g) total-vm:846788kB,\r\n>> anon-rss:843692kB, file-rss:8kB\r\n>\r\n>\r\n> Interesting.  The ARM machine I use for testing has about 1.3gb free which\r\n> might explain why I have not observe an OOM.  I will take a close look at\r\n> this later tonight.  Hopefully, something will jump out.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 01:26:52.272280",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks pretty bad, this isn't an arm only thing.\r\n\r\nhttps://code.google.com/p/go/issues/detail?id=6077\r\n\r\nOn Thu, Aug 8, 2013 at 11:26 AM, Dave Cheney <dave@cheney.net> wrote:\r\n> I think the other panda builder has some swap. Combined with the linux\r\n> overcommit behavior, means you can allocate gigabytes.\r\n>\r\n> On Thu, Aug 8, 2013 at 11:12 AM, Carl Shapiro <cshapiro@google.com> wrote:\r\n>> On Wed, Aug 7, 2013 at 6:05 PM, Dave Cheney <dave@cheney.net> wrote:\r\n>>>\r\n>>> My panda has ~800 mb free, the rpi on to its right < 400\r\n>>>\r\n>>> [2196103.666107] Out of memory: Kill process 31904 (5g) score 843 or\r\n>>> sacrifice child\r\n>>> [2196103.674072] Killed process 31904 (5g) total-vm:846788kB,\r\n>>> anon-rss:843692kB, file-rss:8kB\r\n>>\r\n>>\r\n>> Interesting.  The ARM machine I use for testing has about 1.3gb free which\r\n>> might explain why I have not observe an OOM.  I will take a close look at\r\n>> this later tonight.  Hopefully, something will jump out.\r\n>>\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 02:03:44.262690",
+			"approval": false
+		}
+	],
+	"owner_email": "cshapiro@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "cshapiro1",
+	"subject": "code review 12328044: cmd/cc, cmd/gc, runtime: emit bitmaps for scanning locals.",
+	"created": "2013-08-03 00:07:39.858790",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		17001,
+		21001,
+		27001,
+		31001
+	],
+	"modified": "2013-08-08 02:03:44.480420",
+	"closed": true,
+	"issue": 12328044
+}

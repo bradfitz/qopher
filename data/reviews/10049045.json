@@ -1,0 +1,162 @@
+{
+	"description": "go.crypto/ssh: fix test breakages introduced by 125:40246d2ae2eb\n\n* Remove special handling for dynamically allocated\n  ports. This was a bug in OpenSSH 5.x sshd.\n\n* Run the test with a preselected port number.\n\n* Run TestPortForward only on unix platforms.",
+	"cc": [
+		"dave@cheney.net",
+		"agl@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dave@cheney.net, agl@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.crypto",
+			"disapproval": false,
+			"date": "2013-06-12 14:00:58.269230",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Note: I tested this with openssh 6.2 and 5.9\r\n\r\n\r\nOn Wed, Jun 12, 2013 at 4:00 PM,  <hanwen@google.com> wrote:\r\n> Reviewers: dfc, agl1,\r\n>\r\n> Message:\r\n> Hello dave@cheney.net, agl@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go.crypto\r\n>\r\n>\r\n> Description:\r\n> go.crypto/ssh: fix test breakages introduced by 125:40246d2ae2eb\r\n>\r\n> * Remove special handling for dynamically allocated\r\n>   ports. This was a bug in OpenSSH 5.x sshd.\r\n>\r\n> * Run the test with a preselected port number.\r\n>\r\n> * Run TestPortForward only on unix platforms.\r\n>\r\n> Please review this at https://codereview.appspot.com/10049045/\r\n>\r\n> Affected files:\r\n>   M ssh/tcpip.go\r\n>   M ssh/test/forward_unix_test.go\r\n>\r\n>\r\n> Index: ssh/tcpip.go\r\n> ===================================================================\r\n> --- a/ssh/tcpip.go\r\n> +++ b/ssh/tcpip.go\r\n> @@ -48,15 +48,8 @@\r\n>                 return nil, err\r\n>         }\r\n>\r\n> -       // Register this forward, using the port number we requested.\r\n> -       // If we requested port 0 (auto allocated port), we have to\r\n> -       // register under 0, since the channelOpenMsg will list 0\r\n> -       // rather than the allocated port number.\r\n> -       ch := c.forwardList.add(*laddr)\r\n> -\r\n>         // If the original port was 0, then the remote side will\r\n>         // supply a real port number in the response.\r\n> -       origPort := uint32(laddr.Port)\r\n>         if laddr.Port == 0 {\r\n>                 port, _, ok := parseUint32(resp.Data)\r\n>                 if !ok {\r\n> @@ -65,7 +58,14 @@\r\n>                 laddr.Port = int(port)\r\n>         }\r\n>\r\n> -       return &tcpListener{laddr, origPort, c, ch}, nil\r\n> +       // Register this forward, using the port number we obtained.\r\n> +       //\r\n> +       // This does not work on OpenSSH < 6.0, which will send a\r\n> +       // channelOpenMsg with port number 0, rather than the actual\r\n> +       // port number.\r\n> +       ch := c.forwardList.add(*laddr)\r\n> +\r\n> +       return &tcpListener{laddr, c, ch}, nil\r\n>  }\r\n>\r\n>  // forwardList stores a mapping between remote\r\n> @@ -126,10 +126,8 @@\r\n>  type tcpListener struct {\r\n>         laddr *net.TCPAddr\r\n>\r\n> -       // The port with which we made the request, which can be 0.\r\n> -       origPort uint32\r\n> -       conn     *ClientConn\r\n> -       in       <-chan forward\r\n> +       conn *ClientConn\r\n> +       in   <-chan forward\r\n>  }\r\n>\r\n>  // Accept waits for and returns the next connection to the listener.\r\n> @@ -155,13 +153,9 @@\r\n>                 \"cancel-tcpip-forward\",\r\n>                 true,\r\n>                 l.laddr.IP.String(),\r\n> -               l.origPort,\r\n> +               uint32(l.laddr.Port),\r\n>         }\r\n> -       origAddr := net.TCPAddr{\r\n> -               IP:   l.laddr.IP,\r\n> -               Port: int(l.origPort),\r\n> -       }\r\n> -       l.conn.forwardList.remove(origAddr)\r\n> +       l.conn.forwardList.remove(*l.laddr)\r\n>         if _, err := l.conn.sendGlobalRequest(m); err != nil {\r\n>                 return err\r\n>         }\r\n> Index: ssh/test/forward_unix_test.go\r\n> ===================================================================\r\n> rename from ssh/test/forward_test.go\r\n> rename to ssh/test/forward_unix_test.go\r\n> --- a/ssh/test/forward_test.go\r\n> +++ b/ssh/test/forward_unix_test.go\r\n> @@ -1,7 +1,14 @@\r\n> +// Copyright 2012 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +// +build darwin freebsd linux netbsd openbsd\r\n> +\r\n>  package test\r\n>\r\n>  import (\r\n>         \"bytes\"\r\n> +       \"fmt\"\r\n>         \"io\"\r\n>         \"io/ioutil\"\r\n>         \"math/rand\"\r\n> @@ -9,17 +16,42 @@\r\n>         \"testing\"\r\n>  )\r\n>\r\n> +// pickUnusedPort finds an unused port. Starting sshd with this\r\n> +// afterwards is a race condition, but hopefully it won't trigger too\r\n> +// often. The alternative is to start sshd in a loop, but that would\r\n> +// make it hard to distinguish port-in-use from other configuration\r\n> +// errors.\r\n> +func pickUnusedPort(t *testing.T) int {\r\n> +       l, err := net.Listen(\"tcp\", \":0\")\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"net.Listen: %v\", err)\r\n> +       }\r\n> +       port := l.Addr().(*net.TCPAddr).Port\r\n> +       if err := l.Close(); err != nil {\r\n> +               t.Fatalf(\"listener.Close: %v\", err)\r\n> +       }\r\n> +       return port\r\n> +}\r\n> +\r\n>  func TestPortForward(t *testing.T) {\r\n>         server := newServer(t)\r\n>         defer server.Shutdown()\r\n>         conn := server.Dial(clientConfig())\r\n>         defer conn.Close()\r\n>\r\n> -       sshListener, err := conn.Listen(\"tcp\", \"127.0.0.1:0\")\r\n> +       // We can't reliably test dynamic port allocation, as it does\r\n> +       // not work correctly with OpenSSH before 6.0. See also\r\n> +       // https://bugzilla.mindrot.org/show_bug.cgi?id=2017\r\n> +       port := pickUnusedPort(t)\r\n> +       sshListener, err := conn.Listen(\"tcp\", fmt.Sprintf(\"127.0.0.1:%d\",\r\n> port))\r\n>         if err != nil {\r\n>                 t.Fatalf(\"conn.Listen failed: %v\", err)\r\n>         }\r\n>\r\n> +       if sshListener.Addr().(*net.TCPAddr).Port != port {\r\n> +               t.Fatalf(\"forwarding %v, want port %d\", sshListener.Addr(),\r\n> port)\r\n> +       }\r\n> +\r\n>         go func() {\r\n>                 sshConn, err := sshListener.Accept()\r\n>                 if err != nil {\r\n>\r\n>\r\n\r\n\r\n\r\n--\r\n\r\nGoogle Germany GmbH - ABC-Str. 19 - 20354 Hamburg\r\nRegistergericht und -nummer: Hamburg, HRB 86891\r\nSitz der Gesellschaft: Hamburg - Gesch\u00e4ftsf\u00fchrer: Graham Law, Katherine Stephens\r\n",
+			"disapproval": false,
+			"date": "2013-06-12 14:14:47.244120",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Gentle ping?\r\n\r\nOn Wed, Jun 12, 2013 at 4:14 PM, Han-Wen Nienhuys <hanwen@google.com> wrote:\r\n> Note: I tested this with openssh 6.2 and 5.9\r\n>\r\n>\r\n> On Wed, Jun 12, 2013 at 4:00 PM,  <hanwen@google.com> wrote:\r\n>> Reviewers: dfc, agl1,\r\n>>\r\n>> Message:\r\n>> Hello dave@cheney.net, agl@golang.org (cc: golang-dev@googlegroups.com),\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://code.google.com/p/go.crypto\r\n>>\r\n>>\r\n>> Description:\r\n>> go.crypto/ssh: fix test breakages introduced by 125:40246d2ae2eb\r\n>>\r\n>> * Remove special handling for dynamically allocated\r\n>>   ports. This was a bug in OpenSSH 5.x sshd.\r\n>>\r\n>> * Run the test with a preselected port number.\r\n>>\r\n>> * Run TestPortForward only on unix platforms.\r\n>>\r\n>> Please review this at https://codereview.appspot.com/10049045/\r\n>>\r\n>> Affected files:\r\n>>   M ssh/tcpip.go\r\n>>   M ssh/test/forward_unix_test.go\r\n>>\r\n>>\r\n>> Index: ssh/tcpip.go\r\n>> ===================================================================\r\n>> --- a/ssh/tcpip.go\r\n>> +++ b/ssh/tcpip.go\r\n>> @@ -48,15 +48,8 @@\r\n>>                 return nil, err\r\n>>         }\r\n>>\r\n>> -       // Register this forward, using the port number we requested.\r\n>> -       // If we requested port 0 (auto allocated port), we have to\r\n>> -       // register under 0, since the channelOpenMsg will list 0\r\n>> -       // rather than the allocated port number.\r\n>> -       ch := c.forwardList.add(*laddr)\r\n>> -\r\n>>         // If the original port was 0, then the remote side will\r\n>>         // supply a real port number in the response.\r\n>> -       origPort := uint32(laddr.Port)\r\n>>         if laddr.Port == 0 {\r\n>>                 port, _, ok := parseUint32(resp.Data)\r\n>>                 if !ok {\r\n>> @@ -65,7 +58,14 @@\r\n>>                 laddr.Port = int(port)\r\n>>         }\r\n>>\r\n>> -       return &tcpListener{laddr, origPort, c, ch}, nil\r\n>> +       // Register this forward, using the port number we obtained.\r\n>> +       //\r\n>> +       // This does not work on OpenSSH < 6.0, which will send a\r\n>> +       // channelOpenMsg with port number 0, rather than the actual\r\n>> +       // port number.\r\n>> +       ch := c.forwardList.add(*laddr)\r\n>> +\r\n>> +       return &tcpListener{laddr, c, ch}, nil\r\n>>  }\r\n>>\r\n>>  // forwardList stores a mapping between remote\r\n>> @@ -126,10 +126,8 @@\r\n>>  type tcpListener struct {\r\n>>         laddr *net.TCPAddr\r\n>>\r\n>> -       // The port with which we made the request, which can be 0.\r\n>> -       origPort uint32\r\n>> -       conn     *ClientConn\r\n>> -       in       <-chan forward\r\n>> +       conn *ClientConn\r\n>> +       in   <-chan forward\r\n>>  }\r\n>>\r\n>>  // Accept waits for and returns the next connection to the listener.\r\n>> @@ -155,13 +153,9 @@\r\n>>                 \"cancel-tcpip-forward\",\r\n>>                 true,\r\n>>                 l.laddr.IP.String(),\r\n>> -               l.origPort,\r\n>> +               uint32(l.laddr.Port),\r\n>>         }\r\n>> -       origAddr := net.TCPAddr{\r\n>> -               IP:   l.laddr.IP,\r\n>> -               Port: int(l.origPort),\r\n>> -       }\r\n>> -       l.conn.forwardList.remove(origAddr)\r\n>> +       l.conn.forwardList.remove(*l.laddr)\r\n>>         if _, err := l.conn.sendGlobalRequest(m); err != nil {\r\n>>                 return err\r\n>>         }\r\n>> Index: ssh/test/forward_unix_test.go\r\n>> ===================================================================\r\n>> rename from ssh/test/forward_test.go\r\n>> rename to ssh/test/forward_unix_test.go\r\n>> --- a/ssh/test/forward_test.go\r\n>> +++ b/ssh/test/forward_unix_test.go\r\n>> @@ -1,7 +1,14 @@\r\n>> +// Copyright 2012 The Go Authors. All rights reserved.\r\n>> +// Use of this source code is governed by a BSD-style\r\n>> +// license that can be found in the LICENSE file.\r\n>> +\r\n>> +// +build darwin freebsd linux netbsd openbsd\r\n>> +\r\n>>  package test\r\n>>\r\n>>  import (\r\n>>         \"bytes\"\r\n>> +       \"fmt\"\r\n>>         \"io\"\r\n>>         \"io/ioutil\"\r\n>>         \"math/rand\"\r\n>> @@ -9,17 +16,42 @@\r\n>>         \"testing\"\r\n>>  )\r\n>>\r\n>> +// pickUnusedPort finds an unused port. Starting sshd with this\r\n>> +// afterwards is a race condition, but hopefully it won't trigger too\r\n>> +// often. The alternative is to start sshd in a loop, but that would\r\n>> +// make it hard to distinguish port-in-use from other configuration\r\n>> +// errors.\r\n>> +func pickUnusedPort(t *testing.T) int {\r\n>> +       l, err := net.Listen(\"tcp\", \":0\")\r\n>> +       if err != nil {\r\n>> +               t.Fatalf(\"net.Listen: %v\", err)\r\n>> +       }\r\n>> +       port := l.Addr().(*net.TCPAddr).Port\r\n>> +       if err := l.Close(); err != nil {\r\n>> +               t.Fatalf(\"listener.Close: %v\", err)\r\n>> +       }\r\n>> +       return port\r\n>> +}\r\n>> +\r\n>>  func TestPortForward(t *testing.T) {\r\n>>         server := newServer(t)\r\n>>         defer server.Shutdown()\r\n>>         conn := server.Dial(clientConfig())\r\n>>         defer conn.Close()\r\n>>\r\n>> -       sshListener, err := conn.Listen(\"tcp\", \"127.0.0.1:0\")\r\n>> +       // We can't reliably test dynamic port allocation, as it does\r\n>> +       // not work correctly with OpenSSH before 6.0. See also\r\n>> +       // https://bugzilla.mindrot.org/show_bug.cgi?id=2017\r\n>> +       port := pickUnusedPort(t)\r\n>> +       sshListener, err := conn.Listen(\"tcp\", fmt.Sprintf(\"127.0.0.1:%d\",\r\n>> port))\r\n>>         if err != nil {\r\n>>                 t.Fatalf(\"conn.Listen failed: %v\", err)\r\n>>         }\r\n>>\r\n>> +       if sshListener.Addr().(*net.TCPAddr).Port != port {\r\n>> +               t.Fatalf(\"forwarding %v, want port %d\", sshListener.Addr(),\r\n>> port)\r\n>> +       }\r\n>> +\r\n>>         go func() {\r\n>>                 sshConn, err := sshListener.Accept()\r\n>>                 if err != nil {\r\n>>\r\n>>\r\n>\r\n>\r\n>\r\n> --\r\n>\r\n> Google Germany GmbH - ABC-Str. 19 - 20354 Hamburg\r\n> Registergericht und -nummer: Hamburg, HRB 86891\r\n> Sitz der Gesellschaft: Hamburg - Gesch\u00e4ftsf\u00fchrer: Graham Law, Katherine Stephens\r\n\r\n\r\n\r\n-- \r\nHan-Wen Nienhuys\r\nGoogle Munich\r\nhanwen@google.com\r\n",
+			"disapproval": false,
+			"date": "2013-06-14 11:02:10.240190",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Supporting 5.9 would seem to be more important than 6 at the moment since it's the basis of Ubuntu Precise.\n\n(Of course, it would be nice to support both.)",
+			"disapproval": false,
+			"date": "2013-06-14 19:29:51.941630",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Some small comments. I'm having trouble running the tests on the machine I have today. I'll try again tomorrow.\n\nhttps://codereview.appspot.com/10049045/diff/7003/ssh/test/forward_unix_test.go\nFile ssh/test/forward_unix_test.go (right):\n\nhttps://codereview.appspot.com/10049045/diff/7003/ssh/test/forward_unix_test.go#newcode1\nssh/test/forward_unix_test.go:1: // Copyright 2012 The Go Authors. All rights reserved.\n2013. Thanks for fixing the copyright header, I should have picked this up in the previous review.\n\nhttps://codereview.appspot.com/10049045/diff/7003/ssh/test/forward_unix_test.go#newcode41\nssh/test/forward_unix_test.go:41: t.Fatalf(\"net.Listen failed: %v (try no. %d)\", err, tries)\nnot conn.Listen ?",
+			"disapproval": false,
+			"date": "2013-06-16 12:10:42.108600",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Jun 14, 2013 at 9:29 PM,  <agl@golang.org> wrote:\r\n> Supporting 5.9 would seem to be more important than 6 at the moment\r\n> since it's the basis of Ubuntu Precise.\r\n>\r\n> (Of course, it would be nice to support both.)\r\n>\r\n> https://codereview.appspot.com/10049045/\r\n\r\nMy primary objective is to get the build back to green.  I'll have a\r\nlook at making dynamic port allocation working after that.\r\n\r\n--\r\nHan-Wen Nienhuys\r\nGoogle Munich\r\nhanwen@google.com\r\n",
+			"disapproval": false,
+			"date": "2013-06-17 13:02:42.810620",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10049045/diff/7003/ssh/test/forward_unix_test.go\nFile ssh/test/forward_unix_test.go (right):\n\nhttps://codereview.appspot.com/10049045/diff/7003/ssh/test/forward_unix_test.go#newcode1\nssh/test/forward_unix_test.go:1: // Copyright 2012 The Go Authors. All rights reserved.\nOn 2013/06/16 12:10:42, dfc wrote:\n> 2013. Thanks for fixing the copyright header, I should have picked this up in\n> the previous review.\n\nack.\n\nhttps://codereview.appspot.com/10049045/diff/7003/ssh/test/forward_unix_test.go#newcode41\nssh/test/forward_unix_test.go:41: t.Fatalf(\"net.Listen failed: %v (try no. %d)\", err, tries)\nOn 2013/06/16 12:10:42, dfc wrote:\n> not conn.Listen ?\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-18 16:21:12.285400",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-06-18 16:54:48.843260",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jun 17, 2013 at 9:02 AM, Han-Wen Nienhuys <hanwen@google.com> wrote:\r\n> My primary objective is to get the build back to green.  I'll have a\r\n> look at making dynamic port allocation working after that.\r\n\r\nBut it *is* green for most people, right? It passes for me, although\r\nit dumps far too much to stdout.\r\n\r\n\r\nCheers\r\n\r\nAGL\r\n",
+			"disapproval": false,
+			"date": "2013-06-18 16:38:07.774370",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jun 18, 2013 at 6:38 PM, Adam Langley <agl@golang.org> wrote:\r\n> On Mon, Jun 17, 2013 at 9:02 AM, Han-Wen Nienhuys <hanwen@google.com> wrote:\r\n>> My primary objective is to get the build back to green.  I'll have a\r\n>> look at making dynamic port allocation working after that.\r\n>\r\n> But it *is* green for most people, right? It passes for me, although\r\n> it dumps far too much to stdout.\r\n\r\nIt's red on http://build.golang.org/, so we're in a bad state for\r\nfurther work on the package.\r\n\r\n\r\n>\r\n> Cheers\r\n>\r\n> AGL\r\n\r\n\r\n\r\n--\r\nHan-Wen Nienhuys\r\nGoogle Munich\r\nhanwen@google.com\r\n",
+			"disapproval": false,
+			"date": "2013-06-18 16:40:15.859860",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=1596363fc7e1&repo=crypto ***\n\ngo.crypto/ssh: fix test breakages introduced by 125:40246d2ae2eb\n\n* Remove special handling for dynamically allocated\n  ports. This was a bug in OpenSSH 5.x sshd.\n\n* Run the test with a preselected port number.\n\n* Run TestPortForward only on unix platforms.\n\nR=dave, agl\nCC=golang-dev\nhttps://codereview.appspot.com/10049045\n\nCommitter: Adam Langley <agl@golang.org>",
+			"disapproval": false,
+			"date": "2013-06-18 16:44:11.430020",
+			"approval": false
+		}
+	],
+	"owner_email": "hanwen@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "hanwen",
+	"subject": "code review 10049045: go.crypto/ssh: fix test breakages introduced by 125:402...",
+	"created": "2013-06-12 13:58:43.606250",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		7003,
+		17001,
+		22001
+	],
+	"modified": "2013-06-18 16:54:50.182420",
+	"closed": true,
+	"issue": 10049045
+}

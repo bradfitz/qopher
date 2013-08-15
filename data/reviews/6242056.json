@@ -1,0 +1,91 @@
+{
+	"description": "image/png: optimize the paeth filter implementation.\n\nimage/png benchmarks:\nbenchmark                       old ns/op    new ns/op    delta\nBenchmarkPaeth                         10            7  -29.21%\nBenchmarkDecodeGray               2381745      2241620   -5.88%\nBenchmarkDecodeNRGBAGradient      9535555      8835100   -7.35%\nBenchmarkDecodeNRGBAOpaque        8189590      7611865   -7.05%\nBenchmarkDecodePaletted           1300688      1301940   +0.10%\nBenchmarkDecodeRGB                6760146      6317082   -6.55%\nBenchmarkEncodePaletted           6048596      6122666   +1.22%\nBenchmarkEncodeRGBOpaque         18891140     19474230   +3.09%\nBenchmarkEncodeRGBA              78945350     78552600   -0.50%\n\nWall time for Denis Cheremisov's PNG-decoding program given in\nhttps://groups.google.com/group/golang-nuts/browse_thread/thread/22aa8a05040fdd49\nBefore: 2.25s\nAfter:  2.27s\nDelta:  +1%\n\nThe same program, but with a different PNG input file\n(http://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png)\nand only 100 iterations instead of 1000\nBefore: 4.78s\nAfter:  4.42s\nDelta:  -8%",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nYou might also try making paeth take int arguments.\r\n\r\nI'm a little surprised that inlining abs did anything - I would have\r\nexpected the compiler to do that now.\r\n",
+			"disapproval": false,
+			"date": "2012-05-25 03:34:54.088724",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FYI, I just \"hg sync\"ed, ran all.bash (which re-built the compiler)\r\nand re-ran the benchmarks. I know that there were some codegen\r\nchanges, because the paeth func disassembly used to have:\r\n\r\nMOVB    R8,BX\r\nMOVBLZX BX,BX\r\n\r\nand it now has:\r\n\r\nMOVBLZX R8,BX\r\n\r\nbut there are other changes as well (e.g. runtime changes). The\r\nmicrobenchmarks (compared to the \"after\" case in the CL description)\r\nseem to have slipped a bit:\r\n\r\nbenchmark                       old ns/op    new ns/op    delta\r\nBenchmarkPaeth                          7            6   -3.22%\r\nBenchmarkDecodeGray               2241620      2263624   +0.98%\r\nBenchmarkDecodeNRGBAGradient      8835100      8936760   +1.15%\r\nBenchmarkDecodeNRGBAOpaque        7611865      7771600   +2.10%\r\nBenchmarkDecodePaletted           1301940      1328367   +2.03%\r\nBenchmarkDecodeRGB                6317082      6498760   +2.88%\r\nBenchmarkEncodePaletted           6122666      6215494   +1.52%\r\nBenchmarkEncodeRGBOpaque         19474230     19812880   +1.74%\r\nBenchmarkEncodeRGBA              78552600     80148700   +2.03%\r\n\r\nas have the PNG decoding programs:\r\noriginal PNG: 2.27s -> 2.45s\r\nwikipedia PNG: 4.42s -> 4.51s\r\n\r\nLet me know if it's worth the time to bisect the recent hg history to\r\nsee if any one particular change seems culpable.\r\n",
+			"disapproval": false,
+			"date": "2012-05-25 04:27:53.191659",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-05-25 03:09:25.655613",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 25 May 2012 13:34, Russ Cox <rsc@golang.org> wrote:\r\n> You might also try making paeth take int arguments.\r\n\r\nThat improved BenchmarkPaeth, but wasn't a clear win in the actual PNG\r\ndecoding benchmarks.\r\n\r\n\r\n> I'm a little surprised that inlining abs did anything - I would have\r\n> expected the compiler to do that now.\r\n\r\nYeah, abs was already inlined. It just seemed simpler to do the explicit if.\r\n\r\nMy guess (from eyeballing the disassembly) is that it comes down to\r\nfewer add/subtracts, and fewer variables lead to better\r\nregisterization. Before is 71 lines of assembly (with inlining), after\r\nis 43 lines and doesn't touch R9 or BP, and doesn't stack-allocate any\r\nlocal variables.\r\n",
+			"disapproval": false,
+			"date": "2012-05-25 04:08:03.768229",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's probably not worthwhile to look through history.\r\nIf you want to investigate, run pprof before and after\r\non a significantly-changed benchmark and compare\r\nwhat lines or assembly instructions take the most time.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-25 04:42:33.677179",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=40632db23c46 ***\n\nimage/png: optimize the paeth filter implementation.\n\nimage/png benchmarks:\nbenchmark                       old ns/op    new ns/op    delta\nBenchmarkPaeth                         10            7  -29.21%\nBenchmarkDecodeGray               2381745      2241620   -5.88%\nBenchmarkDecodeNRGBAGradient      9535555      8835100   -7.35%\nBenchmarkDecodeNRGBAOpaque        8189590      7611865   -7.05%\nBenchmarkDecodePaletted           1300688      1301940   +0.10%\nBenchmarkDecodeRGB                6760146      6317082   -6.55%\nBenchmarkEncodePaletted           6048596      6122666   +1.22%\nBenchmarkEncodeRGBOpaque         18891140     19474230   +3.09%\nBenchmarkEncodeRGBA              78945350     78552600   -0.50%\n\nWall time for Denis Cheremisov's PNG-decoding program given in\nhttps://groups.google.com/group/golang-nuts/browse_thread/thread/22aa8a05040fdd49\nBefore: 2.25s\nAfter:  2.27s\nDelta:  +1%\n\nThe same program, but with a different PNG input file\n(http://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png)\nand only 100 iterations instead of 1000\nBefore: 4.78s\nAfter:  4.42s\nDelta:  -8%\n\nR=rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6242056",
+			"disapproval": false,
+			"date": "2012-05-25 04:09:03.177668",
+			"approval": false
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 6242056: image/png: optimize the paeth filter implementation.",
+	"created": "2012-05-25 03:09:02.794796",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		8001
+	],
+	"modified": "2012-05-25 04:09:05.378764",
+	"closed": true,
+	"issue": 6242056
+}

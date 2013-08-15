@@ -1,0 +1,169 @@
+{
+	"description": "runtime: use OS X vsyscall for gettimeofday (amd64)\n\nThanks to Dave Cheney for the magic words \"comm page\".\n\nbenchmark       old ns/op    new ns/op    delta\nBenchmarkNow          197           33  -83.05%\n\nThis should make profiling a little better on OS X.\nThe raw time saved is unlikely to matter: what likely matters\nmore is that it seems like OS X sends profiling signals on the\nway out of system calls more often than it should; avoiding\nthe system call should increase the accuracy of cpu profiles.\n\nThe 386 version would be similar but needs to do different\nmath for CPU speeds less than 1 GHz. (Apparently Apple has\nnever shipped a 64-bit CPU with such a slow clock.)",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"dave@cheney.net",
+		"minux.ma@gmail.com",
+		"r@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Curious: you have a benchmark?\r\n\r\nOn Mon, Jun 4, 2012 at 8:33 PM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> runtime: use OS X vsyscall for gettimeofday\r\n>\r\n> Thanks to Dave Cheney for the magic words \"comm page\".\r\n>\r\n> Please review this at http://codereview.appspot.com/**6275056/<http://codereview.appspot.com/6275056/>\r\n>\r\n> Affected files:\r\n>  M src/pkg/runtime/sys_darwin_**386.s\r\n>  M src/pkg/runtime/sys_darwin_**amd64.s\r\n>\r\n>\r\n> Index: src/pkg/runtime/sys_darwin_**386.s\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/sys_darwin_**386.s\r\n> +++ b/src/pkg/runtime/sys_darwin_**386.s\r\n> @@ -63,15 +63,32 @@\r\n>        INT     $0x80\r\n>        RET\r\n>\r\n> -// func now() (sec int64, nsec int32)\r\n> -TEXT time\u00b7now(SB), 7, $32\r\n> +// called from assembly. leaves unix seconds in AX, microseconds in BX\r\n> +TEXT runtime\u00b7now(SB),7,$32\r\n> +       // try gettimeofday in comm page\r\n> +       LEAL    12(SP), AX\r\n> +       MOVL    AX, 0(SP)\r\n> +       MOVL    $0, 8(SP)\r\n> +       MOVL    $0xffff02e0, AX /* gettimeofday in comm page */\r\n> +       CALL    AX\r\n> +       TESTL   AX, AX\r\n> +       JNZ     systime\r\n> +       MOVL    12(SP), AX\r\n> +       MOVL    16(SP), BX\r\n> +       RET\r\n> +systime:\r\n> +       // fall back to system call (usually first call in this thread)\r\n>        LEAL    12(SP), AX      // must be non-nil, unused\r\n>        MOVL    AX, 4(SP)\r\n>        MOVL    $0, 8(SP)       // time zone pointer\r\n>        MOVL    $116, AX\r\n>        INT     $0x80\r\n>        MOVL    DX, BX\r\n> +       RET\r\n>\r\n> +// func now() (sec int64, nsec int32)\r\n> +TEXT time\u00b7now(SB),7,$0\r\n> +       CALL    runtime\u00b7now(SB)\r\n>        // sec is in AX, usec in BX\r\n>        MOVL    AX, sec+0(FP)\r\n>        MOVL    $0, sec+4(FP)\r\n> @@ -81,14 +98,8 @@\r\n>\r\n>  // int64 nanotime(void) so really\r\n>  // void nanotime(int64 *nsec)\r\n> -TEXT runtime\u00b7nanotime(SB), 7, $32\r\n> -       LEAL    12(SP), AX      // must be non-nil, unused\r\n> -       MOVL    AX, 4(SP)\r\n> -       MOVL    $0, 8(SP)       // time zone pointer\r\n> -       MOVL    $116, AX\r\n> -       INT     $0x80\r\n> -       MOVL    DX, BX\r\n> -\r\n> +TEXT runtime\u00b7nanotime(SB), 7, $0\r\n> +       CALL    runtime\u00b7now(SB)\r\n>        // sec is in AX, usec in BX\r\n>        // convert to DX:AX nsec\r\n>        MOVL    $1000000000, CX\r\n> Index: src/pkg/runtime/sys_darwin_**amd64.s\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/sys_darwin_**amd64.s\r\n> +++ b/src/pkg/runtime/sys_darwin_**amd64.s\r\n> @@ -65,13 +65,28 @@\r\n>        MOVL    $0xf1, 0xf1  // crash\r\n>        RET\r\n>\r\n> -// func now() (sec int64, nsec int32)\r\n> -TEXT time\u00b7now(SB), 7, $32\r\n> +// called from assembly. leaves unix seconds in AX, microseconds in DX\r\n> +TEXT runtime\u00b7now(SB),7,$32\r\n> +       // try gettimeofday in comm page\r\n> +       MOVQ    SP, DI\r\n> +       MOVQ    $0x7fffffe002e0, AX /* gettimeofday in comm page */\r\n> +       CALL    AX\r\n> +       TESTQ   AX, AX\r\n> +       JNZ     systime\r\n> +       MOVQ    0(SP), AX\r\n> +       MOVL    8(SP), DX\r\n> +       RET\r\n> +systime:\r\n> +       // fall back to system call (usually first call in this thread)\r\n>        MOVQ    SP, DI  // must be non-nil, unused\r\n>        MOVQ    $0, SI\r\n>        MOVL    $(0x2000000+116), AX\r\n>        SYSCALL\r\n> +       RET\r\n>\r\n> +// func now() (sec int64, nsec int32)\r\n> +TEXT time\u00b7now(SB), 7, $0\r\n> +       CALL    runtime\u00b7now(SB)\r\n>        // sec is in AX, usec in DX\r\n>        MOVQ    AX, sec+0(FP)\r\n>        IMULQ   $1000, DX\r\n> @@ -79,12 +94,8 @@\r\n>        RET\r\n>\r\n>  // int64 nanotime(void)\r\n> -TEXT runtime\u00b7nanotime(SB), 7, $32\r\n> -       MOVQ    SP, DI  // must be non-nil, unused\r\n> -       MOVQ    $0, SI\r\n> -       MOVL    $(0x2000000+116), AX\r\n> -       SYSCALL\r\n> -\r\n> +TEXT runtime\u00b7nanotime(SB), 7, $0\r\n> +       CALL    runtime\u00b7now(SB)\r\n>        // sec is in AX, usec in DX\r\n>        // return nsec in AX\r\n>        IMULQ   $1000000000, AX\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-06-05 03:37:09.415545",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-06-05 03:33:42.414195",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Try test/bench/go1, the gzip and gob benchmarks tend to crank the GC\r\nover enough.\r\n\r\nOn Tue, Jun 5, 2012 at 1:37 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> Curious: you have a benchmark?\r\n>\r\n>\r\n> On Mon, Jun 4, 2012 at 8:33 PM, <rsc@golang.org> wrote:\r\n>>\r\n>> Reviewers: golang-dev_googlegroups.com,\r\n>>\r\n>> Message:\r\n>> Hello golang-dev@googlegroups.com,\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://go.googlecode.com/hg/\r\n>>\r\n>>\r\n>> Description:\r\n>> runtime: use OS X vsyscall for gettimeofday\r\n>>\r\n>> Thanks to Dave Cheney for the magic words \"comm page\".\r\n>>\r\n>> Please review this at http://codereview.appspot.com/6275056/\r\n>>\r\n>> Affected files:\r\n>> \u00a0M src/pkg/runtime/sys_darwin_386.s\r\n>> \u00a0M src/pkg/runtime/sys_darwin_amd64.s\r\n>>\r\n>>\r\n>> Index: src/pkg/runtime/sys_darwin_386.s\r\n>> ===================================================================\r\n>> --- a/src/pkg/runtime/sys_darwin_386.s\r\n>> +++ b/src/pkg/runtime/sys_darwin_386.s\r\n>> @@ -63,15 +63,32 @@\r\n>> \u00a0 \u00a0 \u00a0 \u00a0INT \u00a0 \u00a0 $0x80\r\n>> \u00a0 \u00a0 \u00a0 \u00a0RET\r\n>>\r\n>> -// func now() (sec int64, nsec int32)\r\n>> -TEXT time\u00b7now(SB), 7, $32\r\n>> +// called from assembly. leaves unix seconds in AX, microseconds in BX\r\n>> +TEXT runtime\u00b7now(SB),7,$32\r\n>> + \u00a0 \u00a0 \u00a0 // try gettimeofday in comm page\r\n>> + \u00a0 \u00a0 \u00a0 LEAL \u00a0 \u00a012(SP), AX\r\n>> + \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a0AX, 0(SP)\r\n>> + \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a0$0, 8(SP)\r\n>> + \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a0$0xffff02e0, AX /* gettimeofday in comm page */\r\n>> + \u00a0 \u00a0 \u00a0 CALL \u00a0 \u00a0AX\r\n>> + \u00a0 \u00a0 \u00a0 TESTL \u00a0 AX, AX\r\n>> + \u00a0 \u00a0 \u00a0 JNZ \u00a0 \u00a0 systime\r\n>> + \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a012(SP), AX\r\n>> + \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a016(SP), BX\r\n>> + \u00a0 \u00a0 \u00a0 RET\r\n>> +systime:\r\n>> + \u00a0 \u00a0 \u00a0 // fall back to system call (usually first call in this thread)\r\n>> \u00a0 \u00a0 \u00a0 \u00a0LEAL \u00a0 \u00a012(SP), AX \u00a0 \u00a0 \u00a0// must be non-nil, unused\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVL \u00a0 \u00a0AX, 4(SP)\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVL \u00a0 \u00a0$0, 8(SP) \u00a0 \u00a0 \u00a0 // time zone pointer\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVL \u00a0 \u00a0$116, AX\r\n>> \u00a0 \u00a0 \u00a0 \u00a0INT \u00a0 \u00a0 $0x80\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVL \u00a0 \u00a0DX, BX\r\n>> + \u00a0 \u00a0 \u00a0 RET\r\n>>\r\n>> +// func now() (sec int64, nsec int32)\r\n>> +TEXT time\u00b7now(SB),7,$0\r\n>> + \u00a0 \u00a0 \u00a0 CALL \u00a0 \u00a0runtime\u00b7now(SB)\r\n>> \u00a0 \u00a0 \u00a0 \u00a0// sec is in AX, usec in BX\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVL \u00a0 \u00a0AX, sec+0(FP)\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVL \u00a0 \u00a0$0, sec+4(FP)\r\n>> @@ -81,14 +98,8 @@\r\n>>\r\n>> \u00a0// int64 nanotime(void) so really\r\n>> \u00a0// void nanotime(int64 *nsec)\r\n>> -TEXT runtime\u00b7nanotime(SB), 7, $32\r\n>> - \u00a0 \u00a0 \u00a0 LEAL \u00a0 \u00a012(SP), AX \u00a0 \u00a0 \u00a0// must be non-nil, unused\r\n>> - \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a0AX, 4(SP)\r\n>> - \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a0$0, 8(SP) \u00a0 \u00a0 \u00a0 // time zone pointer\r\n>> - \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a0$116, AX\r\n>> - \u00a0 \u00a0 \u00a0 INT \u00a0 \u00a0 $0x80\r\n>> - \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a0DX, BX\r\n>> -\r\n>> +TEXT runtime\u00b7nanotime(SB), 7, $0\r\n>> + \u00a0 \u00a0 \u00a0 CALL \u00a0 \u00a0runtime\u00b7now(SB)\r\n>> \u00a0 \u00a0 \u00a0 \u00a0// sec is in AX, usec in BX\r\n>> \u00a0 \u00a0 \u00a0 \u00a0// convert to DX:AX nsec\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVL \u00a0 \u00a0$1000000000, CX\r\n>> Index: src/pkg/runtime/sys_darwin_amd64.s\r\n>> ===================================================================\r\n>> --- a/src/pkg/runtime/sys_darwin_amd64.s\r\n>> +++ b/src/pkg/runtime/sys_darwin_amd64.s\r\n>> @@ -65,13 +65,28 @@\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVL \u00a0 \u00a0$0xf1, 0xf1 \u00a0// crash\r\n>> \u00a0 \u00a0 \u00a0 \u00a0RET\r\n>>\r\n>> -// func now() (sec int64, nsec int32)\r\n>> -TEXT time\u00b7now(SB), 7, $32\r\n>> +// called from assembly. leaves unix seconds in AX, microseconds in DX\r\n>> +TEXT runtime\u00b7now(SB),7,$32\r\n>> + \u00a0 \u00a0 \u00a0 // try gettimeofday in comm page\r\n>> + \u00a0 \u00a0 \u00a0 MOVQ \u00a0 \u00a0SP, DI\r\n>> + \u00a0 \u00a0 \u00a0 MOVQ \u00a0 \u00a0$0x7fffffe002e0, AX /* gettimeofday in comm page */\r\n>> + \u00a0 \u00a0 \u00a0 CALL \u00a0 \u00a0AX\r\n>> + \u00a0 \u00a0 \u00a0 TESTQ \u00a0 AX, AX\r\n>> + \u00a0 \u00a0 \u00a0 JNZ \u00a0 \u00a0 systime\r\n>> + \u00a0 \u00a0 \u00a0 MOVQ \u00a0 \u00a00(SP), AX\r\n>> + \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a08(SP), DX\r\n>> + \u00a0 \u00a0 \u00a0 RET\r\n>> +systime:\r\n>> + \u00a0 \u00a0 \u00a0 // fall back to system call (usually first call in this thread)\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVQ \u00a0 \u00a0SP, DI \u00a0// must be non-nil, unused\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVQ \u00a0 \u00a0$0, SI\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVL \u00a0 \u00a0$(0x2000000+116), AX\r\n>> \u00a0 \u00a0 \u00a0 \u00a0SYSCALL\r\n>> + \u00a0 \u00a0 \u00a0 RET\r\n>>\r\n>> +// func now() (sec int64, nsec int32)\r\n>> +TEXT time\u00b7now(SB), 7, $0\r\n>> + \u00a0 \u00a0 \u00a0 CALL \u00a0 \u00a0runtime\u00b7now(SB)\r\n>> \u00a0 \u00a0 \u00a0 \u00a0// sec is in AX, usec in DX\r\n>> \u00a0 \u00a0 \u00a0 \u00a0MOVQ \u00a0 \u00a0AX, sec+0(FP)\r\n>> \u00a0 \u00a0 \u00a0 \u00a0IMULQ \u00a0 $1000, DX\r\n>> @@ -79,12 +94,8 @@\r\n>> \u00a0 \u00a0 \u00a0 \u00a0RET\r\n>>\r\n>> \u00a0// int64 nanotime(void)\r\n>> -TEXT runtime\u00b7nanotime(SB), 7, $32\r\n>> - \u00a0 \u00a0 \u00a0 MOVQ \u00a0 \u00a0SP, DI \u00a0// must be non-nil, unused\r\n>> - \u00a0 \u00a0 \u00a0 MOVQ \u00a0 \u00a0$0, SI\r\n>> - \u00a0 \u00a0 \u00a0 MOVL \u00a0 \u00a0$(0x2000000+116), AX\r\n>> - \u00a0 \u00a0 \u00a0 SYSCALL\r\n>> -\r\n>> +TEXT runtime\u00b7nanotime(SB), 7, $0\r\n>> + \u00a0 \u00a0 \u00a0 CALL \u00a0 \u00a0runtime\u00b7now(SB)\r\n>> \u00a0 \u00a0 \u00a0 \u00a0// sec is in AX, usec in DX\r\n>> \u00a0 \u00a0 \u00a0 \u00a0// return nsec in AX\r\n>> \u00a0 \u00a0 \u00a0 \u00a0IMULQ \u00a0 $1000000000, AX\r\n>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-06-05 03:38:32.829565",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This fails on darwin/amd64 OS X 10.7.3 (stock image):\r\n\r\n$ ./make.bash\r\n# Building C bootstrap tool.\r\ncmd/dist\r\n\r\n# Building compilers and Go bootstrap tool for host, darwin/amd64.\r\nlib9\r\nlibbio\r\nlibmach\r\nmisc/pprof\r\ncmd/addr2line\r\ncmd/cov\r\ncmd/nm\r\ncmd/objdump\r\ncmd/pack\r\ncmd/prof\r\ncmd/cc\r\ncmd/gc\r\ncmd/6l\r\ncmd/6a\r\ncmd/6c\r\ncmd/6g\r\npkg/runtime\r\npkg/errors\r\npkg/sync/atomic\r\npkg/sync\r\npkg/io\r\npkg/unicode\r\npkg/unicode/utf8\r\npkg/unicode/utf16\r\npkg/bytes\r\npkg/math\r\npkg/strings\r\npkg/strconv\r\npkg/bufio\r\npkg/sort\r\npkg/container/heap\r\npkg/encoding/base64\r\npkg/syscall\r\npkg/time\r\npkg/os\r\npkg/reflect\r\npkg/fmt\r\npkg/encoding/json\r\npkg/flag\r\npkg/path/filepath\r\npkg/path\r\npkg/io/ioutil\r\npkg/log\r\npkg/regexp/syntax\r\npkg/regexp\r\npkg/go/token\r\npkg/go/scanner\r\npkg/go/ast\r\npkg/go/parser\r\npkg/os/exec\r\npkg/net/url\r\npkg/text/template/parse\r\npkg/text/template\r\npkg/go/doc\r\npkg/go/build\r\ncmd/go\r\nSIGTRAP: trace trap\r\npc: 0x7fffffe002e1\r\n\r\n\r\ngoroutine 2 [runnable]:\r\ncreated by runtime.main\r\n/Users/bradfitz/go/src/pkg/runtime/proc.c:221\r\nrax     0x7fffffe002e0\r\nrbx     0x2cd034\r\nrcx     0x0\r\nrdx     0x2dbcc5\r\nrdi     0x44234ab88\r\nrsi     0x9\r\nrbp     0x18\r\nrsp     0x44234ab80\r\nr8      0x42353000\r\nr9      0x2dbcc5\r\nr10     0x18\r\nr11     0x202\r\nr12     0x0\r\nr13     0x0\r\nr14     0x0\r\nr15     0x0\r\nrip     0x7fffffe002e1\r\nrflags  0x206\r\ncs      0x2b\r\nfs      0x0\r\ngs      0x0\r\n\r\n\r\nAnd it builds without this patch.\r\n\r\n\r\nOn Mon, Jun 4, 2012 at 8:33 PM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> runtime: use OS X vsyscall for gettimeofday\r\n>\r\n> Thanks to Dave Cheney for the magic words \"comm page\".\r\n>\r\n> Please review this at http://codereview.appspot.com/**6275056/<http://codereview.appspot.com/6275056/>\r\n>\r\n> Affected files:\r\n>  M src/pkg/runtime/sys_darwin_**386.s\r\n>  M src/pkg/runtime/sys_darwin_**amd64.s\r\n>\r\n>\r\n> Index: src/pkg/runtime/sys_darwin_**386.s\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/sys_darwin_**386.s\r\n> +++ b/src/pkg/runtime/sys_darwin_**386.s\r\n> @@ -63,15 +63,32 @@\r\n>        INT     $0x80\r\n>        RET\r\n>\r\n> -// func now() (sec int64, nsec int32)\r\n> -TEXT time\u00b7now(SB), 7, $32\r\n> +// called from assembly. leaves unix seconds in AX, microseconds in BX\r\n> +TEXT runtime\u00b7now(SB),7,$32\r\n> +       // try gettimeofday in comm page\r\n> +       LEAL    12(SP), AX\r\n> +       MOVL    AX, 0(SP)\r\n> +       MOVL    $0, 8(SP)\r\n> +       MOVL    $0xffff02e0, AX /* gettimeofday in comm page */\r\n> +       CALL    AX\r\n> +       TESTL   AX, AX\r\n> +       JNZ     systime\r\n> +       MOVL    12(SP), AX\r\n> +       MOVL    16(SP), BX\r\n> +       RET\r\n> +systime:\r\n> +       // fall back to system call (usually first call in this thread)\r\n>        LEAL    12(SP), AX      // must be non-nil, unused\r\n>        MOVL    AX, 4(SP)\r\n>        MOVL    $0, 8(SP)       // time zone pointer\r\n>        MOVL    $116, AX\r\n>        INT     $0x80\r\n>        MOVL    DX, BX\r\n> +       RET\r\n>\r\n> +// func now() (sec int64, nsec int32)\r\n> +TEXT time\u00b7now(SB),7,$0\r\n> +       CALL    runtime\u00b7now(SB)\r\n>        // sec is in AX, usec in BX\r\n>        MOVL    AX, sec+0(FP)\r\n>        MOVL    $0, sec+4(FP)\r\n> @@ -81,14 +98,8 @@\r\n>\r\n>  // int64 nanotime(void) so really\r\n>  // void nanotime(int64 *nsec)\r\n> -TEXT runtime\u00b7nanotime(SB), 7, $32\r\n> -       LEAL    12(SP), AX      // must be non-nil, unused\r\n> -       MOVL    AX, 4(SP)\r\n> -       MOVL    $0, 8(SP)       // time zone pointer\r\n> -       MOVL    $116, AX\r\n> -       INT     $0x80\r\n> -       MOVL    DX, BX\r\n> -\r\n> +TEXT runtime\u00b7nanotime(SB), 7, $0\r\n> +       CALL    runtime\u00b7now(SB)\r\n>        // sec is in AX, usec in BX\r\n>        // convert to DX:AX nsec\r\n>        MOVL    $1000000000, CX\r\n> Index: src/pkg/runtime/sys_darwin_**amd64.s\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/sys_darwin_**amd64.s\r\n> +++ b/src/pkg/runtime/sys_darwin_**amd64.s\r\n> @@ -65,13 +65,28 @@\r\n>        MOVL    $0xf1, 0xf1  // crash\r\n>        RET\r\n>\r\n> -// func now() (sec int64, nsec int32)\r\n> -TEXT time\u00b7now(SB), 7, $32\r\n> +// called from assembly. leaves unix seconds in AX, microseconds in DX\r\n> +TEXT runtime\u00b7now(SB),7,$32\r\n> +       // try gettimeofday in comm page\r\n> +       MOVQ    SP, DI\r\n> +       MOVQ    $0x7fffffe002e0, AX /* gettimeofday in comm page */\r\n> +       CALL    AX\r\n> +       TESTQ   AX, AX\r\n> +       JNZ     systime\r\n> +       MOVQ    0(SP), AX\r\n> +       MOVL    8(SP), DX\r\n> +       RET\r\n> +systime:\r\n> +       // fall back to system call (usually first call in this thread)\r\n>        MOVQ    SP, DI  // must be non-nil, unused\r\n>        MOVQ    $0, SI\r\n>        MOVL    $(0x2000000+116), AX\r\n>        SYSCALL\r\n> +       RET\r\n>\r\n> +// func now() (sec int64, nsec int32)\r\n> +TEXT time\u00b7now(SB), 7, $0\r\n> +       CALL    runtime\u00b7now(SB)\r\n>        // sec is in AX, usec in DX\r\n>        MOVQ    AX, sec+0(FP)\r\n>        IMULQ   $1000, DX\r\n> @@ -79,12 +94,8 @@\r\n>        RET\r\n>\r\n>  // int64 nanotime(void)\r\n> -TEXT runtime\u00b7nanotime(SB), 7, $32\r\n> -       MOVQ    SP, DI  // must be non-nil, unused\r\n> -       MOVQ    $0, SI\r\n> -       MOVL    $(0x2000000+116), AX\r\n> -       SYSCALL\r\n> -\r\n> +TEXT runtime\u00b7nanotime(SB), 7, $0\r\n> +       CALL    runtime\u00b7now(SB)\r\n>        // sec is in AX, usec in DX\r\n>        // return nsec in AX\r\n>        IMULQ   $1000000000, AX\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-06-05 03:50:42.492887",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jun 5, 2012 at 11:50 AM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> This fails on darwin/amd64 OS X 10.7.3 (stock image):\r\n> SIGTRAP: trace trap\r\n> pc: 0x7fffffe002e1\r\n> rip     0x7fffffe002e1\r\n>\r\nI think somehow Apple decided to remove commpage gettimeofday() in xnu-1699\r\nseries.\r\nsearch for 0x2e0 in:\r\nhttp://www.opensource.apple.com/source/xnu/xnu-1504.7.4/osfmk/i386/cpu_capabilities.h\r\n(Mac OS X 10.6)\r\nand\r\nhttp://www.opensource.apple.com/source/xnu/xnu-1699.26.8/osfmk/i386/cpu_capabilities.h\r\n(Mac\r\nOS X 10.7)\r\n\r\nhowever, I believe the information is still there, we just need to read the\r\nvariables there:\r\nfunction commpage_set_timestamp() in\r\nhttp://www.opensource.apple.com/source/xnu/xnu-1699.26.8/osfmk/i386/commpage/commpage.c\r\nand i think this method is backward compatibile with Mac OS 10.6.\r\n\r\nwe can reference the commpage implementation of gettimeofday here:\r\nhttp://www.opensource.apple.com/source/xnu/xnu-1504.7.4/osfmk/i386/commpage/commpage_gettimeofday.s\r\nand\r\nhttp://www.opensource.apple.com/source/xnu/xnu-1504.7.4/osfmk/i386/commpage/commpage_mach_absolute_time.s\r\n(basically, commpage provides offset and shift to calculate current time\r\nfrom cpu timestamp (rdtsc))\r\n",
+			"disapproval": false,
+			"date": "2012-06-05 12:10:36.348876",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, dave@cheney.net, minux.ma@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-06-05 18:03:13.796159",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jun 5, 2012 at 2:19 PM,  <minux.ma@gmail.com> wrote:\r\n> src/pkg/runtime/sys_darwin_amd64.s:114: // Fall back to system call\r\n> (usually first call in this thread).\r\n> is this comment still true?\r\n\r\nI believe it is. The test we use for falling back to the system call\r\nis the same as the test in the OS X gettimeofday (gtod_generation==0).\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-06-05 19:54:00.073634",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\ntested on Mac OS X 10.6.8 (xnu-1504.15.3).\n\nhttp://codereview.appspot.com/6275056/diff/13002/src/pkg/runtime/sys_darwin_amd64.s\nFile src/pkg/runtime/sys_darwin_amd64.s (right):\n\nhttp://codereview.appspot.com/6275056/diff/13002/src/pkg/runtime/sys_darwin_amd64.s#newcode114\nsrc/pkg/runtime/sys_darwin_amd64.s:114: // Fall back to system call (usually first call in this thread).\nis this comment still true?",
+			"disapproval": false,
+			"date": "2012-06-05 18:19:42.321181",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6275056/diff/13002/src/pkg/runtime/sys_darwin_amd64.s\nFile src/pkg/runtime/sys_darwin_amd64.s (right):\n\nhttp://codereview.appspot.com/6275056/diff/13002/src/pkg/runtime/sys_darwin_amd64.s#newcode68\nsrc/pkg/runtime/sys_darwin_amd64.s:68: // OS X comm page time offsets\nplease cite a reference or include file.",
+			"disapproval": false,
+			"date": "2012-06-05 18:23:38.440577",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jun 5, 2012 at 2:23 PM,  <r@golang.org> wrote:\r\n> src/pkg/runtime/sys_darwin_amd64.s:68: // OS X comm page time offsets\r\n> please cite a reference or include file.\r\n\r\nDone.\r\n",
+			"disapproval": false,
+			"date": "2012-06-05 19:54:24.764461",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=0b5426350053 ***\n\nruntime: use OS X vsyscall for gettimeofday (amd64)\n\nThanks to Dave Cheney for the magic words \"comm page\".\n\nbenchmark       old ns/op    new ns/op    delta\nBenchmarkNow          197           33  -83.05%\n\nThis should make profiling a little better on OS X.\nThe raw time saved is unlikely to matter: what likely matters\nmore is that it seems like OS X sends profiling signals on the\nway out of system calls more often than it should; avoiding\nthe system call should increase the accuracy of cpu profiles.\n\nThe 386 version would be similar but needs to do different\nmath for CPU speeds less than 1 GHz. (Apparently Apple has\nnever shipped a 64-bit CPU with such a slow clock.)\n\nR=golang-dev, bradfitz, dave, minux.ma, r\nCC=golang-dev\nhttp://codereview.appspot.com/6275056",
+			"disapproval": false,
+			"date": "2012-06-05 20:24:42.095947",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6275056: runtime: use OS X vsyscall for gettimeofday (amd64)",
+	"created": "2012-06-05 03:16:01.145345",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		3002,
+		5002,
+		12001,
+		13002,
+		16002
+	],
+	"modified": "2012-06-05 20:24:42.744399",
+	"closed": true,
+	"issue": 6275056
+}

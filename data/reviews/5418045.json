@@ -1,0 +1,195 @@
+{
+	"description": "inotify: Fix readEntry hanging and Add/RemoveWatch failing when watched directories deleted and re-created.\n\nIf a watched directory is deleted and recreated, and watched again, many of the events sent back are hosed.\n- The event.Name is incomplete, missing the path of the watched directory (you get /a.txt or \"\")\n- RemoveWatch thereafter fails with message: invalid argument\n- Close() doesn't really close, and readEvents hangs forever on syscall.Read(...)\n\nNote that the readEvents() hanging was always there, irrespective of the steps to produce issues with Add/RemoveWatch.\n\nFix involves:\n- use Select to ensure there's data to read, else syscall.Read(...) will keep on waiting, even though intent to close was sent.\n- Let Close() wait till completely closed (use sync channel with send/acknowledge receipt).\n- AddWatch should always modify watch, in case watch description from OS changes (e.g. due to move, delete/re-add, etc)\n\nAlso, added a test for this: TestInotifyDeleteReAdd\n\nFixes issue 2483.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2011-11-18 23:30:41.194225",
+			"approval": false
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5418045/diff/2001/src/pkg/exp/inotify/inotify_linux.go\nFile src/pkg/exp/inotify/inotify_linux.go (right):\n\nhttp://codereview.appspot.com/5418045/diff/2001/src/pkg/exp/inotify/inotify_linux.go#newcode155\nsrc/pkg/exp/inotify/inotify_linux.go:155: fdset.Bits[w.fd/4] |= 1 << uint(w.fd%4) //do fdset\nPlease look closely at the fd_set logic here. \nOn further research, I'm thinking it should be:\n\n\t//create fdSet, taking into consideration that \n\t//64-bit OS uses Bits: [16]int64, 32-bit OS==>[32]int32\n\tfdset := new(syscall.FdSet)\n\tfdiv := 32 * 32 / len(fdset.Bits)\n\tfdset.Bits[w.fd/fdiv] |= 1 << uint(w.fd%fdiv)",
+			"disapproval": false,
+			"date": "2011-11-19 02:28:43.208433",
+			"approval": false
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-21 23:25:03.728136",
+			"approval": false
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-21 23:25:22.098408",
+			"approval": false
+		},
+		{
+			"sender": "leczb@google.com",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"leczb@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2011/11/21 23:25:22, ugorji wrote:\n> Hello mailto:golang-dev@googlegroups.com (cc: mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nHi,\n\nThanks for reporting and fixing this bug!\nPlease see my comments inline.\n\nNote, that I don't have approval rights. My comments are just FYI.\n\nRegards,\nBal\u00e1zs",
+			"disapproval": false,
+			"date": "2011-12-05 15:15:36.873882",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"leczb@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5418045/diff/5002/src/pkg/exp/inotify/inotify_linux.go\nFile src/pkg/exp/inotify/inotify_linux.go (right):\n\nhttp://codereview.appspot.com/5418045/diff/5002/src/pkg/exp/inotify/inotify_linux.go#newcode76\nsrc/pkg/exp/inotify/inotify_linux.go:76: done:    make(chan bool), //remove buffer. make sync.\nthis comment only makes sense in the context of this diff.  it's confusing to anybody reading this code in the future.  Also, space after //.\n\nIf anything, I'd make the comment like:\n \n// needs to be unbuffered\n\nhttp://codereview.appspot.com/5418045/diff/5002/src/pkg/exp/inotify/inotify_linux.go#newcode117\nsrc/pkg/exp/inotify/inotify_linux.go:117: //If a path being watched was deleted and re-added,\nSpaces after //\n\nhttp://codereview.appspot.com/5418045/diff/5002/src/pkg/exp/inotify/inotify_linux.go#newcode131\nsrc/pkg/exp/inotify/inotify_linux.go:131: // If the path is not in the watched file set, return a NoWatchExistError.\n// If the path is not already being watched, the returned error\n// is of type NoWatchExistError.\n\nBut I would actually remove this comment and NoWatchExistError.  It only exists for your test, so just make it lowercase, or have your test match on the Error() string here instead of the type of the error interface.  But it serves little value having it be exported for other callers.",
+			"disapproval": false,
+			"date": "2011-12-05 16:26:29.689298",
+			"approval": false
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"leczb@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2011-12-05 22:50:22.093147",
+			"approval": false
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"leczb@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, leczb@google.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-12-05 22:48:32.104811",
+			"approval": false
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"leczb@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5418045/diff/5002/src/pkg/exp/inotify/inotify_linux.go\nFile src/pkg/exp/inotify/inotify_linux.go (right):\n\nhttp://codereview.appspot.com/5418045/diff/5002/src/pkg/exp/inotify/inotify_linux.go#newcode76\nsrc/pkg/exp/inotify/inotify_linux.go:76: done:    make(chan bool), //remove buffer. make sync.\nOn 2011/12/05 16:26:29, bradfitz wrote:\n> this comment only makes sense in the context of this diff.  it's confusing to\n> anybody reading this code in the future.  Also, space after //.\n> \n> If anything, I'd make the comment like:\n>  \n> // needs to be unbuffered\n\nDone\n\nhttp://codereview.appspot.com/5418045/diff/5002/src/pkg/exp/inotify/inotify_linux.go#newcode117\nsrc/pkg/exp/inotify/inotify_linux.go:117: //If a path being watched was deleted and re-added,\nOn 2011/12/05 16:26:29, bradfitz wrote:\n> Spaces after //\n\nDone.\n\nhttp://codereview.appspot.com/5418045/diff/5002/src/pkg/exp/inotify/inotify_linux.go#newcode131\nsrc/pkg/exp/inotify/inotify_linux.go:131: // If the path is not in the watched file set, return a NoWatchExistError.\nOn 2011/12/05 16:26:29, bradfitz wrote:\n> // If the path is not already being watched, the returned error\n> // is of type NoWatchExistError.\n> \n> But I would actually remove this comment and NoWatchExistError.  It only exists\n> for your test, so just make it lowercase, or have your test match on the Error()\n> string here instead of the type of the error interface.  But it serves little\n> value having it be exported for other callers.\n\nDone. Removed the comment and made error type unexported i.e. noWatchExistError.",
+			"disapproval": false,
+			"date": "2011-12-05 22:54:51.426063",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What's the status of this?\n\n\nOn Mon, Nov 21, 2011 at 3:25 PM, <ugorji@gmail.com> wrote:\n\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> Please take another look.\n>\n>\n> http://codereview.appspot.com/**5418045/<http://codereview.appspot.com/5418045/>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-17 21:41:11.365413",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think the status is that inotify is in exp so we've been\nleaving this on the back burner.  I do think we should get\nback to this at some point.\n",
+			"disapproval": false,
+			"date": "2012-01-17 22:14:23.359179",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2012-06-03 04:40:36.166667",
+			"approval": false
+		},
+		{
+			"sender": "ugorji@gmail.com",
+			"recipients": [
+				"ugorji@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-03-20 16:12:14.896710",
+			"approval": false
+		}
+	],
+	"owner_email": "ugorji@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "ugorji",
+	"subject": "code review 5418045: inotify: Fix readEntry hanging and Add/RemoveWatch fail...",
+	"created": "2011-11-18 23:15:19.656754",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		5002,
+		13001
+	],
+	"modified": "2013-03-20 16:12:16.168290",
+	"closed": true,
+	"issue": 5418045
+}

@@ -1,0 +1,60 @@
+{
+	"description": "net/http: avoid a bunch of unnecessary CanonicalHeaderKey calls\n\nCanonicalHeaderKey didn't allocate, but it did use unnecessary\nCPU in the hot path, deciding it didn't need to allocate.\n\nI considered using constants for all these common header keys\nbut I didn't think it would be prettier. \"Content-Length\" looks\nbetter than contentLength or hdrContentLength, etc.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=3ad9da69a1a7 ***\n\nnet/http: avoid a bunch of unnecessary CanonicalHeaderKey calls\n\nCanonicalHeaderKey didn't allocate, but it did use unnecessary\nCPU in the hot path, deciding it didn't need to allocate.\n\nI considered using constants for all these common header keys\nbut I didn't think it would be prettier. \"Content-Length\" looks\nbetter than contentLength or hdrContentLength, etc.\n\nR=golang-dev, dave\nCC=golang-dev\nhttp://codereview.appspot.com/6255053",
+			"disapproval": false,
+			"date": "2012-05-28 18:07:28.079983",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-05-27 02:04:25.937628",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. Nice \r\n\r\nOn 27/05/2012, at 12:04, bradfitz@golang.org wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n> \r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n> \r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n> \r\n> \r\n> Description:\r\n> net/http: avoid a bunch of unnecessary CanonicalHeaderKey calls\r\n> \r\n> CanonicalHeaderKey didn't allocate, but it did use unnecessary\r\n> CPU in the hot path, deciding it didn't need to allocate.\r\n> \r\n> I considered using constants for all these common header keys\r\n> but I didn't think it would be prettier. \"Content-Length\" looks\r\n> better than contentLength or hdrContentLength, etc.\r\n> \r\n> Please review this at http://codereview.appspot.com/6255053/\r\n> \r\n> Affected files:\r\n>  M src/pkg/net/http/header.go\r\n>  M src/pkg/net/http/request.go\r\n>  M src/pkg/net/http/server.go\r\n>  M src/pkg/net/http/transfer.go\r\n> \r\n> \r\n> Index: src/pkg/net/http/header.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/http/header.go\r\n> +++ b/src/pkg/net/http/header.go\r\n> @@ -36,6 +36,14 @@\r\n>    return textproto.MIMEHeader(h).Get(key)\r\n> }\r\n> \r\n> +// get is like Get, but key must already be in CanonicalHeaderKey form.\r\n> +func (h Header) get(key string) string {\r\n> +    if v := h[key]; len(v) > 0 {\r\n> +        return v[0]\r\n> +    }\r\n> +    return \"\"\r\n> +}\r\n> +\r\n> // Del deletes the values associated with key.\r\n> func (h Header) Del(key string) {\r\n>    textproto.MIMEHeader(h).Del(key)\r\n> Index: src/pkg/net/http/request.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/http/request.go\r\n> +++ b/src/pkg/net/http/request.go\r\n> @@ -513,7 +513,7 @@\r\n>    // the same.  In the second case, any Host line is ignored.\r\n>    req.Host = req.URL.Host\r\n>    if req.Host == \"\" {\r\n> -        req.Host = req.Header.Get(\"Host\")\r\n> +        req.Host = req.Header.get(\"Host\")\r\n>    }\r\n>    req.Header.Del(\"Host\")\r\n> \r\n> @@ -732,18 +732,18 @@\r\n> }\r\n> \r\n> func (r *Request) expectsContinue() bool {\r\n> -    return hasToken(r.Header.Get(\"Expect\"), \"100-continue\")\r\n> +    return hasToken(r.Header.get(\"Expect\"), \"100-continue\")\r\n> }\r\n> \r\n> func (r *Request) wantsHttp10KeepAlive() bool {\r\n>    if r.ProtoMajor != 1 || r.ProtoMinor != 0 {\r\n>        return false\r\n>    }\r\n> -    return hasToken(r.Header.Get(\"Connection\"), \"keep-alive\")\r\n> +    return hasToken(r.Header.get(\"Connection\"), \"keep-alive\")\r\n> }\r\n> \r\n> func (r *Request) wantsClose() bool {\r\n> -    return hasToken(r.Header.Get(\"Connection\"), \"close\")\r\n> +    return hasToken(r.Header.get(\"Connection\"), \"close\")\r\n> }\r\n> \r\n> func hasToken(s, token string) bool {\r\n> Index: src/pkg/net/http/server.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/http/server.go\r\n> +++ b/src/pkg/net/http/server.go\r\n> @@ -287,7 +287,7 @@\r\n>    // Check for a explicit (and valid) Content-Length header.\r\n>    var hasCL bool\r\n>    var contentLength int64\r\n> -    if clenStr := w.header.Get(\"Content-Length\"); clenStr != \"\" {\r\n> +    if clenStr := w.header.get(\"Content-Length\"); clenStr != \"\" {\r\n>        var err error\r\n>        contentLength, err = strconv.ParseInt(clenStr, 10, 64)\r\n>        if err == nil {\r\n> @@ -307,7 +307,7 @@\r\n>        w.closeAfterReply = true\r\n>    }\r\n> \r\n> -    if w.header.Get(\"Connection\") == \"close\" {\r\n> +    if w.header.get(\"Connection\") == \"close\" {\r\n>        w.closeAfterReply = true\r\n>    }\r\n> \r\n> @@ -331,7 +331,7 @@\r\n>    if code == StatusNotModified {\r\n>        // Must not have body.\r\n>        for _, header := range []string{\"Content-Type\", \"Content-Length\", \"Transfer-Encoding\"} {\r\n> -            if w.header.Get(header) != \"\" {\r\n> +            if w.header.get(header) != \"\" {\r\n>                // TODO: return an error if WriteHeader gets a return parameter\r\n>                // or set a flag on w to make future Writes() write an error page?\r\n>                // for now just log and drop the header.\r\n> @@ -341,7 +341,7 @@\r\n>        }\r\n>    } else {\r\n>        // If no content type, apply sniffing algorithm to body.\r\n> -        if w.header.Get(\"Content-Type\") == \"\" && w.req.Method != \"HEAD\" {\r\n> +        if w.header.get(\"Content-Type\") == \"\" && w.req.Method != \"HEAD\" {\r\n>            w.needSniff = true\r\n>        }\r\n>    }\r\n> @@ -350,7 +350,7 @@\r\n>        w.Header().Set(\"Date\", time.Now().UTC().Format(TimeFormat))\r\n>    }\r\n> \r\n> -    te := w.header.Get(\"Transfer-Encoding\")\r\n> +    te := w.header.get(\"Transfer-Encoding\")\r\n>    hasTE := te != \"\"\r\n>    if hasCL && hasTE && te != \"identity\" {\r\n>        // TODO: return an error if WriteHeader gets a return parameter\r\n> @@ -390,7 +390,7 @@\r\n>        return\r\n>    }\r\n> \r\n> -    if w.closeAfterReply && !hasToken(w.header.Get(\"Connection\"), \"close\") {\r\n> +    if w.closeAfterReply && !hasToken(w.header.get(\"Connection\"), \"close\") {\r\n>        w.header.Set(\"Connection\", \"close\")\r\n>    }\r\n> \r\n> @@ -515,8 +515,8 @@\r\n>    // If this was an HTTP/1.0 request with keep-alive and we sent a Content-Length\r\n>    // back, we can make this a keep-alive response ...\r\n>    if w.req.wantsHttp10KeepAlive() {\r\n> -        sentLength := w.header.Get(\"Content-Length\") != \"\"\r\n> -        if sentLength && w.header.Get(\"Connection\") == \"keep-alive\" {\r\n> +        sentLength := w.header.get(\"Content-Length\") != \"\"\r\n> +        if sentLength && w.header.get(\"Connection\") == \"keep-alive\" {\r\n>            w.closeAfterReply = false\r\n>        }\r\n>    }\r\n> @@ -628,7 +628,7 @@\r\n>                break\r\n>            }\r\n>            req.Header.Del(\"Expect\")\r\n> -        } else if req.Header.Get(\"Expect\") != \"\" {\r\n> +        } else if req.Header.get(\"Expect\") != \"\" {\r\n>            // TODO(bradfitz): let ServeHTTP handlers handle\r\n>            // requests with non-standard expectation[s]? Seems\r\n>            // theoretical at best, and doesn't fit into the\r\n> Index: src/pkg/net/http/transfer.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/http/transfer.go\r\n> +++ b/src/pkg/net/http/transfer.go\r\n> @@ -432,7 +432,7 @@\r\n>    }\r\n> \r\n>    // Logic based on Content-Length\r\n> -    cl := strings.TrimSpace(header.Get(\"Content-Length\"))\r\n> +    cl := strings.TrimSpace(header.get(\"Content-Length\"))\r\n>    if cl != \"\" {\r\n>        n, err := strconv.ParseInt(cl, 10, 64)\r\n>        if err != nil || n < 0 {\r\n> @@ -454,7 +454,7 @@\r\n>    // Logic based on media type. The purpose of the following code is just\r\n>    // to detect whether the unsupported \"multipart/byteranges\" is being\r\n>    // used. A proper Content-Type parser is needed in the future.\r\n> -    if strings.Contains(strings.ToLower(header.Get(\"Content-Type\")), \"multipart/byteranges\") {\r\n> +    if strings.Contains(strings.ToLower(header.get(\"Content-Type\")), \"multipart/byteranges\") {\r\n>        return -1, ErrNotSupported\r\n>    }\r\n> \r\n> @@ -469,14 +469,14 @@\r\n>    if major < 1 {\r\n>        return true\r\n>    } else if major == 1 && minor == 0 {\r\n> -        if !strings.Contains(strings.ToLower(header.Get(\"Connection\")), \"keep-alive\") {\r\n> +        if !strings.Contains(strings.ToLower(header.get(\"Connection\")), \"keep-alive\") {\r\n>            return true\r\n>        }\r\n>        return false\r\n>    } else {\r\n>        // TODO: Should split on commas, toss surrounding white space,\r\n>        // and check each field.\r\n> -        if strings.ToLower(header.Get(\"Connection\")) == \"close\" {\r\n> +        if strings.ToLower(header.get(\"Connection\")) == \"close\" {\r\n>            header.Del(\"Connection\")\r\n>            return true\r\n>        }\r\n> @@ -486,7 +486,7 @@\r\n> \r\n> // Parse the trailer header\r\n> func fixTrailer(header Header, te []string) (Header, error) {\r\n> -    raw := header.Get(\"Trailer\")\r\n> +    raw := header.get(\"Trailer\")\r\n>    if raw == \"\" {\r\n>        return nil, nil\r\n>    }\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2012-05-27 02:23:42.998932",
+			"approval": true
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 6255053: net/http: avoid a bunch of unnecessary CanonicalHeaderK...",
+	"created": "2012-05-27 02:04:10.535804",
+	"patchsets": [
+		1,
+		3,
+		2005,
+		2006
+	],
+	"modified": "2012-05-28 18:07:29.870319",
+	"closed": true,
+	"issue": 6255053
+}

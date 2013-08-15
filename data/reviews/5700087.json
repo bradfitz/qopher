@@ -1,0 +1,455 @@
+{
+	"description": "crypto/x509: new home for root fetchers; build chains using Windows API\n\nThis moves the various CA root fetchers from crypto/tls into crypto/x509.\n\nThe move was brought about by issue 2997. Windows doesn't ship with all\nits root certificates, but will instead download them as-needed when using\nCryptoAPI for certificate verification.\n\nThis CL changes crypto/x509 to verify a certificate using the system root\nCAs when VerifyOptions.RootCAs == nil. On Windows, this verification is\nnow implemented using Windows's CryptoAPI. All other root fetchers are\nunchanged, and still use Go's own verification code.\n\nThe CL also fixes the hostname matching logic in crypto/tls/tls.go, in\norder to be able to test whether hostname mismatches are honored by the\nWindows verification code.\n\nThe move to crypto/x509 also allows other packages to use the OS-provided\nroot certificates, instead of hiding them inside the crypto/tls package.\n\nFixes issue 2997.",
+	"cc": [
+		"agl@golang.org",
+		"golang-dev@googlegroups.com",
+		"alex.brainman@gmail.com",
+		"rsc@golang.org",
+		"mikkel@krautz.dk"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/28 00:10:35, mkrautz wrote:\n> Hello mailto:agl@golang.org, mailto:brainman@gmail.com, mailto:golang-dev@googlegroups.com (cc:\n> mailto:golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://code.google.com/p/go/\n\nThis clashes with http://codereview.appspot.com/5700083/. I'll just sync this up if that one hits the repo.",
+			"disapproval": false,
+			"date": "2012-02-28 00:12:03.144183",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello agl@golang.org, brainman@gmail.com, golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-02-28 00:10:35.398195",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/28 00:51:16, agl1 wrote:\n> I'll have to leave the Windows specific stuff to someone else, but the x509\n> stuff LGTM. Although I would wonder whether it's not better to drop the bool in\n> CertPool and rather check whether it's the systemRoots in verify.go with\n> \n> roots != nil && roots == systemRoots\n\nI'm not a fan either.\n\nSince only Windows implements its own chain builder, I'd have to do something like:\n\n  roots != nil && roots == systemRoots && runtime.GOOS() == \"windows\"\n\nWould you prefer that?",
+			"disapproval": false,
+			"date": "2012-02-28 01:02:51.298812",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/28 01:02:51, mkrautz wrote:\n>   roots != nil && roots == systemRoots && runtime.GOOS() == \"windows\"\n> \n> Would you prefer that?\n\nAh yes, of course, we only want to trigger for Windows. If switching on GOOS() is an established way to introduce Windows-only behaviour then I think that's fine.",
+			"disapproval": false,
+			"date": "2012-02-28 01:08:29.830609",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It is much cleaner this way.\n\nAlex\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go\nFile src/pkg/crypto/x509/root_windows.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go#newcode23\nsrc/pkg/crypto/x509/root_windows.go:23: para.RequestedUsage.Usage.UsageIdentifier = nil\nShouldn't you restrict certificates you use to something like szOID_PKIX_KP_SERVER_AUTH?\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go#newcode69\nsrc/pkg/crypto/x509/root_windows.go:69: }\nWhy aren't you using CertVerifyCertificateChainPolicy?\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go#newcode85\nsrc/pkg/crypto/x509/root_windows.go:85: if len(chain) != int(verifiedChain.NumElements) {\nWhy would these two be different?\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/syscall_windows.go\nFile src/pkg/syscall/syscall_windows.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/syscall_windows.go#newcode188\nsrc/pkg/syscall/syscall_windows.go:188: //sys   CertFreeCertificateChain(ctx *CertChainContext) (err error) = crypt32.CertFreeCertificateChain\nCertFreeCertificateChain does not return anything:\ns/ (err error)//\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go\nFile src/pkg/syscall/ztypes_windows.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode734\nsrc/pkg/syscall/ztypes_windows.go:734: Chains                     *CertSimpleChain\ns/*CertSimpleChain/**CertSimpleChain/\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode736\nsrc/pkg/syscall/ztypes_windows.go:736: LowerQualityChains         *CertChainContext\ns/*CertChainContext/**CertChainContext/\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode737\nsrc/pkg/syscall/ztypes_windows.go:737: HasRevocationFreshnessTime bool\nIs it safe to use bool here (and everywhere else) from alignment and value point of view? Maybe just assume it is uint32.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode745\nsrc/pkg/syscall/ztypes_windows.go:745: Elements                   *CertChainElement\ns/*CertChainElement/**CertChainElement/\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode747\nsrc/pkg/syscall/ztypes_windows.go:747: HasRevocationFreshnessTime bool\nSame\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode766\nsrc/pkg/syscall/ztypes_windows.go:766: HasFreshnessTime bool\nSame\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode791\nsrc/pkg/syscall/ztypes_windows.go:791: CheckRevocationFreshnessTime bool\nSame",
+			"disapproval": false,
+			"date": "2012-02-28 05:17:07.012309",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'll have to leave the Windows specific stuff to someone else, but the x509 stuff LGTM. Although I would wonder whether it's not better to drop the bool in CertPool and rather check whether it's the systemRoots in verify.go with\n\nroots != nil && roots == systemRoots",
+			"disapproval": false,
+			"date": "2012-02-28 00:51:16.972276",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Do the changes here modify or delete any APIs?  One thing that I liked\nabout the old system was that the nil CertPool (meaning system)\nwas not inspectable, so that if you wanted to, you could change\nthe implementation to let the system do full verification, because\nyou couldn't tell what the system's cert pool was anyway.\nOne thing this CL appears to do is make the system's cert pool\nsomething that can be inspected, which either precludes calling\nthe OS's verification routines or allows the observation of inconsistent\nbehavior (a verification not justified by the pool).\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-28 18:36:26.396365",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/28 17:20:16, rsc wrote:\n> This is an enormous change to be making right now.\n> Is there a more limited change that can still fix this issue?\n> \n> Russ\n\nThis was the previous CL: http://codereview.appspot.com/5694078/",
+			"disapproval": false,
+			"date": "2012-02-28 17:22:23.472194",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This is an enormous change to be making right now.\nIs there a more limited change that can still fix this issue?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-28 17:20:16.157864",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Feb 28, 2012 at 9:20 AM, Russ Cox <rsc@golang.org> wrote:\n> This is an enormous change to be making right now.\n> Is there a more limited change that can still fix this issue?\n\nI think this is probably the right thing to do but I think that it can\nwait until after Go 1 if need be.\n\n\nCheers\n\nAGL\n",
+			"disapproval": false,
+			"date": "2012-02-28 17:24:44.721067",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/28 18:36:26, rsc wrote:\n> Do the changes here modify or delete any APIs?  One thing that I liked\n> about the old system was that the nil CertPool (meaning system)\n> was not inspectable, so that if you wanted to, you could change\n> the implementation to let the system do full verification, because\n> you couldn't tell what the system's cert pool was anyway.\n> One thing this CL appears to do is make the system's cert pool\n> something that can be inspected, which either precludes calling\n> the OS's verification routines or allows the observation of inconsistent\n> behavior (a verification not justified by the pool).\n> \n> Russ\n\nHi Russ,\n\nThe CL adds a new function to crypto/x509:\n\nfunc SystemPools() *CertPool\n\nIt does not change or delete any existing part of\nany APIs.\n\nPackage crypto/tls will still use the system pools\nfor verification like it always has, when RootCAs\nin tls.Config is set to nil. It special cases\nRootCAs == nil to mean x509.SystemPools(), which\nis like that it did previously with varDefaultRoots\nlocally in its own package.\n\nI agree that it is unfortunate that inconsistent\nstate can be observed. Specifically, I'm thinking\nof the fact that the Subjects method of the system\ncert pool will currently return an empty slice on\nWindows.\n\nI also do not like that it is possible to use add\ncertificates to the system pools via AddCert and\nAppendCertsFromPEM, but those could be changed to\nreturn an error if the pool is a system pool.\n\nAfter thinking this over, I think we should just do\nas crypto/tls does, and as you suggest Russ. We\nshould teach Certificate.Verify() to treat a\nVerifyOptions struct with nil Intermediates and Roots\nto mean 'verify against the system CAs'. That doesn't\nexport any magic CertPools that don't work like other\nCertPools, including things like Subjects() method\nthat cannot be reliably implemented on Windows.\n\nSounds good?",
+			"disapproval": false,
+			"date": "2012-02-29 17:24:13.628270",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/28 00:51:16, agl1 wrote:\n> I'll have to leave the Windows specific stuff to someone else, but the x509\n> stuff LGTM. Although I would wonder whether it's not better to drop the bool in\n> CertPool and rather check whether it's the systemRoots in verify.go with\n> \n> roots != nil && roots == systemRoots\n\nHi AGL,\n\nAm I correct in assuming that *Certificate.Verify()\nis meant not to apply any specific policies to the\nchains that it builds, and delegates that job to its\nconsumers?\n\nI ask because that's what I'm currently doing on Windows:\nNot requesting any specific usages, nor calling the\nCertVerifyCertificateChainPolicy function.\n\nRelatedly, I note that handshake_client.go, for\nexample, does not restrict the leaf certificate\nreceived from the server to be\nExtKeyUsageServerAuth.\n\nI have read the note about KeyUsage status flags in\nverify.go, but I read that as only talking about\nthe basic KeyUsages and not ExtKeyUsage*. Perhaps\nyou could enlighten me. :-)",
+			"disapproval": false,
+			"date": "2012-02-29 17:57:44.714818",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/29 17:57:44, mkrautz wrote:\n> Am I correct in assuming that *Certificate.Verify()\n> is meant not to apply any specific policies to the\n> chains that it builds, and delegates that job to its\n> consumers?\n\nYou mean X.509 policies identifiers? No, we don't currently do anything for that. Not to say that we would never do so, but not yet.\n\n> I have read the note about KeyUsage status flags in\n> verify.go, but I read that as only talking about\n> the basic KeyUsages and not ExtKeyUsage*. Perhaps\n> you could enlighten me. :-)\n\nI'm working through bits of the NIST PKITS when I can. Some extended key usage code might appear in the future but we don't currently do anything with it. That's likely to happen before X.509 policies though.\n\n\nCheers\n\nAGL",
+			"disapproval": false,
+			"date": "2012-03-02 16:22:27.035853",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/03/02 16:22:27, agl1 wrote:\n> On 2012/02/29 17:57:44, mkrautz wrote:\n> > Am I correct in assuming that *Certificate.Verify()\n> > is meant not to apply any specific policies to the\n> > chains that it builds, and delegates that job to its\n> > consumers?\n> \n> You mean X.509 policies identifiers? No, we don't currently do anything for\n> that. Not to say that we would never do so, but not yet.\n\nNo, I simply meant policy as it's used in the MS CryptoAPI and Apple Security.framework, where a SSL policy might match the leaf's CN to a hostname, and ensure that ExtKeyUsageServerAuth or ExtKeyUsageClientAuth is set. Or a code signing or authenticode policy might verify that ExtKeyUsageCodeSigning is set, and that the roots are from a specific system-trusted store.\n\nBut I think your answer to the question below answered this question as well. Since there's no extended key usage checking, the *Certificate.Verify() function should only build chains for now, and let users of the API decide whether they trust the returned chains for what they're doing. Is that correct?\n\n> \n> > I have read the note about KeyUsage status flags in\n> > verify.go, but I read that as only talking about\n> > the basic KeyUsages and not ExtKeyUsage*. Perhaps\n> > you could enlighten me. :-)\n> \n> I'm working through bits of the NIST PKITS when I can. Some extended key usage\n> code might appear in the future but we don't currently do anything with it.\n> That's likely to happen before X.509 policies though.\n> \n> \n> Cheers\n> \n> AGL",
+			"disapproval": false,
+			"date": "2012-03-02 17:29:58.294107",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Mar 2, 2012 at 9:29 AM,  <krautz@gmail.com> wrote:\n> No, I simply meant policy as it's used in the MS CryptoAPI and Apple\n> Security.framework, where a SSL policy might match the leaf's CN to a\n> hostname, and ensure that ExtKeyUsageServerAuth or ExtKeyUsageClientAuth\n> is set. Or a code signing or authenticode policy might verify that\n> ExtKeyUsageCodeSigning is set, and that the roots are from a specific\n> system-trusted store.\n\nWell, if the hostname is set in the VerifyOptions then we *do* match\nthat. (And that's pretty important!)\n\nIf the Windows implementation can't match a hostname without also\nmatching a key usage etc, then that's not the end of the world. In the\nfuture, VerifyOptions can have a MustBeValidForTLSServer or something\nthat users could request for extra checking.\n\n\nCheers\n\nAGL\n",
+			"disapproval": false,
+			"date": "2012-03-02 17:57:47.468764",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/03/02 17:57:47, agl1 wrote:\n> On Fri, Mar 2, 2012 at 9:29 AM,  <mailto:krautz@gmail.com> wrote:\n> > No, I simply meant policy as it's used in the MS CryptoAPI and Apple\n> > Security.framework, where a SSL policy might match the leaf's CN to a\n> > hostname, and ensure that ExtKeyUsageServerAuth or ExtKeyUsageClientAuth\n> > is set. Or a code signing or authenticode policy might verify that\n> > ExtKeyUsageCodeSigning is set, and that the roots are from a specific\n> > system-trusted store.\n> \n> Well, if the hostname is set in the VerifyOptions then we *do* match\n> that. (And that's pretty important!)\n> \n> If the Windows implementation can't match a hostname without also\n> matching a key usage etc, then that's not the end of the world. In the\n> future, VerifyOptions can have a MustBeValidForTLSServer or something\n> that users could request for extra checking.\n> \n> \n> Cheers\n> \n> AGL\n\nCurrently, we're still doing the hostname check in Go code:\n\nThe buildSystemChains method is inserted here:\nhttp://codereview.appspot.com/5700087/patch/5001/6013\n\njust below the current DNS check:\nhttp://code.google.com/p/go/source/browse/src/pkg/crypto/x509/verify.go#142\n\nBut you're right, I didn't think of using the availability of a DNSName in VerifyOptions to trigger a SSL policy check. That might be the sensible thing to do.",
+			"disapproval": false,
+			"date": "2012-03-02 18:06:49.973137",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nI got rid of x509.SystemRoots() and instead use VerifyOptions.RootCAs == nil to mean 'verify against system roots' (on Windows, 'verify using system APIs').\n\nI also added a few tests and fixed a bug in tls.Dial. The logic for using the hostname passed to tls.Dial as the tls.Config's ServerName was wrong.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go\nFile src/pkg/crypto/x509/root_windows.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go#newcode23\nsrc/pkg/crypto/x509/root_windows.go:23: para.RequestedUsage.Usage.UsageIdentifier = nil\nOn 2012/02/28 05:17:07, brainman wrote:\n> Shouldn't you restrict certificates you use to something like\n> szOID_PKIX_KP_SERVER_AUTH?\n\nDone, but only when opts.DNSName is set.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go#newcode69\nsrc/pkg/crypto/x509/root_windows.go:69: }\nOn 2012/02/28 05:17:07, brainman wrote:\n> Why aren't you using CertVerifyCertificateChainPolicy?\n\nDone, for len(opts.DNSName) > 0.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go#newcode85\nsrc/pkg/crypto/x509/root_windows.go:85: if len(chain) != int(verifiedChain.NumElements) {\nOn 2012/02/28 05:17:07, brainman wrote:\n> Why would these two be different?\n\nParseCertificate could fail.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/syscall_windows.go\nFile src/pkg/syscall/syscall_windows.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/syscall_windows.go#newcode188\nsrc/pkg/syscall/syscall_windows.go:188: //sys   CertFreeCertificateChain(ctx *CertChainContext) (err error) = crypt32.CertFreeCertificateChain\nOn 2012/02/28 05:17:07, brainman wrote:\n> CertFreeCertificateChain does not return anything:\n> s/ (err error)//\n\nDone.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go\nFile src/pkg/syscall/ztypes_windows.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode734\nsrc/pkg/syscall/ztypes_windows.go:734: Chains                     *CertSimpleChain\nOn 2012/02/28 05:17:07, brainman wrote:\n> s/*CertSimpleChain/**CertSimpleChain/\n\nDone.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode736\nsrc/pkg/syscall/ztypes_windows.go:736: LowerQualityChains         *CertChainContext\nOn 2012/02/28 05:17:07, brainman wrote:\n> s/*CertChainContext/**CertChainContext/\n\nDone.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode737\nsrc/pkg/syscall/ztypes_windows.go:737: HasRevocationFreshnessTime bool\nOn 2012/02/28 05:17:07, brainman wrote:\n> Is it safe to use bool here (and everywhere else) from alignment and value point\n> of view? Maybe just assume it is uint32.\n\nDone.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode745\nsrc/pkg/syscall/ztypes_windows.go:745: Elements                   *CertChainElement\nOn 2012/02/28 05:17:07, brainman wrote:\n> s/*CertChainElement/**CertChainElement/\n\nDone.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode747\nsrc/pkg/syscall/ztypes_windows.go:747: HasRevocationFreshnessTime bool\nOn 2012/02/28 05:17:07, brainman wrote:\n> Same\n\nDone.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode766\nsrc/pkg/syscall/ztypes_windows.go:766: HasFreshnessTime bool\nOn 2012/02/28 05:17:07, brainman wrote:\n> Same\n\nDone.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/syscall/ztypes_windows.go#newcode791\nsrc/pkg/syscall/ztypes_windows.go:791: CheckRevocationFreshnessTime bool\nOn 2012/02/28 05:17:07, brainman wrote:\n> Same\n\nDone.",
+			"disapproval": false,
+			"date": "2012-03-03 00:14:13.725233",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nStumbled upon a few issues in root_darwin.go and root_stub.go in the last one I sent.\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go\nFile src/pkg/crypto/x509/root_windows.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/5001/src/pkg/crypto/x509/root_windows.go#newcode85\nsrc/pkg/crypto/x509/root_windows.go:85: if len(chain) != int(verifiedChain.NumElements) {\nOn 2012/03/03 00:14:14, mkrautz wrote:\n> On 2012/02/28 05:17:07, brainman wrote:\n> > Why would these two be different?\n> \n> ParseCertificate could fail.\n\nI now return ParseCertificate's error instead of breaking out of the loop above. This check is now gone.",
+			"disapproval": false,
+			"date": "2012-03-03 12:19:27.261271",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nLeaving for others to make final call.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-03-05 02:00:52.452751",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This seems okay to me, but please update the CL so that the\nmoved files are recorded as moved files; then we can see what\nchanged during the move.\n\nRunning 'hg addremove' should (after prompting you about\nvarious other files) auto-detect these moves and update your\nhg state.\n\nThanks.\nRuss\n",
+			"disapproval": false,
+			"date": "2012-03-05 21:31:49.521084",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThe per-file diffs don't seem to be working but\n'view raw patch set' seems okay.\n\nWindows changed recently; you may need to hg sync, not sure.\n",
+			"disapproval": false,
+			"date": "2012-03-06 18:19:10.229754",
+			"approval": true
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttp://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go\nFile src/pkg/crypto/x509/verify_test.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go#newcode109\nsrc/pkg/crypto/x509/verify_test.go:109: // can only return a single chain to us.\nOn 2012/03/06 18:11:21, agl1 wrote:\n> add \" (for now)\". CAPI is certainly capable of returning multiple chains itself.\n\nDone.\n\nA little sidenote:\nAs per the comments in root_windows.go, it seems to me like CertGetCertificateChain can only build a single chain before returning. I'm not suggesting we change it to use another function now (I realise this is already quite a mouthful before Go 1), but I'm curious to know of a better way.\n\nhttp://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go#newcode236\nsrc/pkg/crypto/x509/verify_test.go:236: Intermediates: nil,\nOn 2012/03/06 18:11:21, agl1 wrote:\n> I think you need to fill in the intermediates. It's probably working for you\n> because CAPI will perform AIA chasing, but it'll make the tests flaky.\n\nThis would be a no-op for the system verify test (because it only runs on Windows). But I've done this anyway, since I refactored the test a bit.\n\nThe code in root_windows.go doesn't handle intermediates at all, and delegates that to the CAPI call. I didn't see a way to pass a list of intermediates initially, but I realise now that I should probably be passing an in-memory store of intermediates as hAdditionalStore to CertGetCertificateChain.\n\nhttp://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go#newcode266\nsrc/pkg/crypto/x509/verify_test.go:266: NextOutputChain:\nOn 2012/03/06 18:11:21, agl1 wrote:\n> This is very copy paste from the above. Needs a TODO(agl) to clean it up at\n> least.\n\nDone. The test has been refactored to avoid the duplication.",
+			"disapproval": false,
+			"date": "2012-03-06 19:11:07.693344",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"mikkel@krautz.dk",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nNow honors opts.Intermediates in the Windows system verification code.",
+			"disapproval": false,
+			"date": "2012-03-07 00:10:25.187728",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nOn 2012/03/05 21:31:49, rsc wrote:\n> This seems okay to me, but please update the CL so that the\n> moved files are recorded as moved files; then we can see what\n> changed during the move.\n> \n> Running 'hg addremove' should (after prompting you about\n> various other files) auto-detect these moves and update your\n> hg state.\n\nDone.\n\n> \n> Thanks.\n> Russ",
+			"disapproval": false,
+			"date": "2012-03-05 22:16:23.564917",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've sent out http://codereview.appspot.com/5753060/ to alter the deps to allow this to land.\n\nhttp://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go\nFile src/pkg/crypto/x509/verify_test.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go#newcode109\nsrc/pkg/crypto/x509/verify_test.go:109: // can only return a single chain to us.\nadd \" (for now)\". CAPI is certainly capable of returning multiple chains itself.\n\nhttp://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go#newcode236\nsrc/pkg/crypto/x509/verify_test.go:236: Intermediates: nil,\nI think you need to fill in the intermediates. It's probably working for you because CAPI will perform AIA chasing, but it'll make the tests flaky.\n\nhttp://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go#newcode266\nsrc/pkg/crypto/x509/verify_test.go:266: NextOutputChain:\nThis is very copy paste from the above. Needs a TODO(agl) to clean it up at least.",
+			"disapproval": false,
+			"date": "2012-03-06 18:11:20.872360",
+			"approval": false
+		},
+		{
+			"sender": "mikkel@krautz.dk",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 6, 2012 at 7:19 PM, Russ Cox <rsc@golang.org> wrote:\n> LGTM\n>\n> The per-file diffs don't seem to be working but\n> 'view raw patch set' seems okay.\n\nYeah, I made sure they were in the diff.  Looking at the per-file\ndiffs, they do have the git-style diff renames at the top of the file.\nIs Rietveld supposed to mark them differently?\n\n> Windows changed recently; you may need to hg sync, not sure.\n",
+			"disapproval": false,
+			"date": "2012-03-06 19:14:53.399359",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 6, 2012 at 14:14, Mikkel Krautz <mikkel@krautz.dk> wrote:\n> Yeah, I made sure they were in the diff. \u00a0Looking at the per-file\n> diffs, they do have the git-style diff renames at the top of the file.\n> Is Rietveld supposed to mark them differently?\n\nProbably hg upload again will fix it.  Rietveld can be flaky.\n",
+			"disapproval": false,
+			"date": "2012-03-06 20:32:52.059171",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"mikkel@krautz.dk",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go\nFile src/pkg/crypto/x509/verify_test.go (right):\n\nhttp://codereview.appspot.com/5700087/diff/26002/src/pkg/crypto/x509/verify_test.go#newcode236\nsrc/pkg/crypto/x509/verify_test.go:236: Intermediates: nil,\nOn 2012/03/06 19:11:07, mkrautz wrote:\n> The code in root_windows.go doesn't handle intermediates at all, and delegates\n> that to the CAPI call. I didn't see a way to pass a list of intermediates\n> initially, but I realise now that I should probably be passing an in-memory\n> store of intermediates as hAdditionalStore to CertGetCertificateChain.\n\nAh, I'm afraid that passing the intermediates to the chain building is rather important. Without it, the results will be flaky at best because CryptoAPI will have to fetch them via HTTP. In many cases, there is no AIA pointer and so it will simply fail.\n\nSee CreateOSCertChainForCert in https://src.chromium.org/viewvc/chrome/trunk/src/net/base/x509_certificate_win.cc?view=markup",
+			"disapproval": false,
+			"date": "2012-03-06 20:31:31.438749",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"krautz@gmail.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"mikkel@krautz.dk",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=cab9aee7fb70 ***\n\ncrypto/x509: new home for root fetchers; build chains using Windows API\n\nThis moves the various CA root fetchers from crypto/tls into crypto/x509.\n\nThe move was brought about by issue 2997. Windows doesn't ship with all\nits root certificates, but will instead download them as-needed when using\nCryptoAPI for certificate verification.\n\nThis CL changes crypto/x509 to verify a certificate using the system root\nCAs when VerifyOptions.RootCAs == nil. On Windows, this verification is\nnow implemented using Windows's CryptoAPI. All other root fetchers are\nunchanged, and still use Go's own verification code.\n\nThe CL also fixes the hostname matching logic in crypto/tls/tls.go, in\norder to be able to test whether hostname mismatches are honored by the\nWindows verification code.\n\nThe move to crypto/x509 also allows other packages to use the OS-provided\nroot certificates, instead of hiding them inside the crypto/tls package.\n\nFixes issue 2997.\n\nR=agl, golang-dev, alex.brainman, rsc, mikkel\nCC=golang-dev\nhttp://codereview.appspot.com/5700087\n\nCommitter: Adam Langley <agl@golang.org>",
+			"disapproval": false,
+			"date": "2012-03-07 18:12:52.621363",
+			"approval": false
+		}
+	],
+	"owner_email": "krautz@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "mkrautz",
+	"subject": "code review 5700087: crypto/x509: new home for root fetchers; build chains u...",
+	"created": "2012-02-27 23:31:59.012246",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		17001,
+		18001,
+		18020,
+		14021,
+		21001,
+		22001,
+		16040,
+		21003,
+		19020,
+		18043,
+		17059,
+		26002,
+		29002,
+		31016,
+		27048,
+		28033
+	],
+	"modified": "2012-03-07 20:01:03.156412",
+	"closed": true,
+	"issue": 5700087
+}

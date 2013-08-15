@@ -1,0 +1,228 @@
+{
+	"description": "net/http: fix early side effects in the ResponseWriter's ReadFrom\n\nThe ResponseWriter's ReadFrom method was causing side effects on\nthe output before any data was read.\n\nNow, bail out early and do a normal copy (which does a read\nbefore writing) when our input and output are known to not to\nbe the pair of types we need for sendfile.\n\nFixes issue 5660",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org",
+		"nightlyone@googlemail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-08-07 22:53:46.567350",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 7, 2013 at 5:02 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> On Wed, Aug 7, 2013 at 8:01 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n>\r\n>> Can I keep a fast path avoiding that Read if the src is an *os.File and\r\n>> its Name doesn't begin with a Pipe?  That is the common case\r\n>> (http.FileServer) for ReadFrom.\r\n>>\r\n>\r\n> How about calling f.Stat and checking f.Mode().IsRegular()?\r\n>\r\n\r\nSure, that works.  It's unfortunate because it means we go from 2 stats on\r\nthe same file to 3 stats on the same file.  (Peter Buhr was noticing this\r\non his ktrace analysis of the file server recently)\r\n\r\nOh well, the kernel will have it cached.\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 00:05:51.259590",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hmm.\r\n\r\nTo work around a bad interaction between io.Copy and an\r\nhttp.ResponseWriter, we're making a change in os/exec? That doesn't seem\r\nright.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 23:25:23.635710",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Suggestions welcome.\r\n\r\n\r\n\r\nOn Wed, Aug 7, 2013 at 4:25 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Hmm.\r\n>\r\n> To work around a bad interaction between io.Copy and an\r\n> http.ResponseWriter, we're making a change in os/exec? That doesn't seem\r\n> right.\r\n>\r\n> Russ\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 23:27:28.100930",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It is possible that, now that we understand what is going on, issue 5660 is\r\nworking as intended. Passing the ResponseWriter to os/exec counts as a\r\nWrite, and you can't do that before you consume the body.\r\n\r\nIt is also possible that ResponseWriter's ReadFrom should copy the first\r\nblock itself, without sendfile; basically, delete the w.wroteHeader check\r\nand change if w.needsSniff to if true. That will delay the first write -\r\nand therefore the header flush etc - until there is data available.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 23:28:57.576340",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 7, 2013 at 4:28 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> It is possible that, now that we understand what is going on, issue 5660\r\n> is working as intended. Passing the ResponseWriter to os/exec counts as a\r\n> Write, and you can't do that before you consume the body.\r\n>\r\n> It is also possible that ResponseWriter's ReadFrom should copy the first\r\n> block itself, without sendfile;\r\n>\r\n\r\nI considered that but wasn't sure that was worth the price.\r\n\r\nIn both the sendfile case and the os/exec case, the src io.Reader is of\r\ntype *os.File.  So I can't do it conditional on the type.\r\n\r\nWhat I *could* do is make it conditional on (*os.File).Name().  Which for\r\npipes is \"|0\" and \"|1\".\r\n\r\nHow gross is that?  Can I depend on Name starting with \"|\" to go into the\r\nslow path?  We couldn't really change that safely at this point now anyway,\r\nright?\r\n\r\n\r\n\r\n> basically, delete the w.wroteHeader check and change if w.needsSniff to if\r\n> true. That will delay the first write - and therefore the header flush etc\r\n> - until there is data available.\r\n>\r\n> Russ\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 23:32:45.608840",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 7, 2013 at 7:32 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n>\r\n>> It is also possible that ResponseWriter's ReadFrom should copy the first\r\n>> block itself, without sendfile;\r\n>>\r\n>\r\n> I considered that but wasn't sure that was worth the price.\r\n>\r\n\r\nThe more I think about this the more I think it's the correct fix,\r\nregardless of price. ReadFrom should not be causing the effects of a Write\r\nuntil there is something to write. The implementation here is buggy.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 23:56:52.329420",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 7, 2013 at 4:56 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> On Wed, Aug 7, 2013 at 7:32 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n>\r\n>>\r\n>>> It is also possible that ResponseWriter's ReadFrom should copy the first\r\n>>> block itself, without sendfile;\r\n>>>\r\n>>\r\n>> I considered that but wasn't sure that was worth the price.\r\n>>\r\n>\r\n> The more I think about this the more I think it's the correct fix,\r\n> regardless of price. ReadFrom should not be causing the effects of a Write\r\n> until there is something to write. The implementation here is buggy.\r\n>\r\n\r\nSure, will do.\r\n\r\nI have a nice test for this written from earlier today.\r\n\r\nCan I keep a fast path avoiding that Read if the src is an *os.File and its\r\nName doesn't begin with a Pipe?  That is the common case (http.FileServer)\r\nfor ReadFrom.\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 00:01:17.590890",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 7, 2013 at 8:01 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> Can I keep a fast path avoiding that Read if the src is an *os.File and\r\n> its Name doesn't begin with a Pipe?  That is the common case\r\n> (http.FileServer) for ReadFrom.\r\n>\r\n\r\nHow about calling f.Stat and checking f.Mode().IsRegular()?\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 00:02:46.114150",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-08-08 02:45:48.571200",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\r\n\r\nNow without any os/exec changes.\r\n\r\n\r\n\r\nOn Wed, Aug 7, 2013 at 7:45 PM, <bradfitz@golang.org> wrote:\r\n\r\n> Hello golang-dev@googlegroups.com, rsc@golang.org (cc:\r\n> golang-dev@googlegroups.com),\r\n>\r\n> Please take another look.\r\n>\r\n>\r\n> https://codereview.appspot.**com/12632043/<https://codereview.appspot.com/12632043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 02:46:53.700560",
+			"approval": false
+		},
+		{
+			"sender": "nightlyone@googlemail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thursday, August 8, 2013 2:05:49 AM UTC+2, Brad Fitzpatrick wrote:\r\n\r\n> On Wed, Aug 7, 2013 at 5:02 PM, Russ Cox <r...@golang.org <javascript:>>wrote:\r\n>\r\n>> On Wed, Aug 7, 2013 at 8:01 PM, Brad Fitzpatrick <brad...@golang.org<javascript:>\r\n>> > wrote:\r\n>>  \r\n>>> Can I keep a fast path avoiding that Read if the src is an *os.File and \r\n>>> its Name doesn't begin with a Pipe?  That is the common case \r\n>>> (http.FileServer) for ReadFrom.\r\n>>>\r\n>>\r\n>> How about calling f.Stat and checking f.Mode().IsRegular()?\r\n>>\r\n>\r\n> Sure, that works.  It's unfortunate because it means we go from 2 stats on \r\n> the same file to 3 stats on the same file.  (Peter Buhr was noticing this \r\n> on his ktrace analysis of the file server recently) \r\n>\r\n> Oh well, the kernel will have it cached.\r\n>\r\n\r\nCan't we cache at least the file type of opened files? I guess they won't \r\nchange after open, \r\nas the driver is then usually bound to the handle in all the operating \r\nsystems I am aware of.\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 15:05:19.047680",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 7, 2013 at 8:05 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> Sure, that works.  It's unfortunate because it means we go from 2 stats on\r\n> the same file to 3 stats on the same file.  (Peter Buhr was noticing this\r\n> on his ktrace analysis of the file server recently)\r\n>\r\n\r\nWould you rather not use sendfile at all?\r\n\r\nSurely the benefit of using sendfile more than pays for the cost of three\r\nstat calls.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 16:08:31.298750",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm happy statting.\r\nOn Aug 8, 2013 9:08 AM, \"Russ Cox\" <rsc@golang.org> wrote:\r\n\r\n> On Wed, Aug 7, 2013 at 8:05 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n>\r\n>> Sure, that works.  It's unfortunate because it means we go from 2 stats\r\n>> on the same file to 3 stats on the same file.  (Peter Buhr was noticing\r\n>> this on his ktrace analysis of the file server recently)\r\n>>\r\n>\r\n> Would you rather not use sendfile at all?\r\n>\r\n> Surely the benefit of using sendfile more than pays for the cost of three\r\n> stat calls.\r\n>\r\n> Russ\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 16:19:51.852410",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Russ,\r\n\r\nThis cool?\r\n\r\n\r\n\r\nOn Wed, Aug 7, 2013 at 7:46 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> PTAL\r\n>\r\n> Now without any os/exec changes.\r\n>\r\n>\r\n>\r\n> On Wed, Aug 7, 2013 at 7:45 PM, <bradfitz@golang.org> wrote:\r\n>\r\n>> Hello golang-dev@googlegroups.com, rsc@golang.org (cc:\r\n>> golang-dev@googlegroups.com),\r\n>>\r\n>> Please take another look.\r\n>>\r\n>>\r\n>> https://codereview.appspot.**com/12632043/<https://codereview.appspot.com/12632043/>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 20:35:44.394890",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"nightlyone@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/12632043/diff/19001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/12632043/diff/19001/src/pkg/net/http/server.go#newcode381\nsrc/pkg/net/http/server.go:381: if !ok || !regFile {\nyou could possibly do || !w.bodyAllowed() here too, instead of at the bottom,\nif bodyAllowed is not something that is going to change before you get there.\neither way.",
+			"disapproval": false,
+			"date": "2013-08-08 20:54:40.475740",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"nightlyone@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12632043/diff/19001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/12632043/diff/19001/src/pkg/net/http/server.go#newcode381\nsrc/pkg/net/http/server.go:381: if !ok || !regFile {\nOn 2013/08/08 20:54:40, rsc wrote:\n> you could possibly do || !w.bodyAllowed() here too, instead of at the bottom,\n> if bodyAllowed is not something that is going to change before you get there.\n> either way.\n\nThat's illegal to call before the headers have been flushed.",
+			"disapproval": false,
+			"date": "2013-08-08 20:58:08.219330",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"nightlyone@googlemail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=f53cee5f15de ***\n\nnet/http: fix early side effects in the ResponseWriter's ReadFrom\n\nThe ResponseWriter's ReadFrom method was causing side effects on\nthe output before any data was read.\n\nNow, bail out early and do a normal copy (which does a read\nbefore writing) when our input and output are known to not to\nbe the pair of types we need for sendfile.\n\nFixes issue 5660\n\nR=golang-dev, rsc, nightlyone\nCC=golang-dev\nhttps://codereview.appspot.com/12632043",
+			"disapproval": false,
+			"date": "2013-08-08 21:03:02.871830",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 12632043: net/http: fix early side effects in the ResponseWriter'...",
+	"created": "2013-08-07 22:53:33.980940",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		17001,
+		19001,
+		31001
+	],
+	"modified": "2013-08-08 23:31:55.071360",
+	"closed": true,
+	"issue": 12632043
+}

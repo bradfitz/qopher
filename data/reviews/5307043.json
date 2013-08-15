@@ -1,0 +1,162 @@
+{
+	"description": "rpc: don't panic on write error.\nThe mechanism to record the error in the call is already in place.\nFixes issue 2382.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dsymonds@golang.org",
+		"bradfitz@golang.org",
+		"r@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "i need to try programming more than one day a week\n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2011-10-18 22:49:16.386281",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-18 22:12:03.323929",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\nOn Oct 19, 2011 9:12 AM, <r@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> rpc: don't panic on write error.\n> The mechanism to record the error in the call is already in place.\n> Fixes issue 2382.\n>\n> Please review this at http://codereview.appspot.com/**5307043/<http://codereview.appspot.com/5307043/>\n>\n> Affected files:\n>  M src/pkg/rpc/client.go\n>\n>\n> Index: src/pkg/rpc/client.go\n> ==============================**==============================**=======\n> --- a/src/pkg/rpc/client.go\n> +++ b/src/pkg/rpc/client.go\n> @@ -85,7 +85,8 @@\n>        client.request.Seq = c.seq\n>        client.request.ServiceMethod = c.ServiceMethod\n>        if err := client.codec.WriteRequest(&**client.request, c.Args); err\n> != nil {\n> -               panic(\"rpc: client encode error: \" + err.String())\n> +               c.Error = err\n> +               c.done()\n>        }\n>  }\n>\n> @@ -251,10 +252,10 @@\n>  // the same Call object.  If done is nil, Go will allocate a new channel.\n>  // If non-nil, done must be buffered or Go will deliberately crash.\n>  func (client *Client) Go(serviceMethod string, args interface{}, reply\n> interface{}, done chan *Call) *Call {\n> -       c := new(Call)\n> -       c.ServiceMethod = serviceMethod\n> -       c.Args = args\n> -       c.Reply = reply\n> +       call := new(Call)\n> +       call.ServiceMethod = serviceMethod\n> +       call.Args = args\n> +       call.Reply = reply\n>        if done == nil {\n>                done = make(chan *Call, 10) // buffered.\n>        } else {\n> @@ -266,14 +267,14 @@\n>                        log.Panic(\"rpc: done channel is unbuffered\")\n>                }\n>        }\n> -       c.Done = done\n> +       call.Done = done\n>        if client.shutdown {\n> -               c.Error = ErrShutdown\n> -               c.done()\n> -               return c\n> +               call.Error = ErrShutdown\n> +               call.done()\n> +               return call\n>        }\n> -       client.send(c)\n> -       return c\n> +       client.send(call)\n> +       return call\n>  }\n>\n>  // Call invokes the named function, waits for it to complete, and returns\n> its error status.\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-18 22:17:41.415762",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Here's a test:\n\nbradfitz@gopher:~/go/src/pkg/rpc$ hg diff\ndiff -r b7f9a5e9b87f src/pkg/rpc/server_test.go\n--- a/src/pkg/rpc/server_test.go        Tue Oct 18 17:01:42 2011 -0500\n+++ b/src/pkg/rpc/server_test.go        Tue Oct 18 15:22:19 2011 -0700\n@@ -467,6 +467,27 @@\n        fmt.Printf(\"mallocs per HTTP rpc round trip: %d\\n\",\ncountMallocs(dialHTTP, t))\n }\n\n+type writeCrasher struct{}\n+\n+func (writeCrasher) Close() os.Error {\n+       return nil\n+}\n+\n+func (writeCrasher) Read(p []byte) (int, os.Error) {\n+       return 0, os.EOF\n+}\n+\n+func (writeCrasher) Write(p []byte) (int, os.Error) {\n+       return 0, os.NewError(\"fake write failure\")\n+}\n+\n+func TestClientWriteError(t *testing.T) {\n+       c := NewClient(writeCrasher{})\n+       res := false\n+       c.Call(\"foo\", 1, &res)\n+}\n+\n func benchmarkEndToEnd(dial func() (*Client, os.Error), b *testing.B) {\n        b.StopTimer()\n        once.Do(startServer)\n\n\nOn Tue, Oct 18, 2011 at 3:12 PM, <r@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> rpc: don't panic on write error.\n> The mechanism to record the error in the call is already in place.\n> Fixes issue 2382.\n>\n> Please review this at http://codereview.appspot.com/**5307043/<http://codereview.appspot.com/5307043/>\n>\n> Affected files:\n>  M src/pkg/rpc/client.go\n>\n>\n> Index: src/pkg/rpc/client.go\n> ==============================**==============================**=======\n> --- a/src/pkg/rpc/client.go\n> +++ b/src/pkg/rpc/client.go\n> @@ -85,7 +85,8 @@\n>        client.request.Seq = c.seq\n>        client.request.ServiceMethod = c.ServiceMethod\n>        if err := client.codec.WriteRequest(&**client.request, c.Args); err\n> != nil {\n> -               panic(\"rpc: client encode error: \" + err.String())\n> +               c.Error = err\n> +               c.done()\n>        }\n>  }\n>\n> @@ -251,10 +252,10 @@\n>  // the same Call object.  If done is nil, Go will allocate a new channel.\n>  // If non-nil, done must be buffered or Go will deliberately crash.\n>  func (client *Client) Go(serviceMethod string, args interface{}, reply\n> interface{}, done chan *Call) *Call {\n> -       c := new(Call)\n> -       c.ServiceMethod = serviceMethod\n> -       c.Args = args\n> -       c.Reply = reply\n> +       call := new(Call)\n> +       call.ServiceMethod = serviceMethod\n> +       call.Args = args\n> +       call.Reply = reply\n>        if done == nil {\n>                done = make(chan *Call, 10) // buffered.\n>        } else {\n> @@ -266,14 +267,14 @@\n>                        log.Panic(\"rpc: done channel is unbuffered\")\n>                }\n>        }\n> -       c.Done = done\n> +       call.Done = done\n>        if client.shutdown {\n> -               c.Error = ErrShutdown\n> -               c.done()\n> -               return c\n> +               call.Error = ErrShutdown\n> +               call.done()\n> +               return call\n>        }\n> -       client.send(c)\n> -       return c\n> +       client.send(call)\n> +       return call\n>  }\n>\n>  // Call invokes the named function, waits for it to complete, and returns\n> its error status.\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-18 22:23:04.128517",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5307043/diff/1002/src/pkg/rpc/server_test.go\nFile src/pkg/rpc/server_test.go (right):\n\nhttp://codereview.appspot.com/5307043/diff/1002/src/pkg/rpc/server_test.go#newcode489\nsrc/pkg/rpc/server_test.go:489: t.Error(\"expected error\")\nt.Fatal, otherwise you fall through and deference nil",
+			"disapproval": false,
+			"date": "2011-10-18 22:43:57.940691",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dsymonds@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-18 22:38:37.454174",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dsymonds@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-18 22:40:06.560808",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"bradfitz@golang.org",
+				"r@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2011-10-18 22:50:00.533785",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dsymonds@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-18 22:49:02.178839",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"bradfitz@golang.org",
+				"r@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=db65e054598e ***\n\nrpc: don't panic on write error.\nThe mechanism to record the error in the call is already in place.\nFixes issue 2382.\n\nR=golang-dev, dsymonds, bradfitz, r\nCC=golang-dev\nhttp://codereview.appspot.com/5307043",
+			"disapproval": false,
+			"date": "2011-10-18 22:52:54.610901",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 5307043: rpc: don't panic on write error.",
+	"created": "2011-10-18 22:12:00.021610",
+	"patchsets": [
+		1,
+		4001,
+		7001,
+		1002,
+		7004,
+		1003
+	],
+	"modified": "2011-10-18 22:52:56.405696",
+	"closed": true,
+	"issue": 5307043
+}

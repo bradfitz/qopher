@@ -1,0 +1,308 @@
+{
+	"description": "runtime: faster finalizers\n\nLinux/amd64, 2 x Intel Xeon E5620, 8 HT cores, 2.40GHz\nbenchmark                    old ns/op    new ns/op    delta\nBenchmarkFinalizer              420.00       261.00  -37.86%\nBenchmarkFinalizer-2            985.00       201.00  -79.59%\nBenchmarkFinalizer-4           1077.00       244.00  -77.34%\nBenchmarkFinalizer-8           1155.00       180.00  -84.42%\nBenchmarkFinalizer-16          1182.00       184.00  -84.43%\n\nBenchmarkFinalizerRun          2128.00      1378.00  -35.24%\nBenchmarkFinalizerRun-2        1655.00      1418.00  -14.32%\nBenchmarkFinalizerRun-4        1634.00      1522.00   -6.85%\nBenchmarkFinalizerRun-8        2213.00      1581.00  -28.56%\nBenchmarkFinalizerRun-16       2424.00      1599.00  -34.03%\n\nDarwin/amd64, Intel L9600, 2 cores, 2.13GHz\nbenchmark                    old ns/op    new ns/op    delta\nBenchmarkChanCreation          1451.00       926.00  -36.18%\nBenchmarkChanCreation-2        3124.00      1412.00  -54.80%\nBenchmarkChanCreation-4        6121.00      2628.00  -57.07%\n\nBenchmarkFinalizer              684.00       420.00  -38.60%\nBenchmarkFinalizer-2          11195.00       398.00  -96.44%\nBenchmarkFinalizer-4          15862.00       654.00  -95.88%\n\nBenchmarkFinalizerRun          2025.00      1397.00  -31.01%\nBenchmarkFinalizerRun-2        3920.00      1447.00  -63.09%\nBenchmarkFinalizerRun-4        9471.00      1545.00  -83.69%",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"cw@f00f.org",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, cw@f00f.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-01 13:28:56.596076",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Mon, Oct 3, 2011 at 5:56 AM, Chris Wedgwood <cw@f00f.org> wrote:\n\n> On Sun, Oct 02, 2011 at 12:34:13PM +0000, dvyukov@google.com wrote:\n>\n> > Have you tested that on a machine with 128 byte cache lines (read\n> > prefetching)? I don't have access to such machine, but I suspect that\n> > difference must be huge.\n>\n> (governer set to perforance on all cores, system idle):\n>\n> BenchmarkFinalizer speeds are the same\n>\n> BenchmarkFinalizerRun is a little faster with 64-byte cacheline\n>\n\nBenchmarking makes no sense with GOMAXPROCS=1. Ideally it is done on a\nmultiprocessor machine with GOMAXPROCS at least 8.\nAnd, is it a machine with 128 byte effective cache lines?\n",
+			"disapproval": false,
+			"date": "2011-10-03 09:47:24.379721",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "WFM\n\n(the comment wrt to cacheline size is weak, I tested 64 vs 128 and it's not clear either is a clear win within a reasonable margin of error)\n\nhttp://codereview.appspot.com/4963057/diff/16001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttp://codereview.appspot.com/4963057/diff/16001/src/pkg/runtime/runtime.h#newcode339\nsrc/pkg/runtime/runtime.h:339: enum { CacheLineSize = 128 };\nWhy not simply 64b?\n\nUP chipsets (bios config/defaults really) tend to pre-fetch the next-cache line but servers usually don't.\n\n\nFor non-x86 (ie. ARM) 128 seems quite large.",
+			"disapproval": false,
+			"date": "2011-10-01 04:57:21.762943",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/01 04:57:21, cw wrote:\n> WFM\n\nGreat! Thanks!\n\n> (the comment wrt to cacheline size is weak, I tested 64 vs 128 and it's not\n> clear either is a clear win within a reasonable margin of error)\n> \n> http://codereview.appspot.com/4963057/diff/16001/src/pkg/runtime/runtime.h\n> File src/pkg/runtime/runtime.h (right):\n> \nhttp://codereview.appspot.com/4963057/diff/16001/src/pkg/runtime/runtime.h#newcode339\n> src/pkg/runtime/runtime.h:339: enum { CacheLineSize = 128 };\n> Why not simply 64b?\n> \n> UP chipsets (bios config/defaults really) tend to pre-fetch the next-cache line\n> but servers usually don't.\n> \n> For non-x86 (ie. ARM) 128 seems quite large.\n\nI've made the constant per-arch, and reduced it to 32 for ARM. For 386/amd64 I left it as 128, the problem is that if 128 byte cache lines are enabled and we set it to 64, it will reduce the benefit to zero. We must chose a reasonable MAX of all possible values for an arch.\n\nPTAL",
+			"disapproval": false,
+			"date": "2011-10-01 11:07:15.558023",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Given there is no difference between 128 and 64 ... why not 64 as that means less padding in some places?",
+			"disapproval": false,
+			"date": "2011-10-02 04:10:50.971837",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/02 04:10:50, cw wrote:\n> Given there is no difference between 128 and 64 ... why not 64 as that means\n> less padding in some places?\n\nHave you tested that on a machine with 128 byte cache lines (read prefetching)? I don't have access to such machine, but I suspect that difference must be huge.",
+			"disapproval": false,
+			"date": "2011-10-02 12:34:13.391496",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/05 17:36:45, cw wrote:\n> > Seems fine to me.  We can always change it later.\n> \n> cacheline size;  s/64/128/ ?\n> \n\nHi,\n\nThank you for the exhaustive investigation. I have no impartial reasons to not change it to 64 now.",
+			"disapproval": false,
+			"date": "2011-10-05 17:43:22.332080",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Sun, Oct 02, 2011 at 12:34:13PM +0000, dvyukov@google.com wrote:\n\n> Have you tested that on a machine with 128 byte cache lines (read\n> prefetching)? I don't have access to such machine, but I suspect that\n> difference must be huge.\n\n(governer set to perforance on all cores, system idle):\n\n\n64-bytes:\n\n\nruntime_test.BenchmarkFinalizer\t\t20000000               215 ns/op\nruntime_test.BenchmarkFinalizerRun       5000000               792 ns/op\n\nruntime_test.BenchmarkFinalizer \t10000000               215 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               801 ns/op\n\nruntime_test.BenchmarkFinalizer \t10000000               215 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               791 ns/op\n\nruntime_test.BenchmarkFinalizer \t10000000               215 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               790 ns/op\n\nruntime_test.BenchmarkFinalizer \t10000000               216 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               792 ns/op\n\n\n\n\n\n\n128-bytes:\n\nruntime_test.BenchmarkFinalizer\t\t10000000               216 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               801 ns/op\n\nruntime_test.BenchmarkFinalizer \t10000000               215 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               801 ns/op\n\nruntime_test.BenchmarkFinalizer \t10000000               214 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               805 ns/op\n\nruntime_test.BenchmarkFinalizer \t10000000               215 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               802 ns/op\n\nruntime_test.BenchmarkFinalizer \t10000000               215 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               804 ns/op\n\n\n\n\nBenchmarkFinalizer speeds are the same\n\nBenchmarkFinalizerRun is a little faster with 64-byte cacheline\n",
+			"disapproval": false,
+			"date": "2011-10-03 01:56:28.776650",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "(Reply 1/3)\n\nCore i7-620 (1 socket x 2 cores x 2 ht-threads; 2.66GHz)\nThis *should* be doing adjacent line prefetching.\n\nI don't see any obvious great advantage to 128 over 64:\n\n\ncw@naught:/tmp$ /tmp/6.out-64 -test.cpu=1,2,4 -test.benchtime=1 -test.v=true -test.run=Final -test.bench=Final\n\nruntime_test.BenchmarkFinalizer\t\t10000000               220 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               193 ns/op\nruntime_test.BenchmarkFinalizer-4       10000000               139 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1010 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            127927 ns/op\nruntime_test.BenchmarkFinalizerRun-4      100000            109486 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               222 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               175 ns/op\nruntime_test.BenchmarkFinalizer-4       10000000               144 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1022 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            134328 ns/op\nruntime_test.BenchmarkFinalizerRun-4       10000            110473 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               219 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               183 ns/op\nruntime_test.BenchmarkFinalizer-4       10000000               138 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               955 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            209186 ns/op\nruntime_test.BenchmarkFinalizerRun-4       50000             49328 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               221 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               224 ns/op\nruntime_test.BenchmarkFinalizer-4       10000000               137 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               978 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            223762 ns/op\nruntime_test.BenchmarkFinalizerRun-4       50000            113264 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               219 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               175 ns/op\nruntime_test.BenchmarkFinalizer-4       10000000               135 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1009 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            122270 ns/op\nruntime_test.BenchmarkFinalizerRun-4      100000            152821 ns/op\n\n\n\ncw@naught:/tmp$ /tmp/6.out-128 -test.cpu=1,2,4 -test.benchtime=1 -test.v=true -test.run=Final -test.bench=Final\n\nruntime_test.BenchmarkFinalizer\t\t10000000               220 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               176 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000               130 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1003 ns/op\nruntime_test.BenchmarkFinalizerRun-2       50000            191133 ns/op\nruntime_test.BenchmarkFinalizerRun-4       20000            375595 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               225 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               161 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000               126 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1019 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            229784 ns/op\nruntime_test.BenchmarkFinalizerRun-4       20000             91341 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               216 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               164 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000               127 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1038 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            231828 ns/op\nruntime_test.BenchmarkFinalizerRun-4       20000             96577 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               216 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               176 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000               130 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1056 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            251106 ns/op\nruntime_test.BenchmarkFinalizerRun-4       20000             95430 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               217 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               173 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000               130 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1032 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            248461 ns/op\nruntime_test.BenchmarkFinalizerRun-4       50000            115017 ns/op",
+			"disapproval": false,
+			"date": "2011-10-03 19:03:23.145620",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "(Reply 2/3)\n\n\nCore i7-2600 (Sandy Bridge, 1 socket, 4c 8t, 3.4GHz).\nAgain, this should be doing adjacent cahceline prefetching.\n\n\nroot@dev1:~# /tmp/6.out-64 -test.cpu=1,2,4,8 -test.benchtime=1 -test.v=true -test.run=Final -test.bench=Final\n\nruntime_test.BenchmarkFinalizer\t\t10000000               202 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               126 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                82.8 ns/op\nruntime_test.BenchmarkFinalizer-8       50000000                65.4 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1059 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            218051 ns/op\nruntime_test.BenchmarkFinalizerRun-4       10000            103041 ns/op\nruntime_test.BenchmarkFinalizerRun-8       50000            198526 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               201 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               149 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                82.8 ns/op\nruntime_test.BenchmarkFinalizer-8       20000000                65.1 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1058 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            232809 ns/op\nruntime_test.BenchmarkFinalizerRun-4       10000            112825 ns/op\nruntime_test.BenchmarkFinalizerRun-8      500000             43627 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               201 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               144 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                98.9 ns/op\nruntime_test.BenchmarkFinalizer-8       50000000                67.9 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1007 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            274204 ns/op\nruntime_test.BenchmarkFinalizerRun-4       20000            527742 ns/op\nruntime_test.BenchmarkFinalizerRun-8       10000            130540 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               201 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               139 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                91.3 ns/op\nruntime_test.BenchmarkFinalizer-8       50000000                67.6 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1062 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            164479 ns/op\nruntime_test.BenchmarkFinalizerRun-4       10000            242987 ns/op\nruntime_test.BenchmarkFinalizerRun-8       10000            415009 ns/op\n\nruntime_test.BenchmarkFinalizer\t\t10000000               201 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               143 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                84.3 ns/op\nruntime_test.BenchmarkFinalizer-8       50000000                66.7 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1059 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            211783 ns/op\nruntime_test.BenchmarkFinalizerRun-4       10000            104725 ns/op\nruntime_test.BenchmarkFinalizerRun-8      100000             60580 ns/op\n\n\n\nroot@dev1:~# /tmp/6.out-128 -test.cpu=1,2,4,8 -test.benchtime=1 -test.v=true -test.run=Final -test.bench=Final\n\nruntime_test.BenchmarkFinalizer \t10000000               201 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               142 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                88.1 ns/op\nruntime_test.BenchmarkFinalizer-8       50000000                59.5 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1044 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            240653 ns/op\nruntime_test.BenchmarkFinalizerRun-4       20000            581043 ns/op\nruntime_test.BenchmarkFinalizerRun-8       10000            132943 ns/op\n\nruntime_test.BenchmarkFinalizer         10000000               202 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               144 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                77.3 ns/op\nruntime_test.BenchmarkFinalizer-8       50000000                61.6 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1065 ns/op\nruntime_test.BenchmarkFinalizerRun-2       20000            221170 ns/op\nruntime_test.BenchmarkFinalizerRun-4       50000            461389 ns/op\nruntime_test.BenchmarkFinalizerRun-8       10000            105542 ns/op\n\nruntime_test.BenchmarkFinalizer         10000000               203 ns/op\nruntime_test.BenchmarkFinalizer-2       20000000               152 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                80.7 ns/op\nruntime_test.BenchmarkFinalizer-8       50000000                59.6 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1058 ns/op\nruntime_test.BenchmarkFinalizerRun-2     1000000            213974 ns/op\nruntime_test.BenchmarkFinalizerRun-4       10000            108318 ns/op\nruntime_test.BenchmarkFinalizerRun-8      200000             51457 ns/op\n\nruntime_test.BenchmarkFinalizer         10000000               203 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               140 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                80.4 ns/op\nruntime_test.BenchmarkFinalizer-8       50000000                65.3 ns/op\nruntime_test.BenchmarkFinalizerRun       2000000               941 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            158302 ns/op\nruntime_test.BenchmarkFinalizerRun-4       20000            351828 ns/op\nruntime_test.BenchmarkFinalizerRun-8       10000            260084 ns/op\n\nruntime_test.BenchmarkFinalizer \t10000000               201 ns/op\nruntime_test.BenchmarkFinalizer-2       10000000               145 ns/op\nruntime_test.BenchmarkFinalizer-4       20000000                87.4 ns/op\nruntime_test.BenchmarkFinalizer-8       50000000                60.0 ns/op\nruntime_test.BenchmarkFinalizerRun       1000000              1058 ns/op\nruntime_test.BenchmarkFinalizerRun-2       10000            148011 ns/op\nruntime_test.BenchmarkFinalizerRun-4       10000            108886 ns/op\nruntime_test.BenchmarkFinalizerRun-8       50000            265691 ns/op",
+			"disapproval": false,
+			"date": "2011-10-03 19:03:58.680823",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "(Reply 3/3)\n\nPerhaps I'm DoingItWrong?\n\nI don't see any real win with 128 over 64.\n\nWould it not make sense to use 64 for now and revisit this later?",
+			"disapproval": false,
+			"date": "2011-10-03 19:04:49.458646",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2011-10-05 15:41:42.713816",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/05 15:41:42, rsc wrote:\n> LGTM\n\nThat's suspicious. Are you sure? :)\nI a bit concerned that I pull arch.h into basically everything... however, perhaps, in the long run it's not a bad thing.\nAnd the second moment is that non-shrinking static FinBlock *allfin stack of blocks.",
+			"disapproval": false,
+			"date": "2011-10-05 17:27:30.532184",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Seems fine to me.  We can always change it later.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-10-05 17:29:34.358420",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL\n\nI change CacheLineSize for 386/amd64 to 64 (as per cw investigation).\n\n+ I return back (which disappeared for some reason)\n 1040 // give the queued finalizers, if any, a chance to run  \n 1041 if(finq != nil) \n 1042     runtime\u00b7gosched();",
+			"disapproval": false,
+			"date": "2011-10-05 17:45:02.448486",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> Seems fine to me.  We can always change it later.\n\ncacheline size;  s/64/128/ ?\n\n",
+			"disapproval": false,
+			"date": "2011-10-05 17:36:45.377171",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2011-10-05 17:43:57.578451",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2011-10-05 17:42:28.234002",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2011-10-05 17:49:55.966031",
+			"approval": true
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM^3",
+			"disapproval": false,
+			"date": "2011-10-05 18:04:53.852069",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=3c7f031ee62b ***\n\nruntime: faster finalizers\n\nLinux/amd64, 2 x Intel Xeon E5620, 8 HT cores, 2.40GHz\nbenchmark                    old ns/op    new ns/op    delta\nBenchmarkFinalizer              420.00       261.00  -37.86%\nBenchmarkFinalizer-2            985.00       201.00  -79.59%\nBenchmarkFinalizer-4           1077.00       244.00  -77.34%\nBenchmarkFinalizer-8           1155.00       180.00  -84.42%\nBenchmarkFinalizer-16          1182.00       184.00  -84.43%\n\nBenchmarkFinalizerRun          2128.00      1378.00  -35.24%\nBenchmarkFinalizerRun-2        1655.00      1418.00  -14.32%\nBenchmarkFinalizerRun-4        1634.00      1522.00   -6.85%\nBenchmarkFinalizerRun-8        2213.00      1581.00  -28.56%\nBenchmarkFinalizerRun-16       2424.00      1599.00  -34.03%\n\nDarwin/amd64, Intel L9600, 2 cores, 2.13GHz\nbenchmark                    old ns/op    new ns/op    delta\nBenchmarkChanCreation          1451.00       926.00  -36.18%\nBenchmarkChanCreation-2        3124.00      1412.00  -54.80%\nBenchmarkChanCreation-4        6121.00      2628.00  -57.07%\n\nBenchmarkFinalizer              684.00       420.00  -38.60%\nBenchmarkFinalizer-2          11195.00       398.00  -96.44%\nBenchmarkFinalizer-4          15862.00       654.00  -95.88%\n\nBenchmarkFinalizerRun          2025.00      1397.00  -31.01%\nBenchmarkFinalizerRun-2        3920.00      1447.00  -63.09%\nBenchmarkFinalizerRun-4        9471.00      1545.00  -83.69%\n\nR=golang-dev, cw, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/4963057",
+			"disapproval": false,
+			"date": "2011-10-06 15:43:37.938666",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 4963057: runtime: faster finalizers",
+	"created": "2011-09-03 20:59:03.331443",
+	"patchsets": [
+		1,
+		2001,
+		12001,
+		7003,
+		14011,
+		3011,
+		16001,
+		23001,
+		25001,
+		17010,
+		27001,
+		19018,
+		20002,
+		41001,
+		47001,
+		50001,
+		49002
+	],
+	"modified": "2011-10-06 15:43:38.954979",
+	"closed": true,
+	"issue": 4963057
+}

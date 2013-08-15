@@ -1,0 +1,165 @@
+{
+	"description": "go.exp/go/types/constant: implementation of Go constants\n\nThis is a factored out version of go.exp/go/types/const.go,\nand independent of go/types such that it can be used easily\nby clients of go/types (and others).",
+	"cc": [
+		"adonovan@google.com",
+		"alan@alandonovan.net",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Basically looks sound, but seem my comments about binary methods.\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go\nFile go/types/constants/constants.go (right):\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode28\ngo/types/constants/constants.go:28: type Val interface {\n// Instances are immutable.\n// TODO: lots to document.\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode35\ngo/types/constants/constants.go:35: Binary(op token.Token, y Val, isInt bool) Val\nThis interface encounters the classic \"binary method\" problem whereby you require that y and x must have the same (dynamic) type---though not in all cases, witness int vs int64.  The left-operand bias of interface method dispatch isn't really buying you very much.\n\nThe API might be clearer if these operators were expressed as standalone functions, i.e.\n\nfunc Unary(op token.Token, x Val, isUnsigned bool) Val\nfunc Binary(op token.Token, x, y Val) Val\netc\n\nwhich internally perform the appropriate dispatches using typeswitch (or private methods if you like).\n\nI find it's much easier to specify the behaviour of multimethods of this kind, since you can partition the input space by cases more rigorously.  It's often also easier to see by inspection that the implementation is symmetric etc.\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode52\ngo/types/constants/constants.go:52: func NewBool(b bool) Val {\nNewT suggests that I'm getting back a pointer to a T, and specifically, an unaliased pointer.  Is this my prejudice, or might other Go users share it?\n\nPerhaps MakeT might be a better name.  Or just T(), although I see that these names are taken by the Kind enumeration.\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode260\ngo/types/constants/constants.go:260: return x\nShouldn't most of these operators fail (panic/nil)?\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode300\ngo/types/constants/constants.go:300: return nil\n(This is a specification question even though it seems like an implementation nitpick.)\n\nThese methods all seem to assume that the input is well-typed, and may panic if not.  In that case, I recommend you panic in preference to returning nil to make clear that these are not intended for use on raw user input.\n\nGiven which, are these functions useful to the typechecker (which would have to do quite a bit of work to avoid reaching the panic statements), or are they mostly intended for clients of the typechecker such as exp/ssa?",
+			"disapproval": false,
+			"date": "2013-04-10 14:57:43.795540",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go\nFile go/types/constants/constants.go (right):\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode35\ngo/types/constants/constants.go:35: Binary(op token.Token, y Val, isInt bool) Val\nOn 2013/04/10 14:57:44, adonovan wrote:\n> This interface encounters the classic \"binary method\" problem whereby you\n> require that y and x must have the same (dynamic) type---though not in all\n> cases, witness int vs int64.  The left-operand bias of interface method dispatch\n> isn't really buying you very much.\n> \n> The API might be clearer if these operators were expressed as standalone\n> functions, i.e.\n> \n> func Unary(op token.Token, x Val, isUnsigned bool) Val\n> func Binary(op token.Token, x, y Val) Val\n> etc\n> \n> which internally perform the appropriate dispatches using typeswitch (or private\n> methods if you like).\n> \n> I find it's much easier to specify the behaviour of multimethods of this kind,\n> since you can partition the input space by cases more rigorously.  It's often\n> also easier to see by inspection that the implementation is symmetric etc.\n\nI'm so familiar with this problem, it's not even funny. Tried again, differently this time, but it's not worth it. The next version will have stand-alone functions.\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode52\ngo/types/constants/constants.go:52: func NewBool(b bool) Val {\nOn 2013/04/10 14:57:44, adonovan wrote:\n> NewT suggests that I'm getting back a pointer to a T, and specifically, an\n> unaliased pointer.  Is this my prejudice, or might other Go users share it?\n> \n> Perhaps MakeT might be a better name.  Or just T(), although I see that these\n> names are taken by the Kind enumeration.\n\nThinking about it. New is shorter than Make, and I don't like Mk. I am not convinced that New suggests a pointer.\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode52\ngo/types/constants/constants.go:52: func NewBool(b bool) Val {\nOn 2013/04/10 14:57:44, adonovan wrote:\n> NewT suggests that I'm getting back a pointer to a T, and specifically, an\n> unaliased pointer.  Is this my prejudice, or might other Go users share it?\n> \n> Perhaps MakeT might be a better name.  Or just T(), although I see that these\n> names are taken by the Kind enumeration.\n\nThinking about it. I am not convinced that New suggests a pointer.\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode260\ngo/types/constants/constants.go:260: return x\nOn 2013/04/10 14:57:44, adonovan wrote:\n> Shouldn't most of these operators fail (panic/nil)?\n\nWe want unknown constants (which are due to earlier errors) to just produce more unknown constants silently, in order to reduce the number of follow-up errors. This is already the behavior we have now (where a nil constant means \"unknown\").\n\nhttps://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode300\ngo/types/constants/constants.go:300: return nil\nOn 2013/04/10 14:57:44, adonovan wrote:\n> (This is a specification question even though it seems like an implementation\n> nitpick.)\n> \n> These methods all seem to assume that the input is well-typed, and may panic if\n> not.  In that case, I recommend you panic in preference to returning nil to make\n> clear that these are not intended for use on raw user input.\n> \n> Given which, are these functions useful to the typechecker (which would have to\n> do quite a bit of work to avoid reaching the panic statements), or are they\n> mostly intended for clients of the typechecker such as exp/ssa? \n\nThis function is not fully implemented.\n\nI may choose to not panic (but return an error, possibly) if it doesn't penalize the common case.",
+			"disapproval": false,
+			"date": "2013-04-10 16:16:08.615070",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for the feedback so far. The next version is already quite a bit\r\nchanged. Will first make it work w/ the existing type checker again.\r\n- gri\r\n\r\n\r\nOn Wed, Apr 10, 2013 at 9:16 AM, <gri@golang.org> wrote:\r\n\r\n> Reviewers: adonovan,\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/8546043/diff/10001/go/**\r\n> types/constants/constants.go<https://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go>\r\n> File go/types/constants/constants.**go (right):\r\n>\r\n> https://codereview.appspot.**com/8546043/diff/10001/go/**\r\n> types/constants/constants.go#**newcode35<https://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode35>\r\n> go/types/constants/constants.**go:35: Binary(op token.Token, y Val, isInt\r\n> bool) Val\r\n> On 2013/04/10 14:57:44, adonovan wrote:\r\n>\r\n>> This interface encounters the classic \"binary method\" problem whereby\r\n>>\r\n> you\r\n>\r\n>> require that y and x must have the same (dynamic) type---though not in\r\n>>\r\n> all\r\n>\r\n>> cases, witness int vs int64.  The left-operand bias of interface\r\n>>\r\n> method dispatch\r\n>\r\n>> isn't really buying you very much.\r\n>>\r\n>\r\n>  The API might be clearer if these operators were expressed as\r\n>>\r\n> standalone\r\n>\r\n>> functions, i.e.\r\n>>\r\n>\r\n>  func Unary(op token.Token, x Val, isUnsigned bool) Val\r\n>> func Binary(op token.Token, x, y Val) Val\r\n>> etc\r\n>>\r\n>\r\n>  which internally perform the appropriate dispatches using typeswitch\r\n>>\r\n> (or private\r\n>\r\n>> methods if you like).\r\n>>\r\n>\r\n>  I find it's much easier to specify the behaviour of multimethods of\r\n>>\r\n> this kind,\r\n>\r\n>> since you can partition the input space by cases more rigorously.\r\n>>\r\n> It's often\r\n>\r\n>> also easier to see by inspection that the implementation is symmetric\r\n>>\r\n> etc.\r\n>\r\n> I'm so familiar with this problem, it's not even funny. Tried again,\r\n> differently this time, but it's not worth it. The next version will have\r\n> stand-alone functions.\r\n>\r\n>\r\n> https://codereview.appspot.**com/8546043/diff/10001/go/**\r\n> types/constants/constants.go#**newcode52<https://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode52>\r\n> go/types/constants/constants.**go:52: func NewBool(b bool) Val {\r\n> On 2013/04/10 14:57:44, adonovan wrote:\r\n>\r\n>> NewT suggests that I'm getting back a pointer to a T, and\r\n>>\r\n> specifically, an\r\n>\r\n>> unaliased pointer.  Is this my prejudice, or might other Go users\r\n>>\r\n> share it?\r\n>\r\n>  Perhaps MakeT might be a better name.  Or just T(), although I see\r\n>>\r\n> that these\r\n>\r\n>> names are taken by the Kind enumeration.\r\n>>\r\n>\r\n> Thinking about it. New is shorter than Make, and I don't like Mk. I am\r\n> not convinced that New suggests a pointer.\r\n>\r\n>\r\n> https://codereview.appspot.**com/8546043/diff/10001/go/**\r\n> types/constants/constants.go#**newcode52<https://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode52>\r\n> go/types/constants/constants.**go:52: func NewBool(b bool) Val {\r\n> On 2013/04/10 14:57:44, adonovan wrote:\r\n>\r\n>> NewT suggests that I'm getting back a pointer to a T, and\r\n>>\r\n> specifically, an\r\n>\r\n>> unaliased pointer.  Is this my prejudice, or might other Go users\r\n>>\r\n> share it?\r\n>\r\n>  Perhaps MakeT might be a better name.  Or just T(), although I see\r\n>>\r\n> that these\r\n>\r\n>> names are taken by the Kind enumeration.\r\n>>\r\n>\r\n> Thinking about it. I am not convinced that New suggests a pointer.\r\n>\r\n>\r\n> https://codereview.appspot.**com/8546043/diff/10001/go/**\r\n> types/constants/constants.go#**newcode260<https://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode260>\r\n> go/types/constants/constants.**go:260: return x\r\n> On 2013/04/10 14:57:44, adonovan wrote:\r\n>\r\n>> Shouldn't most of these operators fail (panic/nil)?\r\n>>\r\n>\r\n> We want unknown constants (which are due to earlier errors) to just\r\n> produce more unknown constants silently, in order to reduce the number\r\n> of follow-up errors. This is already the behavior we have now (where a\r\n> nil constant means \"unknown\").\r\n>\r\n>\r\n> https://codereview.appspot.**com/8546043/diff/10001/go/**\r\n> types/constants/constants.go#**newcode300<https://codereview.appspot.com/8546043/diff/10001/go/types/constants/constants.go#newcode300>\r\n> go/types/constants/constants.**go:300: return nil\r\n> On 2013/04/10 14:57:44, adonovan wrote:\r\n>\r\n>> (This is a specification question even though it seems like an\r\n>>\r\n> implementation\r\n>\r\n>> nitpick.)\r\n>>\r\n>\r\n>  These methods all seem to assume that the input is well-typed, and may\r\n>>\r\n> panic if\r\n>\r\n>> not.  In that case, I recommend you panic in preference to returning\r\n>>\r\n> nil to make\r\n>\r\n>> clear that these are not intended for use on raw user input.\r\n>>\r\n>\r\n>  Given which, are these functions useful to the typechecker (which\r\n>>\r\n> would have to\r\n>\r\n>> do quite a bit of work to avoid reaching the panic statements), or are\r\n>>\r\n> they\r\n>\r\n>> mostly intended for clients of the typechecker such as exp/ssa?\r\n>>\r\n>\r\n> This function is not fully implemented.\r\n>\r\n> I may choose to not panic (but return an error, possibly) if it doesn't\r\n> penalize the common case.\r\n>\r\n> Description:\r\n> go.exp/go/types/constants: factored out basic const package\r\n>\r\n> Please review this at https://codereview.appspot.**com/8546043/<https://codereview.appspot.com/8546043/>\r\n>\r\n> Affected files:\r\n>   A go/types/constants/constants.**go\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-10 16:17:32.991900",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.exp",
+			"disapproval": false,
+			"date": "2013-04-11 00:16:08.652110",
+			"approval": false
+		},
+		{
+			"sender": "alan@alandonovan.net",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"alan@alandonovan.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\nSome tests would be nice.\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go\nFile go/types/constant/constant.go (right):\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode21\ngo/types/constant/constant.go:21: // order of increasing \"complexity\" (used for match below).\nIs that true?  I think the complexity() function abstracts away from the actual Kind numeric values.  In fact, Kind isn't even used in this package.\n\nEliminate this comment, or complexity().\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode58\ngo/types/constant/constant.go:58: // String() returns a human-readable form of the constant value.\n\"String returns ...\"\n\nIIRC the parens aren't typically used in Go docstrings.\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode60\ngo/types/constant/constant.go:60: // return a sum of the form a + bi, or just bi if a == 0.\n\"a + bi\", or just \"bi\"(with double-quotes)\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode80\ngo/types/constant/constant.go:80: return unknownSingleton\nSince this is a unitary type, there's little value in a singleton.  Just do: return unknownVal{}\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode156\ngo/types/constant/constant.go:156: func NewStringFromString(s string) Value {\nRename NewXFromString to NewXFromLiteral?\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode166\ngo/types/constant/constant.go:166: return nilSingleton\nDitto:  return nilVal{}\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode184\ngo/types/constant/constant.go:184: return v.Int.BitLen(), true\nv.BitLen should suffice.  This is fine though.\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode372\ngo/types/constant/constant.go:372: // instead of token.QUO; the result is guaranteed to an Int in this case.\ns/to an/to be an/",
+			"disapproval": false,
+			"date": "2013-04-11 02:06:27.023770",
+			"approval": true
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"alan@alandonovan.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks good---only comment nitpicks---but this probably wants some tests.\n\nBTW, I took a look at exp/ssa's needs, and really the only thing it wants is a set of operators for truncating numbers to a particular machine width.  (See ssa/literal.go.)\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go\nFile go/types/constant/constant.go (right):\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode33\ngo/types/constant/constant.go:33: Int64 // integer fits into 64bits\n\"64 bits\"\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode40\ngo/types/constant/constant.go:40: // The value of constants of Unknown kind is unknown;\n\"value of a constant\"\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode45\ngo/types/constant/constant.go:45: // Kind returns the constant kind. A values's kind\n\"value's\"\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode46\ngo/types/constant/constant.go:46: // is always the smallest kind as which the value\ns/as/in/\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode134\ngo/types/constant/constant.go:134: // MakeImag returns the value the imaginary value x*i;\ns/the value//\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode135\ngo/types/constant/constant.go:135: // x must not be complex. If x is unknown, the result\n\"not be complex\":  nor a string or bool, right?\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode197\ngo/types/constant/constant.go:197: // XVal returns the arguments corresponding Go value.\n\"argument's\"\n\nThis comment might want a following blank since so it doesn't appear next to BoolVal in the generated godoc.\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode234\ngo/types/constant/constant.go:234: // Real and Imag return the real and imaginary part of a complex value.\n\"parts\"",
+			"disapproval": false,
+			"date": "2013-04-11 21:56:00.526630",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"alan@alandonovan.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nSignificantly revamped and cleaned up.\n- gri\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go\nFile go/types/constant/constant.go (right):\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode21\ngo/types/constant/constant.go:21: // order of increasing \"complexity\" (used for match below).\nOn 2013/04/11 02:06:27, alan1 wrote:\n> Is that true?  I think the complexity() function abstracts away from the actual\n> Kind numeric values.  In fact, Kind isn't even used in this package.\n> \n> Eliminate this comment, or complexity().\n\nFixed. It's used now.\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode58\ngo/types/constant/constant.go:58: // String() returns a human-readable form of the constant value.\nOn 2013/04/11 02:06:27, alan1 wrote:\n> \"String returns ...\"\n> \n> IIRC the parens aren't typically used in Go docstrings.\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode60\ngo/types/constant/constant.go:60: // return a sum of the form a + bi, or just bi if a == 0.\nOn 2013/04/11 02:06:27, alan1 wrote:\n> \"a + bi\", or just \"bi\"(with double-quotes)\n\nRemoved. Don't want to over-specify.\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode80\ngo/types/constant/constant.go:80: return unknownSingleton\nOn 2013/04/11 02:06:27, alan1 wrote:\n> Since this is a unitary type, there's little value in a singleton.  Just do:\n> return unknownVal{}\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode166\ngo/types/constant/constant.go:166: return nilSingleton\nOn 2013/04/11 02:06:27, alan1 wrote:\n> Ditto:  return nilVal{}\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode184\ngo/types/constant/constant.go:184: return v.Int.BitLen(), true\nOn 2013/04/11 02:06:27, alan1 wrote:\n> v.BitLen should suffice.  This is fine though.\n\nPrefer to leave as is.\n\nhttps://codereview.appspot.com/8546043/diff/23001/go/types/constant/constant.go#newcode372\ngo/types/constant/constant.go:372: // instead of token.QUO; the result is guaranteed to an Int in this case.\nOn 2013/04/11 02:06:27, alan1 wrote:\n> s/to an/to be an/\n\nDone.",
+			"disapproval": false,
+			"date": "2013-04-11 21:40:07.665980",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"alan@alandonovan.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nAdded testing framework (needs to be expanded massively).\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go\nFile go/types/constant/constant.go (right):\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode33\ngo/types/constant/constant.go:33: Int64 // integer fits into 64bits\nOn 2013/04/11 21:56:00, adonovan wrote:\n> \"64 bits\"\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode40\ngo/types/constant/constant.go:40: // The value of constants of Unknown kind is unknown;\nOn 2013/04/11 21:56:00, adonovan wrote:\n> \"value of a constant\"\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode45\ngo/types/constant/constant.go:45: // Kind returns the constant kind. A values's kind\nOn 2013/04/11 21:56:00, adonovan wrote:\n> \"value's\"\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode46\ngo/types/constant/constant.go:46: // is always the smallest kind as which the value\nOn 2013/04/11 21:56:00, adonovan wrote:\n> s/as/in/\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode134\ngo/types/constant/constant.go:134: // MakeImag returns the value the imaginary value x*i;\nOn 2013/04/11 21:56:00, adonovan wrote:\n> s/the value//\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode135\ngo/types/constant/constant.go:135: // x must not be complex. If x is unknown, the result\nOn 2013/04/11 21:56:00, adonovan wrote:\n> \"not be complex\":  nor a string or bool, right?\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode197\ngo/types/constant/constant.go:197: // XVal returns the arguments corresponding Go value.\nOn 2013/04/11 21:56:00, adonovan wrote:\n> \"argument's\"\n> \n> This comment might want a following blank since so it doesn't appear next to\n> BoolVal in the generated godoc.\n\nDone.\n\nhttps://codereview.appspot.com/8546043/diff/29001/go/types/constant/constant.go#newcode234\ngo/types/constant/constant.go:234: // Real and Imag return the real and imaginary part of a complex value.\nOn 2013/04/11 21:56:00, adonovan wrote:\n> \"parts\"\n\nDone.",
+			"disapproval": false,
+			"date": "2013-04-11 23:14:22.832530",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"alan@alandonovan.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-04-11 23:21:13.621440",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"alan@alandonovan.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=98e268597e3e&repo=exp ***\n\ngo.exp/go/types/constant: implementation of Go constants\n\nThis is a factored out version of go.exp/go/types/const.go,\nand independent of go/types such that it can be used easily\nby clients of go/types (and others).\n\nR=adonovan, alan\nCC=golang-dev\nhttps://codereview.appspot.com/8546043",
+			"disapproval": false,
+			"date": "2013-04-11 23:40:52.594990",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 8546043: go.exp/go/types/constant: implementation of Go constants",
+	"created": "2013-04-09 00:27:27.105940",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		7001,
+		10001,
+		17001,
+		20001,
+		23001,
+		29001,
+		34001,
+		40001,
+		43001
+	],
+	"modified": "2013-04-11 23:40:53.642580",
+	"closed": true,
+	"issue": 8546043
+}

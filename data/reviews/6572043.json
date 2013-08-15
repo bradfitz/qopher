@@ -1,0 +1,238 @@
+{
+	"description": "reflect: add ArrayOf, ChanOf, MapOf, SliceOf\n\nIn order to add these, we need to be able to find references\nto such types that already exist in the binary. To do that, introduce\na new linker section holding a list of the types corresponding to\narrays, chans, maps, and slices.\n\nTo offset the storage cost of this list, and to simplify the code,\nremove the interface{} header from the representation of a\nruntime type. It was used in early versions of the code but was\nmade obsolete by the kind field: a switch on kind is more efficient\nthan a type switch.\n\nIn the godoc binary, removing the interface{} header cuts two\nwords from each of about 10,000 types. Adding back the list of pointers\nto array, chan, map, and slice types reintroduces one word for\neach of about 500 types. On a 64-bit machine, then, this CL *removes*\na net 156 kB of read-only data from the binary.\n\nThis CL does not include the needed support for precise garbage\ncollection. I have created issue 4375 to track that.\n\nThis CL also does not set the 'algorithm' - specifically the equality\nand copy functions - for a new array correctly, so I have unexported\nArrayOf for now. That is also part of issue 4375.\n\nFixes issue 2339.",
+	"cc": [
+		"r@golang.org",
+		"remyoudompheng@gmail.com",
+		"mirtchovski@gmail.com",
+		"iant@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttps://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2746\nsrc/pkg/reflect/all_test.go:2746: t.Errorf(\"using constructed chan: have %q, %q, want %q, %q\", s1, s2, \"hello\", \"world\")\nOn 2012/11/07 21:41:51, r wrote:\n> s/using // for consistency\n\nDone.\n\nhttps://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttps://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go#newcode238\nsrc/pkg/reflect/type.go:238: // rtype is the common implementation of most values.\nOn 2012/11/07 21:41:51, r wrote:\n> why the name change?\n\nThere are two names being merged into one here. Before, there was both commonType and runtimeType. A runtimeType was a commonType preceded by an interface-valued header. The interface value described the commonType that followed. This was all nicely self-referential and worked (before we had kind we had to use type switches so the interface was important), but it was confusing to keep track of which type pointers were *commonType (pointing at this struct) vs *runtimeType (pointing one interface value before this struct), and crossing the boundary between reflect and runtime always had error-prone and awkward -2 or +2 to adjust the pointer two words. In essence commonType was the 'package reflect' type, and runtimeType was the 'package runtime' type.\n\nIn the cleaned up form, there is just one type in use, agreed upon between both the reflect package and the runtime. I named it rtype both because it now serves as the type pointer for both package runtime and package reflect, and also to make sure I was forced to look at all the existing uses of both names being replaced and adjust the code accordingly.\n\nhttps://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go#newcode980\nsrc/pkg/reflect/type.go:980: func toCommonType(p *rtype) *rtype {\nOn 2012/11/07 21:41:51, r wrote:\n> if the name changes (which i don't feel is necessary), this should change its\n> name too.\n> \n> since it's a no-op, though, why does it even exist?\n\nA dreg. Gone.\n\nhttps://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go#newcode984\nsrc/pkg/reflect/type.go:984: func toType(p *rtype) Type {\nOn 2012/11/07 21:41:51, r wrote:\n> ditto, almost but not quite because of the nil interface thing\n\nWill be gone soon. This is another nice side effect of the cleanup.\n\nhttps://codereview.appspot.com/6572043/diff/4001/src/pkg/runtime/type.go\nFile src/pkg/runtime/type.go (right):\n\nhttps://codereview.appspot.com/6572043/diff/4001/src/pkg/runtime/type.go#newcode17\nsrc/pkg/runtime/type.go:17: // This should be rtype but saying commonType avoids having to update gdb.\nOn 2012/11/07 21:41:51, r wrote:\n> is it rtype or commonType? what's going on?\n\nIt is supposed to be rtype everywhere. Now that I know this code actually works - it was unclear for a long time - I will fix this. The gdb support knows this name so it is not as trivial to change.",
+			"disapproval": false,
+			"date": "2012-11-07 21:54:21.075300",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-11-07 21:34:49.927030",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "haven't looked at the real code yet, but after a skim of the declarations i am confused by the relationship between runtimeType, rtype, commonType and whatever else there is that i've missed.\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2746\nsrc/pkg/reflect/all_test.go:2746: t.Errorf(\"using constructed chan: have %q, %q, want %q, %q\", s1, s2, \"hello\", \"world\")\ns/using // for consistency\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go#newcode238\nsrc/pkg/reflect/type.go:238: // rtype is the common implementation of most values.\nwhy the name change?\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go#newcode980\nsrc/pkg/reflect/type.go:980: func toCommonType(p *rtype) *rtype {\nif the name changes (which i don't feel is necessary), this should change its name too.\n\nsince it's a no-op, though, why does it even exist?\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go#newcode984\nsrc/pkg/reflect/type.go:984: func toType(p *rtype) Type {\nditto, almost but not quite because of the nil interface thing\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/runtime/type.go\nFile src/pkg/runtime/type.go (right):\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/runtime/type.go#newcode17\nsrc/pkg/runtime/type.go:17: // This should be rtype but saying commonType avoids having to update gdb.\nis it rtype or commonType? what's going on?",
+			"disapproval": false,
+			"date": "2012-11-07 21:41:51.340770",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-07 21:42:33.987190",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry, the PTAL is just because hg made me run gofmt and I thought the\r\noriginal hadn't gone out. Nothing changed except the gofmting.\r\n",
+			"disapproval": false,
+			"date": "2012-11-07 21:43:10.349850",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttps://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2717\nsrc/pkg/reflect/all_test.go:2717: }\nOn 2012/11/07 21:54:15, remyoudompheng wrote:\n> I would like to see something like:\n> \n> vi := v.Interface()\n> if _, ok := vi.([10]T); !ok {\n>     t.Errorf(\"constructed type %T != [10]T\", vi)\n> }\n\nThe tricky part is that if I add that test I lose what the above is testing, namely that the newly constructed type ends up working. If the binary mentions [10]T explicitly, reflect won't have to synthesize [10]T. However, I can add a test for something different, like [5]T.",
+			"disapproval": false,
+			"date": "2012-11-07 22:06:23.033060",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2717\nsrc/pkg/reflect/all_test.go:2717: }\nI would like to see something like:\n\nvi := v.Interface()\nif _, ok := vi.([10]T); !ok {\n    t.Errorf(\"constructed type %T != [10]T\", vi)\n}\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2731\nsrc/pkg/reflect/all_test.go:2731: }\nsame test missing\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2747\nsrc/pkg/reflect/all_test.go:2747: }\nsame test\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2763\nsrc/pkg/reflect/all_test.go:2763: \nsame\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/type.go#newcode253\nsrc/pkg/reflect/type.go:253: ptrToThis     *rtype // type for pointer to this type, if used in binary or has methods\ngofmt-ing was lost here",
+			"disapproval": false,
+			"date": "2012-11-07 21:54:15.728260",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1017\nsrc/pkg/reflect/type.go:1017: // of a *unsafe.Pointer.\ns/a/an/ ?\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1249\nsrc/pkg/reflect/type.go:1249: // typesByName returns the subslice of typelinks() with the given string.\ntypesByName returns the subslice of typelinks() whose elements have the given string representation.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1276\nsrc/pkg/reflect/type.go:1276: return typ[i:j]\nlooks like you get the empty slice (at the end of the typelinks slice) for no such string. should probably document that.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1377\nsrc/pkg/reflect/type.go:1377: ch.hash = typ.hash*16777619 ^ 'c'\nwhere does this number come from? at least give it a name - it appears everywhere. regardless, i think you want a variadic function that constructs the hash value, so the number appears in only one place. this isn't quite it, i don't think, but something like it would be nice:\n\nfunc newTypeHash(x ...uintptr) (h uintptr) {\n  for u := range x {\n   h = h*16777619 ^ x\n  }\n  return\n}\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1386\nsrc/pkg/reflect/type.go:1386: // MapOf returns the map type with the given key and value types.\ns/value/element/\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1388\nsrc/pkg/reflect/type.go:1388: // MapOf(k, v) represents map[int]string.\ns/v/e/\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1391\nsrc/pkg/reflect/type.go:1391: // not implement Go's == operator), MapOf panics.\ns;$; TODO\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1470\nsrc/pkg/reflect/type.go:1470: // ArrayOf panics.\nit does?",
+			"disapproval": false,
+			"date": "2012-11-07 22:38:47.755550",
+			"approval": false
+		},
+		{
+			"sender": "mirtchovski@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> where does this number come from?\r\n\r\nhttp://primes.utm.edu/curios/page.php/16777619.html\r\n",
+			"disapproval": false,
+			"date": "2012-11-07 22:59:40.636610",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"mirtchovski@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6572043/diff/14001/src/cmd/ld/symtab.c\nFile src/cmd/ld/symtab.c (right):\n\nhttps://codereview.appspot.com/6572043/diff/14001/src/cmd/ld/symtab.c#newcode389\nsrc/cmd/ld/symtab.c:389: //\ts->hide = 1;\nWhy is s->hide = 1 commented out?\n\nhttps://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttps://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/all_test.go#newcode2706\nsrc/pkg/reflect/all_test.go:2706: func TestArrayOf(t *testing.T) {\nI think you also need some tests that these functions return the same type as the type in the program.\n    type F float\n    at := ArrayOf(10, TypeOf(F(1)))\n    if at != TypeOf([10]F) { panic(\"different type\") }\n\nhttps://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttps://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1252\nsrc/pkg/reflect/type.go:1252: func typesByString(s string) []*rtype {\nThe comment says typesByName but the function is called typesByString.\n\nhttps://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1378\nsrc/pkg/reflect/type.go:1378: ch.hash = typ.hash*16777619 ^ uint32(dir)\nThis code doesn't make sense as written.  Do you want s/typ.hash/ch.hash/ ?",
+			"disapproval": false,
+			"date": "2012-11-07 23:36:53.184130",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"mirtchovski@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello r@golang.org, remyoudompheng@gmail.com, mirtchovski@gmail.com, iant@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-12 16:56:33.962270",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"mirtchovski@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM as far as i understand it.\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/cmd/gc/reflect.c\nFile src/cmd/gc/reflect.c (right):\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/cmd/gc/reflect.c#newcode635\nsrc/cmd/gc/reflect.c:635: p = smprint(\"%-uT/%-T\", t, t);\nhow much bigger is the .6?\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/cmd/ld/go.c\nFile src/cmd/ld/go.c (right):\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/cmd/ld/go.c#newcode743\nsrc/cmd/ld/go.c:743: // keep each beginning with 'typelink.' if the symbol it points at is being kept.\nkeep each XXX beginning ...\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/cmd/ld/go.c#newcode780\nsrc/cmd/ld/go.c:780: \ntab\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/pkg/reflect/type.go#newcode1341\nsrc/pkg/reflect/type.go:1341: // ChanOf returns the channel type with the given direction and and element type.\ns/and and/and/\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/pkg/reflect/type.go#newcode1479\nsrc/pkg/reflect/type.go:1479: // for the type. This may require significant work.\ni thought i saw an export in one of the other files.",
+			"disapproval": false,
+			"date": "2012-11-13 00:31:25.413270",
+			"approval": true
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"mirtchovski@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/cmd/gc/reflect.c\nFile src/cmd/gc/reflect.c (right):\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/cmd/gc/reflect.c#newcode525\nsrc/cmd/gc/reflect.c:525: if(ot != 0)\nIs this useful?\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (left):\n\nhttps://codereview.appspot.com/6572043/diff/21001/src/pkg/reflect/type.go#oldcode436\nsrc/pkg/reflect/type.go:436: func (t *commonType) toType() Type {\nThe toType method is really convenient for gccgo, because that is where I canonicalize type pointers.  If this patch takes it away, I'm going to have to change all the callers in the gccgo version of this code to call the canonicalization function directly.  How would you feel about retaining this, or something similar--it doesn't have to be a method.",
+			"disapproval": false,
+			"date": "2012-11-13 01:36:45.936310",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sure, preserving toType is fine. I brought back a toType function and\r\ndocumented why it exists.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-13 17:59:16.663530",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"mirtchovski@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=2e2a1d8184e6 ***\n\nreflect: add ArrayOf, ChanOf, MapOf, SliceOf\n\nIn order to add these, we need to be able to find references\nto such types that already exist in the binary. To do that, introduce\na new linker section holding a list of the types corresponding to\narrays, chans, maps, and slices.\n\nTo offset the storage cost of this list, and to simplify the code,\nremove the interface{} header from the representation of a\nruntime type. It was used in early versions of the code but was\nmade obsolete by the kind field: a switch on kind is more efficient\nthan a type switch.\n\nIn the godoc binary, removing the interface{} header cuts two\nwords from each of about 10,000 types. Adding back the list of pointers\nto array, chan, map, and slice types reintroduces one word for\neach of about 500 types. On a 64-bit machine, then, this CL *removes*\na net 156 kB of read-only data from the binary.\n\nThis CL does not include the needed support for precise garbage\ncollection. I have created issue 4375 to track that.\n\nThis CL also does not set the 'algorithm' - specifically the equality\nand copy functions - for a new array correctly, so I have unexported\nArrayOf for now. That is also part of issue 4375.\n\nFixes issue 2339.\n\nR=r, remyoudompheng, mirtchovski, iant\nCC=golang-dev\nhttp://codereview.appspot.com/6572043\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2717\nsrc/pkg/reflect/all_test.go:2717: }\nOn 2012/11/07 22:06:23, rsc wrote:\n> On 2012/11/07 21:54:15, remyoudompheng wrote:\n> > I would like to see something like:\n> > \n> > vi := v.Interface()\n> > if _, ok := vi.([10]T); !ok {\n> >     t.Errorf(\"constructed type %T != [10]T\", vi)\n> > }\n> \n> The tricky part is that if I add that test I lose what the above is testing,\n> namely that the newly constructed type ends up working. If the binary mentions\n> [10]T explicitly, reflect won't have to synthesize [10]T. However, I can add a\n> test for something different, like [5]T.\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2731\nsrc/pkg/reflect/all_test.go:2731: }\nOn 2012/11/07 21:54:15, remyoudompheng wrote:\n> same test missing\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2747\nsrc/pkg/reflect/all_test.go:2747: }\nOn 2012/11/07 21:54:15, remyoudompheng wrote:\n> same test\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/4001/src/pkg/reflect/all_test.go#newcode2763\nsrc/pkg/reflect/all_test.go:2763: \nOn 2012/11/07 21:54:15, remyoudompheng wrote:\n> same\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/cmd/ld/symtab.c\nFile src/cmd/ld/symtab.c (right):\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/cmd/ld/symtab.c#newcode389\nsrc/cmd/ld/symtab.c:389: //\ts->hide = 1;\nOn 2012/11/07 23:36:53, iant wrote:\n> Why is s->hide = 1 commented out?\n\nProbably a debugging dreg; fixed.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/all_test.go#newcode2706\nsrc/pkg/reflect/all_test.go:2706: func TestArrayOf(t *testing.T) {\nOn 2012/11/07 23:36:53, iant wrote:\n> I think you also need some tests that these functions return the same type as\n> the type in the program.\n>     type F float\n>     at := ArrayOf(10, TypeOf(F(1)))\n>     if at != TypeOf([10]F) { panic(\"different type\") }\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1017\nsrc/pkg/reflect/type.go:1017: // of a *unsafe.Pointer.\nOn 2012/11/07 22:38:47, r wrote:\n> s/a/an/ ?\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1249\nsrc/pkg/reflect/type.go:1249: // typesByName returns the subslice of typelinks() with the given string.\nOn 2012/11/07 22:38:47, r wrote:\n> typesByName returns the subslice of typelinks() whose elements have the given\n> string representation.\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1252\nsrc/pkg/reflect/type.go:1252: func typesByString(s string) []*rtype {\nOn 2012/11/07 23:36:53, iant wrote:\n> The comment says typesByName but the function is called typesByString.\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1276\nsrc/pkg/reflect/type.go:1276: return typ[i:j]\nOn 2012/11/07 22:38:47, r wrote:\n> looks like you get the empty slice (at the end of the typelinks slice) for no\n> such string. should probably document that.\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1377\nsrc/pkg/reflect/type.go:1377: ch.hash = typ.hash*16777619 ^ 'c'\nOn 2012/11/07 22:38:47, r wrote:\n> where does this number come from? at least give it a name - it appears\n> everywhere. regardless, i think you want a variadic function that constructs the\n> hash value, so the number appears in only one place. this isn't quite it, i\n> don't think, but something like it would be nice:\n> \n> func newTypeHash(x ...uintptr) (h uintptr) {\n>   for u := range x {\n>    h = h*16777619 ^ x\n>   }\n>   return\n> }\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1378\nsrc/pkg/reflect/type.go:1378: ch.hash = typ.hash*16777619 ^ uint32(dir)\nOn 2012/11/07 23:36:53, iant wrote:\n> This code doesn't make sense as written.  Do you want s/typ.hash/ch.hash/ ?\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1386\nsrc/pkg/reflect/type.go:1386: // MapOf returns the map type with the given key and value types.\nOn 2012/11/07 22:38:47, r wrote:\n> s/value/element/\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1388\nsrc/pkg/reflect/type.go:1388: // MapOf(k, v) represents map[int]string.\nOn 2012/11/07 22:38:47, r wrote:\n> s/v/e/\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1391\nsrc/pkg/reflect/type.go:1391: // not implement Go's == operator), MapOf panics.\nOn 2012/11/07 22:38:47, r wrote:\n> s;$; TODO\n\nDone.\n\nhttp://codereview.appspot.com/6572043/diff/14001/src/pkg/reflect/type.go#newcode1470\nsrc/pkg/reflect/type.go:1470: // ArrayOf panics.\nOn 2012/11/07 22:38:47, r wrote:\n> it does?\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-13 18:06:28.205890",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6572043: reflect: add ArrayOf, ChanOf, MapOf, SliceOf",
+	"created": "2012-09-25 00:34:15.702870",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		8003,
+		10002,
+		14001,
+		21001,
+		19002
+	],
+	"modified": "2012-11-13 18:06:30.076890",
+	"closed": true,
+	"issue": 6572043
+}

@@ -1,0 +1,116 @@
+{
+	"description": "http: fix serving from CWD with http.ServeFile\nhttp: make Dir(\"\") equivalent to Dir(\".\")\n\nFixes issue 2471.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://github.com/nf/goplayer does a\n\nhttp.ServeFile(w, r, \"index.html\")\n\nThe existing code would serve \"/index.html\" (relative to FS root).\nThis is almost never what you want.\n\nOn 11 November 2011 14:38, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> Background?\n>\n> On Thu, Nov 10, 2011 at 7:30 PM, <adg@golang.org> wrote:\n>>\n>> Reviewers: golang-dev_googlegroups.com,\n>>\n>> Message:\n>> Hello golang-dev@googlegroups.com,\n>>\n>> I'd like you to review this change to\n>> https://go.googlecode.com/hg/\n>>\n>>\n>> Description:\n>> http: fix serving from CWD with http.ServeFile\n>> http: make Dir(\"\") an invalid value\n>>\n>> Please review this at http://codereview.appspot.com/5370061/\n>>\n>> Affected files:\n>> \u00a0M src/pkg/http/fs.go\n>> \u00a0M src/pkg/http/fs_test.go\n>>\n>>\n>> Index: src/pkg/http/fs.go\n>> ===================================================================\n>> --- a/src/pkg/http/fs.go\n>> +++ b/src/pkg/http/fs.go\n>> @@ -21,9 +21,14 @@\n>>\n>> \u00a0// A Dir implements http.FileSystem using the native file\n>> \u00a0// system restricted to a specific directory tree.\n>> +//\n>> +// An empty Dir is invalid.\n>> \u00a0type Dir string\n>>\n>> \u00a0func (d Dir) Open(name string) (File, os.Error) {\n>> + \u00a0 \u00a0 \u00a0 if d == \"\" {\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 panic(\"http.Dir cannot be empty string\")\n>> + \u00a0 \u00a0 \u00a0 }\n>> \u00a0 \u00a0 \u00a0 \u00a0if filepath.Separator != '/' && strings.IndexRune(name,\n>> filepath.Separator) >= 0 {\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return nil, os.NewError(\"http: invalid character in file\n>> path\")\n>> \u00a0 \u00a0 \u00a0 \u00a0}\n>> @@ -236,6 +241,10 @@\n>> \u00a0// ServeFile replies to the request with the contents of the named file\n>> or directory.\n>> \u00a0func ServeFile(w ResponseWriter, r *Request, name string) {\n>> \u00a0 \u00a0 \u00a0 \u00a0dir, file := filepath.Split(name)\n>> + \u00a0 \u00a0 \u00a0 if dir == \"\" {\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // file is in CWD\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 dir = \".\"\n>> + \u00a0 \u00a0 \u00a0 }\n>> \u00a0 \u00a0 \u00a0 \u00a0serveFile(w, r, Dir(dir), file, false)\n>> \u00a0}\n>>\n>> Index: src/pkg/http/fs_test.go\n>> ===================================================================\n>> --- a/src/pkg/http/fs_test.go\n>> +++ b/src/pkg/http/fs_test.go\n>> @@ -208,6 +208,15 @@\n>> \u00a0 \u00a0 \u00a0 \u00a0test(Dir(\"/etc/hosts\"), \"../\")\n>> \u00a0}\n>>\n>> +func TestEmptyDirOpenPanic(t *testing.T) {\n>> + \u00a0 \u00a0 \u00a0 defer func() {\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if e := recover(); e == nil {\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Fatal(\"expected panic; got nothing\")\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n>> + \u00a0 \u00a0 \u00a0 }()\n>> + \u00a0 \u00a0 \u00a0 Dir(\"\").Open(\"fail\")\n>> +}\n>> +\n>> \u00a0func TestServeFileContentType(t *testing.T) {\n>> \u00a0 \u00a0 \u00a0 \u00a0const ctype = \"icecream/chocolate\"\n>> \u00a0 \u00a0 \u00a0 \u00a0override := false\n>> @@ -247,6 +256,20 @@\n>> \u00a0 \u00a0 \u00a0 \u00a0}\n>> \u00a0}\n>>\n>> +func TestServeFileFromCWD(t *testing.T) {\n>> + \u00a0 \u00a0 \u00a0 ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r\n>> *Request) {\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 ServeFile(w, r, \"fs_test.go\")\n>> + \u00a0 \u00a0 \u00a0 }))\n>> + \u00a0 \u00a0 \u00a0 defer ts.Close()\n>> + \u00a0 \u00a0 \u00a0 r, err := Get(ts.URL)\n>> + \u00a0 \u00a0 \u00a0 if err != nil {\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Fatal(err)\n>> + \u00a0 \u00a0 \u00a0 }\n>> + \u00a0 \u00a0 \u00a0 if r.StatusCode != 200 {\n>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Fatalf(\"expected 200 OK, got %s\", r.Status)\n>> + \u00a0 \u00a0 \u00a0 }\n>> +}\n>> +\n>> \u00a0func TestServeFileWithContentEncoding(t *testing.T) {\n>> \u00a0 \u00a0 \u00a0 \u00a0ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r\n>> *Request) {\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0w.Header().Set(\"Content-Encoding\", \"foo\")\n>>\n>>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-11-11 03:41:29.492270",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-11-11 03:30:19.316102",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Background?\n\n\nOn Thu, Nov 10, 2011 at 7:30 PM, <adg@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> http: fix serving from CWD with http.ServeFile\n> http: make Dir(\"\") an invalid value\n>\n> Please review this at http://codereview.appspot.com/**5370061/<http://codereview.appspot.com/5370061/>\n>\n> Affected files:\n>  M src/pkg/http/fs.go\n>  M src/pkg/http/fs_test.go\n>\n>\n> Index: src/pkg/http/fs.go\n> ==============================**==============================**=======\n> --- a/src/pkg/http/fs.go\n> +++ b/src/pkg/http/fs.go\n> @@ -21,9 +21,14 @@\n>\n>  // A Dir implements http.FileSystem using the native file\n>  // system restricted to a specific directory tree.\n> +//\n> +// An empty Dir is invalid.\n>  type Dir string\n>\n>  func (d Dir) Open(name string) (File, os.Error) {\n> +       if d == \"\" {\n> +               panic(\"http.Dir cannot be empty string\")\n> +       }\n>        if filepath.Separator != '/' && strings.IndexRune(name,\n> filepath.Separator) >= 0 {\n>                return nil, os.NewError(\"http: invalid character in file\n> path\")\n>        }\n> @@ -236,6 +241,10 @@\n>  // ServeFile replies to the request with the contents of the named file\n> or directory.\n>  func ServeFile(w ResponseWriter, r *Request, name string) {\n>        dir, file := filepath.Split(name)\n> +       if dir == \"\" {\n> +               // file is in CWD\n> +               dir = \".\"\n> +       }\n>        serveFile(w, r, Dir(dir), file, false)\n>  }\n>\n> Index: src/pkg/http/fs_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/http/fs_test.go\n> +++ b/src/pkg/http/fs_test.go\n> @@ -208,6 +208,15 @@\n>        test(Dir(\"/etc/hosts\"), \"../\")\n>  }\n>\n> +func TestEmptyDirOpenPanic(t *testing.T) {\n> +       defer func() {\n> +               if e := recover(); e == nil {\n> +                       t.Fatal(\"expected panic; got nothing\")\n> +               }\n> +       }()\n> +       Dir(\"\").Open(\"fail\")\n> +}\n> +\n>  func TestServeFileContentType(t *testing.T) {\n>        const ctype = \"icecream/chocolate\"\n>        override := false\n> @@ -247,6 +256,20 @@\n>        }\n>  }\n>\n> +func TestServeFileFromCWD(t *testing.T) {\n> +       ts := httptest.NewServer(**HandlerFunc(func(w ResponseWriter, r\n> *Request) {\n> +               ServeFile(w, r, \"fs_test.go\")\n> +       }))\n> +       defer ts.Close()\n> +       r, err := Get(ts.URL)\n> +       if err != nil {\n> +               t.Fatal(err)\n> +       }\n> +       if r.StatusCode != 200 {\n> +               t.Fatalf(\"expected 200 OK, got %s\", r.Status)\n> +       }\n> +}\n> +\n>  func TestServeFileWithContentEncodi**ng(t *testing.T) {\n>        ts := httptest.NewServer(**HandlerFunc(func(w ResponseWriter, r\n> *Request) {\n>                w.Header().Set(\"Content-**Encoding\", \"foo\")\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-11-11 03:38:14.876399",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "An alternate approach is to make Dir(\"\") default to serving from the CWD.\n\nI considered it, but thought the other approach is more likely to\ncatch programming errors.\n\nHappy to go either way.\n\nOn 11 November 2011 14:40, Andrew Gerrand <adg@golang.org> wrote:\n> http://github.com/nf/goplayer does a\n>\n> http.ServeFile(w, r, \"index.html\")\n>\n> The existing code would serve \"/index.html\" (relative to FS root).\n> This is almost never what you want.\n>\n> On 11 November 2011 14:38, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n>> Background?\n>>\n>> On Thu, Nov 10, 2011 at 7:30 PM, <adg@golang.org> wrote:\n>>>\n>>> Reviewers: golang-dev_googlegroups.com,\n>>>\n>>> Message:\n>>> Hello golang-dev@googlegroups.com,\n>>>\n>>> I'd like you to review this change to\n>>> https://go.googlecode.com/hg/\n>>>\n>>>\n>>> Description:\n>>> http: fix serving from CWD with http.ServeFile\n>>> http: make Dir(\"\") an invalid value\n>>>\n>>> Please review this at http://codereview.appspot.com/5370061/\n>>>\n>>> Affected files:\n>>> \u00a0M src/pkg/http/fs.go\n>>> \u00a0M src/pkg/http/fs_test.go\n>>>\n>>>\n>>> Index: src/pkg/http/fs.go\n>>> ===================================================================\n>>> --- a/src/pkg/http/fs.go\n>>> +++ b/src/pkg/http/fs.go\n>>> @@ -21,9 +21,14 @@\n>>>\n>>> \u00a0// A Dir implements http.FileSystem using the native file\n>>> \u00a0// system restricted to a specific directory tree.\n>>> +//\n>>> +// An empty Dir is invalid.\n>>> \u00a0type Dir string\n>>>\n>>> \u00a0func (d Dir) Open(name string) (File, os.Error) {\n>>> + \u00a0 \u00a0 \u00a0 if d == \"\" {\n>>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 panic(\"http.Dir cannot be empty string\")\n>>> + \u00a0 \u00a0 \u00a0 }\n>>> \u00a0 \u00a0 \u00a0 \u00a0if filepath.Separator != '/' && strings.IndexRune(name,\n>>> filepath.Separator) >= 0 {\n>>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return nil, os.NewError(\"http: invalid character in file\n>>> path\")\n>>> \u00a0 \u00a0 \u00a0 \u00a0}\n>>> @@ -236,6 +241,10 @@\n>>> \u00a0// ServeFile replies to the request with the contents of the named file\n>>> or directory.\n>>> \u00a0func ServeFile(w ResponseWriter, r *Request, name string) {\n>>> \u00a0 \u00a0 \u00a0 \u00a0dir, file := filepath.Split(name)\n>>> + \u00a0 \u00a0 \u00a0 if dir == \"\" {\n>>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // file is in CWD\n>>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 dir = \".\"\n>>> + \u00a0 \u00a0 \u00a0 }\n>>> \u00a0 \u00a0 \u00a0 \u00a0serveFile(w, r, Dir(dir), file, false)\n>>> \u00a0}\n>>>\n>>> Index: src/pkg/http/fs_test.go\n>>> ===================================================================\n>>> --- a/src/pkg/http/fs_test.go\n>>> +++ b/src/pkg/http/fs_test.go\n>>> @@ -208,6 +208,15 @@\n>>> \u00a0 \u00a0 \u00a0 \u00a0test(Dir(\"/etc/hosts\"), \"../\")\n>>> \u00a0}\n>>>\n>>> +func TestEmptyDirOpenPanic(t *testing.T) {\n>>> + \u00a0 \u00a0 \u00a0 defer func() {\n>>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if e := recover(); e == nil {\n>>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Fatal(\"expected panic; got nothing\")\n>>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n>>> + \u00a0 \u00a0 \u00a0 }()\n>>> + \u00a0 \u00a0 \u00a0 Dir(\"\").Open(\"fail\")\n>>> +}\n>>> +\n>>> \u00a0func TestServeFileContentType(t *testing.T) {\n>>> \u00a0 \u00a0 \u00a0 \u00a0const ctype = \"icecream/chocolate\"\n>>> \u00a0 \u00a0 \u00a0 \u00a0override := false\n>>> @@ -247,6 +256,20 @@\n>>> \u00a0 \u00a0 \u00a0 \u00a0}\n>>> \u00a0}\n>>>\n>>> +func TestServeFileFromCWD(t *testing.T) {\n>>> + \u00a0 \u00a0 \u00a0 ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r\n>>> *Request) {\n>>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 ServeFile(w, r, \"fs_test.go\")\n>>> + \u00a0 \u00a0 \u00a0 }))\n>>> + \u00a0 \u00a0 \u00a0 defer ts.Close()\n>>> + \u00a0 \u00a0 \u00a0 r, err := Get(ts.URL)\n>>> + \u00a0 \u00a0 \u00a0 if err != nil {\n>>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Fatal(err)\n>>> + \u00a0 \u00a0 \u00a0 }\n>>> + \u00a0 \u00a0 \u00a0 if r.StatusCode != 200 {\n>>> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 t.Fatalf(\"expected 200 OK, got %s\", r.Status)\n>>> + \u00a0 \u00a0 \u00a0 }\n>>> +}\n>>> +\n>>> \u00a0func TestServeFileWithContentEncoding(t *testing.T) {\n>>> \u00a0 \u00a0 \u00a0 \u00a0ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, r\n>>> *Request) {\n>>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0w.Header().Set(\"Content-Encoding\", \"foo\")\n>>>\n>>>\n>>\n>>\n>\n",
+			"disapproval": false,
+			"date": "2011-11-11 04:07:26.999273",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "An empty dir should be treated as \".\"\nThis is consistent with filepath.Split.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-11 19:49:56.900122",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-12 21:48:26.604054",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2011-11-16 20:56:59.050260",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=2b24fa6cd9d7 ***\n\nhttp: fix serving from CWD with http.ServeFile\nhttp: make Dir(\"\") equivalent to Dir(\".\")\n\nFixes issue 2471.\n\nR=golang-dev, bradfitz, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5370061",
+			"disapproval": false,
+			"date": "2011-11-17 00:42:30.836428",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 5370061: http: fix serving from CWD with http.ServeFile",
+	"created": "2011-11-11 03:30:06.333539",
+	"patchsets": [
+		1,
+		4003,
+		7001
+	],
+	"modified": "2011-11-17 00:42:33.017267",
+	"closed": true,
+	"issue": 5370061
+}

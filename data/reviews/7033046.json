@@ -1,0 +1,134 @@
+{
+	"description": "os: fix Open for empty root directories on windows\n\nFixes issue 4601.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org",
+		"bradfitz@golang.org",
+		"kardianos@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "kardianos@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Would this help?\r\n\r\nC:\\Users\\danielt>subst /?\r\nAssociates a path with a drive letter.\r\n\r\nSUBST [drive1: [drive2:]path]\r\nSUBST drive1: /D\r\n\r\n  drive1:        Specifies a virtual drive to which you want to assign a \r\npath.\r\n  [drive2:]path  Specifies a physical drive and path you want to assign to\r\n                 a virtual drive.\r\n  /D             Deletes a substituted (virtual) drive.\r\n\r\nType SUBST with no parameters to display a list of current virtual drives.\r\n\r\n\r\nOn Friday, January 4, 2013 8:06:27 AM UTC-8, rsc wrote:\r\n>\r\n> It's not like one can just create an empty root directory during a \r\n> test, unfortunately. \r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 17:05:08.988470",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-01-02 23:48:16.120550",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nYay Windows.\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 15:29:44.477930",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "No new test?\r\n On Jan 2, 2013 3:48 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> os: fix Open for empty root directories on windows\r\n>\r\n> Fixes issue 4601.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7033046/<https://codereview.appspot.com/7033046/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/os/file_windows.go\r\n>\r\n>\r\n> Index: src/pkg/os/file_windows.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/os/file_windows.go\r\n> +++ b/src/pkg/os/file_windows.go\r\n> @@ -11,6 +11,7 @@\r\n>         \"syscall\"\r\n>         \"unicode/utf16\"\r\n>         \"unicode/utf8\"\r\n> +       \"unsafe\"\r\n>  )\r\n>\r\n>  // File represents an open file descriptor.\r\n> @@ -41,12 +42,9 @@\r\n>         return uintptr(file.fd)\r\n>  }\r\n>\r\n> -// NewFile returns a new File with the given file descriptor and name.\r\n> -func NewFile(fd uintptr, name string) *File {\r\n> -       h := syscall.Handle(fd)\r\n> -       if h == syscall.InvalidHandle {\r\n> -               return nil\r\n> -       }\r\n> +// newFile returns a new File with the given file handle and name.\r\n> +// Unlike NewFile, it does not check that h is syscall.InvalidHandle.\r\n> +func newFile(h syscall.Handle, name string) *File {\r\n>         f := &File{&file{fd: h, name: name}}\r\n>         var m uint32\r\n>         if syscall.GetConsoleMode(f.fd, &m) == nil {\r\n> @@ -56,11 +54,21 @@\r\n>         return f\r\n>  }\r\n>\r\n> +// NewFile returns a new File with the given file descriptor and name.\r\n> +func NewFile(fd uintptr, name string) *File {\r\n> +       h := syscall.Handle(fd)\r\n> +       if h == syscall.InvalidHandle {\r\n> +               return nil\r\n> +       }\r\n> +       return newFile(h, name)\r\n> +}\r\n> +\r\n>  // Auxiliary information if the File describes a directory\r\n>  type dirInfo struct {\r\n>         data     syscall.Win32finddata\r\n>         needdata bool\r\n>         path     string\r\n> +       isempty  bool // set if FindFirstFile returns ERROR_FILE_NOT_FOUND\r\n>  }\r\n>\r\n>  func epipecheck(file *File, e error) {\r\n> @@ -73,7 +81,7 @@\r\n>  func openFile(name string, flag int, perm FileMode) (file *File, err\r\n> error) {\r\n>         r, e := syscall.Open(name, flag|syscall.O_CLOEXEC,\r\n> syscallMode(perm))\r\n>         if e != nil {\r\n> -               return nil, &PathError{\"open\", name, e}\r\n> +               return nil, e\r\n>         }\r\n>         return NewFile(uintptr(r), name), nil\r\n>  }\r\n> @@ -81,19 +89,37 @@\r\n>  func openDir(name string) (file *File, err error) {\r\n>         maskp, e := syscall.UTF16PtrFromString(**name + `\\*`)\r\n>         if e != nil {\r\n> -               return nil, &PathError{\"open\", name, e}\r\n> +               return nil, e\r\n>         }\r\n>         d := new(dirInfo)\r\n>         r, e := syscall.FindFirstFile(maskp, &d.data)\r\n>         if e != nil {\r\n> -               return nil, &PathError{\"open\", name, e}\r\n> +               // FindFirstFile returns ERROR_FILE_NOT_FOUND when\r\n> +               // no matching files can be found. Then, if directory\r\n> +               // exists, we should proceed.\r\n> +               if e != syscall.ERROR_FILE_NOT_FOUND {\r\n> +                       return nil, e\r\n> +               }\r\n> +               var fa syscall.Win32FileAttributeData\r\n> +               namep, e := syscall.UTF16PtrFromString(**name)\r\n> +               if e != nil {\r\n> +                       return nil, e\r\n> +               }\r\n> +               e = syscall.GetFileAttributesEx(**namep,\r\n> syscall.GetFileExInfoStandard, (*byte)(unsafe.Pointer(&fa)))\r\n> +               if e != nil {\r\n> +                       return nil, e\r\n> +               }\r\n> +               if fa.FileAttributes&syscall.**FILE_ATTRIBUTE_DIRECTORY\r\n> == 0 {\r\n> +                       return nil, e\r\n> +               }\r\n> +               d.isempty = true\r\n>         }\r\n>         d.path = name\r\n>         if !isAbs(d.path) {\r\n>                 cwd, _ := Getwd()\r\n>                 d.path = cwd + `\\` + d.path\r\n>         }\r\n> -       f := NewFile(uintptr(r), name)\r\n> +       f := newFile(r, name)\r\n>         f.dirinfo = d\r\n>         return f, nil\r\n>  }\r\n> @@ -120,7 +146,7 @@\r\n>         if e == nil {\r\n>                 return r, nil\r\n>         }\r\n> -       return nil, e\r\n> +       return nil, &PathError{\"open\", name, e}\r\n>  }\r\n>\r\n>  // Close closes the File, rendering it unusable for I/O.\r\n> @@ -130,7 +156,14 @@\r\n>  }\r\n>\r\n>  func (file *file) close() error {\r\n> -       if file == nil || file.fd == syscall.InvalidHandle {\r\n> +       if file == nil {\r\n> +               return syscall.EINVAL\r\n> +       }\r\n> +       if file.isdir() && file.dirinfo.isempty {\r\n> +               // \"special\" empty directories\r\n> +               return nil\r\n> +       }\r\n> +       if file.fd == syscall.InvalidHandle {\r\n>                 return syscall.EINVAL\r\n>         }\r\n>         var e error\r\n> @@ -151,12 +184,15 @@\r\n>  }\r\n>\r\n>  func (file *File) readdir(n int) (fi []FileInfo, err error) {\r\n> -       if file == nil || file.fd == syscall.InvalidHandle {\r\n> +       if file == nil {\r\n>                 return nil, syscall.EINVAL\r\n>         }\r\n>         if !file.isdir() {\r\n>                 return nil, &PathError{\"Readdir\", file.name,\r\n> syscall.ENOTDIR}\r\n>         }\r\n> +       if !file.dirinfo.isempty && file.fd == syscall.InvalidHandle {\r\n> +               return nil, syscall.EINVAL\r\n> +       }\r\n>         wantAll := n <= 0\r\n>         size := n\r\n>         if wantAll {\r\n> @@ -165,7 +201,7 @@\r\n>         }\r\n>         fi = make([]FileInfo, 0, size) // Empty with room to grow.\r\n>         d := &file.dirinfo.data\r\n> -       for n != 0 {\r\n> +       for n != 0 && !file.dirinfo.isempty {\r\n>                 if file.dirinfo.needdata {\r\n>                         e := syscall.FindNextFile(syscall.**Handle(file.fd),\r\n> d)\r\n>                         if e != nil {\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 16:05:11.985850",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's not like one can just create an empty root directory during a\r\ntest, unfortunately.\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 16:06:29.553130",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"kardianos@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/04 17:05:08, kardia wrote:\n> Would this help?\n> \n\nI will try that. Thank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-01-04 23:10:58.379890",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"kardianos@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/04 23:10:58, brainman wrote:\n> On 2013/01/04 17:05:08, kardia wrote:\n> > Would this help?\n> > \n> \n> I will try that. Thank you.\n> \n\nUnfortunately, no cigar. Subst-ed directories behave just like any empty directory - they are not really \"empty\", they have \".\" and \"..\" entries. So, I will submit tomorrow as is with no test, unless I hear more objections.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-01-07 01:20:46.392530",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"kardianos@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=f088b33ca75f ***\n\nos: fix Open for empty root directories on windows\n\nFixes issue 4601.\n\nR=golang-dev, rsc, bradfitz, kardianos\nCC=golang-dev\nhttps://codereview.appspot.com/7033046",
+			"disapproval": false,
+			"date": "2013-01-07 01:48:41.664340",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "submit away\r\n",
+			"disapproval": false,
+			"date": "2013-01-07 01:22:56.140170",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 7033046: os: fix Open for empty root directories on windows",
+	"created": "2013-01-02 23:07:01.697420",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		13001
+	],
+	"modified": "2013-01-07 01:48:44.397350",
+	"closed": true,
+	"issue": 7033046
+}

@@ -1,0 +1,521 @@
+{
+	"description": "cmd/dist: new command\n\ndist is short for distribution.  This is the new Go distribution tool.\n\nThe plan is to replace the Makefiles with what amounts to\n'go tool dist bootstrap', although it cannot be invoked like\nthat since it is in charge of getting us to the point where we\ncan build the go command.\n\nIt will also add additional commands to replace bash scripts\nlike test/run (go tool dist testrun), eventually eliminating our\ndependence on not just bash but all the Unix tools and all\nof cygwin.\n\nThis is strong enough to build (cc *.c) and run (a.out bootstrap)\nto build not just the C libraries and tools but also the basic\nGo packages up to the bootstrap form of the go command\n(go_bootstrap).  I've run it successfully on both Linux and Windows.\nThis means that once we've switched to this tool in the build,\nwe can delete the buildscripts.\n\nThis tool is not nearly as nice as the go tool.  There are many\nspecial cases that turn into simple if statements or tables in\nthe code.  Please forgive that.  C does not enjoy the benefits\nthat we designed into Go.\n\nI was planning to wait to do this until after Go 1, but the\nWindows builders are both broken due to a bug in either\nmake or bash or both involving the parsing of quoted command\narguments.  Make thinks it is invoking\n\n        quietgcc -fno-common -I\"c:/go/include\" -ggdb -O2 -c foo.c\n\nbut bash (quietgcc is a bash script) thinks it is being invoked as\n\n        quietgcc -fno-common '-Ic:/go/include -ggdb' -O2 -c foo.c\n\nwhich obviously does not have the desired effect.  Rather than fight\nthese clumsy ports, I accelerated the schedule for the new tool.\nWe should be completely off cygwin (using just the mingw gcc port,\nwhich is much more standalone) before Go 1.\n\nIt is big for a single CL, and for that I apologize.  I can cut it into\nseparate CLs along file boundaries if people would prefer that.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"adg@golang.org",
+		"gri@golang.org",
+		"bradfitz@golang.org",
+		"alex.brainman@gmail.com",
+		"dsymonds@golang.org",
+		"iant@golang.org",
+		"ality@pbrane.org",
+		"hcwfrichter@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "As far as windows concerned. Perhaps builders mingw are out of date and can be upgraded. When I run ./all.bash or gobuilder here I see no problem I see on windows builders.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-02 01:54:44.103513",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nOn Wed, Feb 1, 2012 at 20:53,  <iant@golang.org> wrote:\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode1\n> src/cmd/dist/README:1: This program, dist, is the bootstrapping tool for\n> the Go distribution.\n> Does a README file require a copyright notice?\n\nI don't believe so.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode41\n> src/cmd/dist/README:41: registers for []byte or []string, sitting in\n> charge of the allocation for that\n> I don't understand what you mean by \"registers\" here. \u00a0Unless you are\n> trying to say something subtle, perhaps this whole sentence can go.\n\nI replaced it with something maybe more understandable.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode7\n> src/cmd/dist/a.h:7: // The unit on Time is unspecified; we just need to\n> \"Time values are unspecified; we just need to be able....\"\n\nDone.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode9\n> src/cmd/dist/buf.c:9: #include <stdio.h>\n> Why do you need <stdio.h>?\n\nGone.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode97\n> src/cmd/dist/buf.c:97: // bprintf replaces the buffer with the result of\n> the printf formatting.\n> ...and returns a pointer to the NUL-terminated buffer contents.\n\nDone.  I moved this into the unix.c/windows.c, so that it can\nuse the appropriate <stdio.h> or whatever.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode106\n> src/cmd/dist/buf.c:106: vsnprintf(buf, sizeof buf, fmt, arg);\n> Not xvsnprintf?\n>\n> (BTW gcc uses vasprintf to avoid worrying about fixed size buffers.)\n\nMoved into unix.c/windows.c so that each system can do what\nis appropriate.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode230\n> src/cmd/dist/buf.c:230: p[i+1] = '\\0';\n> Doing it this way makes it more likely that someday somebody will get\n> bitten by passing in a constant string. \u00a0You can avoid that and be\n> slightly more efficient to boot by using vaddbuf(Vec *, char *, int).\n\nDone, nice suggestion.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode258\n> src/cmd/dist/buf.c:258: *p = '\\0';\n> Same comment about constant strings.\n\nDone.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode7\n> src/cmd/dist/build.c:7: #include <stdio.h>\n> Why do you need <stdio.h>? \u00a0It seems to run against the idea expressed\n> in the README, that everything system-specific was in a portability\n> file.\n\nGone.  It was for bprintf.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode540\n> src/cmd/dist/build.c:540: stale = 1;\n> stale is never set to anything other than 1. \u00a0Is this a TODO?\n\nYes, added explicit comment.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode585\n> src/cmd/dist/build.c:585: }\n> Aren't we in trouble if we get here without finding the name in gentab?\n\nYes.  I was letting the build fail, but will fail here with\na better message.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode598\n> src/cmd/dist/build.c:598: vadd(&compile, \"-m64\");\n> Should you use -m32 if gohostarch == i386?\n\nDone.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode642\n> src/cmd/dist/build.c:642: b.p[b.len-1] = 'o'; \u00a0// was c\n> was c or s\n\nDone.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode91\n> src/cmd/dist/unix.c:91: bwritestr(&cmd, \"$WORK\");\n> What is this about?\n\nFor debugging, it's nice to see the commands, but on a Mac\n$TMPDIR is 50 characters long, so it's nice to see it shorter.\nI commented that this is for logging.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode519\n> src/cmd/dist/unix.c:519: xprintf(\"hostos %s\\n\", gohostos);\n> Remove debug print.\n\nDone.\n\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/windows.c#newcode169\n> src/cmd/dist/windows.c:169: break;\n> error reporting?\n\nDone.\n\nThanks for the careful review.\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-02 21:06:01.522394",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"ality@pbrane.org",
+				"hcwfrichter@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Forgot to include http://jesusnjim.com/programming/common-compiler-defines.html. But you could google for more.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-02 23:14:14.522266",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"ality@pbrane.org",
+				"hcwfrichter@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThis is going to be slower than running a parallel make, perhaps that won't bother us too much.\n\nhttp://codereview.appspot.com/5620045/diff/1007/src/cmd/dist/unix.c\nFile src/cmd/dist/unix.c (right):\n\nhttp://codereview.appspot.com/5620045/diff/1007/src/cmd/dist/unix.c#newcode354\nsrc/cmd/dist/unix.c:354: if(mkdtemp(bstr(&b)) == nil)\nJust a note: mkdtemp is a relatively recent function--we may need to replace this one for greater portability.\n\nhttp://codereview.appspot.com/5620045/diff/1007/src/cmd/dist/unix.c#newcode594\nsrc/cmd/dist/unix.c:594: ep = p+strlen(p);\nWhy not just call strrchr?  It's in C89 and should be at least as available as strstr.  If you don't just cal strrchr, note that ep is initialized twice.",
+			"disapproval": false,
+			"date": "2012-02-03 00:30:43.691539",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"ality@pbrane.org",
+				"hcwfrichter@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=20324e413be7 ***\n\ncmd/dist: new command\n\ndist is short for distribution.  This is the new Go distribution tool.\n\nThe plan is to replace the Makefiles with what amounts to\n'go tool dist bootstrap', although it cannot be invoked like\nthat since it is in charge of getting us to the point where we\ncan build the go command.\n\nIt will also add additional commands to replace bash scripts\nlike test/run (go tool dist testrun), eventually eliminating our\ndependence on not just bash but all the Unix tools and all\nof cygwin.\n\nThis is strong enough to build (cc *.c) and run (a.out bootstrap)\nto build not just the C libraries and tools but also the basic\nGo packages up to the bootstrap form of the go command\n(go_bootstrap).  I've run it successfully on both Linux and Windows.\nThis means that once we've switched to this tool in the build,\nwe can delete the buildscripts.\n\nThis tool is not nearly as nice as the go tool.  There are many\nspecial cases that turn into simple if statements or tables in\nthe code.  Please forgive that.  C does not enjoy the benefits\nthat we designed into Go.\n\nI was planning to wait to do this until after Go 1, but the\nWindows builders are both broken due to a bug in either\nmake or bash or both involving the parsing of quoted command\narguments.  Make thinks it is invoking\n\n        quietgcc -fno-common -I\"c:/go/include\" -ggdb -O2 -c foo.c\n\nbut bash (quietgcc is a bash script) thinks it is being invoked as\n\n        quietgcc -fno-common '-Ic:/go/include -ggdb' -O2 -c foo.c\n\nwhich obviously does not have the desired effect.  Rather than fight\nthese clumsy ports, I accelerated the schedule for the new tool.\nWe should be completely off cygwin (using just the mingw gcc port,\nwhich is much more standalone) before Go 1.\n\nIt is big for a single CL, and for that I apologize.  I can cut it into\nseparate CLs along file boundaries if people would prefer that.\n\nR=golang-dev, adg, gri, bradfitz, alex.brainman, dsymonds, iant, ality, hcwfrichter\nCC=golang-dev\nhttp://codereview.appspot.com/5620045",
+			"disapproval": false,
+			"date": "2012-02-03 00:41:44.008670",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README\nFile src/cmd/dist/README (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode1\nsrc/cmd/dist/README:1: This program, dist, is the bootstrapping tool for the Go distribution.\nwhy not s/dist/bootstrap/ ? it's not really distributing anything, it seems.\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode4\nsrc/cmd/dist/README:4: to replace odd job previously done with shell scripts.\ns/job/jobs/\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h\nFile src/cmd/dist/a.h (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode7\nsrc/cmd/dist/a.h:7: // The unit on Time is unspecified; we just need to\ns/on/of/ or s/on/for/ ?",
+			"disapproval": false,
+			"date": "2012-02-02 00:35:56.446047",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Feb 2, 2012 at 08:16,  <ality@pbrane.org> wrote:\n> What about \".y\"? How could this have worked\n> without running yacc or bison? Did you have\n> stale y.tab.[ch] files hanging around?\n\nGenerated files that are complex to build will be\nchecked into the repository instead, like we do\nfor the z files in package syscall.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-02 15:15:20.885510",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Feb 1, 2012 at 20:17,  <alex.brainman@gmail.com> wrote:\n> Why don't we write this program in Go? We could keep compiled binary in\n> the repo for every platform we support.\n\nIt's ultimately not that big a program, and it means that we can build\nGo from scratch, without relying on the correctness of opaque binaries.\nIt's an important property, and one we'd like to preserve.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-02 15:26:00.843852",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Has anyone looked at this enough to LGTM it?\nThanks.\n",
+			"disapproval": false,
+			"date": "2012-02-02 23:10:55.639801",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Russ Cox <rsc@golang.org> once said:\n> Plan 9 is beyond the scope of this particular review.\n> However, I would encourage you to compile this tool\n> with pcc on Plan 9.\n\nThat's a good idea.  The diffs to support using pcc\nare *much* smaller.\n\n  Anthony\n",
+			"disapproval": false,
+			"date": "2012-02-02 23:38:33.586073",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Feb 2, 2012 at 18:32,  <alex.brainman@gmail.com> wrote:\n> If you have Windows 64 bit, but your compiler is 32 bit. How would you\n> build windows-amd64 Go?\n\nYou can build a 64-bit Go compiler using a 32-bit C compiler.\nThat works fine.  The usual case is that people have a 64-bit-capable\ngcc installed but it defaults to 32-bit mode to avoid surprising people.\n\n> Regardless what we decide, I assume, you would allow it to be overridden\n> by environment variable or something. Wouldn't you?\n\nYes, definitely.  The environment variable always wins.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-03 00:15:21.585989",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Exciting.\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README\nFile src/cmd/dist/README (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode4\nsrc/cmd/dist/README:4: to replace odd job previously done with shell scripts.\ns/job/jobs/\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode16\nsrc/cmd/dist/README:16: data structures, Buf and Vec, which own all the data they point at.\nfrom this doc alone, it's not clear whether a Vec owns the member Buf or not.  in the code sample below, you show bfree in addition to vfree, but never adding to the vector, so it's not clear either way.\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c\nFile src/cmd/dist/build.c (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode794\nsrc/cmd/dist/build.c:794: // fixslash rewrites / to \\ on Windows, so that the paths look conventional.\nwhy is this here and not in some portability file?\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c\nFile src/cmd/dist/unix.c (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode35\nsrc/cmd/dist/unix.c:35: if(n <= 0)\nbe fatal on non-EOF errors?",
+			"disapproval": false,
+			"date": "2012-02-02 00:53:10.848755",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You always find ways! Thank you, Russ.\n\nI am just reporting problems. Sorry.\n\n1) building on linux/386 fails\n\n# ./dist bootstrap\nhostos linux\nuname -m\nld --version\nlib9\ngcc -Wall -Wno-sign-compare -Wno-missing-braces -Wno-parentheses -Wno-unknown-pragmas -Wno-switch -Wno-comment -Werror -fno-common -ggdb -O2 -c -m64 -DPLAN9PORT -I /root/hg/go/include -I /root/hg/go/src/lib9 -o $WORK/_exits.o /root/hg/go/src/lib9/_exits.c\n/root/hg/go/src/lib9/_exits.c:1: sorry, unimplemented: 64-bit mode not compiled in\ngo tool dist: gcc failed\nrm -rf /var/tmp/go-cbuild-c3PAqT\n\n2) windows needs GOHOSTARCH set. Correct?\n\n3) windows/386 builds fail on lib9:\n\nC:\\MinGW\\go\\src\\cmd\\dist>dist.exe bootstrap\nld --version\nlib9\ngcc -Wall -Wno-sign-compare -Wno-missing-braces -Wno-parentheses -Wno-unknown-pragmas -Wno-switch -Wno-comment -Werror -fno-common -ggdb -O2 -c -DPLAN9PORT -I c:\\mingw\\go\\include -I c:\\mingw\\go\\src\\lib9 -o $WORK\\_exits.o c:\\mingw\\go\\src\\lib9\\_exits.c\ngcc -Wall -Wno-sign-compare -Wno-missing-braces -Wno-parentheses -Wno-unknown-pragmas -Wno-switch -Wno-comment -Werror -fno-common -ggdb -O2 -c -DPLAN9PORT -I c:\\mingw\\go\\include -I c:\\mingw\\go\\src\\lib9 -o $WORK\\_p9dir.o c:\\mingw\\go\\src\\lib9\\_p9dir.c\ngcc -Wall -Wno-sign-compare -Wno-missing-braces -Wno-parentheses -Wno-unknown-pragmas -Wno-switch -Wno-comment -Werror -fno-common -ggdb -O2 -c -DPLAN9PORT -I c:\\mingw\\go\\include -I c:\\mingw\\go\\src\\lib9 -o $WORK\\argv0.o c:\\mingw\\go\\src\\lib9\\argv0.c\ngcc -Wall -Wno-sign-compare -Wno-missing-braces -Wno-parentheses -Wno-unknown-pragmas -Wno-switch -Wno-comment -Werror -fno-common -ggdb -O2 -c -DPLAN9PORT -I c:\\mingw\\go\\include -I c:\\mingw\\go\\src\\lib9 -o $WORK\\atoi.o c:\\mingw\\go\\src\\lib9\\atoi.c\ngcc -Wall -Wno-sign-compare -Wno-missing-braces -Wno-parentheses -Wno-unknown-pragmas -Wno-switch -Wno-comment -Werror -fno-common -ggdb -O2 -c -DPLAN9PORT -I c:\\mingw\\go\\include -I c:\\mingw\\go\\src\\lib9 -o $WORK\\await.o c:\\mingw\\go\\src\\lib9\\await.c\nc:\\mingw\\go\\src\\lib9\\await.c:33:22: fatal error: sys/wait.h: No such file or directory\ncompilation terminated.\ncbuild: gcc failed\nrm -rf C:\\DOCUME~1\\brainman\\LOCALS~1\\Temp\\go3D4.tmp\n\nI take it because lib9 have different source file set on windows. See lib9/Makefile\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-02 01:06:23.017653",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"ality@pbrane.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c\nFile src/cmd/dist/build.c (right):\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode378\nsrc/cmd/dist/build.c:378: \".go\",\nWhat about \".y\"? How could this have worked\nwithout running yacc or bison? Did you have\nstale y.tab.[ch] files hanging around?",
+			"disapproval": false,
+			"date": "2012-02-02 13:16:44.934968",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Feb 1, 2012 at 20:54,  <alex.brainman@gmail.com> wrote:\n> As far as windows concerned. Perhaps builders mingw are out of date and\n> can be upgraded. When I run ./all.bash or gobuilder here I see no\n> problem I see on windows builders.\n\nI think you mean cygwin, since mingw is just the gcc port.\nOne of the motivations for this is to make it possible to\nbuild Go without cygwin, which does not play well with the\nsurrounding environment and is quite compllicated to set up.\nIn the long term, cygwin cannot be a dependency for building\nGo from source.  It has served well to get us this far, but it\nneeds to be shown the door.\n\nMy goal is for this dist program to build just as well under\nthe standard Microsoft command-line compiler (cl.exe),\nas a step toward building the whole Go-on-Windows without\neven needing mingw, although mingw is significantly less\nproblematic than cygwin.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-02 15:32:11.401223",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Feb 2, 2012 at 19:30,  <iant@golang.org> wrote:\n> This is going to be slower than running a parallel make, perhaps that\n> won't bother us too much.\n\nYes, I measured that earlier today.  It's unfortunate.  We could have\na background version of run and explicit wait if we wanted to, but\nI think that can wait.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-03 00:38:14.410200",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Why don't we write this program in Go? We could keep compiled binary in the repo for every platform we support.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-02 01:17:51.825050",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Feb 1, 2012 at 19:38, Robert Griesemer <gri@golang.org> wrote:\n> PS: C is the lowest common denominator, I guess. I am all for this\n> tool, but I wonder if it can be simpler. For one, perhaps the memory\n> management can be simplified (albeit there's not much) - just\n> allocate, never free. Always copy, never share. This tool is not\n> running long.\n\nI was going to do the never free thing, but there is a lot of data\nmoving around, and I would still need the concepts of Buf and Vec\nfor things like reading data from a file or the result of splitlines.\nI don't think the memory management would get much simpler.\nYou'd be able to delete the various bfree/vfree lines, but that's\nabout it.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-02 15:22:12.793361",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-01 23:25:07.742773",
+			"approval": false
+		},
+		{
+			"sender": "hcwfrichter@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://msdn.microsoft.com/en-us/library/windows/desktop/ms684139(v=vs.85).aspx\n \n\nuse GetProcAddress to check for the existence of IsWow64Process which is \nonly present in Windows 64\n",
+			"disapproval": false,
+			"date": "2012-02-02 16:47:43.199171",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"ality@pbrane.org",
+				"hcwfrichter@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c\nFile src/cmd/dist/unix.c (right):\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode151\nsrc/cmd/dist/unix.c:151: char buf[MAXPATHLEN];\nShould this be PATH_MAX? I never know which to use.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode154\nsrc/cmd/dist/unix.c:154: if(getcwd(buf, MAXPATHLEN) == nil)\ns/MAXPATHLEN/sizeof buf/\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode162\nsrc/cmd/dist/unix.c:162: xrealwd(Buf *b, char *path)\nThis appears to be unused.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode495\nsrc/cmd/dist/unix.c:495: setenv(name, value, 1);\nI'm not sure if setenv is available everywhere.\nYou could do:\n\nBuf b;\n\nbinit(&b);\nbprintf(&b, \"%s=%s\", name, value);\nputenv(btake(&b));\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode553\nsrc/cmd/dist/unix.c:553: ep = p+strlen(p);\nDuplicated initialization of ep.",
+			"disapproval": false,
+			"date": "2012-02-02 17:43:21.822396",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"ality@pbrane.org",
+				"hcwfrichter@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/02 23:17:16, rsc wrote:\n> I don't want to look at the compiler, because sometimes people\n> are running a compiler that defaults to 32-bit mode even on a\n> 64-bit platform.  Fred's suggestion to use GetNativeSystemInfo\n> looks perfect, ...\n\nIf you have Windows 64 bit, but your compiler is 32 bit. How would you build windows-amd64 Go?\n\nRegardless what we decide, I assume, you would allow it to be overridden by environment variable or something. Wouldn't you?\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-02 23:32:03.449212",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't want to look at the compiler, because sometimes people\nare running a compiler that defaults to 32-bit mode even on a\n64-bit platform.  Fred's suggestion to use GetNativeSystemInfo\nlooks perfect, but I will make the change in a future CL.\n(This CL is not enabling the tool yet.)\n",
+			"disapproval": false,
+			"date": "2012-02-02 23:17:16.384468",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "In the CL description: s/^to build //\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c\nFile src/cmd/dist/buf.c (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode60\nsrc/cmd/dist/buf.c:60: // bwritestr appendst he string p to the buffer.\ns/t he/ the/",
+			"disapproval": false,
+			"date": "2012-02-02 00:02:37.617655",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PS: C is the lowest common denominator, I guess. I am all for this\ntool, but I wonder if it can be simpler. For one, perhaps the memory\nmanagement can be simplified (albeit there's not much) - just\nallocate, never free. Always copy, never share. This tool is not\nrunning long.\n- gri\n\nOn Wed, Feb 1, 2012 at 4:35 PM,  <gri@golang.org> wrote:\n>\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README\n> File src/cmd/dist/README (right):\n>\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode1\n> src/cmd/dist/README:1: This program, dist, is the bootstrapping tool for\n> the Go distribution.\n> why not s/dist/bootstrap/ ? it's not really distributing anything, it\n> seems.\n>\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode4\n> src/cmd/dist/README:4: to replace odd job previously done with shell\n> scripts.\n> s/job/jobs/\n>\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h\n> File src/cmd/dist/a.h (right):\n>\n> http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode7\n> src/cmd/dist/a.h:7: // The unit on Time is unspecified; we just need to\n> s/on/of/ or s/on/for/ ?\n>\n> http://codereview.appspot.com/5620045/\n",
+			"disapproval": false,
+			"date": "2012-02-02 00:38:39.615253",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/02 01:34:42, dsymonds wrote:\n> \n> Because then you have a bootstrapping problem for new targets.\n\nWe are cross-compiling. Aren't we? If we can't build program like that for \"new target\", then, I would say, we have nothing to \"bootstrap\".\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-02 01:38:27.980792",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README\nFile src/cmd/dist/README (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode1\nsrc/cmd/dist/README:1: This program, dist, is the bootstrapping tool for the Go distribution.\nDoes a README file require a copyright notice?\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/README#newcode41\nsrc/cmd/dist/README:41: registers for []byte or []string, sitting in charge of the allocation for that\nI don't understand what you mean by \"registers\" here.  Unless you are trying to say something subtle, perhaps this whole sentence can go.\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h\nFile src/cmd/dist/a.h (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode7\nsrc/cmd/dist/a.h:7: // The unit on Time is unspecified; we just need to\n\"Time values are unspecified; we just need to be able....\"\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c\nFile src/cmd/dist/buf.c (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode9\nsrc/cmd/dist/buf.c:9: #include <stdio.h>\nWhy do you need <stdio.h>?\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode97\nsrc/cmd/dist/buf.c:97: // bprintf replaces the buffer with the result of the printf formatting.\n...and returns a pointer to the NUL-terminated buffer contents.\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode106\nsrc/cmd/dist/buf.c:106: vsnprintf(buf, sizeof buf, fmt, arg);\nNot xvsnprintf?\n\n(BTW gcc uses vasprintf to avoid worrying about fixed size buffers.)\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode230\nsrc/cmd/dist/buf.c:230: p[i+1] = '\\0';\nDoing it this way makes it more likely that someday somebody will get bitten by passing in a constant string.  You can avoid that and be slightly more efficient to boot by using vaddbuf(Vec *, char *, int).\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode258\nsrc/cmd/dist/buf.c:258: *p = '\\0';\nSame comment about constant strings.\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c\nFile src/cmd/dist/build.c (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode7\nsrc/cmd/dist/build.c:7: #include <stdio.h>\nWhy do you need <stdio.h>?  It seems to run against the idea expressed in the README, that everything system-specific was in a portability file.\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode540\nsrc/cmd/dist/build.c:540: stale = 1;\nstale is never set to anything other than 1.  Is this a TODO?\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode585\nsrc/cmd/dist/build.c:585: }\nAren't we in trouble if we get here without finding the name in gentab?\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode598\nsrc/cmd/dist/build.c:598: vadd(&compile, \"-m64\");\nShould you use -m32 if gohostarch == i386?\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode642\nsrc/cmd/dist/build.c:642: b.p[b.len-1] = 'o';  // was c\nwas c or s\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c\nFile src/cmd/dist/unix.c (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode91\nsrc/cmd/dist/unix.c:91: bwritestr(&cmd, \"$WORK\");\nWhat is this about?\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode519\nsrc/cmd/dist/unix.c:519: xprintf(\"hostos %s\\n\", gohostos);\nRemove debug print.\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/windows.c\nFile src/cmd/dist/windows.c (right):\n\nhttp://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/windows.c#newcode169\nsrc/cmd/dist/windows.c:169: break;\nerror reporting?",
+			"disapproval": false,
+			"date": "2012-02-02 01:53:26.114458",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"ality@pbrane.org",
+				"hcwfrichter@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/02 15:24:55, rsc wrote:\n> ...  If you can tell me how to figure out\n> whether the underlying operating system is a 64-bit or a\n> 32-bit Windows, ...\n> \n\nI can see some people wishing to use windows/386 on Windows 64 bit. I don't think OS is the factor here - compiler is. I think, you should look for mingw compiler and then decide if 32 or 64 bit compiler used:\n\n#if defined(__MINGW32__)\t// mingw compiler\n#if defined(_WIN64)\t\t// only if target is 64-bit\n\tfatal(\"win64\");\n#else\n\tfatal(\"win32\");\n#endif\n#endif\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-02 23:12:26.435092",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"ality@pbrane.org",
+				"hcwfrichter@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/5620045/diff/1007/src/cmd/dist/windows.c\nFile src/cmd/dist/windows.c (right):\n\nhttps://codereview.appspot.com/5620045/diff/1007/src/cmd/dist/windows.c#newcode316\nsrc/cmd/dist/windows.c:316: n = GetCurrentDirectory(0, nil);\ns/ry/ryW/\n\nhttps://codereview.appspot.com/5620045/diff/1007/src/cmd/dist/windows.c#newcode363\nsrc/cmd/dist/windows.c:363: return attr >= 0 && (attr & FILE_ATTRIBUTE_DIRECTORY);\nNot sure about attr >=0. I think it always be true, even for errors. GetFileAttributesW returns DWORD = uint32. If error, INVALID_FILE_ATTRIBUTES is returned.\n\nhttps://codereview.appspot.com/5620045/diff/1007/src/cmd/dist/windows.c#newcode375\nsrc/cmd/dist/windows.c:375: return attr >= 0 && !(attr & FILE_ATTRIBUTE_DIRECTORY);\nSame.\n\nhttps://codereview.appspot.com/5620045/diff/1007/src/cmd/dist/windows.c#newcode391\nsrc/cmd/dist/windows.c:391: return 0;\nMust close handle once you are done.\nFindClose(h);",
+			"disapproval": false,
+			"date": "2012-02-03 00:17:23.336551",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Feb 2, 2012 at 19:30,  <iant@golang.org> wrote:\n> Why not just call strrchr? \u00a0It's in C89 and should be at least as\n> available as strstr. \u00a0If you don't just cal strrchr, note that ep is\n> initialized twice.\n\nThanks.  I always confuse strrchr with memrchr; the latter\nis *not* widely available.  Will use strrchr here.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-03 00:38:55.770805",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Feb 2, 2012 at 12:17 PM,  <alex.brainman@gmail.com> wrote:\n\n> Why don't we write this program in Go? We could keep compiled binary in\n> the repo for every platform we support.\n\nBecause then you have a bootstrapping problem for new targets.\n",
+			"disapproval": false,
+			"date": "2012-02-02 01:34:42.940507",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"ality@pbrane.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I can't express how great this is. I've written the Plan 9\nsupport already and can either send it to you now or just\nsend a CL after this goes in.\n\nA few things need to be changed to make it work, though.\nComments are below.\n\nThanks a bunch for doing this.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h\nFile src/cmd/dist/a.h (right):\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode4\nsrc/cmd/dist/a.h:4: \nTHis will make it easier to add Plan 9 support:\n\n#ifdef PLAN9\n#include <u.h>\n#include <libc.h>\n#else\n#include <stdarg.h>\n#include <stdio.h>\n#define nil ((void*)0)\n#define nelem(x) (sizeof(x)/sizeof((x)[0]))\n#define USED(x) ((void)(x))\n#endif\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode11\nsrc/cmd/dist/a.h:11: #define nil ((void*)0)\nRemove these (see previous comment).\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode64\nsrc/cmd/dist/a.h:64: extern char *gobin;\nI've moved the install function out of build.c\nand into a new file called install.c. I also wrote\ninstall-plan9.c since there's a bunch of changes\nthat would make the code much harder to read.\n\nFor this to work, a few more things need to have\nexternal linkage.\n\nAdd gochar and goversion here.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode76\nsrc/cmd/dist/a.h:76: \nAdd these here:\nvoid    fixslash(Buf*);\nbool    shouldbuild(char*, char*);\nvoid    copy(char*, char*);\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode80\nsrc/cmd/dist/a.h:80: \nAdd:\n\n// install.c\nvoid    install(char*);\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/a.h#newcode111\nsrc/cmd/dist/a.h:111: void\txprintf(char*, ...);\nWe need to add a declaration for xvsnprintf here\nand then write the wrappers for each operating system.\nThis is necessary to get around the fact that Plan 9\nuses vsnprint where Unix uses vsnprint*f*.\n\nvoid    xvsnprintf(char*, int, char*, va_list);\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c\nFile src/cmd/dist/buf.c (right):\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode8\nsrc/cmd/dist/buf.c:8: #include <stdarg.h>\nDelete.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode9\nsrc/cmd/dist/buf.c:9: #include <stdio.h>\nDelete.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buf.c#newcode106\nsrc/cmd/dist/buf.c:106: vsnprintf(buf, sizeof buf, fmt, arg);\nOn 2012/02/02 01:53:26, iant wrote:\n> Not xvsnprintf?\n\nWe'll need xvsnprintf for Plan 9.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c\nFile src/cmd/dist/build.c (right):\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode7\nsrc/cmd/dist/build.c:7: #include <stdio.h>\nDelete.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode27\nsrc/cmd/dist/build.c:27: static void fixslash(Buf*);\nRemove these three declarations.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode114\nsrc/cmd/dist/build.c:114: if(b.len == 0 && !streq(gohostos, \"windows\")) {\nif(b.len == 0 && streq(gohostos, \"plan9\")) {\n    xgetenv(&b, \"objtype\");\n    if(b.len == 0)\n        fatal(\"neither $GOHOSTARCH nor $objtype is set\");\n}\nelse if(b.len == 0 && !streq(gohostos, \"windows\")) {\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode172\nsrc/cmd/dist/build.c:172: \"5a\", \"5c\", \"5g\", \"5l\",\nIf we rearrange this list to move the Go compilers\nafter the regular Plan 9 toolchain then we can easily\nbe more careful when deleting the old binaries.\n\nRemove ?g from these lines.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode175\nsrc/cmd/dist/build.c:175: \"6cov\",\nAdd a line with \"5g\", \"6g\", \"8g\" here.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode202\nsrc/cmd/dist/build.c:202: run(&b, nil, 0, \"ld\", \"--version\", nil);\nEnclose this block in if(!streq(gohostos, \"plan9\")).\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode239\nsrc/cmd/dist/build.c:239: for(i=0; i<nelem(oldtool); i++)\nif(streq(gohostos, \"plan9\")) {\n    i = 9; // don't remove the host compilers\n} else {\n    i = 0;\n}\nfor(; i<nelem(oldtool); i++)\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode248\nsrc/cmd/dist/build.c:248: /*\nMove the code starting here and ending just before\nmatchfield into a new file, \"install.c\".\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode726\nsrc/cmd/dist/build.c:726: static bool\ns/static //\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode795\nsrc/cmd/dist/build.c:795: static void\ns/static //\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode808\nsrc/cmd/dist/build.c:808: static void\ns/static //\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/build.c#newcode908\nsrc/cmd/dist/build.c:908: \nUSED(argc);\nUSED(argv);\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buildgc.c\nFile src/cmd/dist/buildgc.c (right):\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/buildgc.c#newcode6\nsrc/cmd/dist/buildgc.c:6: #include <stdio.h>\nDelete.\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c\nFile src/cmd/dist/unix.c (right):\n\nhttps://codereview.appspot.com/5620045/diff/4001/src/cmd/dist/unix.c#newcode516\nsrc/cmd/dist/unix.c:516: #else\nThis will fail on Plan 9 since the #else\ncorresponds to the second #ifndef at the\ntop of this file.",
+			"disapproval": false,
+			"date": "2012-02-02 13:07:43.208176",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Plan 9 is beyond the scope of this particular review.\nHowever, I would encourage you to compile this tool\nwith pcc on Plan 9.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-02 15:17:25.501208",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Feb 1, 2012 at 20:06,  <alex.brainman@gmail.com> wrote:\n> 1) building on linux/386 fails\n>\n> 3) windows/386 builds fail on lib9:\n\nYes, this tool requires other changes to the repository\nthat have not yet been committed.\n\n> 2) windows needs GOHOSTARCH set. Correct?\n\nYes, at the moment.  If you can tell me how to figure out\nwhether the underlying operating system is a 64-bit or a\n32-bit Windows, I'd love to add that.\n\nThanks.\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-02 15:24:55.202593",
+			"approval": false
+		},
+		{
+			"sender": "hcwfrichter@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Duh,  \"Note that this technique is not a reliable way to detect whether the \noperating system is a 64-bit version of Windows because the Kernel32.dll in \ncurrent versions of 32-bit Windows also contains this function.\"\n\nGetNativeSystemInfo() and checking the wProcessorArchitecture member of the \nreturned SYSTEM_INFO struct looks more promising.  GetNativeSystemInfo() is \nsupported on XP or later\n\nhttp://msdn.microsoft.com/en-us/library/ms724340(v=vs.85).aspx\n",
+			"disapproval": false,
+			"date": "2012-02-02 17:18:24.002279",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5620045: cmd/dist: new command",
+	"created": "2012-02-01 23:24:15.321355",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		1007,
+		1012,
+		5020
+	],
+	"modified": "2012-02-03 00:41:45.390951",
+	"closed": true,
+	"issue": 5620045
+}

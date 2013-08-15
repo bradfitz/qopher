@@ -1,0 +1,214 @@
+{
+	"description": "reflect: add Type.ConvertibleTo, Value.Convert (API CHANGE)\n\nFixes issue 4047.",
+	"cc": [
+		"iant@golang.org",
+		"r@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"james.chalfant@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go\nFile src/pkg/reflect/value.go (right):\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode1995\nsrc/pkg/reflect/value.go:1995: if dst.Kind() == Slice && dst.Name() == \"\" && dst.Elem().PkgPath() == \"\" {\nOn 2012/09/21 13:59:00, iant wrote:\n> The spec shows that converting a string to a named slice type is a valid\n> conversion.  It looks like that is being rejected here.\n\nThat's what I thought too, but it's not what I found in the spec. Looks like I found the wrong section. I filed issue 4123 for the spec.\n\nFixed code and added tests.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode2005\nsrc/pkg/reflect/value.go:2005: if dst.Kind() == String && src.Name() == \"\" && src.Elem().PkgPath() == \"\" {\nOn 2012/09/21 13:59:00, iant wrote:\n> Again, the spec permits converting a named slice type to string.\n\nDone.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode2041\nsrc/pkg/reflect/value.go:2041: *(*uint64)(unsafe.Pointer(ptr)) = bits\nOn 2012/09/21 13:59:00, iant wrote:\n> Comment: Assume pointers are at least 4 bytes.\n\nDone.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode2062\nsrc/pkg/reflect/value.go:2062: *(*float64)(unsafe.Pointer(ptr)) = v\nOn 2012/09/21 13:59:00, iant wrote:\n> Comment: Assume pointers are at least 4 bytes.\n\nDone.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode2117\nsrc/pkg/reflect/value.go:2117: return makeInt(v.flag&flagRO, uint64(v.Int()), t)\nOn 2012/09/21 13:59:00, iant wrote:\n> Why do you need to preserve the flagRO field?  You are creating a new value. \n> What's the harm in permitting the program to change that value?\n> \n> Whatever the decision is here, should there be tests for the way this flag is\n> handled?\n\nAny values obtained by reading an unexported field are tainted RO, to avoid writes to package-local data via reflect. The RO applies not just to this value but to any value found using it. For example if you grab an unexported p *int from a struct, the RO field on the value for p keeps you also from writing to what it points at. Because it's a taint, it needs to be preserved.\n\nActually the Convert method was requiring that the thing being converted must be exported, which means not RO, so all this tracking was unnecessary. However, I think it makes sense to allow the conversion and just propagate the flag. A Printf for example might want to Convert to a set of standard types.\n\nI removed the check in Convert (which wasn't documented to be there anyway) and added tests that all the conversions preserve the RO.",
+			"disapproval": false,
+			"date": "2012-09-21 18:39:06.299660",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-09-21 18:48:18.137920",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/6500065/diff/5005/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttp://codereview.appspot.com/6500065/diff/5005/src/pkg/reflect/type.go#newcode1182\nsrc/pkg/reflect/type.go:1182: return haveIdenticalUnderlyingTypes(T, V)\nnit: should probably be haveIdenticalUnderlyingType (singular) since if true there is only one such type.",
+			"disapproval": false,
+			"date": "2012-09-22 06:05:34.365010",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "(Still other comments left to process.)\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/all_test.go#newcode2410\nsrc/pkg/reflect/all_test.go:2410: {V(int(-1)), V(string(\"\\uFFFD\"))},\nOn 2012/09/21 13:59:00, iant wrote:\n> Do these int(\"\\u\") tests really pass?  It looks like the values are not the\n> same.\n\nAll runtime string conversions of invalid runes turn into the Unicode replacement rune U+FFFD. Compile-time conversions too, it turns out, although that wasn't entirely intentional.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/type.go#newcode1196\nsrc/pkg/reflect/type.go:1196: if Bool <= kind && kind <= Complex128 || kind == UnsafePointer {\nOn 2012/09/21 13:59:00, iant wrote:\n> I wouldn't describe this as return true for \"identical underlying types.\" \n> Perhaps this function should have a different name.  Or maybe this condition\n> should be omitted altogether, I'm not sure what it is doing.\n\nIf this is a basic type, the underlying type is the builtin, so as long as kinds agree they have the same underlying type.  I am using \"identical underlying type\" in the sense from the spec. \nWill add a comment to that effect.",
+			"disapproval": false,
+			"date": "2012-09-21 14:43:17.632230",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-09-21 04:55:11.388340",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Sep 21, 2012 at 12:56 AM,  <dsymonds@golang.org> wrote:\r\n> Should there be a corresponding CanConvert?\r\n\r\nYes, it's Type.ConvertibleTo. Will fix description.\r\n",
+			"disapproval": false,
+			"date": "2012-09-21 04:56:59.124230",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Should there be a corresponding CanConvert?",
+			"disapproval": false,
+			"date": "2012-09-21 04:56:37.533710",
+			"approval": false
+		},
+		{
+			"sender": "james.chalfant@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"james.chalfant@gmail.com",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/22 12:52:35, rsc wrote:\n> *** Submitted as http://code.google.com/p/go/source/detail?r=a1dbdb805e2e ***\n> \n> reflect: add Type.ConvertibleTo, Value.Convert (API CHANGE)\n> \n> Fixes issue 4047.\n> \n> R=iant, r\n> CC=golang-dev\n> http://codereview.appspot.com/6500065\n\nI think you may have a typo in this panic in type.go (\"AssignableTo\" vs \"ConvertibleTo\"):\n\npanic(\"reflect: nil type passed to Type.AssignableTo\")\n\nSorry if this isn't the best way to provide you with this feedback (or if it is unhelpful); I'm unfamiliar with this reviewing tool.",
+			"disapproval": false,
+			"date": "2012-09-22 15:46:23.042220",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Rob, please sign off on the API change.",
+			"disapproval": false,
+			"date": "2012-09-21 19:10:01.532730",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=a1dbdb805e2e ***\n\nreflect: add Type.ConvertibleTo, Value.Convert (API CHANGE)\n\nFixes issue 4047.\n\nR=iant, r\nCC=golang-dev\nhttp://codereview.appspot.com/6500065",
+			"disapproval": false,
+			"date": "2012-09-22 12:52:35.222490",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/all_test.go\nFile src/pkg/reflect/all_test.go (right):\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/all_test.go#newcode2383\nsrc/pkg/reflect/all_test.go:2383: {V(float64(169)), V(float64(169))},\nIs it worth testing things like int(float32(1.4))?\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/all_test.go#newcode2410\nsrc/pkg/reflect/all_test.go:2410: {V(int(-1)), V(string(\"\\uFFFD\"))},\nDo these int(\"\\u\") tests really pass?  It looks like the values are not the same.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/all_test.go#newcode2434\nsrc/pkg/reflect/all_test.go:2434: {V((***int)(nil)), V((***int)(nil))},\nCan you introduce another pointer type, to verify that different pointer types do not convert?\n\nSimilarly for chan, map, [], etc.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/type.go#newcode1196\nsrc/pkg/reflect/type.go:1196: if Bool <= kind && kind <= Complex128 || kind == UnsafePointer {\nI wouldn't describe this as return true for \"identical underlying types.\"  Perhaps this function should have a different name.  Or maybe this condition should be omitted altogether, I'm not sure what it is doing.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go\nFile src/pkg/reflect/value.go (right):\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode1995\nsrc/pkg/reflect/value.go:1995: if dst.Kind() == Slice && dst.Name() == \"\" && dst.Elem().PkgPath() == \"\" {\nThe spec shows that converting a string to a named slice type is a valid conversion.  It looks like that is being rejected here.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode2005\nsrc/pkg/reflect/value.go:2005: if dst.Kind() == String && src.Name() == \"\" && src.Elem().PkgPath() == \"\" {\nAgain, the spec permits converting a named slice type to string.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode2041\nsrc/pkg/reflect/value.go:2041: *(*uint64)(unsafe.Pointer(ptr)) = bits\nComment: Assume pointers are at least 4 bytes.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode2062\nsrc/pkg/reflect/value.go:2062: *(*float64)(unsafe.Pointer(ptr)) = v\nComment: Assume pointers are at least 4 bytes.\n\nhttps://codereview.appspot.com/6500065/diff/4001/src/pkg/reflect/value.go#newcode2117\nsrc/pkg/reflect/value.go:2117: return makeInt(v.flag&flagRO, uint64(v.Int()), t)\nWhy do you need to preserve the flagRO field?  You are creating a new value.  What's the harm in permitting the program to change that value?\n\nWhatever the decision is here, should there be tests for the way this flag is handled?",
+			"disapproval": false,
+			"date": "2012-09-21 13:59:00.492890",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\r\n",
+			"disapproval": false,
+			"date": "2012-09-22 04:58:51.381010",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6500065/diff/13002/src/pkg/reflect/type.go\nFile src/pkg/reflect/type.go (right):\n\nhttps://codereview.appspot.com/6500065/diff/13002/src/pkg/reflect/type.go#newcode1182\nsrc/pkg/reflect/type.go:1182: return identicalUnderlyingTypes(T, V)\nmaybe verb this. haveIdenticalUnderlyingTypes\n\nhttps://codereview.appspot.com/6500065/diff/13002/src/pkg/reflect/value.go\nFile src/pkg/reflect/value.go (right):\n\nhttps://codereview.appspot.com/6500065/diff/13002/src/pkg/reflect/value.go#newcode306\nsrc/pkg/reflect/value.go:306: // It panics if v's underlying value is not a slice of runes.\nslice of runes (int32).\n\nhttps://codereview.appspot.com/6500065/diff/13002/src/pkg/reflect/value.go#newcode1236\nsrc/pkg/reflect/value.go:1236: // It panics if v's underlying value is not a slice of runes.\nditto\n\nhttps://codereview.appspot.com/6500065/diff/13002/src/pkg/reflect/value.go#newcode1955\nsrc/pkg/reflect/value.go:1955: func convertOp(dst, src *commonType) func(Value, Type) Value {\n// convertOp returns the function than can convert src to dst.\n\nhttps://codereview.appspot.com/6500065/diff/13002/src/pkg/reflect/value.go#newcode2036\nsrc/pkg/reflect/value.go:2036: func makeInt(f flag, bits uint64, t Type) Value {\ndoc comments on these make functions. they're not simple to understand.",
+			"disapproval": false,
+			"date": "2012-09-21 19:24:42.484410",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I think you may have a typo in this panic in type.go (\"AssignableTo\" vs\r\n> \"ConvertibleTo\"):\r\n>\r\n> panic(\"reflect: nil type passed to Type.AssignableTo\")\r\n>\r\n> Sorry if this isn't the best way to provide you with this feedback (or\r\n> if it is unhelpful); I'm unfamiliar with this reviewing tool.\r\n\r\nThanks for catching that. Email replies are great.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-22 16:07:46.732290",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6500065: reflect: add Convert (API CHANGE)",
+	"created": "2012-09-01 21:28:52.974400",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		13001,
+		13002,
+		6008,
+		5005,
+		5006
+	],
+	"modified": "2012-09-22 15:46:23.173990",
+	"closed": true,
+	"issue": 6500065
+}

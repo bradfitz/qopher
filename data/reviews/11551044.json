@@ -1,0 +1,149 @@
+{
+	"description": "runtime: more cgocallback_gofunc work\n\nDebugging the Windows breakage I noticed that SEH\nonly exists on 386, so we can balance the two stacks\na little more on amd64 and reclaim another word.\n\nNow we're down to just one word consumed by\ncgocallback_gofunc, having reclaimed 25% of the\noverall budget (4 words out of 16).\n\nSeparately, fix windows/386 - the SEH must be on the\nm0 stack, as must the saved SP, so we are forced to have\na three-word frame for 386. It matters much less for\n386, because there 128 bytes gives 32 words to use.",
+	"cc": [
+		"dvyukov@google.com",
+		"alex.brainman@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-07-24 03:10:55.201070",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Test passes on windows/amd64, but windows/386 is broken in misc/cgo/test/TestCthread. I can have a look at it, but I am slow.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-07-24 03:28:39.951170",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry about that. I cannot read, apparently.\r\n\r\nI have updated this CL to include a windows/386 fix, but it's untested. Can\r\nyou try it?\r\n\r\nThanks.\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 04:32:35.001350",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. Both windows/386 and windows/amd64 builds are fine. It is really complicated. :-(\n\nAlex\n\nhttps://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/asm_386.s\nFile src/pkg/runtime/asm_386.s (right):\n\nhttps://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/asm_386.s#newcode557\nsrc/pkg/runtime/asm_386.s:557: // On Windows, the SEH is at 4(SP) and 8(SP).\nMaybe you want this line after:\n\n// 4(SP) and 8(SP) are unused.\n\ndown below.",
+			"disapproval": false,
+			"date": "2013-07-24 04:47:10.904640",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/asm_386.s\nFile src/pkg/runtime/asm_386.s (right):\n\nhttps://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/asm_386.s#newcode557\nsrc/pkg/runtime/asm_386.s:557: // On Windows, the SEH is at 4(SP) and 8(SP).\nOn 2013/07/24 04:47:11, brainman wrote:\n> Maybe you want this line after:\n> // 4(SP) and 8(SP) are unused.\n> down below.\n\nNo, that was the bug. The comment here is describing one stack; the comment below is describing a different stack (\"in the new goroutine\"). The SEH was on the wrong stack.",
+			"disapproval": false,
+			"date": "2013-07-24 04:50:47.829760",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you.\n\nAlex\n\nhttps://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/asm_386.s\nFile src/pkg/runtime/asm_386.s (right):\n\nhttps://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/asm_386.s#newcode557\nsrc/pkg/runtime/asm_386.s:557: // On Windows, the SEH is at 4(SP) and 8(SP).\nOn 2013/07/24 04:50:48, rsc wrote:\n> ... The comment here is describing one stack; the comment\n> below is describing a different stack (\"in the new goroutine\"). The SEH was on\n> the wrong stack.\n\nYes. You are right about that.",
+			"disapproval": false,
+			"date": "2013-07-24 05:18:34.053800",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\nI think I even understand what happens here\n\nhttps://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/proc.c#newcode659\nsrc/pkg/runtime/proc.c:659: m->seh = (SEH*)((uintptr*)&x + 1);\nplease set m->seh to nil otherwise, we are reusing an old M so it's not all zeros",
+			"disapproval": false,
+			"date": "2013-07-24 05:31:28.761840",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/11551044/diff/13001/src/pkg/runtime/proc.c#newcode659\nsrc/pkg/runtime/proc.c:659: m->seh = (SEH*)((uintptr*)&x + 1);\nOn 2013/07/24 05:31:29, dvyukov wrote:\n> please set m->seh to nil otherwise, we are reusing an old M so it's not all\n> zeros\n\nI changed the other assignment to m->seh to only happen on windows/386. It will now be nil always, because Ms are zeroed to start with.",
+			"disapproval": false,
+			"date": "2013-07-24 13:01:11.362010",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=e7b0d65f9e5b ***\n\nruntime: more cgocallback_gofunc work\n\nDebugging the Windows breakage I noticed that SEH\nonly exists on 386, so we can balance the two stacks\na little more on amd64 and reclaim another word.\n\nNow we're down to just one word consumed by\ncgocallback_gofunc, having reclaimed 25% of the\noverall budget (4 words out of 16).\n\nSeparately, fix windows/386 - the SEH must be on the\nm0 stack, as must the saved SP, so we are forced to have\na three-word frame for 386. It matters much less for\n386, because there 128 bytes gives 32 words to use.\n\nR=dvyukov, alex.brainman\nCC=golang-dev\nhttps://codereview.appspot.com/11551044",
+			"disapproval": false,
+			"date": "2013-07-24 13:02:04.744530",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 11551044: runtime: reclaim another word in cgocallback_gofunc",
+	"created": "2013-07-24 03:05:02.890090",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		2,
+		13001,
+		22001
+	],
+	"modified": "2013-07-24 13:02:09.294090",
+	"closed": true,
+	"issue": 11551044
+}

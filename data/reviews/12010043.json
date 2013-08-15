@@ -1,0 +1,286 @@
+{
+	"description": "net: reduce unnecessary syscall.Sockaddr conversions\n\nThis CL makes IPAddr, UDPAddr and TCPAddr implement sockaddr\ninterface, UnixAddr is already sockaddr interface compliant, and\nreduces unnecessary conversions between net.Addr, net.sockaddr and\nsyscall.Sockaddr.\n\nThis is in preparation for runtime-integrated network pollster for BSD\nvariants.\n\nUpdate issue 5199",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 30, 2013 at 3:33 PM,  <dave@cheney.net> wrote:\r\n\r\n> Confirmed. I see the same problem with\r\n\r\nFixed, also removed temporal merged fragments come from CL 11980043.\r\n\r\nYou can test w/ both CL 11980043 and 12010043.\r\nOtherwise, you will see why CL 11980043 is required, like the following:\r\n\r\n/Users/mikioh/go/src/pkg/testing/testing.go:355 +0xda\r\nnet.(*TCPAddr).sockaddr(0x0, 0x2, 0x1, 0x0, 0x0, ...)\r\n/Users/mikioh/go/src/pkg/net/tcpsock_posix.go:49 +0x32\r\nnet.socket(0x1e8340, 0x3, 0x2, 0x1, 0x0, ...)\r\n/Users/mikioh/go/src/pkg/net/sock_posix.go:65 +0x683\r\nnet.internetSocket(0x1e8340, 0x3, 0x4545f8, 0x0, 0x4545f8, ...)\r\n/Users/mikioh/go/src/pkg/net/ipsock_posix.go:125 +0x161\r\nnet.dialTCP(0x1e8340, 0x3, 0x0, 0xc210049d50, 0x0, ...)\r\n/Users/mikioh/go/src/pkg/net/tcpsock_posix.go:159 +0xf5\r\nnet.dial(0x1e8340, 0x3, 0xc21005a3f0, 0xf, 0x0, ...)\r\n/Users/mikioh/go/src/pkg/net/dial.go:156 +0x3df\r\nnet.resolveAndDial(0x1e8340, 0x3, 0xc21005a3f0, 0xf, 0x0, ...)\r\n/Users/mikioh/go/src/pkg/net/fd_unix.go:54 +0x15e\r\nnet.(*Dialer).Dial(0x4a2d60, 0x1e8340, 0x3, 0xc21005a3f0, 0xf, ...)\r\n/Users/mikioh/go/src/pkg/net/dial.go:146 +0x94\r\nnet.Dial(0x1e8340, 0x3, 0xc21005a3f0, 0xf, 0x1eb890, ...)\r\n/Users/mikioh/go/src/pkg/net/dial.go:131 +0x72\r\n",
+			"disapproval": false,
+			"date": "2013-07-30 07:56:36.018530",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks Mikio.\n\nI think this can be broken up a bit more. I'm also seeing a test failure on OS X darwin\n\n--- FAIL: TestUDPConnLocalName (0.00 seconds)\npanic: runtime error: index out of range [recovered]\n\tpanic: runtime error: index out of range\n\ngoroutine 422 [running]:\ntesting.func\u00b7005()\n\t/Users/dfc/go/src/pkg/testing/testing.go:355 +0xda\nnet.IP.IsMulticast(0x0, 0x0, 0x0, 0x3cd9c0)\n\tnet/_test/ip.go:114 +0xc0\nnet.listenerSockaddr(0x8, 0x2, 0x47caa0, 0x3cd9c0, 0x0, ...)\n\tnet/_test/sock_unix.go:18 +0x24f\nnet.socket(0x1fb3a0, 0x4, 0x2, 0x2, 0x0, ...)\n\tnet/_test/sock_posix.go:40 +0x1bc\nnet.internetSocket(0x1fb3a0, 0x4, 0x47caa0, 0x3cd9c0, 0x0, ...)\n\tnet/_test/ipsock_posix.go:88 +0x16c\nnet.ListenUDP(0x1fb3a0, 0x4, 0x3cd9c0, 0xc2100b9570, 0x1, ...)\n\tnet/_test/udpsock_posix.go:227 +0x1ad\nnet.TestUDPConnLocalName(0xc2100ba1b0)\n\t/Users/dfc/go/src/pkg/net/udp_test.go:152 +0xe3\ntesting.tRunner(0xc2100ba1b0, 0x3cb508)\n\t/Users/dfc/go/src/pkg/testing/testing.go:360 +0x8e\ncreated by testing.RunTests\n\t/Users/dfc/go/src/pkg/testing/testing.go:440 +0x88e\n\ngoroutine 1 [chan receive]:\ntesting.RunTests(0x2503c8, 0x3cac80, 0x69, 0x69, 0x4bbf01)\n\t/Users/dfc/go/src/pkg/testing/testing.go:441 +0x8b1\ntesting.Main(0x2503c8, 0x3cac80, 0x69, 0x69, 0x3c2fc0, ...)\n\t/Users/dfc/go/src/pkg/testing/testing.go:372 +0x8c\nmain.main()\n\tnet/_test/_testmain.go:413 +0x11b\n\ngoroutine 162 [chan send]:\nnet.runDatagramPacketConnServer(0xc21010ac60, 0x1fb380, 0x3, 0x1ff3b0, 0xb, ...)\n\t/Users/dfc/go/src/pkg/net/server_test.go:392 +0x49c\ncreated by net.TestTimeoutUDP\n\t/Users/dfc/go/src/pkg/net/timeout_test.go:244 +0x1b3\n\ngoroutine 17 [syscall]:\nruntime.goexit()\n\t/Users/dfc/go/src/pkg/runtime/proc.c:1332\n\ngoroutine 160 [chan send]:\nnet.func\u00b7055()\n\t/Users/dfc/go/src/pkg/net/timeout_test.go:167 +0x8c\ncreated by net.TestWriteTimeout\n\t/Users/dfc/go/src/pkg/net/timeout_test.go:170 +0x5f5\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/iprawsock_posix.go\nFile src/pkg/net/iprawsock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/iprawsock_posix.go#newcode184\nsrc/pkg/net/iprawsock_posix.go:184: fd, err := internetSocket(net, laddr, raddr, deadline, syscall.SOCK_RAW, proto, \"dial\", sockaddrToIP)\nplease move this to a separate CL.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/iprawsock_posix.go#newcode205\nsrc/pkg/net/iprawsock_posix.go:205: fd, err := internetSocket(net, laddr, nil, noDeadline, syscall.SOCK_RAW, proto, \"listen\", sockaddrToIP)\nplease move this to a separate CL.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go\nFile src/pkg/net/sock_posix.go (left):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go#oldcode51\nsrc/pkg/net/sock_posix.go:51: // This socket is used by a listener.\nThis method is complex, please retain this comment.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go#oldcode78\nsrc/pkg/net/sock_posix.go:78: // This socket is used by a dialer.\nditto\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go\nFile src/pkg/net/sock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go#newcode64\nsrc/pkg/net/sock_posix.go:64: } else if laddr != nil && raddr != nil {\nplease add a comment to explain what is happening in this branch\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_unix.go\nFile src/pkg/net/sock_unix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_unix.go#newcode12\nsrc/pkg/net/sock_unix.go:12: switch laddr.(type) {\nswitch laddr := laddr.(type)\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_unix.go#newcode19\nsrc/pkg/net/sock_unix.go:19: if laddr.(*UDPAddr) != nil && laddr.(*UDPAddr).IP.IsMulticast() {\ndrop the assertions\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_unix.go#newcode23\nsrc/pkg/net/sock_unix.go:23: addr := *laddr.(*UDPAddr)\nsame.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/tcpsock_posix.go\nFile src/pkg/net/tcpsock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/tcpsock_posix.go#newcode192\nsrc/pkg/net/tcpsock_posix.go:192: fd, err = internetSocket(net, laddr, raddr, deadline, syscall.SOCK_STREAM, 0, \"dial\", sockaddrToTCP)\nplease move this to a separate CL.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/udpsock_posix.go\nFile src/pkg/net/udpsock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/udpsock_posix.go#newcode202\nsrc/pkg/net/udpsock_posix.go:202: fd, err := internetSocket(net, laddr, nil, noDeadline, syscall.SOCK_DGRAM, 0, \"listen\", sockaddrToUDP)\nplease move this to a separate CL.",
+			"disapproval": false,
+			"date": "2013-07-30 04:06:14.884170",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 30, 2013 at 1:06 PM,  <dave@cheney.net> wrote:\r\n\r\n> I think this can be broken up a bit more. I'm also seeing a test failure\r\n> on OS X darwin\r\n\r\nThanks. Funny, I didn't have that failures on darwin/amd64.\r\nDid you apply this CL clearly? Also this CL includes CL 11980043 temporarily.\r\nI mean, CL 11980043 first.\r\n\r\n> src/pkg/net/iprawsock_posix.go:184: fd, err := internetSocket(net,\r\n> laddr, raddr, deadline, syscall.SOCK_RAW, proto, \"dial\", sockaddrToIP)\r\n> please move this to a separate CL.\r\n\r\nThanks but no thanks. Dropping toAddr is related to temporal scaffolds\r\nin socket().\r\n",
+			"disapproval": false,
+			"date": "2013-07-30 05:37:21.237290",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 30, 2013 at 2:37 PM, Mikio Hara <mikioh.mikioh@gmail.com> wrote:\r\n\r\n> Thanks. Funny, I didn't have that failures on darwin/amd64.\r\n\r\nNever mind. You mean test w/o -short, thx.\r\n",
+			"disapproval": false,
+			"date": "2013-07-30 05:38:49.953020",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/30 05:38:49, mikio wrote:\n> On Tue, Jul 30, 2013 at 2:37 PM, Mikio Hara <mailto:mikioh.mikioh@gmail.com> wrote:\n> \n> > Thanks. Funny, I didn't have that failures on darwin/amd64.\n> \n> Never mind. You mean test w/o -short, thx.\n\nConfirmed. I see the same problem with \n\n   go test net\n\non linux/amd64, after applying this CL.",
+			"disapproval": false,
+			"date": "2013-07-30 06:33:39.488800",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for sticking with me. Re: 11980043 and 12010043 it is clear to\r\nme now that they are both required for this change. Can you please\r\nmerge them back again, sorry for making you jump through hoops.\r\n\r\nOn Tue, Jul 30, 2013 at 5:56 PM, Mikio Hara <mikioh.mikioh@gmail.com> wrote:\r\n> On Tue, Jul 30, 2013 at 3:33 PM,  <dave@cheney.net> wrote:\r\n>\r\n>> Confirmed. I see the same problem with\r\n>\r\n> Fixed, also removed temporal merged fragments come from CL 11980043.\r\n>\r\n> You can test w/ both CL 11980043 and 12010043.\r\n> Otherwise, you will see why CL 11980043 is required, like the following:\r\n>\r\n> /Users/mikioh/go/src/pkg/testing/testing.go:355 +0xda\r\n> net.(*TCPAddr).sockaddr(0x0, 0x2, 0x1, 0x0, 0x0, ...)\r\n> /Users/mikioh/go/src/pkg/net/tcpsock_posix.go:49 +0x32\r\n> net.socket(0x1e8340, 0x3, 0x2, 0x1, 0x0, ...)\r\n> /Users/mikioh/go/src/pkg/net/sock_posix.go:65 +0x683\r\n> net.internetSocket(0x1e8340, 0x3, 0x4545f8, 0x0, 0x4545f8, ...)\r\n> /Users/mikioh/go/src/pkg/net/ipsock_posix.go:125 +0x161\r\n> net.dialTCP(0x1e8340, 0x3, 0x0, 0xc210049d50, 0x0, ...)\r\n> /Users/mikioh/go/src/pkg/net/tcpsock_posix.go:159 +0xf5\r\n> net.dial(0x1e8340, 0x3, 0xc21005a3f0, 0xf, 0x0, ...)\r\n> /Users/mikioh/go/src/pkg/net/dial.go:156 +0x3df\r\n> net.resolveAndDial(0x1e8340, 0x3, 0xc21005a3f0, 0xf, 0x0, ...)\r\n> /Users/mikioh/go/src/pkg/net/fd_unix.go:54 +0x15e\r\n> net.(*Dialer).Dial(0x4a2d60, 0x1e8340, 0x3, 0xc21005a3f0, 0xf, ...)\r\n> /Users/mikioh/go/src/pkg/net/dial.go:146 +0x94\r\n> net.Dial(0x1e8340, 0x3, 0xc21005a3f0, 0xf, 0x1eb890, ...)\r\n> /Users/mikioh/go/src/pkg/net/dial.go:131 +0x72\r\n",
+			"disapproval": false,
+			"date": "2013-07-30 12:41:15.440210",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-07-30 13:00:01.198120",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12010043/diff/8001/src/pkg/net/iprawsock_posix.go\nFile src/pkg/net/iprawsock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/iprawsock_posix.go#newcode184\nsrc/pkg/net/iprawsock_posix.go:184: fd, err := internetSocket(net, laddr, raddr, deadline, syscall.SOCK_RAW, proto, \"dial\", sockaddrToIP)\nthx but no thx\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/iprawsock_posix.go#newcode205\nsrc/pkg/net/iprawsock_posix.go:205: fd, err := internetSocket(net, laddr, nil, noDeadline, syscall.SOCK_RAW, proto, \"listen\", sockaddrToIP)\nditto\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go\nFile src/pkg/net/sock_posix.go (left):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go#oldcode51\nsrc/pkg/net/sock_posix.go:51: // This socket is used by a listener.\nOn 2013/07/30 04:06:15, dfc wrote:\n> This method is complex, please retain this comment.\n\nDone.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go#oldcode78\nsrc/pkg/net/sock_posix.go:78: // This socket is used by a dialer.\nOn 2013/07/30 04:06:15, dfc wrote:\n> ditto\n\nDone.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go\nFile src/pkg/net/sock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_posix.go#newcode64\nsrc/pkg/net/sock_posix.go:64: } else if laddr != nil && raddr != nil {\nOn 2013/07/30 04:06:15, dfc wrote:\n> please add a comment to explain what is happening in this branch\n\nDone.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_unix.go\nFile src/pkg/net/sock_unix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_unix.go#newcode12\nsrc/pkg/net/sock_unix.go:12: switch laddr.(type) {\nOn 2013/07/30 04:06:15, dfc wrote:\n> switch laddr := laddr.(type)\n\nDone.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_unix.go#newcode19\nsrc/pkg/net/sock_unix.go:19: if laddr.(*UDPAddr) != nil && laddr.(*UDPAddr).IP.IsMulticast() {\nOn 2013/07/30 04:06:15, dfc wrote:\n> drop the assertions\n\nDone.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/sock_unix.go#newcode23\nsrc/pkg/net/sock_unix.go:23: addr := *laddr.(*UDPAddr)\nOn 2013/07/30 04:06:15, dfc wrote:\n> same.\n\nDone.\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/tcpsock_posix.go\nFile src/pkg/net/tcpsock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/tcpsock_posix.go#newcode192\nsrc/pkg/net/tcpsock_posix.go:192: fd, err = internetSocket(net, laddr, raddr, deadline, syscall.SOCK_STREAM, 0, \"dial\", sockaddrToTCP)\nthx but no thx\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/udpsock_posix.go\nFile src/pkg/net/udpsock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/8001/src/pkg/net/udpsock_posix.go#newcode202\nsrc/pkg/net/udpsock_posix.go:202: fd, err := internetSocket(net, laddr, nil, noDeadline, syscall.SOCK_DGRAM, 0, \"listen\", sockaddrToUDP)\nthx but no thx",
+			"disapproval": false,
+			"date": "2013-07-30 13:08:13.706260",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM with some minor comment nits. I would like to see at least one other reviewer on this code before submitting. \n\nI am happy that the code is correct, but proving it to myself has not been simple and the requirement to unbox the typed *net.TCPAddr (or similar) to an untyped nil for this code to work correctly makes me worry. Fortunately, the tests do catch this, although some cases like *net.IPAddr.toAddr()/sockaddr() are not covered.\n\nhttps://codereview.appspot.com/12010043/diff/27001/src/pkg/net/sock_posix.go\nFile src/pkg/net/sock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/27001/src/pkg/net/sock_posix.go#newcode52\nsrc/pkg/net/sock_posix.go:52: if laddr != nil && raddr == nil { // converts sockaddr for a named listener\nI'd like to see a comment that said\n\n// laddr is not nil and raddr is nil, we are opening a socket to bind to a listening port.\n\nhttps://codereview.appspot.com/12010043/diff/27001/src/pkg/net/sock_posix.go#newcode64\nsrc/pkg/net/sock_posix.go:64: } else if laddr != nil && raddr != nil { // converts sockaddr for a named dialer\nsame, but this time we are dialing from a specific source ip\n\nhttps://codereview.appspot.com/12010043/diff/27001/src/pkg/net/sock_posix.go#newcode84\nsrc/pkg/net/sock_posix.go:84: if raddr != nil { // converts sockaddr for a named or unnamed dialer\nagain a better comment please, \n\n// laddr is nil and raddr is not nil, we are connecting to a remote host, the operating system will choose the source ip and port.",
+			"disapproval": false,
+			"date": "2013-07-30 13:18:28.796040",
+			"approval": true
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 30, 2013 at 10:18 PM,  <dave@cheney.net> wrote:\r\n\r\n> Fortunately, the tests do catch this, although some cases like *net.IPAddr.toAddr()/sockaddr() are not covered.\r\n\r\nYou need to run tests w/ administrator,supervisor privilege.\r\n\r\n> src/pkg/net/sock_posix.go:52: if laddr != nil && raddr == nil { //\r\n> converts sockaddr for a named listener\r\n> I'd like to see a comment that said\r\n>\r\n> // laddr is not nil and raddr is nil, we are opening a socket to bind to\r\n> a listening port.\r\n\r\nWell, I'm missing your point. Do you really want such comments\r\non those scaffolds? They'll be removed in the next CL but two or\r\nthree. Also looks like you want comments for the whole socket()\r\nimplementation, how to deal with arguments without context, not\r\nfor each branching.\r\n",
+			"disapproval": false,
+			"date": "2013-07-31 00:07:56.367730",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 30, 2013 at 10:18 PM,  <dave@cheney.net> wrote:\r\n\r\n> I am happy that the code is correct, but proving it to myself has not\r\n> been simple and the requirement to unbox the typed *net.TCPAddr (or\r\n> similar) to an untyped nil for this code to work correctly makes me\r\n> worry.\r\n\r\nAre you suggesting to not use interfaces?\r\nOr don't test both by if statement and put non-nil interface shims everywhere?\r\nOr something more straightforward stuff?\r\n",
+			"disapproval": false,
+			"date": "2013-07-31 00:13:26.619170",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> > // laddr is not nil and raddr is nil, we are opening a socket to bind to\n> > a listening port.\n> \n> Well, I'm missing your point. Do you really want such comments\n> on those scaffolds? They'll be removed in the next CL but two or\n> three. Also looks like you want comments for the whole socket()\n> implementation, how to deal with arguments without context, not\n> for each branching.\n\nThis method is very complicated and I would prefer it to have more comments explaining what each branch means.",
+			"disapproval": false,
+			"date": "2013-07-31 00:57:19.768590",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Are you suggesting to not use interfaces?\n> Or don't test both by if statement and put non-nil interface shims everywhere?\n> Or something more straightforward stuff?\n\nI think your approach is correct, sorry it took me so long to understand this. My concern is this behavior is not immediately obvious, ie, someone could refactor sockaddr() to the original form before this change. The tests _will_ catch this, but a small comment explaining why this piece of logic is there would solve the issue before it happened.",
+			"disapproval": false,
+			"date": "2013-07-31 00:59:18.984030",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wednesday, July 31, 2013 9:57:19 AM UTC+9, Dave Cheney wrote:\r\n\r\nThis method is very complicated and I would prefer it to have more \r\n> comments explaining what each branch means.\r\n\r\n\r\nI see,  thanks. \r\n",
+			"disapproval": false,
+			"date": "2013-07-31 01:29:46.992610",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL, thanks.\nWill submit this afternoon and send the next one.\n\nhttps://codereview.appspot.com/12010043/diff/27001/src/pkg/net/sock_posix.go\nFile src/pkg/net/sock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/27001/src/pkg/net/sock_posix.go#newcode52\nsrc/pkg/net/sock_posix.go:52: if laddr != nil && raddr == nil { // converts sockaddr for a named listener\nOn 2013/07/30 13:18:29, dfc wrote:\n> I'd like to see a comment that said\n> \n> // laddr is not nil and raddr is nil, we are opening a socket to bind to a\n> listening port.\n\nDone.\n\nhttps://codereview.appspot.com/12010043/diff/27001/src/pkg/net/sock_posix.go#newcode64\nsrc/pkg/net/sock_posix.go:64: } else if laddr != nil && raddr != nil { // converts sockaddr for a named dialer\n> same, but this time we are dialing from a specific source ip\n\nsorry but your proposal doesn't look correct.\n\nhttps://codereview.appspot.com/12010043/diff/27001/src/pkg/net/sock_posix.go#newcode84\nsrc/pkg/net/sock_posix.go:84: if raddr != nil { // converts sockaddr for a named or unnamed dialer\n> // laddr is nil and raddr is not nil, we are connecting to a remote host, the\n> operating system will choose the source ip and port.\n\nditto",
+			"disapproval": false,
+			"date": "2013-07-31 03:28:27.783550",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> PTAL, thanks.\r\n> Will submit this afternoon and send the next one.\r\n\r\nI would like to see a second reviewer before submitting.\r\n",
+			"disapproval": false,
+			"date": "2013-07-31 03:30:39.810770",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I would like to see a second reviewer before submitting. \r\n\r\nwaiting...\r\n",
+			"disapproval": false,
+			"date": "2013-07-31 04:05:19.856770",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What is a \"preflight socket helper\" and what is a \"scaffold\" and which of\r\nthese \"scaffolds\" will be removed later?\r\n\r\nLooking at the CL now, but let's clarify the CL description at least.\r\n\r\n\r\n\r\nOn Tue, Jul 30, 2013 at 9:05 PM, Mikio Hara <mikioh.mikioh@gmail.com> wrote:\r\n\r\n> I would like to see a second reviewer before submitting.\r\n>\r\n> waiting...\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-31 15:45:51.120090",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks, CL description is updated.\r\n\r\nOn Thu, Aug 1, 2013 at 12:45 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n\r\n> What is a \"preflight socket helper\"\r\n\r\nDropped. I mean, a internal function that makes sockets ready to be\r\nused read, write I/O operations; specifically it configures required socket\r\noptions before syscall.Bind, Listen or Connect calls.\r\n\r\n> and what is a \"scaffold\" and which of these \"scaffolds\" will be removed later?\r\n\r\nAlso dropped. This CL is a fragment of CL 8726051 and has some code\r\nthat doesn't exist in CL 8726051, to avoid breaking build.\r\n",
+			"disapproval": false,
+			"date": "2013-08-01 00:04:37.018880",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM but see comments\n\nI still don't fully understand how these dozen CLs are cut up, but I do agree this is getting simpler, so I'm happy enough if Dave is also happy.\n\nhttps://codereview.appspot.com/12010043/diff/38001/src/pkg/net/sock_posix.go\nFile src/pkg/net/sock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/38001/src/pkg/net/sock_posix.go#newcode51\nsrc/pkg/net/sock_posix.go:51: // This function makes a preflight network file descriptor for\nmore \"preflight\". reword?\n\nhttps://codereview.appspot.com/12010043/diff/38001/src/pkg/net/unixsock_posix.go\nFile src/pkg/net/unixsock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/38001/src/pkg/net/unixsock_posix.go#newcode16\nsrc/pkg/net/unixsock_posix.go:16: func unixSocket(net string, laddr, raddr sockaddr, mode string, deadline time.Time) (*netFD, error) {\nWhat's the motivation here? If we're making a unix socket, taking a remote address of a concrete unix socket address seems fine.  What does being generic buy us here?",
+			"disapproval": false,
+			"date": "2013-08-01 18:13:25.568690",
+			"approval": true
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=0c05398daad8 ***\n\nnet: reduce unnecessary syscall.Sockaddr conversions\n\nThis CL makes IPAddr, UDPAddr and TCPAddr implement sockaddr\ninterface, UnixAddr is already sockaddr interface compliant, and\nreduces unnecessary conversions between net.Addr, net.sockaddr and\nsyscall.Sockaddr.\n\nThis is in preparation for runtime-integrated network pollster for BSD\nvariants.\n\nUpdate issue 5199\n\nR=golang-dev, dave, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/12010043\n\nhttps://codereview.appspot.com/12010043/diff/38001/src/pkg/net/sock_posix.go\nFile src/pkg/net/sock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/38001/src/pkg/net/sock_posix.go#newcode51\nsrc/pkg/net/sock_posix.go:51: // This function makes a preflight network file descriptor for\nOn 2013/08/01 18:13:25, bradfitz wrote:\n> more \"preflight\". reword?\n\nDone.\n\nhttps://codereview.appspot.com/12010043/diff/38001/src/pkg/net/unixsock_posix.go\nFile src/pkg/net/unixsock_posix.go (right):\n\nhttps://codereview.appspot.com/12010043/diff/38001/src/pkg/net/unixsock_posix.go#newcode16\nsrc/pkg/net/unixsock_posix.go:16: func unixSocket(net string, laddr, raddr sockaddr, mode string, deadline time.Time) (*netFD, error) {\nOn 2013/08/01 18:13:25, bradfitz wrote:\n> What's the motivation here? If we're making a unix socket, taking a remote\n> address of a concrete unix socket address seems fine.  What does being generic\n> buy us here?\n\nI'd like to collapse both internetSocket and unixSocket because they are already unnecessary. Handling protocol-specific addresses and preparing namespace stuff are already done by dial, listen functions. Also other task that working together with runtime-integrated network pollster is not good for this one. I think there's no reason to keep this stuff, kinda just taking some args and passing the args to lowers.",
+			"disapproval": false,
+			"date": "2013-08-03 04:32:35.405500",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for persevering. I hope the remaining changes here won't be as painful.\r\n\r\nOn Sat, Aug 3, 2013 at 2:32 PM,  <mikioh.mikioh@gmail.com> wrote:\r\n> *** Submitted as\r\n> https://code.google.com/p/go/source/detail?r=0c05398daad8 ***\r\n>\r\n> net: reduce unnecessary syscall.Sockaddr conversions\r\n>\r\n> This CL makes IPAddr, UDPAddr and TCPAddr implement sockaddr\r\n> interface, UnixAddr is already sockaddr interface compliant, and\r\n> reduces unnecessary conversions between net.Addr, net.sockaddr and\r\n> syscall.Sockaddr.\r\n>\r\n> This is in preparation for runtime-integrated network pollster for BSD\r\n> variants.\r\n>\r\n> Update issue 5199\r\n>\r\n> R=golang-dev, dave, bradfitz\r\n> CC=golang-dev\r\n> https://codereview.appspot.com/12010043\r\n>\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.com/12010043/diff/38001/src/pkg/net/sock_posix.go\r\n> File src/pkg/net/sock_posix.go (right):\r\n>\r\n> https://codereview.appspot.com/12010043/diff/38001/src/pkg/net/sock_posix.go#newcode51\r\n> src/pkg/net/sock_posix.go:51: // This function makes a preflight network\r\n> file descriptor for\r\n> On 2013/08/01 18:13:25, bradfitz wrote:\r\n>>\r\n>> more \"preflight\". reword?\r\n>\r\n>\r\n> Done.\r\n>\r\n>\r\n> https://codereview.appspot.com/12010043/diff/38001/src/pkg/net/unixsock_posix.go\r\n> File src/pkg/net/unixsock_posix.go (right):\r\n>\r\n> https://codereview.appspot.com/12010043/diff/38001/src/pkg/net/unixsock_posix.go#newcode16\r\n> src/pkg/net/unixsock_posix.go:16: func unixSocket(net string, laddr,\r\n> raddr sockaddr, mode string, deadline time.Time) (*netFD, error) {\r\n> On 2013/08/01 18:13:25, bradfitz wrote:\r\n>>\r\n>> What's the motivation here? If we're making a unix socket, taking a\r\n>\r\n> remote\r\n>>\r\n>> address of a concrete unix socket address seems fine.  What does being\r\n>\r\n> generic\r\n>>\r\n>> buy us here?\r\n>\r\n>\r\n> I'd like to collapse both internetSocket and unixSocket because they are\r\n> already unnecessary. Handling protocol-specific addresses and preparing\r\n> namespace stuff are already done by dial, listen functions. Also other\r\n> task that working together with runtime-integrated network pollster is\r\n> not good for this one. I think there's no reason to keep this stuff,\r\n> kinda just taking some args and passing the args to lowers.\r\n>\r\n> https://codereview.appspot.com/12010043/\r\n",
+			"disapproval": false,
+			"date": "2013-08-03 04:35:41.603540",
+			"approval": false
+		}
+	],
+	"owner_email": "mikioh.mikioh@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "mikio",
+	"subject": "code review 12010043: net: reduce unnecessary syscall.Sockaddr conversions",
+	"created": "2013-07-29 05:03:52.665370",
+	"patchsets": [
+		8001,
+		24001,
+		27001,
+		38001,
+		51001
+	],
+	"modified": "2013-08-03 04:35:41.867400",
+	"closed": true,
+	"issue": 12010043
+}

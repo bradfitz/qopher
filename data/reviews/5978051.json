@@ -1,0 +1,182 @@
+{
+	"description": "runtime: get per-process random number from auxv for hash table\nDecode AT_RANDOM, AT_HWCAP, and AT_PLATFORM.\nThis CL only make use of AT_RANDOM, but future CLs will make use of the others.",
+	"cc": [
+		"dave@cheney.net",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-04-15 18:03:09.013715",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello,\n\nThank you for this CL. Previously you've mention that AT_* were newer kernel features. Which kernel did they get added too? Specifically RHEL5 is a known working platform, but uses 2.6.18, will this change continue to work there?\n\nOn 16/04/2012, at 4:03, minux.ma@gmail.com wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n> \n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://code.google.com/p/go/\n> \n> \n> Description:\n> runtime: get per-process randome number from auxv for hash table\n> Decode AT_RANDOM, AT_HWCAP, and AT_PLATFORM.\n> This CL only make use of AT_RANDOM, but future CLs will make use of the\n> others.\n> \n> Please review this at http://codereview.appspot.com/5978051/\n> \n> Affected files:\n>  M src/pkg/runtime/asm_arm.s\n>  M src/pkg/runtime/rt0_linux_arm.s\n>  M src/pkg/runtime/signal_linux_arm.c\n>  M src/pkg/runtime/sys_linux_arm.s\n> \n> \n> Index: src/pkg/runtime/asm_arm.s\n> ===================================================================\n> --- a/src/pkg/runtime/asm_arm.s\n> +++ b/src/pkg/runtime/asm_arm.s\n> @@ -258,16 +258,6 @@\n> TEXT runtime\u00b7emptyfunc(SB),0,$0\n>    RET\n> \n> -// int64 runtime\u00b7cputicks(), so really\n> -// void runtime\u00b7cputicks(int64 *ticks)\n> -// stubbed: return int64(0)\n> -TEXT runtime\u00b7cputicks(SB),7,$0\n> -    MOVW    0(FP), R1\n> -    MOVW    $0, R0\n> -    MOVW    R0, 0(R1)\n> -    MOVW    R0, 4(R1)\n> -    RET\n> -\n> TEXT runtime\u00b7abort(SB),7,$-4\n>    MOVW    $0, R0\n>    MOVW    (R0), R1\n> Index: src/pkg/runtime/rt0_linux_arm.s\n> ===================================================================\n> --- a/src/pkg/runtime/rt0_linux_arm.s\n> +++ b/src/pkg/runtime/rt0_linux_arm.s\n> @@ -37,6 +37,10 @@\n>    MOVW    $174, R7 // sys_sigaction\n>    SWI    $0 // restore signal handler\n>    ADD    $32, R13\n> +\n> +    SUB    $4, R13 // fake a stack frame for runtime\u00b7setup_auxv\n> +    BL    runtime\u00b7setup_auxv(SB)\n> +    ADD    $4, R13\n>    B    _rt0_arm(SB)\n> \n> TEXT bad_abi<>(SB),7,$-4\n> Index: src/pkg/runtime/signal_linux_arm.c\n> ===================================================================\n> --- a/src/pkg/runtime/signal_linux_arm.c\n> +++ b/src/pkg/runtime/signal_linux_arm.c\n> @@ -138,3 +138,45 @@\n>    sa.sa_handler = fn;\n>    runtime\u00b7rt_sigaction(i, &sa, nil, 8);\n> }\n> +\n> +#define AT_NULL        0\n> +#define AT_HWCAP    16\n> +#define AT_RANDOM    25\n> +#define AT_PLATFORM    15\n> +uint32 runtime\u00b7random_number;\n> +uint32 runtime\u00b7hwcap;\n> +uint8 runtime\u00b7arm_arch = 6; // we default to ARMv6\n> +\n> +#pragma textflag 7\n> +void\n> +runtime\u00b7setup_auxv(int32 argc, void *argv_list)\n> +{\n> +    byte **argv = &argv_list;\n> +    byte **envp;\n> +    uint32 *auxv;\n> +    uint32 t;\n> +\n> +    // skip envp to get to ELF auxiliary vector.\n> +    for(envp = &argv[argc+1]; *envp != nil; envp++)\n> +        ;\n> +    envp++;\n> +    \n> +    for(auxv=(uint32*)envp; auxv[0] != AT_NULL; auxv += 2) {\n> +        switch(auxv[0]) {\n> +        case AT_RANDOM: // kernel provided 16-byte worth of random data\n> +            if(auxv[1])\n> +                runtime\u00b7random_number = *(uint32 *)(4 + auxv[1]);\n> +            break;\n> +        case AT_PLATFORM: // v5l, v6l, v7l\n> +            if(auxv[1]) {\n> +                t = (*(uint8 *)(auxv[1]+1));\n> +                if(t >= '5' && t <= '7')\n> +                    runtime\u00b7arm_arch = t - '0';\n> +            }\n> +            break;\n> +        case AT_HWCAP: // CPU capability bit flags\n> +            runtime\u00b7hwcap = auxv[1];\n> +            break;\n> +        }\n> +    }\n> +}\n> Index: src/pkg/runtime/sys_linux_arm.s\n> ===================================================================\n> --- a/src/pkg/runtime/sys_linux_arm.s\n> +++ b/src/pkg/runtime/sys_linux_arm.s\n> @@ -385,3 +385,14 @@\n>    MOVW    $SYS_sched_yield, R7\n>    SWI    $0\n>    RET\n> +\n> +// int64 runtime\u00b7cputicks(), so really\n> +// void runtime\u00b7cputicks(int64 *ticks)\n> +// return the same random number that kernel provides,\n> +// good enough for our use.\n> +TEXT runtime\u00b7cputicks(SB),7,$0\n> +    MOVW    0(FP), R1\n> +    MOVW    runtime\u00b7random_number(SB), R0\n> +    MOVW    R0, 0(R1)\n> +    MOVW    R0, 4(R1)\n> +    RET\n> \n> \n",
+			"disapproval": false,
+			"date": "2012-04-15 22:34:54.798391",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Apr 16, 2012 at 6:33 AM, Dave Cheney <dave@cheney.net> wrote:\n>\n> Thank you for this CL. Previously you've mention that AT_* were newer\n> kernel features. Which kernel did they get added too? Specifically RHEL5 is\n> a known working platform, but uses 2.6.18, will this change continue to\n> work there?\n\nAT_RANDOM is introduced in 2.6.29, but as the original code always use 0, I\nthink this is acceptable (I could\nhave read random bytes from /dev/random, but it might be overkill to read a\ndevice file each time we create\na map). And, of course, we could do better by using some pseudo random\nnumber generator for runtime.cputicks\nand only use kernel provided random number as seed (I used fastrand1\nalgorithm for this now).\nAT_PLATFORM is introduced in at least 2.6.11.\nAT_HWCAP is introduced in at least 2.6.11 (\nhttp://lxr.linux.no/#linux+v2.6.11/include/asm-arm/procinfo.h#L50)\n(I've added this info in the comment)\n",
+			"disapproval": false,
+			"date": "2012-04-16 05:30:58.826687",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/04/16 05:30:58, minux wrote:\n> AT_RANDOM is introduced in 2.6.29, but as the original code always use 0, I\n> think this is acceptable (I could have read random bytes from /dev/random, \n> but it might be overkill to read a device file each time we create a map).\nCorrection: we only call runtime.cputicks() once per M.",
+			"disapproval": false,
+			"date": "2012-04-16 05:56:45.284707",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Are there any parts of this CL that are applicable to linux/amd64 and 386 ? It might improve the level of confidence with this addition if it can be tested natively all the linux archs.",
+			"disapproval": false,
+			"date": "2012-04-18 10:21:37.221579",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Apr 18, 2012 at 6:21 PM, <dave@cheney.net> wrote:\n\n> Are there any parts of this CL that are applicable to linux/amd64 and\n> 386 ? It might improve the level of confidence with this addition if it\n\nlinux/386 already use auxv to get AT_SYSINFO (VDSO).\n",
+			"disapproval": false,
+			"date": "2012-04-18 10:27:58.940083",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Excellent, I didn't realise.\n\nOn Wed, Apr 18, 2012 at 8:27 PM, minux <minux.ma@gmail.com> wrote:\n>\n> On Wed, Apr 18, 2012 at 6:21 PM, <dave@cheney.net> wrote:\n>>\n>> Are there any parts of this CL that are applicable to linux/amd64 and\n>> 386 ? It might improve the level of confidence with this addition if it\n>\n> linux/386 already use auxv to get\u00a0AT_SYSINFO (VDSO).\n",
+			"disapproval": false,
+			"date": "2012-04-18 10:29:22.561289",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5978051/diff/12007/src/pkg/runtime/signal_linux_arm.c\nFile src/pkg/runtime/signal_linux_arm.c (right):\n\nhttp://codereview.appspot.com/5978051/diff/12007/src/pkg/runtime/signal_linux_arm.c#newcode168\nsrc/pkg/runtime/signal_linux_arm.c:168: runtime\u00b7randomNumber = *(uint32 *)(4 + auxv[1]);\n*(uint32*)(auxv[1]+4)\n\nhttp://codereview.appspot.com/5978051/diff/12007/src/pkg/runtime/signal_linux_arm.c#newcode172\nsrc/pkg/runtime/signal_linux_arm.c:172: t = (*(uint8 *)(auxv[1]+1));\nlots of parens here.  t = *(byte*)(auxv[1]+1)\n\nhttp://codereview.appspot.com/5978051/diff/12007/src/pkg/runtime/sys_linux_arm.s\nFile src/pkg/runtime/sys_linux_arm.s (right):\n\nhttp://codereview.appspot.com/5978051/diff/12007/src/pkg/runtime/sys_linux_arm.s#newcode389\nsrc/pkg/runtime/sys_linux_arm.s:389: // int64 runtime\u00b7cputicks(), so really\nLooks like this can go in signal_linux_arm.c?\nI don't see any reason it needs to be written in assembly.",
+			"disapproval": false,
+			"date": "2012-04-25 03:06:04.537683",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please take another look.",
+			"disapproval": false,
+			"date": "2012-04-25 08:03:59.670504",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/5978051/diff/19001/src/pkg/runtime/signal_linux_arm.c\nFile src/pkg/runtime/signal_linux_arm.c (right):\n\nhttp://codereview.appspot.com/5978051/diff/19001/src/pkg/runtime/signal_linux_arm.c#newcode146\nsrc/pkg/runtime/signal_linux_arm.c:146: uint32 runtime\u00b7randomNumber;\nCan you make this static?\nIt does not seem to be used outside this file.\nWhat about hwcap?\n\nhttp://codereview.appspot.com/5978051/diff/19001/src/pkg/runtime/signal_linux_arm.c#newcode148\nsrc/pkg/runtime/signal_linux_arm.c:148: uint8 runtime\u00b7armArch = 6; // we default to ARMv6\nThere it is!\n\nhttp://codereview.appspot.com/5978051/diff/19001/src/pkg/runtime/signal_linux_arm.c#newcode168\nsrc/pkg/runtime/signal_linux_arm.c:168: runtime\u00b7randomNumber = *(uint32 *)(auxv[1] + 4);\ndrop space in (uint32 *)\n\nhttp://codereview.appspot.com/5978051/diff/19001/src/pkg/runtime/signal_linux_arm.c#newcode172\nsrc/pkg/runtime/signal_linux_arm.c:172: t = *(uint8 *)(auxv[1]+1);\ndrop space in (uint8 *)",
+			"disapproval": false,
+			"date": "2012-05-03 21:53:27.216525",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/05/03 21:53:27, rsc wrote:\n> http://codereview.appspot.com/5978051/diff/19001/src/pkg/runtime/signal_linux_arm.c#newcode146\n> src/pkg/runtime/signal_linux_arm.c:146: uint32 runtime\u00b7randomNumber;\n> Can you make this static?\nDone.\n> It does not seem to be used outside this file.\n> What about hwcap?\nIt's unused now, but if we latter want to detect whether the machine has FPU (VFP) or not,\nwe can make use of that.\n\n> http://codereview.appspot.com/5978051/diff/19001/src/pkg/runtime/signal_linux_arm.c#newcode168\n> src/pkg/runtime/signal_linux_arm.c:168: runtime\u00b7randomNumber = *(uint32\n> *)(auxv[1] + 4);\n> drop space in (uint32 *) \n> http://codereview.appspot.com/5978051/diff/19001/src/pkg/runtime/signal_linux_arm.c#newcode172\n> src/pkg/runtime/signal_linux_arm.c:172: t = *(uint8 *)(auxv[1]+1);\n> drop space in (uint8 *)\nBoth done.",
+			"disapproval": false,
+			"date": "2012-05-04 17:45:57.551615",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=6c231e101df3 ***\n\nruntime: get per-process random number from auxv for hash table\nDecode AT_RANDOM, AT_HWCAP, and AT_PLATFORM.\nThis CL only make use of AT_RANDOM, but future CLs will make use of the others.\n\nR=dave, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5978051",
+			"disapproval": false,
+			"date": "2012-05-04 17:59:28.753297",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 5978051: runtime: get per-process randome number from auxv for h...",
+	"created": "2012-04-15 18:00:11.279870",
+	"patchsets": [
+		1,
+		1002,
+		3,
+		7002,
+		9002,
+		12007,
+		19001,
+		26001,
+		32001
+	],
+	"modified": "2012-05-04 17:59:34.375061",
+	"closed": true,
+	"issue": 5978051
+}

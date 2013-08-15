@@ -1,0 +1,102 @@
+{
+	"description": "cmd/gc, cmd/ld: struct field tracking\n\nThis is an experiment in static analysis of Go programs\nto understand which struct fields a program might use.\nIt is not part of the Go language specification, it must\nbe enabled explicitly when building the toolchain,\nand it may be removed at any time.\n\nAfter building the toolchain with GOEXPERIMENT=fieldtrack,\na specific field can be marked for tracking by including\n`go:\"track\"` in the field tag:\n\n        package pkg\n\n        type T struct {\n                F int `go:\"track\"`\n                G int // untracked\n        }\n\nTo simplify usage, only named struct types can have\ntracked fields, and only exported fields can be tracked.\n\nThe implementation works by making each function begin\nwith a sequence of no-op USEFIELD instructions declaring\nwhich tracked fields are accessed by a specific function.\nAfter the linker's dead code elimination removes unused\nfunctions, the fields referred to by the remaining\nUSEFIELD instructions are the ones reported as used by\nthe binary.\n\nThe -k option to the linker specifies the fully qualified\nsymbol name (such as my/pkg.list) of a string variable that\nshould be initialized with the field tracking information\nfor the program. The field tracking string is a sequence\nof lines, each terminated by a \\n and describing a single\ntracked field referred to by the program. Each line is made\nup of one or more tab-separated fields. The first field is\nthe name of the tracked field, fully qualified, as in\n\"my/pkg.T.F\". Subsequent fields give a shortest path of\nreverse references from that field to a global variable or\nfunction, corresponding to one way in which the program\nmight reach that field.\n\nA common source of false positives in field tracking is\ntypes with large method sets, because a reference to the\ntype descriptor carries with it references to all methods.\nTo address this problem, the CL also introduces a comment\nannotation\n\n        //go:nointerface\n\nthat marks an upcoming method declaration as unavailable\nfor use in satisfying interfaces, both statically and \ndynamically. Such a method is also invisible to package\nreflect.\n\nAgain, all of this is disabled by default. It only turns on\nif you have GOEXPERIMENT=fieldtrack set during make.bash.",
+	"cc": [
+		"iant@golang.org",
+		"ken@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-11-02 03:43:03.139730",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello iant, ken2 (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-01 02:43:02.163590",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6749064/diff/14001/src/cmd/5a/lex.c\nFile src/cmd/5a/lex.c (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/5a/lex.c#newcode416\nsrc/cmd/5a/lex.c:416: \"USEFIELD\", LTYPEN, AUSEFIELD,\nAt least in codereview, the new line doesn't seem to line up with the existing columns.\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/8a/lex.c\nFile src/cmd/8a/lex.c (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/8a/lex.c#newcode784\nsrc/cmd/8a/lex.c:784: \"USEFIELD\", LTYPEN, AUSEFIELD,\nColumns don't seem to line up.\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/gc/go.y\nFile src/cmd/gc/go.y (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/gc/go.y#newcode1316\nsrc/cmd/gc/go.y:1316: nointerface = 0;\nClearing nointerface here makes it seems like\n//go:nointerface\nwill apply to the next method seen, even if there are some arbitrary number of variable, function, etc., definitions in between.  Should it be cleared somewhere else as well?\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/gc/walk.c\nFile src/cmd/gc/walk.c (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/gc/walk.c#newcode2942\nsrc/cmd/gc/walk.c:2942: l->down = curfn->paramfld;\nI don't know, but is it correct to assume that curfn != nil here?  What about\n\ntype T struct { F int `go:\"track\"` }\nvar t = T{1}\nvar f = t.F\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/ld/go.c\nFile src/cmd/ld/go.c (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/ld/go.c#newcode669\nsrc/cmd/ld/go.c:669: if(s->gotype)\nInstead of these various conditionals, why not have mark1 simply return if s == nil?",
+			"disapproval": false,
+			"date": "2012-11-01 21:30:14.966430",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/5a/lex.c\nFile src/cmd/5a/lex.c (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/5a/lex.c#newcode416\nsrc/cmd/5a/lex.c:416: \"USEFIELD\", LTYPEN, AUSEFIELD,\nOn 2012/11/01 21:30:15, iant wrote:\n> At least in codereview, the new line doesn't seem to line up with the existing\n> columns.\n\nDone.\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/8a/lex.c\nFile src/cmd/8a/lex.c (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/8a/lex.c#newcode784\nsrc/cmd/8a/lex.c:784: \"USEFIELD\", LTYPEN, AUSEFIELD,\nOn 2012/11/01 21:30:15, iant wrote:\n> Columns don't seem to line up.\n\nDone.\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/gc/go.y\nFile src/cmd/gc/go.y (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/gc/go.y#newcode1316\nsrc/cmd/gc/go.y:1316: nointerface = 0;\nOn 2012/11/01 21:30:15, iant wrote:\n> Clearing nointerface here makes it seems like\n> //go:nointerface\n> will apply to the next method seen, even if there are some arbitrary number of\n> variable, function, etc., definitions in between.  Should it be cleared\n> somewhere else as well?\n\nIndeed. Changed to clear after every top-level declaration. This specific one doesn't matter much since it is in the export data, which we can rely on to be well-formed, but the change addresses the nointerface = 0 in the standard method declaration case.\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/gc/walk.c\nFile src/cmd/gc/walk.c (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/gc/walk.c#newcode2942\nsrc/cmd/gc/walk.c:2942: l->down = curfn->paramfld;\nOn 2012/11/01 21:30:15, iant wrote:\n> I don't know, but is it correct to assume that curfn != nil here?  What about\n> \n> type T struct { F int `go:\"track\"` }\n> var t = T{1}\n> var f = t.F\n\nYes, it's okay. The walk for f = t.F occurs in the compilation of the package's primary init function. walk is the stage right before code generation for a function, so it is only called with a curfn.\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/ld/go.c\nFile src/cmd/ld/go.c (right):\n\nhttps://codereview.appspot.com/6749064/diff/14001/src/cmd/ld/go.c#newcode669\nsrc/cmd/ld/go.c:669: if(s->gotype)\nOn 2012/11/01 21:30:15, iant wrote:\n> Instead of these various conditionals, why not have mark1 simply return if s ==\n> nil?\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-02 03:33:37.876580",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=53c4c08250f0 ***\n\ncmd/gc, cmd/ld: struct field tracking\n\nThis is an experiment in static analysis of Go programs\nto understand which struct fields a program might use.\nIt is not part of the Go language specification, it must\nbe enabled explicitly when building the toolchain,\nand it may be removed at any time.\n\nAfter building the toolchain with GOEXPERIMENT=fieldtrack,\na specific field can be marked for tracking by including\n`go:\"track\"` in the field tag:\n\n        package pkg\n\n        type T struct {\n                F int `go:\"track\"`\n                G int // untracked\n        }\n\nTo simplify usage, only named struct types can have\ntracked fields, and only exported fields can be tracked.\n\nThe implementation works by making each function begin\nwith a sequence of no-op USEFIELD instructions declaring\nwhich tracked fields are accessed by a specific function.\nAfter the linker's dead code elimination removes unused\nfunctions, the fields referred to by the remaining\nUSEFIELD instructions are the ones reported as used by\nthe binary.\n\nThe -k option to the linker specifies the fully qualified\nsymbol name (such as my/pkg.list) of a string variable that\nshould be initialized with the field tracking information\nfor the program. The field tracking string is a sequence\nof lines, each terminated by a \\n and describing a single\ntracked field referred to by the program. Each line is made\nup of one or more tab-separated fields. The first field is\nthe name of the tracked field, fully qualified, as in\n\"my/pkg.T.F\". Subsequent fields give a shortest path of\nreverse references from that field to a global variable or\nfunction, corresponding to one way in which the program\nmight reach that field.\n\nA common source of false positives in field tracking is\ntypes with large method sets, because a reference to the\ntype descriptor carries with it references to all methods.\nTo address this problem, the CL also introduces a comment\nannotation\n\n        //go:nointerface\n\nthat marks an upcoming method declaration as unavailable\nfor use in satisfying interfaces, both statically and \ndynamically. Such a method is also invisible to package\nreflect.\n\nAgain, all of this is disabled by default. It only turns on\nif you have GOEXPERIMENT=fieldtrack set during make.bash.\n\nR=iant, ken\nCC=golang-dev\nhttp://codereview.appspot.com/6749064",
+			"disapproval": false,
+			"date": "2012-11-02 04:17:27.847180",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6749064: cmd/gc, cmd/ld: struct field tracking",
+	"created": "2012-10-23 14:57:41.747670",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		6001,
+		8001,
+		5051,
+		11001,
+		14001,
+		19001,
+		19002
+	],
+	"modified": "2012-11-02 04:17:28.743500",
+	"closed": true,
+	"issue": 6749064
+}

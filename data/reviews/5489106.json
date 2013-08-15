@@ -1,0 +1,187 @@
+{
+	"description": "gc: inlining fixes\n\nflag -l means: inlining on, -ll inline with early typecheck\n-l lazily typechecks imports on use and re-export, nicer for debugging\n-lm produces output suitable for errchk tests, repeated -mm... increases inl.c's verbosity\nexport processed constants, instead of originals\noutparams get ->inlvar too, and initialized to zero\nfix shared rlist bug, that lead to typecheck messing up the patched tree\nproperly handle non-method calls to methods T.meth(t, a...)\nremoved embryonic code to handle closures in inlined bodies\nalso inline calls inside closures (todo: move from phase 6b to 4)\n\nFixes issue 2579.",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"kevlar@google.com"
+	],
+	"messages": [
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Dec 23, 2011 at 11:51, Luuk van Dijk <lvd@google.com> wrote:\n> On Fri, Dec 23, 2011 at 11:43, \u00a0<lvd@google.com> wrote:\n>> Reviewers: rsc,\n>>\n>> Message:\n>> Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n>>\n>> I'd like you to review this change to\n>> https://go.googlecode.com/hg/\n>>\n>>\n>> Description:\n>> gc: inlining fixes\n>>\n>> export processed constants, instead of originals\n>> outparams get ->inlvar too, and initialized to zero\n>> fix shared rlist bug, that lead to typecheck messing up the patched\n>> tree.\n>\n> these only come out with non-leaf call inlining unsupressed (see DO\n> NOT SUBMIT in inl.c), but they still lurk even without that.\n>\n> with this the whole tree builds & passes except the runtime.Caller\n> test in pkg/runtime/debug and a missed dependenty export in os/exec\n> which i'll fix in a separate CL\n\noh no, because it was caused by the constant change.  fixed now.  only\nruntime.Caller left.\n",
+			"disapproval": false,
+			"date": "2011-12-23 11:11:05.162233",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "patch in 5502076 to make the runtime/debug test pass.\n\nOn Fri, Dec 23, 2011 at 12:11, Luuk van Dijk <lvd@google.com> wrote:\n> On Fri, Dec 23, 2011 at 11:51, Luuk van Dijk <lvd@google.com> wrote:\n>> On Fri, Dec 23, 2011 at 11:43, \u00a0<lvd@google.com> wrote:\n>>> Reviewers: rsc,\n>>>\n>>> Message:\n>>> Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n>>>\n>>> I'd like you to review this change to\n>>> https://go.googlecode.com/hg/\n>>>\n>>>\n>>> Description:\n>>> gc: inlining fixes\n>>>\n>>> export processed constants, instead of originals\n>>> outparams get ->inlvar too, and initialized to zero\n>>> fix shared rlist bug, that lead to typecheck messing up the patched\n>>> tree.\n>>\n>> these only come out with non-leaf call inlining unsupressed (see DO\n>> NOT SUBMIT in inl.c), but they still lurk even without that.\n>>\n>> with this the whole tree builds & passes except the runtime.Caller\n>> test in pkg/runtime/debug and a missed dependenty export in os/exec\n>> which i'll fix in a separate CL\n>\n> oh no, because it was caused by the constant change. \u00a0fixed now. \u00a0only\n> runtime.Caller left.\n",
+			"disapproval": false,
+			"date": "2011-12-23 11:27:58.151248",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-12-23 10:43:27.832655",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Dec 23, 2011 at 11:43,  <lvd@google.com> wrote:\n> Reviewers: rsc,\n>\n> Message:\n> Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> gc: inlining fixes\n>\n> export processed constants, instead of originals\n> outparams get ->inlvar too, and initialized to zero\n> fix shared rlist bug, that lead to typecheck messing up the patched\n> tree.\n\nthese only come out with non-leaf call inlining unsupressed (see DO\nNOT SUBMIT in inl.c), but they still lurk even without that.\n\nwith this the whole tree builds & passes except the runtime.Caller\ntest in pkg/runtime/debug and a missed dependenty export in os/exec\nwhich i'll fix in a separate CL\n\n>\n> Please review this at http://codereview.appspot.com/5489106/\n>\n> Affected files:\n> \u00a0M src/cmd/gc/export.c\n> \u00a0M src/cmd/gc/fmt.c\n> \u00a0M src/cmd/gc/inl.c\n>\n>\n> Index: src/cmd/gc/export.c\n> ===================================================================\n> --- a/src/cmd/gc/export.c\n> +++ b/src/cmd/gc/export.c\n> @@ -104,10 +104,15 @@\n> \u00a0 \u00a0 \u00a0 \u00a0if(!n)\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return;\n>\n> +// \u00a0 \u00a0 print(\"reexportdep %+hN\\n\", n);\n> \u00a0 \u00a0 \u00a0 \u00a0switch(n->op) {\n> \u00a0 \u00a0 \u00a0 \u00a0case ONAME:\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0switch(n->class&~PHEAP) {\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0case PFUNC:\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // methods will be printed along with their type\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if(!n->type || n->type->thistuple > 0)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 break;\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // fallthrough\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0case PEXTERN:\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0if (n->sym && n->sym->pkg != localpkg && n->sym->pkg\n> != builtinpkg)\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0exportlist = list(exportlist, n);\n> @@ -176,7 +181,7 @@\n> \u00a0 \u00a0 \u00a0 \u00a0Type *t;\n>\n> \u00a0 \u00a0 \u00a0 \u00a0n = s->def;\n> - \u00a0 \u00a0 \u00a0 typecheck(&n, Erv);\n> + \u00a0 \u00a0 \u00a0 typecheck(&n, Erv|Ecall);\n> \u00a0 \u00a0 \u00a0 \u00a0if(n == N || n->type == T) {\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0yyerror(\"variable exported but not defined: %S\", s);\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return;\n> @@ -261,7 +266,7 @@\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0yyerror(\"unknown export symbol: %S\", s);\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return;\n> \u00a0 \u00a0 \u00a0 \u00a0}\n> -\n> +// \u00a0 \u00a0 print(\"dumpsym %O %+S\\n\", s->def->op, s);\n> \u00a0 \u00a0 \u00a0 \u00a0dumppkg(s->pkg);\n>\n> \u00a0 \u00a0 \u00a0 \u00a0switch(s->def->op) {\n> Index: src/cmd/gc/fmt.c\n> ===================================================================\n> --- a/src/cmd/gc/fmt.c\n> +++ b/src/cmd/gc/fmt.c\n> @@ -1291,7 +1291,13 @@\n> \u00a0 \u00a0 \u00a0 \u00a0Type *t;\n>\n> \u00a0 \u00a0 \u00a0 \u00a0t = n->type;\n> - \u00a0 \u00a0 \u00a0 if(n->orig != N)\n> + \u00a0 \u00a0 \u00a0 if(n->orig == N)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 fatal(\"node with no orig %N\", n);\n> +\n> + \u00a0 \u00a0 \u00a0 // we almost always want the original, except in export mode for\n> literals\n> + \u00a0 \u00a0 \u00a0 // this saves the importer some work, and avoids us having to redo\n> some\n> + \u00a0 \u00a0 \u00a0 // special casing for package unsafe\n> + \u00a0 \u00a0 \u00a0 if(fmtmode != FExp || n->op != OLITERAL)\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0n = n->orig;\n>\n> \u00a0 \u00a0 \u00a0 \u00a0if(f->flags&FmtLong && t != T) {\n> Index: src/cmd/gc/inl.c\n> ===================================================================\n> --- a/src/cmd/gc/inl.c\n> +++ b/src/cmd/gc/inl.c\n> @@ -55,7 +55,7 @@\n> \u00a0 \u00a0 \u00a0 \u00a0if(fn->nbody == nil || fn->nbody->next != nil)\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return;\n>\n> - \u00a0 \u00a0 \u00a0 // the single statement should be a return or an assignment.\n> + \u00a0 \u00a0 \u00a0 // the single statement should be a return, an assignment or empty.\n> \u00a0 \u00a0 \u00a0 \u00a0switch(fn->nbody->n->op) {\n> \u00a0 \u00a0 \u00a0 \u00a0default:\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return;\n> @@ -108,12 +108,13 @@\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return 0;\n>\n> \u00a0 \u00a0 \u00a0 \u00a0switch(n->op) {\n> - \u00a0 \u00a0 \u00a0 case OPROC:\n> - \u00a0 \u00a0 \u00a0 case ODEFER:\n> \u00a0 \u00a0 \u00a0 \u00a0case OCALL:\n> \u00a0 \u00a0 \u00a0 \u00a0case OCALLFUNC:\n> \u00a0 \u00a0 \u00a0 \u00a0case OCALLINTER:\n> \u00a0 \u00a0 \u00a0 \u00a0case OCALLMETH:\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 break; \u00a0// DO NOT SUBMIT\n> + \u00a0 \u00a0 \u00a0 case OPROC:\n> + \u00a0 \u00a0 \u00a0 case ODEFER:\n> \u00a0 \u00a0 \u00a0 \u00a0case OCLOSURE:\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0return 1;\n> \u00a0 \u00a0 \u00a0 \u00a0}\n> @@ -399,7 +400,7 @@\n> \u00a0mkinlcall(Node **np, Node *fn)\n> \u00a0{\n> \u00a0 \u00a0 \u00a0 \u00a0int i;\n> - \u00a0 \u00a0 \u00a0 Node *n, *call, *saveinlfn, *as;\n> + \u00a0 \u00a0 \u00a0 Node *n, *call, *saveinlfn, *as, *m;\n> \u00a0 \u00a0 \u00a0 \u00a0NodeList *dcl, *ll, *ninit, *body;\n> \u00a0 \u00a0 \u00a0 \u00a0Type *t;\n>\n> @@ -425,11 +426,22 @@\n> \u00a0 \u00a0 \u00a0 \u00a0else // imported function\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0dcl = fn->dcl;\n>\n> - \u00a0 \u00a0 \u00a0 // Make temp names to use instead of the originals for anything but\n> the outparams\n> + \u00a0 \u00a0 \u00a0 inlretvars = nil;\n> + \u00a0 \u00a0 \u00a0 // Make temp names to use instead of the originals\n> \u00a0 \u00a0 \u00a0 \u00a0for(ll = dcl; ll; ll=ll->next)\n> - \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if(ll->n->op == ONAME && ll->n->class != PPARAMOUT) {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if(ll->n->op == ONAME) {\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0ll->n->inlvar = inlvar(ll->n);\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0ninit = list(ninit, nod(ODCL, ll->n->inlvar, N)); \u00a0//\n> otherwise gen won't emit the allocations for heapallocs\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if (ll->n->class == PPARAMOUT) \u00a0// we rely on the\n> order being correct here\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 inlretvars = list(inlretvars,\n> ll->n->inlvar);\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 }\n> +\n> + \u00a0 \u00a0 \u00a0 // anonymous return values, synthesize names for use in assignment\n> that replaces return\n> + \u00a0 \u00a0 \u00a0 if(inlretvars == nil && fn->type->outtuple > 0)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 for(t = getoutargx(fn->type)->type; t; t = t->down) {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 m = retvar(t, i++);\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 ninit = list(ninit, nod(ODCL, m, N));\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 inlretvars = list(inlretvars, m);\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0}\n>\n> \u00a0 \u00a0 \u00a0 \u00a0// assign arguments to the parameters' temp names\n> @@ -479,12 +491,13 @@\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0ninit = list(ninit, as);\n> \u00a0 \u00a0 \u00a0 \u00a0}\n>\n> - \u00a0 \u00a0 \u00a0 // make the outparams. \u00a0No need to declare because currently they'll\n> only be used in the assignment that replaces returns.\n> - \u00a0 \u00a0 \u00a0 inlretvars = nil;\n> - \u00a0 \u00a0 \u00a0 i = 0;\n> - \u00a0 \u00a0 \u00a0 for(t = getoutargx(fn->type)->type; t; t = t->down)\n> - \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 inlretvars = list(inlretvars, retvar(t, i++));\n> -\n> + \u00a0 \u00a0 \u00a0 // zero the outparams\n> + \u00a0 \u00a0 \u00a0 for(ll = inlretvars; ll; ll=ll->next) {\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 as = nod(OAS, ll->n, N);\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 typecheck(&as, Etop);\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 ninit = list(ninit, as);\n> + \u00a0 \u00a0 \u00a0 }\n> +\n> \u00a0 \u00a0 \u00a0 \u00a0inlretlabel = newlabel();\n> \u00a0 \u00a0 \u00a0 \u00a0body = inlsubstlist(fn->inl);\n>\n> @@ -530,6 +543,22 @@\n> \u00a0 \u00a0 \u00a0 \u00a0return n;\n> \u00a0}\n>\n> +// Synthesize a variable to store the inlined function's results in.\n> +static Node*\n> +retvar(Type *t, int i)\n> +{\n> + \u00a0 \u00a0 \u00a0 Node *n;\n> +\n> + \u00a0 \u00a0 \u00a0 snprint(namebuf, sizeof(namebuf), \".r%d\", i);\n> + \u00a0 \u00a0 \u00a0 n = newname(lookup(namebuf));\n> + \u00a0 \u00a0 \u00a0 n->type = t->type;\n> + \u00a0 \u00a0 \u00a0 n->class = PAUTO;\n> + \u00a0 \u00a0 \u00a0 n->used = 1;\n> + \u00a0 \u00a0 \u00a0 n->curfn = curfn; \u00a0 // the calling function, not the called one\n> + \u00a0 \u00a0 \u00a0 curfn->dcl = list(curfn->dcl, n);\n> + \u00a0 \u00a0 \u00a0 return n;\n> +}\n> +\n> \u00a0// Make a new pparamref\n> \u00a0static Node*\n> \u00a0inlref(Node *var)\n> @@ -553,22 +582,6 @@\n> \u00a0 \u00a0 \u00a0 \u00a0return n;\n> \u00a0}\n>\n> -// Synthesize a variable to store the inlined function's results in.\n> -static Node*\n> -retvar(Type *t, int i)\n> -{\n> - \u00a0 \u00a0 \u00a0 Node *n;\n> -\n> - \u00a0 \u00a0 \u00a0 snprint(namebuf, sizeof(namebuf), \".r%d\", i);\n> - \u00a0 \u00a0 \u00a0 n = newname(lookup(namebuf));\n> - \u00a0 \u00a0 \u00a0 n->type = t->type;\n> - \u00a0 \u00a0 \u00a0 n->class = PAUTO;\n> - \u00a0 \u00a0 \u00a0 n->used = 1;\n> - \u00a0 \u00a0 \u00a0 n->curfn = curfn; \u00a0 // the calling function, not the called one\n> - \u00a0 \u00a0 \u00a0 curfn->dcl = list(curfn->dcl, n);\n> - \u00a0 \u00a0 \u00a0 return n;\n> -}\n> -\n> \u00a0static Node*\n> \u00a0newlabel(void)\n> \u00a0{\n> @@ -634,16 +647,16 @@\n>\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0// rewrite naked return for function with return values to\n> return PPARAMOUTs\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0if(count(n->list) == 0 && inlfn->type->outtuple > 0) {\n> - \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 for(ll = inlfn->dcl; ll; ll=ll->next)\n> - \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 if(ll->n->op == ONAME && ll->n->class ==\n> PPARAMOUT)\n> - \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 n->list = list(n->list, ll->n);\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 n->list = inlretvars;\n>\n> \u00a0// \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 dump(\"Return naked -> dressed \", n);\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0}\n>\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0if(inlretvars && n->list) {\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0as = nod(OAS2, N, N);\n> - \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 as->list = inlretvars;\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // shallow copy or OINLCALL->rlist will be the same\n> list, and later walk and typecheck may clobber that.\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 for(ll=inlretvars; ll; ll=ll->next)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 as->list = list(as->list, ll->n);\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0as->rlist = inlsubstlist(n->list);\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0typecheck(&as, Etop);\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0m->ninit = list(m->ninit, as);\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-12-23 10:51:01.341095",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5489106/diff/5/src/cmd/gc/inl.c\nFile src/cmd/gc/inl.c (right):\n\nhttp://codereview.appspot.com/5489106/diff/5/src/cmd/gc/inl.c#newcode655\nsrc/cmd/gc/inl.c:655: if(inlretvars && n->list) {\nwait, this should just be combined with the dressing above",
+			"disapproval": false,
+			"date": "2011-12-23 11:47:57.509778",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-04 14:04:28.669800",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-05 15:05:04.514058",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/5489106/diff/15007/src/cmd/gc/export.c\nFile src/cmd/gc/export.c (right):\n\nhttp://codereview.appspot.com/5489106/diff/15007/src/cmd/gc/export.c#newcode112\nsrc/cmd/gc/export.c:112: // methods will be printed along with their type\ns/printed/printed separately,/",
+			"disapproval": false,
+			"date": "2012-01-10 04:40:15.851462",
+			"approval": true
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "thanks but we should talk about -m. currently this breaks test/escape2.go\nOn Jan 10, 2012 5:40 AM, <rsc@golang.org> wrote:\n\n> LGTM\n>\n>\n>\n> http://codereview.appspot.com/**5489106/diff/15007/src/cmd/gc/**export.c<http://codereview.appspot.com/5489106/diff/15007/src/cmd/gc/export.c>\n> File src/cmd/gc/export.c (right):\n>\n> http://codereview.appspot.com/**5489106/diff/15007/src/cmd/gc/**\n> export.c#newcode112<http://codereview.appspot.com/5489106/diff/15007/src/cmd/gc/export.c#newcode112>\n> src/cmd/gc/export.c:112: // methods will be printed along with their\n> type\n> s/printed/printed separately,/\n>\n> http://codereview.appspot.com/**5489106/<http://codereview.appspot.com/5489106/>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-10 07:03:26.407042",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "this is an artefact of hg change -d on a hg clpatch'ed diff. it was\nsubmitted. i must be doing something wrong.\n\nOn Tue, Jan 10, 2012 at 21:27,  <lvd@google.com> wrote:\n> *** Abandoned ***\n>\n> http://codereview.appspot.com/5489106/\n",
+			"disapproval": false,
+			"date": "2012-01-10 20:31:14.183790",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=a9c3d197d971 ***\n\ngc: inlining fixes\n\nflag -l means: inlining on, -ll inline with early typecheck\n-l lazily typechecks imports on use and re-export, nicer for debugging\n-lm produces output suitable for errchk tests, repeated -mm... increases inl.c's verbosity\nexport processed constants, instead of originals\noutparams get ->inlvar too, and initialized to zero\nfix shared rlist bug, that lead to typecheck messing up the patched tree\nproperly handle non-method calls to methods T.meth(t, a...)\nremoved embryonic code to handle closures in inlined bodies\nalso inline calls inside closures (todo: move from phase 6b to 4)\n\nFixes issue 2579.\n\nR=rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5489106",
+			"disapproval": false,
+			"date": "2012-01-10 20:24:37.301269",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-01-10 20:27:46.424175",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Isn't it -D?\n\nOn Tue, Jan 10, 2012 at 12:31 PM, Luuk van Dijk <lvd@google.com> wrote:\n\n> this is an artefact of hg change -d on a hg clpatch'ed diff. it was\n> submitted. i must be doing something wrong.\n>\n> On Tue, Jan 10, 2012 at 21:27,  <lvd@google.com> wrote:\n> > *** Abandoned ***\n> >\n> > http://codereview.appspot.com/5489106/\n>\n",
+			"disapproval": false,
+			"date": "2012-01-10 20:50:37.484367",
+			"approval": false
+		}
+	],
+	"owner_email": "lvd@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "lvd",
+	"subject": "code review 5489106: gc: inlining fixes",
+	"created": "2011-12-22 15:13:02.441998",
+	"patchsets": [
+		1,
+		3,
+		4,
+		5,
+		2008,
+		1009,
+		6001,
+		8001,
+		12001,
+		16001,
+		15007,
+		21001,
+		23001
+	],
+	"modified": "2012-01-10 20:50:37.639795",
+	"closed": true,
+	"issue": 5489106
+}

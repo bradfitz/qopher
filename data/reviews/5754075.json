@@ -1,0 +1,206 @@
+{
+	"description": "cmd/ld: correctly support linking hidden visibility symbols\r\n        To support static linking in libgcc functions.\r\n        Part of issue 3261.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"rsc@golang.org",
+		"iant@golang.org",
+		"iant@google.com"
+	],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, iant@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-03-11 14:10:22.850142",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What fails without this change?  The bug report isn't clear.\n\nI'm not sure the approach of adding the contents of libgcc.a to cgo.a is\nbest.  I think it might be better to run\n\ngcc -nostdlib -Wl,-r -o FILE.cgo3.o FILE.cgo2.o -lgcc\n\nand then use FILE.cgo3.o instead of FILE.cgo2.o in the subsequent\ncommands.\n\nIan\n\n\nminux.ma@gmail.com writes:\n\n> Reviewers: rsc, iant,\n>\n> Message:\n> Hello rsc@golang.org, iant@golang.org (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://code.google.com/p/go/\n>\n>\n> Description:\n> cmd/ld: rewrite hidden symbol visibility to default unconditionally\n>         To support static linking in libgcc functions.\n>         Part of issue 3261.\n>\n> Please review this at http://codereview.appspot.com/5754075/\n>\n> Affected files:\n>   M src/cmd/ld/ldelf.c\n>\n>\n> Index: src/cmd/ld/ldelf.c\n> ===================================================================\n> --- a/src/cmd/ld/ldelf.c\n> +++ b/src/cmd/ld/ldelf.c\n> @@ -743,8 +743,11 @@\n>  \ts = nil;\n>  \tif(strcmp(sym->name, \"_GLOBAL_OFFSET_TABLE_\") == 0)\n>  \t\tsym->name = \".got\";\n> -\tif(strcmp(sym->name, \"__stack_chk_fail_local\") == 0)\n> -\t\tsym->other = 0;  // rewrite hidden -> default visibility\n> +\n> +\t// TODO(minux): support hidden visibility in symbol table\n> +\t// for now, we just unconditionally rewrite hidden -> default visibility\n> +\tsym->other = 0;\n> +\n>  \tswitch(sym->type) {\n>  \tcase ElfSymTypeSection:\n>  \t\ts = obj->sect[sym->shndx].sym;\n",
+			"disapproval": false,
+			"date": "2012-03-12 05:10:34.747566",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/03/12 17:01:20, iant2 wrote:\n> minux <mailto:minux.ma@gmail.com> writes:\n> \n> > On Mon, Mar 12, 2012 at 1:10 PM, Ian Lance Taylor <mailto:iant@google.com> wrote:\n> >\n> >> What fails without this change?  The bug report isn't clear.\n> >>\n> > functions in libgcc all have hidden visibility.\n> \n> I know that, but it doesn't tell me what fails.  It's not a problem to\nCurrent cmd/ld won't link hidden symbols. Perhaps I should fix this\ninstead of work around that bug and remove the code that conditionally\nrewrite hidden visibility.\n> link a symbol with hidden visibility into a program.  Hidden visibility\n> only applies to visibility between shared libraries.  And in the case\n> where there are other shared libraries involved via cgo or SWIG, we\n> actually do want the symbols to have hidden visibility in the\n> executable.  In fact, a correct ELF linker should give them binding\n> STB_LOCAL rather than STB_GLOBAL.  We don't want the libgcc symbols in\n> the Go executable to override any libgcc symbols in any shared\n> libraries.\nThanks for the detailed explanation. :-)",
+			"disapproval": false,
+			"date": "2012-03-13 05:28:27.670016",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "minux.ma@gmail.com writes:\n\n> Current cmd/ld won't link hidden symbols. Perhaps I should fix this\n> instead of work around that bug and remove the code that conditionally\n> rewrite hidden visibility.\n\nHmmm, that's odd.  Hidden symbols are largely irrelevant to a program\nlike ld.  The only thing it is supposed to do is convert a hidden symbol\nfrom global to local when writing out the symbol table.\n\nShould we just remove the test of sym->other\n\t\tcase ElfSymBindGlobal:\n\t\t\tif(sym->other != 2) {\nin ldelf.c?  I'm not sure what that is doing there.  It seems to have\nbeen there since the beginning.\n\nIan\n",
+			"disapproval": false,
+			"date": "2012-03-13 16:46:50.349494",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Mar 12, 2012 at 1:10 PM, Ian Lance Taylor <iant@google.com> wrote:\n\n> What fails without this change?  The bug report isn't clear.\n>\nfunctions in libgcc all have hidden visibility.\n\n>\n> I'm not sure the approach of adding the contents of libgcc.a to cgo.a is\n> best.  I think it might be better to run\n>\n> gcc -nostdlib -Wl,-r -o FILE.cgo3.o FILE.cgo2.o -lgcc\n>\n> and then use FILE.cgo3.o instead of FILE.cgo2.o in the subsequent\n> commands.\n\nOh, that's a better & much more simple idea. I will try it. Thanks.\n",
+			"disapproval": false,
+			"date": "2012-03-12 06:00:42.602704",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "minux <minux.ma@gmail.com> writes:\n\n> On Mon, Mar 12, 2012 at 1:10 PM, Ian Lance Taylor <iant@google.com> wrote:\n>\n>> What fails without this change?  The bug report isn't clear.\n>>\n> functions in libgcc all have hidden visibility.\n\nI know that, but it doesn't tell me what fails.  It's not a problem to\nlink a symbol with hidden visibility into a program.  Hidden visibility\nonly applies to visibility between shared libraries.  And in the case\nwhere there are other shared libraries involved via cgo or SWIG, we\nactually do want the symbols to have hidden visibility in the\nexecutable.  In fact, a correct ELF linker should give them binding\nSTB_LOCAL rather than STB_GLOBAL.  We don't want the libgcc symbols in\nthe Go executable to override any libgcc symbols in any shared\nlibraries.\n\nIan\n",
+			"disapproval": false,
+			"date": "2012-03-12 17:01:20.547250",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Mar 15, 2012 at 1:52 AM, Russ Cox <rsc@golang.org> wrote:\n\n> Have you tested this on non-Windows systems?\n>\nThis CL only fixes ELF linking, so Windows isn't affected.\n\n> What else is required to make Windows work beyond this CL?\n>\nThis CL only fix the problem of linking in libgcc using the old approach\n(pack necessary object files\nfrom libgcc.a into runtime/cgo.a), as stated in comment #5 of issue\n3261<http://code.google.com/p/go/issues/detail?id=3261#c5>,\nI switched to a new approach\nsuggested by iant for that issue.\n\nThe benefit of submit this CL is: it removes the special case for symbol\n\"__stack_chk_fail_local\",\nhttp://codereview.appspot.com/5754075/diff/7001/src/cmd/ld/ldelf.c#oldcode746\nand provide general support for linking hidden visibility symbols in\nELF-based systems.\n\nAs this CL doesn't fix a Go1-Must issue, it can wait until after Go 1 is\nout.\n",
+			"disapproval": false,
+			"date": "2012-03-14 18:21:40.773686",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This CL LGTM, but I'll let rsc decide.\n\nIt's not exactly how hidden symbols should be handled.  A hidden symbol should become STB_LOCAL.  However, that is a larger change.",
+			"disapproval": false,
+			"date": "2012-03-14 17:44:11.258705",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/03/13 16:46:50, iant2 wrote:\n> Should we just remove the test of sym->other\n> \t\tcase ElfSymBindGlobal:\n> \t\t\tif(sym->other != 2) {\n> in ldelf.c?  I'm not sure what that is doing there.  It seems to have\n> been there since the beginning.\nFixed and tested linking libgcc.a, and we now support correct semantics of hidden symbols.",
+			"disapproval": false,
+			"date": "2012-03-13 20:57:51.997387",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/03/12 05:10:34, iant2 wrote:\n> I'm not sure the approach of adding the contents of libgcc.a to cgo.a is\n> best.  I think it might be better to run\n> \n> gcc -nostdlib -Wl,-r -o FILE.cgo3.o FILE.cgo2.o -lgcc\n> \n> and then use FILE.cgo3.o instead of FILE.cgo2.o in the subsequent\n> commands.\nI tried this, nearly succeeded. But, the command above introduced several\nrelocations not supported by 6l (for example R_X86_64_32S).\n\nI could fix 5l/6l/8l for this kind of relocation, but is this change acceptable for \nGo 1?\n(Effectively, this change will make it possible for 6l to static link cgo programs,\nI think.)",
+			"disapproval": false,
+			"date": "2012-03-13 21:53:15.551260",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "minux.ma@gmail.com writes:\n\n> On 2012/03/12 05:10:34, iant2 wrote:\n>> I'm not sure the approach of adding the contents of libgcc.a to cgo.a\n> is\n>> best.  I think it might be better to run\n>\n>> gcc -nostdlib -Wl,-r -o FILE.cgo3.o FILE.cgo2.o -lgcc\n>\n>> and then use FILE.cgo3.o instead of FILE.cgo2.o in the subsequent\n>> commands.\n> I tried this, nearly succeeded. But, the command above introduced\n> several\n> relocations not supported by 6l (for example R_X86_64_32S).\n\nThis surprises me.  Using gcc -nostdlib -Wl,-r should not introduce any\nrelocation types that are not present in the input objects.  Does your\nlibgcc.a file have any R_X86_64_32S relocs?  Can you send me the output\nof the command you are running if you also the -v option?\n\nIan\n",
+			"disapproval": false,
+			"date": "2012-03-13 23:07:28.923773",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Mar 14, 2012 at 7:07 AM, Ian Lance Taylor <iant@google.com> wrote:\n\n> minux.ma@gmail.com writes:\n>\n> > On 2012/03/12 05:10:34, iant2 wrote:\n> >> I'm not sure the approach of adding the contents of libgcc.a to cgo.a\n> > is\n> >> best.  I think it might be better to run\n> >\n> >> gcc -nostdlib -Wl,-r -o FILE.cgo3.o FILE.cgo2.o -lgcc\n> >\n> >> and then use FILE.cgo3.o instead of FILE.cgo2.o in the subsequent\n> >> commands.\n> > I tried this, nearly succeeded. But, the command above introduced\n> > several\n> > relocations not supported by 6l (for example R_X86_64_32S).\n>\n> This surprises me.  Using gcc -nostdlib -Wl,-r should not introduce any\n> relocation types that are not present in the input objects.  Does your\n> libgcc.a file have any R_X86_64_32S relocs?  Can you send me the output\n> of the command you are running if you also the -v option?\n\nOh, it's because cgoLDFLAGS contains -lpthread for\nruntime/cgo/gcc_linux_amd64.c.\nI will filter it.\n\nI've succeeded (at least on Unixes), and will send in CL soon. Thank you\nfor your great help.\n\nPS: How about this CL?\n",
+			"disapproval": false,
+			"date": "2012-03-14 13:29:11.752390",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Have you tested this on non-Windows systems?\nWhat else is required to make Windows work beyond this CL?\n\nThanks.\nRuss\n",
+			"disapproval": false,
+			"date": "2012-03-14 17:52:14.425030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Okay, let's wait for after Go 1.\nI do want to fix Windows before Go 1.\n",
+			"disapproval": false,
+			"date": "2012-03-14 18:25:08.143645",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "For the record, this CL has been merged into CL 5823055.",
+			"disapproval": false,
+			"date": "2012-03-19 16:15:42.006246",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 5754075: cmd/ld: correctly support linking hidden visibility symbols",
+	"created": "2012-03-11 14:06:19.497264",
+	"patchsets": [
+		1,
+		1002,
+		7001
+	],
+	"modified": "2012-03-19 16:15:42.043290",
+	"closed": true,
+	"issue": 5754075
+}

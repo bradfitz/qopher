@@ -1,0 +1,132 @@
+{
+	"description": "cmd/6g, cmd/8g: do not LEA[LQ] interfaces when calling methods.\n\nIt is enough to load directly the data word and the itab word\nfrom memory, so we save a LEA instruction for each method call,\nand allow elimination of some extra temporaries.\n\nUpdate issue 1914.",
+	"cc": [
+		"daniel.morsing@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com",
+		"remy@archlinux.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/6501110/diff/3/src/cmd/6g/ggen.c\nFile src/cmd/6g/ggen.c (right):\n\nhttp://codereview.appspot.com/6501110/diff/3/src/cmd/6g/ggen.c#newcode130\nsrc/cmd/6g/ggen.c:130: igen(i, &nodr, res);\t\t// REG = &inter\nCan you introduce a new variable nodi and use it here and below? I got confused reading this about nodr being smashed by the REG = 32+... line, but it isn't smashed: it got regalloc'ed midway. Having a separate variable will avoid that confusion the next time someone reads it.\n\nThanks.\n\nhttp://codereview.appspot.com/6501110/diff/3/src/cmd/8g/ggen.c\nFile src/cmd/8g/ggen.c (right):\n\nhttp://codereview.appspot.com/6501110/diff/3/src/cmd/8g/ggen.c#newcode167\nsrc/cmd/8g/ggen.c:167: igen(i, &nodr, res);\t\t// REG = &inter\nSame.",
+			"disapproval": false,
+			"date": "2012-09-11 02:25:57.930180",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Here is an example where the change leads to elimination of a temporary: io.WriteString\nSee how the sw variable got eliminated. Two LEAQ remain, they read function return values and make the code unnecessarily complex, but they will be eliminated by the change \"make igen a no-op if node is already a OINDREG\".\n\nBefore\n\n.... prepare assertion w.(stringWriter) ...\n0010 (io.go:248) CALL    ,runtime.assertI2I2+0(SB)\n0011 (io.go:248) MOVQ    s+16(FP),DX\n0012 (io.go:248) MOVL    s+24(FP),CX\n0013 (io.go:248) LEAQ    24(SP),BX\n0014 (io.go:248) MOVQ    (BX),BP\n0015 (io.go:248) MOVQ    BP,sw+-16(SP)\n0016 (io.go:248) MOVQ    8(BX),BP\n0017 (io.go:248) MOVQ    BP,sw+-8(SP)\n0018 (io.go:248) MOVBQZX 40(SP),BX\n0019 (io.go:248) CMPB    BX,$0\n0020 (io.go:248) JEQ     ,38\n0021 (io.go:249) LEAQ    8(SP),BX\n0022 (io.go:249) MOVQ    DX,(BX)\n0023 (io.go:249) MOVL    CX,8(BX)\n0024 (io.go:249) LEAQ    sw+-16(SP),BX\n0025 (io.go:249) MOVQ    8(BX),BP\n0026 (io.go:249) MOVQ    BP,(SP)\n0027 (io.go:249) MOVQ    (BX),BX\n0028 (io.go:249) MOVQ    32(BX),BX\n0029 (io.go:249) CALL    ,BX\n0030 (io.go:249) MOVL    24(SP),DX\n0031 (io.go:249) LEAQ    32(SP),BX\n0032 (io.go:249) MOVQ    (BX),CX\n0033 (io.go:249) MOVQ    8(BX),AX\n0034 (io.go:249) MOVL    DX,n+32(FP)\n0035 (io.go:249) MOVQ    CX,err+40(FP)\n0036 (io.go:249) MOVQ    AX,err+48(FP)\n0037 (io.go:249) RET     ,\n0038 case where the assertion was false\n\nAfter:\n\n0010 (io.go:248) CALL    ,runtime.assertI2I2+0(SB)\n0011 (io.go:248) MOVQ    s+16(FP),DI\n0012 (io.go:248) MOVL    s+24(FP),SI\n0013 (io.go:248) LEAQ    24(SP),BX\n0014 (io.go:248) MOVQ    (BX),DX\n0015 (io.go:248) MOVQ    8(BX),CX\n0016 (io.go:248) MOVBQZX 40(SP),BX\n0017 (io.go:248) CMPB    BX,$0\n0018 (io.go:248) JEQ     ,33\n0019 (io.go:249) LEAQ    8(SP),BX\n0020 (io.go:249) MOVQ    DI,(BX)\n0021 (io.go:249) MOVL    SI,8(BX)\n0022 (io.go:249) MOVQ    CX,(SP)\n0023 (io.go:249) MOVQ    32(DX),BX\n0024 (io.go:249) CALL    ,BX\n0025 (io.go:249) MOVL    24(SP),DX\n0026 (io.go:249) LEAQ    32(SP),BX\n0027 (io.go:249) MOVQ    (BX),CX\n0028 (io.go:249) MOVQ    8(BX),AX\n0029 (io.go:249) MOVL    DX,n+32(FP)\n0030 (io.go:249) MOVQ    CX,err+40(FP)\n0031 (io.go:249) MOVQ    AX,err+48(FP)\n0032 (io.go:249) RET     ,\n0033 assertion is false",
+			"disapproval": false,
+			"date": "2012-09-09 07:15:42.871680",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, remy@archlinux.org),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-09-09 06:52:49.912820",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=54654f95a754 ***\n\ncmd/6g, cmd/8g: do not LEA[LQ] interfaces when calling methods.\n\nIt is enough to load directly the data word and the itab word\nfrom memory, so we save a LEA instruction for each method call,\nand allow elimination of some extra temporaries.\n\nUpdate issue 1914.\n\nR=daniel.morsing, rsc\nCC=golang-dev, remy\nhttp://codereview.appspot.com/6501110",
+			"disapproval": false,
+			"date": "2012-09-11 06:45:28.673780",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Could you post a section of assembly code before and after this change?",
+			"disapproval": false,
+			"date": "2012-09-09 06:58:00.250380",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Submitting.\n\nhttp://codereview.appspot.com/6501110/diff/3/src/cmd/6g/ggen.c\nFile src/cmd/6g/ggen.c (right):\n\nhttp://codereview.appspot.com/6501110/diff/3/src/cmd/6g/ggen.c#newcode130\nsrc/cmd/6g/ggen.c:130: igen(i, &nodr, res);\t\t// REG = &inter\nOn 2012/09/11 02:25:58, rsc wrote:\n> Can you introduce a new variable nodi and use it here and below? I got confused\n> reading this about nodr being smashed by the REG = 32+... line, but it isn't\n> smashed: it got regalloc'ed midway. Having a separate variable will avoid that\n> confusion the next time someone reads it.\n> \n> Thanks.\n\nDone.\n\nhttp://codereview.appspot.com/6501110/diff/3/src/cmd/8g/ggen.c\nFile src/cmd/8g/ggen.c (right):\n\nhttp://codereview.appspot.com/6501110/diff/3/src/cmd/8g/ggen.c#newcode167\nsrc/cmd/8g/ggen.c:167: igen(i, &nodr, res);\t\t// REG = &inter\nOn 2012/09/11 02:25:58, rsc wrote:\n> Same.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-09-11 06:45:06.276320",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello daniel.morsing@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com, remy@archlinux.org),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-09-11 06:42:20.825570",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 6501110: cmd/6g, cmd/8g: do not LEA[LQ] interfaces when calling ...",
+	"created": "2012-09-09 06:52:37.083950",
+	"patchsets": [
+		1,
+		2001,
+		3,
+		8001,
+		12001
+	],
+	"modified": "2012-09-11 06:45:29.852320",
+	"closed": true,
+	"issue": 6501110
+}

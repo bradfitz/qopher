@@ -1,0 +1,452 @@
+{
+	"description": "vet: add range variable misuse detection",
+	"cc": [
+		"r@golang.org",
+		"remyoudompheng@gmail.com",
+		"minux.ma@gmail.com",
+		"gri@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"fullung@gmail.com",
+		"dsymonds@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg",
+			"disapproval": false,
+			"date": "2012-09-16 05:54:15.199220",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6494075/diff/4005/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/4005/src/cmd/vet/rangeloop.go#newcode9\nsrc/cmd/vet/rangeloop.go:9: body, as otherwise we would need whole program analysis to reliably detect\nOn 2012/09/17 18:23:31, r wrote:\n> unsplit the verb or just drop the whole \"to ... \" end of the sentence.\n\nDone.\n\nhttp://codereview.appspot.com/6494075/diff/4005/src/cmd/vet/rangeloop.go#newcode28\nsrc/cmd/vet/rangeloop.go:28: // its index or value variables are used unsafely inside goroutine or deferred\nOn 2012/09/17 18:23:31, r wrote:\n> \"goroutines\"?\n> \n\nDone.",
+			"disapproval": false,
+			"date": "2012-09-17 18:26:24.267340",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FYI.\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode64\nsrc/cmd/vet/rangeloop.go:64: if g, ok := node.(*ast.GoStmt); ok {\nswitch n := node.(type) {\ncase nil:\ncase *ast.GoStmt:\ncase *ast.DeferStmt:\ndefault:\n}\n\n?\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode79\nsrc/cmd/vet/rangeloop.go:79: type rangeLoopVisitor struct {\nFYI: There's nothing wrong with using a visitor, but for simple tree inspections like this you might be able to just use ast.Inspect with a closure. There's no need for a visitor type and the all the walk setup. Might be less code and easier to understand.",
+			"disapproval": false,
+			"date": "2012-09-17 19:35:31.366300",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode33\nsrc/cmd/vet/rangeloop.go:33: walkRangeFor(f, n.Key, n)\nIt is not required to use walk for everything. If the data structure is fixed, like here where we know it's a range statement, then it is usually easier to inspect its fields directly. Only the final walk, over the closure body, is truly useful:\n\nif len(n.Body.List) == 0 {\n    return\n}\n\nvar call *ast.CallExpr\nswitch stmt := n.Body.List[len(n.Body.List)-1].(type) {\ncase *ast.GoStmt:\n    call = stmt.Call\ncase *ast.DeferStmt:\n    call = stmt.Call\ndefault:\n    return\n}\n\nlit, ok := call.Fun.(*ast.FuncLit)\nif !ok {\n    return\n}\n\nv := &rangeLoopVisitor{file: f, key: key, val: val}\nast.Walk(v, lit.Body)\n\n(And even there you could possibly use Inspect and a closure).\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode85\nsrc/cmd/vet/rangeloop.go:85: if n, ok := node.(*ast.Ident); ok && n.Name == v.id.Name && n.Obj == v.id.Obj {\nOn 2012/09/17 19:54:13, gri wrote:\n> The n.Name == v.id.Name shouldn't be required: Two identifiers that denote the\n> same object have the same Obj field - if it's the same, the names must be the\n> same. Instead I'd check n.Obj != nil && n.Obj == v.id.Obj - just as a\n> precaution. If the identifier isn't resolved (due to an error), it's Obj will be\n> nil.\n> \n> Background: I think go vet works on individual files and thus doesn't always\n> have full package information (or imports). Thus there is plenty of potential\n> for unresolved identifiers and thus nil objects. In general, for the ones\n> interesting here, the identifier is resolved because it's in the same file and\n> inside a function. However, a program could refer to a globally declared range\n> iteration variable which might be in another package; in that case Obj would be\n> nil (and should be ignored).\n\nI think the check is good as written (with .Name). It's just as wrong to use globals this way as it is to use locals this way.\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode117\nsrc/cmd/vet/rangeloop.go:117: println(\"unfortunately, we can't catch the error above because of this statement\")\ns/unfortunately, we can't/we don't/\n\nYou certainly _can_.",
+			"disapproval": false,
+			"date": "2012-09-17 20:01:59.178480",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode33\nsrc/cmd/vet/rangeloop.go:33: walkRangeFor(f, n.Key, n)\nI had it written this way initially, before I introduced the lastEscapingCallVisitor. I added it because it means I can catch those additional cases where the defer or go statement is inside another block.\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode64\nsrc/cmd/vet/rangeloop.go:64: if g, ok := node.(*ast.GoStmt); ok {\nOn 2012/09/17 19:35:31, gri wrote:\n> switch n := node.(type) {\n> case nil:\n> case *ast.GoStmt:\n> case *ast.DeferStmt:\n> default:\n> }\n> \n> ?\n\nDone.\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode79\nsrc/cmd/vet/rangeloop.go:79: type rangeLoopVisitor struct {\nOn 2012/09/17 19:35:31, gri wrote:\n> FYI: There's nothing wrong with using a visitor, but for simple tree inspections\n> like this you might be able to just use ast.Inspect with a closure. There's no\n> need for a visitor type and the all the walk setup. Might be less code and\n> easier to understand.\n\nDone.\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode81\nsrc/cmd/vet/rangeloop.go:81: id   *ast.Ident\nOn 2012/09/17 19:54:13, gri wrote:\n> You only need the ast.Object I think - no need to always do id.Obj.\n\nDone.\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode117\nsrc/cmd/vet/rangeloop.go:117: println(\"unfortunately, we can't catch the error above because of this statement\")\nOn 2012/09/17 20:01:59, rsc wrote:\n> s/unfortunately, we can't/we don't/\n> \n> You certainly _can_.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-09-17 20:17:49.715030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode33\nsrc/cmd/vet/rangeloop.go:33: walkRangeFor(f, n.Key, n)\nOn 2012/09/17 20:17:50, adg wrote:\n> I had it written this way initially, before I introduced the\n> lastEscapingCallVisitor. I added it because it means I can catch those\n> additional cases where the defer or go statement is inside another block.\n\nThey're not worth it.",
+			"disapproval": false,
+			"date": "2012-09-17 20:29:28.982400",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 17 September 2012 13:29,  <rsc@golang.org> wrote:\r\n>\r\n> http://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go\r\n> File src/cmd/vet/rangeloop.go (right):\r\n>\r\n> http://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode33\r\n> src/cmd/vet/rangeloop.go:33: walkRangeFor(f, n.Key, n)\r\n> On 2012/09/17 20:17:50, adg wrote:\r\n>>\r\n>> I had it written this way initially, before I introduced the\r\n>> lastEscapingCallVisitor. I added it because it means I can catch those\r\n>> additional cases where the defer or go statement is inside another\r\n>\r\n> block.\r\n>\r\n> They're not worth it.\r\n\r\nNot worth the extra 10 lines of code? Or are you worried about\r\nexecution speed? Or false positives? FWIW, you'd have to write pretty\r\ncontrived code to trigger a false positive.\r\n",
+			"disapproval": false,
+			"date": "2012-09-17 22:32:37.236330",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go\nFile src/cmd/vet/main.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go#newcode64\nsrc/cmd/vet/main.go:64: if *vetMethods || *vetPrintf || *vetStructTags || *vetUntaggedLiteral || *vetRangeLoops {\nthis is becoming hard to read, I suggest (if you think it looks better):\n\nswitch {\ncase *vetMethods,\n  *vetPrintf,\n  *vetRangeLoops,\n  *vetStructTags,\n  *vetUntaggedLiteral:\n    *vetAll = false\n}\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go#newcode63\nsrc/cmd/vet/rangeloop.go:63: // If found, it is issues a warning.\nit issues ?\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go#newcode102\nsrc/cmd/vet/rangeloop.go:102: println(\"unforunately, we can't catch the error above because of this statement\")\nunfortunately",
+			"disapproval": false,
+			"date": "2012-09-17 18:16:14.184070",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, fullung@gmail.com, r@golang.org, remyoudompheng@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-09-17 18:16:46.767350",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "minor typo\n\nhttp://codereview.appspot.com/6494075/diff/6001/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/6001/src/cmd/vet/rangeloop.go#newcode11\nsrc/cmd/vet/rangeloop.go:11: // checkRangeLoop walks the body of the provided range statment, checking if\nstatment -> statement",
+			"disapproval": false,
+			"date": "2012-09-16 06:34:53.984330",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go\nFile src/cmd/vet/main.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go#newcode64\nsrc/cmd/vet/main.go:64: if *vetMethods || *vetPrintf || *vetStructTags || *vetUntaggedLiteral || *vetRangeLoops {\nThat's messier than what's here, IMO.\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go#newcode63\nsrc/cmd/vet/rangeloop.go:63: // If found, it is issues a warning.\nOn 2012/09/17 18:16:14, remyoudompheng wrote:\n> it issues ? \n\nDone.\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go#newcode102\nsrc/cmd/vet/rangeloop.go:102: println(\"unforunately, we can't catch the error above because of this statement\")\nOn 2012/09/17 18:16:14, remyoudompheng wrote:\n> unfortunately\n\nDone.",
+			"disapproval": false,
+			"date": "2012-09-17 18:19:13.223820",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM but let rsc or gri take a look\n\nhttp://codereview.appspot.com/6494075/diff/4005/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/4005/src/cmd/vet/rangeloop.go#newcode9\nsrc/cmd/vet/rangeloop.go:9: body, as otherwise we would need whole program analysis to reliably detect\nunsplit the verb or just drop the whole \"to ... \" end of the sentence.\n\nhttp://codereview.appspot.com/6494075/diff/4005/src/cmd/vet/rangeloop.go#newcode28\nsrc/cmd/vet/rangeloop.go:28: // its index or value variables are used unsafely inside goroutine or deferred\n\"goroutines\"?",
+			"disapproval": false,
+			"date": "2012-09-17 18:23:31.363340",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Sep 17, 2012 at 11:22 AM, minux <minux.ma@gmail.com> wrote:\r\n> Could we use an array of flags here so that we do not\r\n> need to add every bool flag here?\r\n\r\nsounds good but let's make that a separate CL.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-09-17 18:24:14.777810",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go\nFile src/cmd/vet/main.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go#newcode192\nsrc/cmd/vet/main.go:192: f.walkRangeStmt(n)\nOn 2012/09/17 18:09:59, r wrote:\n> these were in alphabetical order.\n\nDone.\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go#newcode208\nsrc/cmd/vet/main.go:208: checkRangeLoop(f, n)\nOn 2012/09/17 18:09:59, r wrote:\n> ditto, almost. please fix them up\n\nDone.\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go#newcode5\nsrc/cmd/vet/rangeloop.go:5: // This file contains the code to check the use of range loop variables.\nOn 2012/09/17 18:09:59, r wrote:\n> maybe an example - it's not clear what's being checked.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-09-17 18:17:31.880630",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello fullung@gmail.com, r@golang.org, remyoudompheng@gmail.com, minux.ma@gmail.com, gri@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-09-17 20:18:05.428330",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tuesday, September 18, 2012, adg wrote\r\n>\r\n> http://codereview.appspot.com/**6494075/diff/12001/src/cmd/**vet/main.go<http://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go>\r\n> File src/cmd/vet/main.go (right):\r\n> http://codereview.appspot.com/**6494075/diff/12001/src/cmd/**\r\n> vet/main.go#newcode64<http://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go#newcode64>\r\n> src/cmd/vet/main.go:64: if *vetMethods || *vetPrintf || *vetStructTags\r\n> || *vetUntaggedLiteral || *vetRangeLoops {\r\n> That's messier than what's here, IMO.\r\n\r\nCould we use an array of flags here so that we do not\r\nneed to add every bool flag here?\r\n",
+			"disapproval": false,
+			"date": "2012-09-17 18:22:26.550880",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, fullung@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-09-17 17:16:38.465930",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PS:\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode81\nsrc/cmd/vet/rangeloop.go:81: id   *ast.Ident\nYou only need the ast.Object I think - no need to always do id.Obj.\n\nhttp://codereview.appspot.com/6494075/diff/1002/src/cmd/vet/rangeloop.go#newcode85\nsrc/cmd/vet/rangeloop.go:85: if n, ok := node.(*ast.Ident); ok && n.Name == v.id.Name && n.Obj == v.id.Obj {\nThe n.Name == v.id.Name shouldn't be required: Two identifiers that denote the same object have the same Obj field - if it's the same, the names must be the same. Instead I'd check n.Obj != nil && n.Obj == v.id.Obj - just as a precaution. If the identifier isn't resolved (due to an error), it's Obj will be nil.\n\nBackground: I think go vet works on individual files and thus doesn't always have full package information (or imports). Thus there is plenty of potential for unresolved identifiers and thus nil objects. In general, for the ones interesting here, the identifier is resolved because it's in the same file and inside a function. However, a program could refer to a globally declared range iteration variable which might be in another package; in that case Obj would be nil (and should be ignored).",
+			"disapproval": false,
+			"date": "2012-09-17 19:54:13.390450",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go\nFile src/cmd/vet/main.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go#newcode192\nsrc/cmd/vet/main.go:192: f.walkRangeStmt(n)\nthese were in alphabetical order.\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/main.go#newcode208\nsrc/cmd/vet/main.go:208: checkRangeLoop(f, n)\nditto, almost. please fix them up\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/12001/src/cmd/vet/rangeloop.go#newcode5\nsrc/cmd/vet/rangeloop.go:5: // This file contains the code to check the use of range loop variables.\nmaybe an example - it's not clear what's being checked.",
+			"disapproval": false,
+			"date": "2012-09-17 18:09:59.445660",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, fullung@gmail.com, r@golang.org, remyoudompheng@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-09-17 18:19:21.443500",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello fullung@gmail.com, r@golang.org, remyoudompheng@gmail.com, minux.ma@gmail.com, gri@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-09-18 20:31:41.782730",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/6494075/diff/20007/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/20007/src/cmd/vet/rangeloop.go#newcode33\nsrc/cmd/vet/rangeloop.go:33: checkRangeLoopFor(f, n, n.Key)\nIt's odd to do the work twice just because there are two variables.\nPass both into one function.",
+			"disapproval": false,
+			"date": "2012-09-18 20:53:33.195050",
+			"approval": true
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've reduced it to something like this:\r\n\r\n        var x [2]int\r\n        var f int\r\n        for x[0], f = range s {\r\n                go func() {\r\n                        _ = f\r\n                }()\r\n        }\r\n\r\nThe code is assuming that if one of key and value are non-nil then\r\n(value!=nil) => (key!=nil) [true], and therefore (value is an\r\n*ast.Ident) => (key is an *ast.Ident) [false].\r\n\r\nEasy to fix.\r\n",
+			"disapproval": false,
+			"date": "2012-09-19 13:00:07.404820",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Fix: http://codereview.appspot.com/6540045\r\n",
+			"disapproval": false,
+			"date": "2012-09-19 13:04:09.588750",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"adg@golang.org",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello\n\nThis didn't survive our code.\n\nThe file that blows it up has ranges like:\n\nfor b:= range bb {}\n\nfor i, c := range cc {}\n\nfor _, f := range ff {}\n\nIt's quite a big file though. Don't have time to reduce it right now unfortunately.\n\nCheers\n\nAlbert\n\npanic: runtime error: invalid memory address or nil pointer dereference\n[signal 0xb code=0x1 addr=0x18 pc=0x405fbb]\n\ngoroutine 1 [running]:\nmain.func\u00b7002(0xf84006efb8, 0xf84006efc0, 0xf84006efb0, 0x43b973, 0xf84008b840, ...)\n        /build/go/go/src/cmd/vet/rangeloop.go:56 +0x8b\ngo/ast.inspector.Visit(0xf840090870, 0xf84008b840, 0xf840087dc0, 0xf84008bc00, 0xf840090870, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:367 +0x33\ngo/ast.Walk(0xf84008bc00, 0xf840090870, 0xf84008b840, 0xf840087dc0, 0x7f9ccb67e100, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:52 +0x59\n----- stack segment boundary -----\ngo/ast.walkExprList(0xf84008bc00, 0xf840090870, 0xf840078d80, 0x400000004, 0xf840087d80, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:26 +0x8a\ngo/ast.Walk(0xf84008bc00, 0xf840090870, 0xf84008b9f0, 0xf840085d50, 0xf840085d50, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:134 +0x1fc8\ngo/ast.Walk(0xf84008bc00, 0xf840090870, 0xf84008ba50, 0xf840088330, 0x7f9ccb67d100, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:191 +0x41ab\n----- stack segment boundary -----\ngo/ast.walkStmtList(0xf84008bc00, 0xf840090870, 0xf840078e00, 0x400000004, 0xf840090801, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:32 +0x8a\ngo/ast.Walk(0xf84008bc00, 0xf840090870, 0xf84008b990, 0xf8400890c0, 0x405461, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:219 +0x4117\ngo/ast.Inspect(0xf84008b990, 0xf8400890c0, 0xf840090870, 0xf84006efc0, 0xf84006efb0, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:378 +0x52\nmain.checkRangeLoop(0xf84005d0e0, 0xf840001c80, 0x4020ce, 0xf84005d0e0)\n        /build/go/go/src/cmd/vet/rangeloop.go:60 +0x261\nmain.(*File).walkRangeStmt(0xf84005d0e0, 0xf840001c80, 0xf840001c80, 0xf840001c80)\n        /build/go/go/src/cmd/vet/main.go:260 +0x2f\nmain.(*File).Visit(0xf84005d0e0, 0xf84008bba0, 0xf840001c80, 0xf84008b7e0, 0xf84005d0e0, ...)\n        /build/go/go/src/cmd/vet/main.go:202 +0x24e\ngo/ast.Walk(0xf84008b7e0, 0xf84005d0e0, 0xf84008bba0, 0xf840001c80, 0x7f9ccb67c100, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:52 +0x59\n----- stack segment boundary -----\ngo/ast.walkStmtList(0xf84008b7e0, 0xf84005d0e0, 0xf840068400, 0x4000000030, 0xf84005d001, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:32 +0x8a\ngo/ast.Walk(0xf84008b7e0, 0xf84005d0e0, 0xf84008b990, 0xf84008f100, 0xf84005d001, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:219 +0x4117\ngo/ast.Walk(0xf84008b7e0, 0xf84005d0e0, 0xf84008b900, 0xf84008b450, 0x7f9ccb67a100, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:337 +0xd0c\n----- stack segment boundary -----\ngo/ast.walkDeclList(0xf84008b7e0, 0xf84005d0e0, 0xf840080400, 0x1000000009, 0xf84005d001, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:38 +0x8a\ngo/ast.Walk(0xf84008b7e0, 0xf84005d0e0, 0xf84008b810, 0xf8400760c0, 0xf840088d20, ...)\n        /build/go/go/src/pkg/go/ast/walk.go:346 +0x2c7b\nmain.(*File).walkFile(0xf84005d0e0, 0x7fff31ccd602, 0xe, 0xf8400760c0, 0x0, ...)\n        /build/go/go/src/cmd/vet/main.go:185 +0x11c\nmain.doFile(0x7fff31ccd602, 0xe, 0x0, 0x0, 0x0, ...)\n        /build/go/go/src/cmd/vet/main.go:116 +0x1f5\nmain.main()\n        /build/go/go/src/cmd/vet/main.go:99 +0x522\n\nOn 2012/09/18 21:22:31, adg wrote:\n> *** Submitted as http://code.google.com/p/go/source/detail?r=838111caecdd ***\n> \n> vet: add range variable misuse detection\n> \n> R=fullung, r, remyoudompheng, minux.ma, gri, rsc\n> CC=golang-dev\n> http://codereview.appspot.com/6494075\n> \n> http://codereview.appspot.com/6494075/diff/20007/src/cmd/vet/rangeloop.go\n> File src/cmd/vet/rangeloop.go (right):\n> \n> http://codereview.appspot.com/6494075/diff/20007/src/cmd/vet/rangeloop.go#newcode33\n> src/cmd/vet/rangeloop.go:33: checkRangeLoopFor(f, n, n.Key)\n> On 2012/09/18 20:53:33, rsc wrote:\n> > It's odd to do the work twice just because there are two variables.\n> > Pass both into one function.\n> \n> Done.",
+			"disapproval": false,
+			"date": "2012-09-19 08:50:52.711070",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry about that. Thanks for the report.\r\n\r\nOn 19 September 2012 01:50,  <fullung@gmail.com> wrote:\r\n> Hello\r\n>\r\n> This didn't survive our code.\r\n>\r\n> The file that blows it up has ranges like:\r\n>\r\n> for b:= range bb {}\r\n>\r\n> for i, c := range cc {}\r\n>\r\n> for _, f := range ff {}\r\n>\r\n> It's quite a big file though. Don't have time to reduce it right now\r\n> unfortunately.\r\n>\r\n> Cheers\r\n>\r\n> Albert\r\n>\r\n> panic: runtime error: invalid memory address or nil pointer dereference\r\n> [signal 0xb code=0x1 addr=0x18 pc=0x405fbb]\r\n>\r\n> goroutine 1 [running]:\r\n> main.func\u00b7002(0xf84006efb8, 0xf84006efc0, 0xf84006efb0, 0x43b973,\r\n> 0xf84008b840, ...)\r\n>         /build/go/go/src/cmd/vet/rangeloop.go:56 +0x8b\r\n> go/ast.inspector.Visit(0xf840090870, 0xf84008b840, 0xf840087dc0,\r\n> 0xf84008bc00, 0xf840090870, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:367 +0x33\r\n> go/ast.Walk(0xf84008bc00, 0xf840090870, 0xf84008b840, 0xf840087dc0,\r\n> 0x7f9ccb67e100, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:52 +0x59\r\n> ----- stack segment boundary -----\r\n> go/ast.walkExprList(0xf84008bc00, 0xf840090870, 0xf840078d80,\r\n> 0x400000004, 0xf840087d80, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:26 +0x8a\r\n> go/ast.Walk(0xf84008bc00, 0xf840090870, 0xf84008b9f0, 0xf840085d50,\r\n> 0xf840085d50, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:134 +0x1fc8\r\n> go/ast.Walk(0xf84008bc00, 0xf840090870, 0xf84008ba50, 0xf840088330,\r\n> 0x7f9ccb67d100, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:191 +0x41ab\r\n> ----- stack segment boundary -----\r\n> go/ast.walkStmtList(0xf84008bc00, 0xf840090870, 0xf840078e00,\r\n> 0x400000004, 0xf840090801, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:32 +0x8a\r\n> go/ast.Walk(0xf84008bc00, 0xf840090870, 0xf84008b990, 0xf8400890c0,\r\n> 0x405461, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:219 +0x4117\r\n> go/ast.Inspect(0xf84008b990, 0xf8400890c0, 0xf840090870, 0xf84006efc0,\r\n> 0xf84006efb0, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:378 +0x52\r\n> main.checkRangeLoop(0xf84005d0e0, 0xf840001c80, 0x4020ce, 0xf84005d0e0)\r\n>         /build/go/go/src/cmd/vet/rangeloop.go:60 +0x261\r\n> main.(*File).walkRangeStmt(0xf84005d0e0, 0xf840001c80, 0xf840001c80,\r\n> 0xf840001c80)\r\n>         /build/go/go/src/cmd/vet/main.go:260 +0x2f\r\n> main.(*File).Visit(0xf84005d0e0, 0xf84008bba0, 0xf840001c80,\r\n> 0xf84008b7e0, 0xf84005d0e0, ...)\r\n>         /build/go/go/src/cmd/vet/main.go:202 +0x24e\r\n> go/ast.Walk(0xf84008b7e0, 0xf84005d0e0, 0xf84008bba0, 0xf840001c80,\r\n> 0x7f9ccb67c100, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:52 +0x59\r\n> ----- stack segment boundary -----\r\n> go/ast.walkStmtList(0xf84008b7e0, 0xf84005d0e0, 0xf840068400,\r\n> 0x4000000030, 0xf84005d001, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:32 +0x8a\r\n> go/ast.Walk(0xf84008b7e0, 0xf84005d0e0, 0xf84008b990, 0xf84008f100,\r\n> 0xf84005d001, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:219 +0x4117\r\n> go/ast.Walk(0xf84008b7e0, 0xf84005d0e0, 0xf84008b900, 0xf84008b450,\r\n> 0x7f9ccb67a100, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:337 +0xd0c\r\n> ----- stack segment boundary -----\r\n> go/ast.walkDeclList(0xf84008b7e0, 0xf84005d0e0, 0xf840080400,\r\n> 0x1000000009, 0xf84005d001, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:38 +0x8a\r\n> go/ast.Walk(0xf84008b7e0, 0xf84005d0e0, 0xf84008b810, 0xf8400760c0,\r\n> 0xf840088d20, ...)\r\n>         /build/go/go/src/pkg/go/ast/walk.go:346 +0x2c7b\r\n> main.(*File).walkFile(0xf84005d0e0, 0x7fff31ccd602, 0xe, 0xf8400760c0,\r\n> 0x0, ...)\r\n>         /build/go/go/src/cmd/vet/main.go:185 +0x11c\r\n> main.doFile(0x7fff31ccd602, 0xe, 0x0, 0x0, 0x0, ...)\r\n>         /build/go/go/src/cmd/vet/main.go:116 +0x1f5\r\n> main.main()\r\n>         /build/go/go/src/cmd/vet/main.go:99 +0x522\r\n>\r\n>\r\n> On 2012/09/18 21:22:31, adg wrote:\r\n>>\r\n>> *** Submitted as\r\n>\r\n> http://code.google.com/p/go/source/detail?r=838111caecdd ***\r\n>\r\n>> vet: add range variable misuse detection\r\n>\r\n>\r\n>> R=fullung, r, remyoudompheng, minux.ma, gri, rsc\r\n>> CC=golang-dev\r\n>> http://codereview.appspot.com/6494075\r\n>\r\n>\r\n>\r\n> http://codereview.appspot.com/6494075/diff/20007/src/cmd/vet/rangeloop.go\r\n>>\r\n>> File src/cmd/vet/rangeloop.go (right):\r\n>\r\n>\r\n>\r\n> http://codereview.appspot.com/6494075/diff/20007/src/cmd/vet/rangeloop.go#newcode33\r\n>>\r\n>> src/cmd/vet/rangeloop.go:33: checkRangeLoopFor(f, n, n.Key)\r\n>> On 2012/09/18 20:53:33, rsc wrote:\r\n>> > It's odd to do the work twice just because there are two variables.\r\n>> > Pass both into one function.\r\n>\r\n>\r\n>> Done.\r\n>\r\n>\r\n>\r\n> http://codereview.appspot.com/6494075/\r\n",
+			"disapproval": false,
+			"date": "2012-09-19 17:05:43.598870",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"fullung@gmail.com",
+				"r@golang.org",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=838111caecdd ***\n\nvet: add range variable misuse detection\n\nR=fullung, r, remyoudompheng, minux.ma, gri, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6494075\n\nhttp://codereview.appspot.com/6494075/diff/20007/src/cmd/vet/rangeloop.go\nFile src/cmd/vet/rangeloop.go (right):\n\nhttp://codereview.appspot.com/6494075/diff/20007/src/cmd/vet/rangeloop.go#newcode33\nsrc/cmd/vet/rangeloop.go:33: checkRangeLoopFor(f, n, n.Key)\nOn 2012/09/18 20:53:33, rsc wrote:\n> It's odd to do the work twice just because there are two variables.\n> Pass both into one function.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-09-18 21:22:31.164750",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 6494075: vet: add range variable misuse detection",
+	"created": "2012-09-04 01:22:17.857320",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		6001,
+		8001,
+		4002,
+		12001,
+		2003,
+		4005,
+		1002,
+		14002,
+		7012,
+		15001,
+		19001,
+		20007,
+		17004
+	],
+	"modified": "2012-09-19 13:00:07.474580",
+	"closed": true,
+	"issue": 6494075
+}

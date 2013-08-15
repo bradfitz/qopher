@@ -1,0 +1,269 @@
+{
+	"description": "cmd/go: quote command line arguments in debug output\n\nDebug output from go test -x may contain empty arguments.\nThis CL quotes arguments if needed. E.g. the output of\ngo test -x is now\n  .../6g -o ./_go_.6 -p testmain -complete -D \"\" -I . -I $WORK ./_testmain.go\nwhich is easier to grasp.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"minux.ma@gmail.com",
+		"r@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-04-10 18:12:32.321180",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't think quotedJoin here needs to be as performance-sensitive as\r\nstrings.Join.  I'd just make it super simple instead:\r\n\r\n// quotedJoin works like strings.Join(a, \" \") but joins empty strings as \"\".\r\nfunc quotedJoin(a []string) string {\r\n    var b []byte\r\n    for i, s := range a {\r\n        if i > 0 {\r\n             b = append(b, ' ')\r\n        }\r\n        if s == \"\" {\r\n             b = append(b, '\"', '\"')\r\n        } else {\r\n             b = append(b, s...)\r\n        }\r\n    }\r\n    return string(b)\r\n}\r\n\r\nBut this is still not a complete solution if the problem is \"I want to\r\ncopy/paste this into my shell\".\r\n\r\nI'm not opposed to it, though.  This seems fine.\r\n\r\n\r\n\r\nOn Wed, Apr 10, 2013 at 11:12 AM, <dr.volker.dobler@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> cmd/go: quote empty command line arguments in debug output\r\n>\r\n> Debug output from go test -x may contain empty arguments.\r\n> This CL displays them as \"\". E.g. the output of go test -x\r\n> is now\r\n>   .../6g -o ./_go_.6 -p testmain -complete -D \"\" -I . -I $WORK\r\n> ./_testmain.go\r\n> which is easier to grasp and can be re-run directly.\r\n>\r\n> Please review this at https://codereview.appspot.**com/8633043/<https://codereview.appspot.com/8633043/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/go/build.go\r\n>\r\n>\r\n> Index: src/cmd/go/build.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/go/build.go\r\n> +++ b/src/cmd/go/build.go\r\n> @@ -1236,7 +1236,7 @@\r\n>  func (b *builder) runOut(dir string, desc string, cmdargs ...interface{})\r\n> ([]byte, error) {\r\n>         cmdline := stringList(cmdargs...)\r\n>         if buildN || buildX {\r\n> -               b.showcmd(dir, \"%s\", strings.Join(cmdline, \" \"))\r\n> +               b.showcmd(dir, \"%s\", quotedJoin(cmdline))\r\n>                 if buildN {\r\n>                         return nil, nil\r\n>                 }\r\n> @@ -1303,6 +1303,41 @@\r\n>         }\r\n>  }\r\n>\r\n> +// quotedJoin works like strings.Join(a, \" \") but joins empty strings as\r\n> \"\".\r\n> +func quotedJoin(a []string) string {\r\n> +       if len(a) == 0 {\r\n> +               return \"\"\r\n> +       }\r\n> +       if len(a) == 1 {\r\n> +               if a[0] == \"\" {\r\n> +                       return `\"\"`\r\n> +               }\r\n> +               return a[0]\r\n> +       }\r\n> +       n := len(a) - 1\r\n> +       for i := 0; i < len(a); i++ {\r\n> +               if w := len(a[i]); w > 0 {\r\n> +                       n += w\r\n> +               } else {\r\n> +                       n += 2\r\n> +               }\r\n> +       }\r\n> +\r\n> +       b := make([]byte, n)\r\n> +       bp := 0\r\n> +       for i, s := range a {\r\n> +               if i > 0 {\r\n> +                       bp += copy(b[bp:], \" \")\r\n> +               }\r\n> +               if s == \"\" {\r\n> +                       bp += copy(b[bp:], `\"\"`)\r\n> +               } else {\r\n> +                       bp += copy(b[bp:], s)\r\n> +               }\r\n> +       }\r\n> +       return string(b)\r\n> +}\r\n> +\r\n>  // mkdir makes the named directory.\r\n>  func (b *builder) mkdir(dir string) error {\r\n>         b.exec.Lock()\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-10 18:28:41.180030",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nI admit it is not a solution to copy/paste in\nthe shell, but I struggled 10 minutes why I\ncouldn't re-run the output.  Looking up -D\nand counting spaces made it clear.  This patch\nhelps a bit here.",
+			"disapproval": false,
+			"date": "2013-04-10 19:01:24.488030",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8633043/diff/9001/src/cmd/go/build.go\nFile src/cmd/go/build.go (right):\n\nhttps://codereview.appspot.com/8633043/diff/9001/src/cmd/go/build.go#newcode1320\nsrc/cmd/go/build.go:1320: }\ni see the point, but it's a little odd and specific. if you're going to quote, maybe quote for real?\nfunc quotedJoin(s []string) string {\n\tr := fmt.Sprintf(\"%q\", s)\n\treturn r[1:len(r)-1]\n}\n\nsince this is debug output, it might be nice to see if there are frogs.\ni could see not doing that, too, since it means you can't cut and paste, but i think for debugging full information is more important.\n\nif you prefer the incomplete but easier to copy-paste version, use a byte buffer:\n\nfunc quotedJoin(strs []string) string {\n\tvar b bytes.Buffer\n\tfor _, s := range strs {\n\t\tb.WriteByte('\"')\n\t\tb.WriteString(s)\n\t\tb.WriteByte('\"')\n\t\tb.WriteByte(' ')\n\t}\n\treturn b.String()\n}\n\ni don't believe the trailing space is worth the if statement to eliminate it, but put it in if you want.\n\nbut what you have is also ok.",
+			"disapproval": false,
+			"date": "2013-04-10 20:38:13.224650",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\nI vote for get this in.",
+			"disapproval": false,
+			"date": "2013-04-10 20:21:28.016180",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nbut waiting for r or adg before submitting.\r\n\r\n\r\n\r\nOn Wed, Apr 10, 2013 at 1:21 PM, <minux.ma@gmail.com> wrote:\r\n\r\n> LGTM.\r\n>\r\n> I vote for get this in.\r\n>\r\n> https://codereview.appspot.**com/8633043/<https://codereview.appspot.com/8633043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-10 20:26:29.999040",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Notice my versions also protect spaces.",
+			"disapproval": false,
+			"date": "2013-04-10 20:39:57.071630",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'd prefer to avoid quoting things which don't need quoting.\r\n On Apr 10, 2013 1:39 PM, <r@golang.org> wrote:\r\n\r\n> Notice my versions also protect spaces.\r\n>\r\n> https://codereview.appspot.**com/8633043/<https://codereview.appspot.com/8633043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-11 04:23:44.038100",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Fine, but the CL as it stands doesn't quote things that *do* need\r\nquoting, it just prints \"\" for empty strings.\r\n\r\n-rob\r\n\r\n\r\nOn Wed, Apr 10, 2013 at 9:23 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> I'd prefer to avoid quoting things which don't need quoting.\r\n>\r\n> On Apr 10, 2013 1:39 PM, <r@golang.org> wrote:\r\n>>\r\n>> Notice my versions also protect spaces.\r\n>>\r\n>> https://codereview.appspot.com/8633043/\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-11 04:37:36.671470",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I will propose an alternative when I find a computer.\r\n On Apr 10, 2013 9:37 PM, \"Rob Pike\" <r@golang.org> wrote:\r\n\r\n> Fine, but the CL as it stands doesn't quote things that *do* need\r\n> quoting, it just prints \"\" for empty strings.\r\n>\r\n> -rob\r\n>\r\n>\r\n> On Wed, Apr 10, 2013 at 9:23 PM, Brad Fitzpatrick <bradfitz@golang.org>\r\n> wrote:\r\n> > I'd prefer to avoid quoting things which don't need quoting.\r\n> >\r\n> > On Apr 10, 2013 1:39 PM, <r@golang.org> wrote:\r\n> >>\r\n> >> Notice my versions also protect spaces.\r\n> >>\r\n> >> https://codereview.appspot.com/8633043/\r\n> >\r\n> > --\r\n> >\r\n> > ---\r\n> > You received this message because you are subscribed to the Google Groups\r\n> > \"golang-dev\" group.\r\n> > To unsubscribe from this group and stop receiving emails from it, send an\r\n> > email to golang-dev+unsubscribe@googlegroups.com.\r\n> > For more options, visit https://groups.google.com/groups/opt_out.\r\n> >\r\n> >\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-11 04:38:34.488810",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "func main() {\r\n        println(quotedJoin([]string{\"foo\", \"-D\", \"\", \"with space\",\r\n\"with\\\"quote\", \"bare\"}))\r\n}\r\n\r\nfunc quotedJoin(a []string) string {\r\n        var buf bytes.Buffer\r\n        for i, s := range a {\r\n                if i > 0 {\r\n                        buf.WriteByte(' ')\r\n                }\r\n                q := strconv.Quote(s)\r\n                if s == \"\" || strings.Contains(s, \" \") || len(q) > len(s)+2\r\n{\r\n                        buf.WriteString(q)\r\n                } else {\r\n                        buf.WriteString(s)\r\n                }\r\n        }\r\n        return buf.String()\r\n}\r\n\r\n\r\n\r\nOn Wed, Apr 10, 2013 at 9:38 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> I will propose an alternative when I find a computer.\r\n>  On Apr 10, 2013 9:37 PM, \"Rob Pike\" <r@golang.org> wrote:\r\n>\r\n>> Fine, but the CL as it stands doesn't quote things that *do* need\r\n>> quoting, it just prints \"\" for empty strings.\r\n>>\r\n>> -rob\r\n>>\r\n>>\r\n>> On Wed, Apr 10, 2013 at 9:23 PM, Brad Fitzpatrick <bradfitz@golang.org>\r\n>> wrote:\r\n>> > I'd prefer to avoid quoting things which don't need quoting.\r\n>> >\r\n>> > On Apr 10, 2013 1:39 PM, <r@golang.org> wrote:\r\n>> >>\r\n>> >> Notice my versions also protect spaces.\r\n>> >>\r\n>> >> https://codereview.appspot.com/8633043/\r\n>> >\r\n>> > --\r\n>> >\r\n>> > ---\r\n>> > You received this message because you are subscribed to the Google\r\n>> Groups\r\n>> > \"golang-dev\" group.\r\n>> > To unsubscribe from this group and stop receiving emails from it, send\r\n>> an\r\n>> > email to golang-dev+unsubscribe@googlegroups.com.\r\n>> > For more options, visit https://groups.google.com/groups/opt_out.\r\n>> >\r\n>> >\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-11 06:19:04.851010",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nadopted the suggestion of Brad.",
+			"disapproval": false,
+			"date": "2013-04-11 07:38:07.462880",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nLeaving for r to approve for go1.1 before submitting.\r\n\r\n\r\n\r\nOn Thu, Apr 11, 2013 at 12:38 AM, <dr.volker.dobler@gmail.com> wrote:\r\n\r\n> PTAL\r\n>\r\n> adopted the suggestion of Brad.\r\n>\r\n> https://codereview.appspot.**com/8633043/<https://codereview.appspot.com/8633043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-11 21:52:00.511050",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8633043/diff/24001/src/cmd/go/build.go\nFile src/cmd/go/build.go (right):\n\nhttps://codereview.appspot.com/8633043/diff/24001/src/cmd/go/build.go#newcode1308\nsrc/cmd/go/build.go:1308: // if needed.\nthis comment is grammatically wrong and inaccurate. also the name is not the best, either, given what it does now.\n\n// quoteForShell prints the slice, quoting where necessary to make it closer\n// to being interpretable by the shell, such as showing empty strings and\n// quoting non-shell-safe strings. However it uses Go's quoting rules so\n// the result may not be perfect.\nfunc quoteForShell(...)",
+			"disapproval": false,
+			"date": "2013-04-11 22:10:56.562140",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nSorry for the nonsensical doc.\n\nI do not think shell quoting should be mentioned\nas this is not the intention of this CL.\nSo I'd like to propose a new version.",
+			"disapproval": false,
+			"date": "2013-04-11 23:12:55.908980",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "sorry about the long long tale here, but if we're going to do this, let's get it right. i'll write a proper shell quoter tonight and propose that. i learned long ago that it's worth making the printing of shell commands valid input to the shell.",
+			"disapproval": false,
+			"date": "2013-04-11 23:26:23.919460",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThis does only a small part of the problem but getting it right is a huge amount of work. I played with it some last night and this code is not set up to make proper printing work well. I'll file an issue to take care of it properly.\n\nhttps://codereview.appspot.com/8633043/diff/30002/src/cmd/go/build.go\nFile src/cmd/go/build.go (right):\n\nhttps://codereview.appspot.com/8633043/diff/30002/src/cmd/go/build.go#newcode1309\nsrc/cmd/go/build.go:1309: func joinUnambiguously(a []string) string {\nthat's a mouthful yet still not quite right.  meh. this has dragged on long enough.",
+			"disapproval": false,
+			"date": "2013-04-12 20:59:27.352890",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=eed0c8bb671f ***\n\ncmd/go: quote command line arguments in debug output\n\nDebug output from go test -x may contain empty arguments.\nThis CL quotes arguments if needed. E.g. the output of\ngo test -x is now\n  .../6g -o ./_go_.6 -p testmain -complete -D \"\" -I . -I $WORK ./_testmain.go\nwhich is easier to grasp.\n\nR=golang-dev, bradfitz, minux.ma, r\nCC=golang-dev\nhttps://codereview.appspot.com/8633043\n\nCommitter: Rob Pike <r@golang.org>",
+			"disapproval": false,
+			"date": "2013-04-12 21:05:30.057170",
+			"approval": false
+		}
+	],
+	"owner_email": "dr.volker.dobler@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "volker.dobler",
+	"subject": "code review 8633043: cmd/go: quote empty command line arguments in debug output",
+	"created": "2013-04-10 17:58:36.960210",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9001,
+		21001,
+		24001,
+		30002
+	],
+	"modified": "2013-04-13 11:04:52.088480",
+	"closed": true,
+	"issue": 8633043
+}

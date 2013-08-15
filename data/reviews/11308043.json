@@ -1,0 +1,116 @@
+{
+	"description": "cmd/gc: fix race detector instrumentation of type switches.\n\nA type switch on a value with map index expressions,\ncould get a spurious instrumentation from a OTYPESW node.\nThese nodes do not need instrumentation because after\nwalk the type switch has been turned into a sequence\nof ifs.\n\nFixes issue 5890.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dvyukov@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-07-15 23:09:19.416010",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Before the fix:\n\n$ go test -race runtime/race\n--- FAIL: TestRace (6.87 seconds)\n\trace_test.go:45: Failed to run tests: exit status 1\n\t\t==================\n\t\tWARNING: DATA RACE\n\t\tRead by goroutine 3:\n\t\t[...]\n\t\t--- PASS: TestRaceCaseTypeBody (0.00 seconds)\n\t\t=== RUN TestRaceCaseTypeIssue5890\n\t\tunexpected fault address 0x0\n\t\tfatal error: fault\n\t\t[signal 0xb code=0x80 addr=0x0 pc=0x408763]\n\t\t\n\t\tgoroutine 219 [running]:\n\t\truntime.throw(0x9cc337)\n\t\t\t/opt/remy/go/src/pkg/runtime/panic.c:466 +0x69 fp=0x7fed22829ec8\n\t\truntime.sigpanic()\n\t\t\t/opt/remy/go/src/pkg/runtime/os_linux.c:240 +0xe9 fp=0x7fed22829ee0\n\t\truntime.mapaccess1_fast64(0x6ae3c0, 0x2c000001000101, 0x1, 0x1, 0x428651, ...)\n\t\t\t/opt/remy/go/src/pkg/runtime/hashmap.c:163 +0x13 fp=0x7fed22829f38\n\t\tcommand-line-arguments_test.func\u00b7129()\n\t\t\t/opt/remy/go/src/pkg/runtime/race/testdata/mop_test.go:273 +0x6e fp=0x7fed22829fa0\n\t\truntime.goexit()\n\t\t\t/opt/remy/go/src/pkg/runtime/proc.c:1289 fp=0x7fed22829fa8\n\t\tcreated by command-line-arguments_test.TestRaceCaseTypeIssue5890\n\t\t\t/opt/remy/go/src/pkg/runtime/race/testdata/mop_test.go:279 +0x1af\n\n\t\t[...]",
+			"disapproval": false,
+			"date": "2013-07-15 23:10:43.617960",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If OTYPESW is turned into a sequence of ifs, then it must not appear in racewalk at all... what am I missing?",
+			"disapproval": false,
+			"date": "2013-07-15 23:22:16.487460",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Le 16 juil. 2013 01:22, <dvyukov@google.com> a \u00e9crit :\r\n>\r\n> If OTYPESW is turned into a sequence of ifs, then it must not appear in\r\n> racewalk at all... what am I missing?\r\n>\r\n> https://codereview.appspot.com/11308043/\r\n\r\nThe parent node is a OSWITCH node: after walk, it serves as a container for\r\nthe ifs, and the dangling OTYPESW child is left over, but it apparently\r\nserves no purpose. Maybe it could be removed in a separate patch.\r\n\r\nR\u00e9my.\r\n",
+			"disapproval": false,
+			"date": "2013-07-15 23:32:57.310320",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-07-16 05:25:27.707070",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Every time we hit this, I think how simple it in LLVM, and we never-ever hit any similar issue:\n\n339\t  for (Function::iterator FI = F.begin(), FE = F.end(); FI != FE; ++FI) {\n341\t    BasicBlock &BB = *FI;\n342\t    for (BasicBlock::iterator BI = BB.begin(), BE = BB.end(); BI != BE; ++BI) {\n346\t      if (isa<LoadInst>(BI) || isa<StoreInst>(BI))\n347\t        instrument(BI);\n358\t  }\nhttp://llvm.org/svn/llvm-project/llvm/trunk/lib/Transforms/Instrumentation/ThreadSanitizer.cpp",
+			"disapproval": false,
+			"date": "2013-07-16 05:27:33.952300",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=20d15d2ce9ed ***\n\ncmd/gc: fix race detector instrumentation of type switches.\n\nA type switch on a value with map index expressions,\ncould get a spurious instrumentation from a OTYPESW node.\nThese nodes do not need instrumentation because after\nwalk the type switch has been turned into a sequence\nof ifs.\n\nFixes issue 5890.\n\nR=golang-dev, dvyukov\nCC=golang-dev\nhttps://codereview.appspot.com/11308043",
+			"disapproval": false,
+			"date": "2013-07-16 07:04:49.638720",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 11308043: cmd/gc: fix instrumentation of type switches.",
+	"created": "2013-07-15 23:08:49.284140",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		13001
+	],
+	"modified": "2013-07-18 18:39:24.594720",
+	"closed": true,
+	"issue": 11308043
+}

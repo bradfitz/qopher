@@ -1,0 +1,415 @@
+{
+	"description": "syscall, os: Fix a fork-exec/wait race in Plan 9.\n\nOn Plan 9, only the parent of a given process can enter its wait\nqueue. When a Go program tries to fork-exec a child process\nand subsequently waits for it to finish, the goroutines doing\nthese two tasks do not necessarily tie themselves to the same\n(or any single) OS thread. In the case that the fork and the wait\nsystem calls happen on different OS threads (say, due to a\ngoroutine being rescheduled somewhere along the way), the\nwait() will either return an error or end up waiting for a\ncompletely different child than was intended.\n\nThis change forces the fork and wait syscalls to happen in the\nsame goroutine and ties that goroutine to its OS thread until\nthe child exits. The PID of the child is recorded upon fork and\nexit, and de-queued once the child's wait message has been read.\nThe Wait API, then, is translated into a synthetic implementation\nthat simply waits for the requested PID to show up in the queue\nand then reads the associated stats.",
+	"cc": [
+		"rsc@golang.org",
+		"rminnich@gmail.com",
+		"npe@plan9.bell-labs.com",
+		"mirtchovski@gmail.com",
+		"ality@pbrane.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, rminnich@gmail.com, npe@plan9.bell-labs.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-09-21 10:27:11.271890",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode519\nsrc/pkg/syscall/exec_plan9.go:519: // Plan 9, only the parent thread can ever enter the\ns/ever enter the wait queue/wait/\nThere's no queue.\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode539\nsrc/pkg/syscall/exec_plan9.go:539: defer runtime.UnlockOSThread()\nThis will happen automatically when the goroutine dies. Delete.\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode542\nsrc/pkg/syscall/exec_plan9.go:542: forkc <- rval\nYou should probably wait to do this until you have entered the pid in forks.\nThat means you'll need a forkc <- rval in the next if statement too.\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode544\nsrc/pkg/syscall/exec_plan9.go:544: // No one should be waiting\n// If fork fails there is nothing to wait for.\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode546\nsrc/pkg/syscall/exec_plan9.go:546: if err != nil || pid == -1 {\nerr := rval.err first\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode552\nsrc/pkg/syscall/exec_plan9.go:552: forks[pid] = true\nYou need a lock here.\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode552\nsrc/pkg/syscall/exec_plan9.go:552: forks[pid] = true\nYou can avoid having two maps by having\n\nwaitmsg map[int]*Waitmsg\n\nand use nil to mean it's running and not done yet. \n\nAlso, why is pid int? Didn't we just establish that was too short?\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode553\nsrc/pkg/syscall/exec_plan9.go:553: defer delete(forks, pid)\nYou need a lock here (in the code that runs at defer). Probably better to just do the lock+delete at the bottom. The defer isn't saving anything.\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go\nFile src/pkg/syscall/syscall_plan9.go (right):\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode46\nsrc/pkg/syscall/syscall_plan9.go:46: type Processes struct {\nPlease don't export this.\n\ntype processes struct\n\nAlso you can put the sync.Mutex and the sync.Cond here.\nIn fact you don't even need the type or the extra variables.\n\nvar procs struct {\n    once sync.Once\n    sync.RWMutex\n    cond sync.Cond\n    forks map[int]bool\n    waits map[int]Waitmsg\n}\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode59\nsrc/pkg/syscall/syscall_plan9.go:59: procs     Processes\nIn general please don't put unexported vars in the same block as exported vars. It complicates the godoc output.\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode213\nsrc/pkg/syscall/syscall_plan9.go:213: func makeProcs() {\nPlease move all this to the other file, so that all the code manipulating procs is in one place. The procs struct too.\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode239\nsrc/pkg/syscall/syscall_plan9.go:239: return NewError(\"no forked process with the given pid\")\nNewError(\"process not found\") is fine.\n\nhttp://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode248\nsrc/pkg/syscall/syscall_plan9.go:248: delete(waits, w.Pid)\nDeleting from the map while holding a reader lock is a no-no. I would just use a Mutex instead of an RWMutex. Everyone needs to write things.",
+			"disapproval": false,
+			"date": "2012-09-24 15:46:11.576980",
+			"approval": false
+		},
+		{
+			"sender": "mirtchovski@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "what I encountered after a day of running go test with this CL in:\r\n\r\n- go test go/ast always fails with the last process in Pwrite state\r\n- occasionally go test will fail in a random place with the last proc\r\nin Broken state. the whole runtime appears to be blocked because after\r\nthe broken process is killed the runtime will fire the (long expired)\r\ntimeout set up by the go binary itself\r\n- if a binary is just being started a keyboard interrupt will\r\noccasionally cause:\r\n\r\nsplit stack overflow: 0x1096ff3c < 0x10970000\r\nthrow: runtime: split stack overflow\r\n\r\n- i saw one \"throw: negative mcpu in scheduler\" while running go test\r\n\r\nattached is a log of go test -short -timeout 30s where the hung\r\nprocesses (in broken state) are manually killed after a couple of\r\nminutes.\r\n",
+			"disapproval": false,
+			"date": "2012-09-22 01:01:34.482930",
+			"approval": false
+		},
+		{
+			"sender": "rminnich@gmail.com",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This gets us over a major hurdle.\nLGTM",
+			"disapproval": false,
+			"date": "2012-09-21 19:46:26.196200",
+			"approval": true
+		},
+		{
+			"sender": "mirtchovski@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "nice! tests now actually pass, wow!\r\n\r\ngo test -short std broke at database/sql. it appears to be a race\r\nbecause go test -short in the directory itself passes. here's what i\r\nsee:\r\n\r\nandrey       305474    0:01   0:26   797892K Pread    go\r\nandrey       305475    0:00   0:00   797892K Tsemacqu go\r\nandrey       305476    0:00   0:02   797892K Semacqui go\r\nandrey       305486    0:00   0:00   797892K Semacqui go\r\nandrey       305487    0:00   0:00   797892K Semacqui go\r\nandrey       305794    0:00   0:00   794000K Semacqui sql.test\r\nandrey       305795    0:00   0:00   794000K Broken   sql.test\r\n% acid 305795\r\n/proc/305795/text:386 plan 9 executable\r\n/sys/lib/acid/port\r\n/sys/lib/acid/386\r\nacid: lstk()\r\n<stdin>:2: (error) no stack frame: can't translate address 0xf06bb5fe\r\nacid: \u0004\r\necho kill > /proc/305795/ctl\r\n% acid 305794\r\n/proc/305794/text:386 plan 9 executable\r\n/sys/lib/acid/port\r\n/sys/lib/acid/386\r\nacid: lstk()\r\nruntime.plan9_semacquire()+0x7 /usr/andrey/go/src/pkg/runtime/sys_plan9_386.s:50\r\nruntime.semasleep(ns=0xffffffff)+0x50\r\n/usr/andrey/go/src/pkg/runtime/thread_plan9.c:289\r\nruntime.notesleep(n=0x1061e084)+0xb4\r\n/usr/andrey/go/src/pkg/runtime/lock_sema.c:160\r\nnextgandunlock()+0x19b /usr/andrey/go/src/pkg/runtime/proc.c:635\r\n\tgp=0x1e2b74\r\nschedule(gp=0x1061a080)+0xb4 /usr/andrey/go/src/pkg/runtime/proc.c:920\r\nruntime.mcall(fn=0x1061a080)+0x34 /usr/andrey/go/src/pkg/runtime/asm_386.s:175\r\n0x1061a080 ?file?:0\r\nacid:\r\n\r\n% cd pkg/database/sql && go test -short\r\nPASS\r\nok  \tdatabase/sql\t0.375s\r\n%\r\n\r\nhere are the passing tests before that:\r\n\r\n% time go test std -short '-timeout=120s'\r\nok  \tcmd/api\t0.277s\r\n?   \tcmd/cgo\t[no test files]\r\nok  \tcmd/fix\t2.337s\r\nok  \tcmd/go\t0.297s\r\n?   \tcmd/godoc\t[no test files]\r\nok  \tcmd/gofmt\t0.330s\r\n?   \tcmd/vet\t[no test files]\r\n?   \tcmd/yacc\t[no test files]\r\nok  \tarchive/tar\t0.153s\r\nok  \tarchive/zip\t0.690s\r\nok  \tbufio\t0.218s\r\nok  \tbytes\t0.415s\r\nok  \tcompress/bzip2\t0.433s\r\nok  \tcompress/flate\t1.425s\r\nok  \tcompress/gzip\t0.165s\r\nok  \tcompress/lzw\t0.550s\r\nok  \tcompress/zlib\t2.670s\r\nok  \tcontainer/heap\t0.143s\r\nok  \tcontainer/list\t0.139s\r\nok  \tcontainer/ring\t0.146s\r\n?   \tcrypto\t[no test files]\r\nok  \tcrypto/aes\t0.178s\r\nok  \tcrypto/cipher\t0.209s\r\nok  \tcrypto/des\t0.219s\r\nok  \tcrypto/dsa\t0.300s\r\nok  \tcrypto/ecdsa\t0.199s\r\nok  \tcrypto/elliptic\t0.178s\r\nok  \tcrypto/hmac\t0.157s\r\nok  \tcrypto/md5\t0.159s\r\nok  \tcrypto/rand\t0.364s\r\nok  \tcrypto/rc4\t0.146s\r\nok  \tcrypto/rsa\t0.513s\r\nok  \tcrypto/sha1\t0.151s\r\nok  \tcrypto/sha256\t0.149s\r\nok  \tcrypto/sha512\t0.153s\r\nok  \tcrypto/subtle\t0.156s\r\nok  \tcrypto/tls\t0.623s\r\nok  \tcrypto/x509\t1.799s\r\n?   \tcrypto/x509/pkix\t[no test files]\r\n",
+			"disapproval": false,
+			"date": "2012-09-21 16:12:12.356840",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, there are definitely more issues in the go runtime\r\nfor Plan 9 to be resolved. :-)\r\n\r\nBut from what I can see, these seem to be orthogonal\r\nto what this patch is doing; rather, they're coming up\r\nbecause you're now able to get further into the process.\r\n\r\nOn 21 September 2012 18:01, andrey mirtchovski <mirtchovski@gmail.com> wrote:\r\n> what I encountered after a day of running go test with this CL in:\r\n>\r\n> - go test go/ast always fails with the last process in Pwrite state\r\n> - occasionally go test will fail in a random place with the last proc\r\n> in Broken state. the whole runtime appears to be blocked because after\r\n> the broken process is killed the runtime will fire the (long expired)\r\n> timeout set up by the go binary itself\r\n> - if a binary is just being started a keyboard interrupt will\r\n> occasionally cause:\r\n>\r\n> split stack overflow: 0x1096ff3c < 0x10970000\r\n> throw: runtime: split stack overflow\r\n>\r\n> - i saw one \"throw: negative mcpu in scheduler\" while running go test\r\n>\r\n> attached is a log of go test -short -timeout 30s where the hung\r\n> processes (in broken state) are manually killed after a couple of\r\n> minutes.\r\n",
+			"disapproval": false,
+			"date": "2012-09-22 18:26:02.305940",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode519\nsrc/pkg/syscall/exec_plan9.go:519: // Plan 9, only the parent thread can ever enter the\nOn 2012/09/24 15:46:11, rsc wrote:\n> s/ever enter the wait queue/wait/\n> There's no queue.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode539\nsrc/pkg/syscall/exec_plan9.go:539: defer runtime.UnlockOSThread()\nOn 2012/09/24 15:46:11, rsc wrote:\n> This will happen automatically when the goroutine dies. Delete.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode542\nsrc/pkg/syscall/exec_plan9.go:542: forkc <- rval\nOn 2012/09/24 15:46:11, rsc wrote:\n> You should probably wait to do this until you have entered the pid in forks.\n> That means you'll need a forkc <- rval in the next if statement too.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode544\nsrc/pkg/syscall/exec_plan9.go:544: // No one should be waiting\nOn 2012/09/24 15:46:11, rsc wrote:\n> // If fork fails there is nothing to wait for.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode546\nsrc/pkg/syscall/exec_plan9.go:546: if err != nil || pid == -1 {\nOn 2012/09/24 15:46:11, rsc wrote:\n> err := rval.err first\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode552\nsrc/pkg/syscall/exec_plan9.go:552: forks[pid] = true\nOn 2012/09/24 15:46:11, rsc wrote:\n> You need a lock here.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode552\nsrc/pkg/syscall/exec_plan9.go:552: forks[pid] = true\nOn 2012/09/24 15:46:11, rsc wrote:\n> You can avoid having two maps by having\n> \n> waitmsg map[int]*Waitmsg\n> \n> and use nil to mean it's running and not done yet. \n> \n> Also, why is pid int? Didn't we just establish that was too short?\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode553\nsrc/pkg/syscall/exec_plan9.go:553: defer delete(forks, pid)\nOn 2012/09/24 15:46:11, rsc wrote:\n> You need a lock here (in the code that runs at defer). Probably better to just\n> do the lock+delete at the bottom. The defer isn't saving anything.\n> \n\nDone.\n\nTook your suggestion about using just one map; this is no longer needed.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go\nFile src/pkg/syscall/syscall_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode46\nsrc/pkg/syscall/syscall_plan9.go:46: type Processes struct {\nOn 2012/09/24 15:46:11, rsc wrote:\n> Please don't export this.\n> \n> type processes struct\n> \n> Also you can put the sync.Mutex and the sync.Cond here.\n> In fact you don't even need the type or the extra variables.\n> \n> var procs struct {\n>     once sync.Once\n>     sync.RWMutex\n>     cond sync.Cond\n>     forks map[int]bool\n>     waits map[int]Waitmsg\n> }\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode59\nsrc/pkg/syscall/syscall_plan9.go:59: procs     Processes\nOn 2012/09/24 15:46:11, rsc wrote:\n> In general please don't put unexported vars in the same block as exported vars.\n> It complicates the godoc output.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode213\nsrc/pkg/syscall/syscall_plan9.go:213: func makeProcs() {\nOn 2012/09/24 15:46:11, rsc wrote:\n> Please move all this to the other file, so that all the code manipulating procs\n> is in one place. The procs struct too.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode239\nsrc/pkg/syscall/syscall_plan9.go:239: return NewError(\"no forked process with the given pid\")\nOn 2012/09/24 15:46:11, rsc wrote:\n> NewError(\"process not found\") is fine.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode248\nsrc/pkg/syscall/syscall_plan9.go:248: delete(waits, w.Pid)\nOn 2012/09/24 15:46:11, rsc wrote:\n> Deleting from the map while holding a reader lock is a no-no. I would just use a\n> Mutex instead of an RWMutex. Everyone needs to write things.\n> \n\nDone.",
+			"disapproval": false,
+			"date": "2012-09-30 21:22:13.792690",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping\n\nOn 2012/09/30 21:22:13, akumar wrote:\n> PTAL.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go\n> File src/pkg/syscall/exec_plan9.go (right):\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode519\n> src/pkg/syscall/exec_plan9.go:519: // Plan 9, only the parent thread can ever\n> enter the\n> On 2012/09/24 15:46:11, rsc wrote:\n> > s/ever enter the wait queue/wait/\n> > There's no queue.\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode539\n> src/pkg/syscall/exec_plan9.go:539: defer runtime.UnlockOSThread()\n> On 2012/09/24 15:46:11, rsc wrote:\n> > This will happen automatically when the goroutine dies. Delete.\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode542\n> src/pkg/syscall/exec_plan9.go:542: forkc <- rval\n> On 2012/09/24 15:46:11, rsc wrote:\n> > You should probably wait to do this until you have entered the pid in forks.\n> > That means you'll need a forkc <- rval in the next if statement too.\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode544\n> src/pkg/syscall/exec_plan9.go:544: // No one should be waiting\n> On 2012/09/24 15:46:11, rsc wrote:\n> > // If fork fails there is nothing to wait for.\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode546\n> src/pkg/syscall/exec_plan9.go:546: if err != nil || pid == -1 {\n> On 2012/09/24 15:46:11, rsc wrote:\n> > err := rval.err first\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode552\n> src/pkg/syscall/exec_plan9.go:552: forks[pid] = true\n> On 2012/09/24 15:46:11, rsc wrote:\n> > You need a lock here.\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode552\n> src/pkg/syscall/exec_plan9.go:552: forks[pid] = true\n> On 2012/09/24 15:46:11, rsc wrote:\n> > You can avoid having two maps by having\n> > \n> > waitmsg map[int]*Waitmsg\n> > \n> > and use nil to mean it's running and not done yet. \n> > \n> > Also, why is pid int? Didn't we just establish that was too short?\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/exec_plan9.go#newcode553\n> src/pkg/syscall/exec_plan9.go:553: defer delete(forks, pid)\n> On 2012/09/24 15:46:11, rsc wrote:\n> > You need a lock here (in the code that runs at defer). Probably better to just\n> > do the lock+delete at the bottom. The defer isn't saving anything.\n> > \n> \n> Done.\n> \n> Took your suggestion about using just one map; this is no longer needed.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go\n> File src/pkg/syscall/syscall_plan9.go (right):\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode46\n> src/pkg/syscall/syscall_plan9.go:46: type Processes struct {\n> On 2012/09/24 15:46:11, rsc wrote:\n> > Please don't export this.\n> > \n> > type processes struct\n> > \n> > Also you can put the sync.Mutex and the sync.Cond here.\n> > In fact you don't even need the type or the extra variables.\n> > \n> > var procs struct {\n> >     once sync.Once\n> >     sync.RWMutex\n> >     cond sync.Cond\n> >     forks map[int]bool\n> >     waits map[int]Waitmsg\n> > }\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode59\n> src/pkg/syscall/syscall_plan9.go:59: procs     Processes\n> On 2012/09/24 15:46:11, rsc wrote:\n> > In general please don't put unexported vars in the same block as exported\n> vars.\n> > It complicates the godoc output.\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode213\n> src/pkg/syscall/syscall_plan9.go:213: func makeProcs() {\n> On 2012/09/24 15:46:11, rsc wrote:\n> > Please move all this to the other file, so that all the code manipulating\n> procs\n> > is in one place. The procs struct too.\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode239\n> src/pkg/syscall/syscall_plan9.go:239: return NewError(\"no forked process with\n> the given pid\")\n> On 2012/09/24 15:46:11, rsc wrote:\n> > NewError(\"process not found\") is fine.\n> \n> Done.\n> \n> https://codereview.appspot.com/6545051/diff/4001/src/pkg/syscall/syscall_plan9.go#newcode248\n> src/pkg/syscall/syscall_plan9.go:248: delete(waits, w.Pid)\n> On 2012/09/24 15:46:11, rsc wrote:\n> > Deleting from the map while holding a reader lock is a no-no. I would just use\n> a\n> > Mutex instead of an RWMutex. Everyone needs to write things.\n> > \n> \n> Done.",
+			"disapproval": false,
+			"date": "2012-10-24 01:22:09.545830",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Getting close.\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode516\nsrc/pkg/syscall/exec_plan9.go:516: cond  *sync.Cond\ncond sync.Cond\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode522\nsrc/pkg/syscall/exec_plan9.go:522: procs.cond = sync.NewCond(&procs.Mutex)\nproc.cond.L = &procs.Mutex\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode569\nsrc/pkg/syscall/exec_plan9.go:569: for wmsg.Pid != pid {\nWhy is this a for loop? There is only one thing to wait for.\nI expected (no loop):\n\nwmsg.err = Await(&wmsg)\nprocs.Lock()\nwaits[wmsg.Pid] = &wmsg\nprocs.cond.Broadcast()\nprocs.Unlock()\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode641\nsrc/pkg/syscall/exec_plan9.go:641: procs.cond.L.Lock()\nprocs.Lock()\ndefer procs.Unlock()\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode651\nsrc/pkg/syscall/exec_plan9.go:651: // Everytime a process exits, check\nEvery time\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/syscall_plan9.go\nFile src/pkg/syscall/syscall_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/syscall_plan9.go#newcode186\nsrc/pkg/syscall/syscall_plan9.go:186: err  error\nWe can't just add extra unexported fields to data structures like this. Define a separate type and use that instead.",
+			"disapproval": false,
+			"date": "2012-11-01 16:40:32.466650",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What's the status of this CL?\n\nThanks,\n  Anthony",
+			"disapproval": false,
+			"date": "2012-11-27 00:46:15.860520",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hey, sorry, I went out of country and then got caught up in other\r\nprojects. This and the other patch will be fixed within the next\r\nfew days.\r\n\r\nAgain, my apologies for letting such things linger.\r\n\r\n\r\nOn 5 December 2012 21:48, Russ Cox <rsc@golang.org> wrote:\r\n> I think we're waiting for Akshat to address my last round of comments.\r\n",
+			"disapproval": false,
+			"date": "2012-12-06 06:24:47.388170",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think we're waiting for Akshat to address my last round of comments.\r\n",
+			"disapproval": false,
+			"date": "2012-12-06 06:30:47.528870",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode516\nsrc/pkg/syscall/exec_plan9.go:516: cond  *sync.Cond\nOn 2012/11/01 16:40:32, rsc wrote:\n> cond sync.Cond\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode522\nsrc/pkg/syscall/exec_plan9.go:522: procs.cond = sync.NewCond(&procs.Mutex)\nOn 2012/11/01 16:40:32, rsc wrote:\n> proc.cond.L = &procs.Mutex\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode569\nsrc/pkg/syscall/exec_plan9.go:569: for wmsg.Pid != pid {\nOn 2012/11/01 16:40:32, rsc wrote:\n> Why is this a for loop? There is only one thing to wait for.\n> I expected (no loop):\n> \n> wmsg.err = Await(&wmsg)\n> procs.Lock()\n> waits[wmsg.Pid] = &wmsg\n> procs.cond.Broadcast()\n> procs.Unlock()\n\nAh, I think you're right. I was thinking that the same thread might be waiting for more than one kid and so we might receive the wait message for the wrong kid here; however, that check is already in WaitProcess and shouldn't be done here.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode641\nsrc/pkg/syscall/exec_plan9.go:641: procs.cond.L.Lock()\nOn 2012/11/01 16:40:32, rsc wrote:\n> procs.Lock()\n> defer procs.Unlock()\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode651\nsrc/pkg/syscall/exec_plan9.go:651: // Everytime a process exits, check\nOn 2012/11/01 16:40:32, rsc wrote:\n> Every time\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/syscall_plan9.go\nFile src/pkg/syscall/syscall_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/syscall_plan9.go#newcode186\nsrc/pkg/syscall/syscall_plan9.go:186: err  error\nOn 2012/11/01 16:40:32, rsc wrote:\n> We can't just add extra unexported fields to data structures like this. Define a\n> separate type and use that instead.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-12-17 18:47:30.313120",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping?\r\n\r\nOn 17 December 2012 10:47,  <seed@mail.nanosouffle.net> wrote:\r\n> PTAL.\r\n>\r\n>\r\n> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go\r\n> File src/pkg/syscall/exec_plan9.go (right):\r\n>\r\n> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode516\r\n> src/pkg/syscall/exec_plan9.go:516: cond  *sync.Cond\r\n> On 2012/11/01 16:40:32, rsc wrote:\r\n>>\r\n>> cond sync.Cond\r\n>\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode522\r\n> src/pkg/syscall/exec_plan9.go:522: procs.cond =\r\n> sync.NewCond(&procs.Mutex)\r\n> On 2012/11/01 16:40:32, rsc wrote:\r\n>>\r\n>> proc.cond.L = &procs.Mutex\r\n>\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode569\r\n> src/pkg/syscall/exec_plan9.go:569: for wmsg.Pid != pid {\r\n> On 2012/11/01 16:40:32, rsc wrote:\r\n>>\r\n>> Why is this a for loop? There is only one thing to wait for.\r\n>> I expected (no loop):\r\n>\r\n>\r\n>> wmsg.err = Await(&wmsg)\r\n>> procs.Lock()\r\n>> waits[wmsg.Pid] = &wmsg\r\n>> procs.cond.Broadcast()\r\n>> procs.Unlock()\r\n>\r\n>\r\n> Ah, I think you're right. I was thinking that the same thread might be\r\n> waiting for more than one kid and so we might receive the wait message\r\n> for the wrong kid here; however, that check is already in WaitProcess\r\n> and shouldn't be done here.\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode641\r\n> src/pkg/syscall/exec_plan9.go:641: procs.cond.L.Lock()\r\n> On 2012/11/01 16:40:32, rsc wrote:\r\n>>\r\n>> procs.Lock()\r\n>> defer procs.Unlock()\r\n>\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode651\r\n> src/pkg/syscall/exec_plan9.go:651: // Everytime a process exits, check\r\n> On 2012/11/01 16:40:32, rsc wrote:\r\n>>\r\n>> Every time\r\n>\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/syscall_plan9.go\r\n> File src/pkg/syscall/syscall_plan9.go (right):\r\n>\r\n> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/syscall_plan9.go#newcode186\r\n> src/pkg/syscall/syscall_plan9.go:186: err  error\r\n> On 2012/11/01 16:40:32, rsc wrote:\r\n>>\r\n>> We can't just add extra unexported fields to data structures like\r\n>\r\n> this. Define a\r\n>>\r\n>> separate type and use that instead.\r\n>\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.com/6545051/\r\n",
+			"disapproval": false,
+			"date": "2012-12-20 21:33:27.053090",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping once more\r\n\r\nOn 20 December 2012 13:33, Akshat Kumar <seed@mail.nanosouffle.net> wrote:\r\n> ping?\r\n>\r\n> On 17 December 2012 10:47,  <seed@mail.nanosouffle.net> wrote:\r\n>> PTAL.\r\n>>\r\n>>\r\n>> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go\r\n>> File src/pkg/syscall/exec_plan9.go (right):\r\n>>\r\n>> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode516\r\n>> src/pkg/syscall/exec_plan9.go:516: cond  *sync.Cond\r\n>> On 2012/11/01 16:40:32, rsc wrote:\r\n>>>\r\n>>> cond sync.Cond\r\n>>\r\n>>\r\n>> Done.\r\n>>\r\n>> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode522\r\n>> src/pkg/syscall/exec_plan9.go:522: procs.cond =\r\n>> sync.NewCond(&procs.Mutex)\r\n>> On 2012/11/01 16:40:32, rsc wrote:\r\n>>>\r\n>>> proc.cond.L = &procs.Mutex\r\n>>\r\n>>\r\n>> Done.\r\n>>\r\n>> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode569\r\n>> src/pkg/syscall/exec_plan9.go:569: for wmsg.Pid != pid {\r\n>> On 2012/11/01 16:40:32, rsc wrote:\r\n>>>\r\n>>> Why is this a for loop? There is only one thing to wait for.\r\n>>> I expected (no loop):\r\n>>\r\n>>\r\n>>> wmsg.err = Await(&wmsg)\r\n>>> procs.Lock()\r\n>>> waits[wmsg.Pid] = &wmsg\r\n>>> procs.cond.Broadcast()\r\n>>> procs.Unlock()\r\n>>\r\n>>\r\n>> Ah, I think you're right. I was thinking that the same thread might be\r\n>> waiting for more than one kid and so we might receive the wait message\r\n>> for the wrong kid here; however, that check is already in WaitProcess\r\n>> and shouldn't be done here.\r\n>>\r\n>> Done.\r\n>>\r\n>> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode641\r\n>> src/pkg/syscall/exec_plan9.go:641: procs.cond.L.Lock()\r\n>> On 2012/11/01 16:40:32, rsc wrote:\r\n>>>\r\n>>> procs.Lock()\r\n>>> defer procs.Unlock()\r\n>>\r\n>>\r\n>> Done.\r\n>>\r\n>> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/exec_plan9.go#newcode651\r\n>> src/pkg/syscall/exec_plan9.go:651: // Everytime a process exits, check\r\n>> On 2012/11/01 16:40:32, rsc wrote:\r\n>>>\r\n>>> Every time\r\n>>\r\n>>\r\n>> Done.\r\n>>\r\n>> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/syscall_plan9.go\r\n>> File src/pkg/syscall/syscall_plan9.go (right):\r\n>>\r\n>> https://codereview.appspot.com/6545051/diff/10010/src/pkg/syscall/syscall_plan9.go#newcode186\r\n>> src/pkg/syscall/syscall_plan9.go:186: err  error\r\n>> On 2012/11/01 16:40:32, rsc wrote:\r\n>>>\r\n>>> We can't just add extra unexported fields to data structures like\r\n>>\r\n>> this. Define a\r\n>>>\r\n>>> separate type and use that instead.\r\n>>\r\n>>\r\n>> Done.\r\n>>\r\n>> https://codereview.appspot.com/6545051/\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 05:41:09.113960",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6545051/diff/28001/src/pkg/os/exec_plan9.go\nFile src/pkg/os/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/os/exec_plan9.go#newcode79\nsrc/pkg/os/exec_plan9.go:79: for true {\ns/for true/for/\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/os/exec_plan9.go#newcode79\nsrc/pkg/os/exec_plan9.go:79: for true {\nI don't think the loop is needed at all. When will WaitProcess succeed but return waitmsg.Pid != p.Pid?\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go#newcode512\nsrc/pkg/syscall/exec_plan9.go:512: waits map[int]*waitErr\nThe use of the condition variable here is not quite right. If multiple goroutines try to wait for the same pid, one will get a result and the other will hang forever. I think everything can be a bit clearer if we avoid the condition variable and use a channel for each process: delete cond entirely and change waits to be a map[int]chan *waitErr.\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go#newcode517\nsrc/pkg/syscall/exec_plan9.go:517: procs.cond.L = &procs.Mutex\nDelete.\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go#newcode531\nsrc/pkg/syscall/exec_plan9.go:531: var (\nThere is one rval var here shared bewteen the goroutine and the parent. It is not technically incorrect, but it's confusing. Much clearer would be to put the declarations next to their uses, which will incidentally split the two different rvals into two different variables.\n\ntype pidErr struct {\n    pid int\n    err error\n}\n\nforkc := make(chan pidErr, 1)\ngo func() {\n   runtime.LockOSThread()\n   var rval pidErr\n   rval.pid, rval.err = ...\n   ...\n   ch := make(chan *waitErr, 1)\n   procs.Lock()\n   waits[pid] = ch\n   procs.Unlock()\n   forkc <- rval\n\n   var wmsg waitErr\n   wmsg.err = Await(&wmsg.Waitmsg)\n   ch <- &wmsg\n   close(ch)\n}()\nrval := <-forkc\nreturn rval.pid, rval.err\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go#newcode636\nsrc/pkg/syscall/exec_plan9.go:636: // Make sure that there is a process\nprocs.Lock()\nch := waits[pid]\nprocs.Unlock()\n\nvar wmsg *waitErr\nif ch != nil {\n    wmsg = <-ch\n    procs.Lock()\n    if waits[pid] == ch {\n        delete(waits, pid)\n    }\n    procs.Unlock()\n}\nif wmsg == nil {\n    // ch was missing or ch is closed\n    return NewError(\"process not found\")\n}\nif wmsg.err != nil {\n    return wmsg.err\n}\n*w = wmsg.Waitmsg\nreturn nil",
+			"disapproval": false,
+			"date": "2013-01-07 05:10:00.706740",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On a second thought, I think this is not quite right: in buying the ability for multiple goroutines on the same go thread to wait on one process without a deadlock, we've lost a proper routing of wait messages in the case that multiple processes are started from one go thread (thus causing another deadlock).\n\nHowever, I think the fix is not too drastic and channels are the right way forward.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode560\nsrc/pkg/syscall/exec_plan9.go:560: ch <- &wmsg\nNote that there is no guarantee here that wmsg.Pid == pid, since this thread may have started more than one process. If indeed wmsg.Pid != pid, then anyone waiting on waits[wmsg.Pid] will continue to wait forever.\n\nI think the way to fix this is:\n\nif waits[wmsg.Pid] != nil {\n  waits[wmsg.Pid] <- &wmsg\n  close(waits[wmsg.Pid])\n}\n\n(and not to do the close(ch) itself).\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode631\nsrc/pkg/syscall/exec_plan9.go:631: if ch != nil {\nIf the above change is not made, then there are no guarantees anymore that WaitProcess() will wait for the given pid if the process is still running, since it simply gives up after the first wait message that is received, regardless of the pid.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode634\nsrc/pkg/syscall/exec_plan9.go:634: if waits[pid] == ch {\nShould this not be: waits[wmsg.Pid] ? Otherwise, this is a tautology.",
+			"disapproval": false,
+			"date": "2013-01-08 10:12:34.288760",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks Russ, for these wonderful improvements.\n\nI hope I've implemented them properly.\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/os/exec_plan9.go\nFile src/pkg/os/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/os/exec_plan9.go#newcode79\nsrc/pkg/os/exec_plan9.go:79: for true {\nOn 2013/01/07 05:10:00, rsc wrote:\n> I don't think the loop is needed at all. When will WaitProcess succeed but\n> return waitmsg.Pid != p.Pid?\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go#newcode512\nsrc/pkg/syscall/exec_plan9.go:512: waits map[int]*waitErr\nOn 2013/01/07 05:10:00, rsc wrote:\n> The use of the condition variable here is not quite right. If multiple\n> goroutines try to wait for the same pid, one will get a result and the other\n> will hang forever. I think everything can be a bit clearer if we avoid the\n> condition variable and use a channel for each process: delete cond entirely and\n> change waits to be a map[int]chan *waitErr.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go#newcode517\nsrc/pkg/syscall/exec_plan9.go:517: procs.cond.L = &procs.Mutex\nOn 2013/01/07 05:10:00, rsc wrote:\n> Delete.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go#newcode531\nsrc/pkg/syscall/exec_plan9.go:531: var (\nOn 2013/01/07 05:10:00, rsc wrote:\n> There is one rval var here shared bewteen the goroutine and the parent. It is\n> not technically incorrect, but it's confusing. Much clearer would be to put the\n> declarations next to their uses, which will incidentally split the two different\n> rvals into two different variables.\n> \n> type pidErr struct {\n>     pid int\n>     err error\n> }\n> \n> forkc := make(chan pidErr, 1)\n> go func() {\n>    runtime.LockOSThread()\n>    var rval pidErr\n>    rval.pid, rval.err = ...\n>    ...\n>    ch := make(chan *waitErr, 1)\n>    procs.Lock()\n>    waits[pid] = ch\n>    procs.Unlock()\n>    forkc <- rval\n> \n>    var wmsg waitErr\n>    wmsg.err = Await(&wmsg.Waitmsg)\n>    ch <- &wmsg\n>    close(ch)\n> }()\n> rval := <-forkc\n> return rval.pid, rval.err\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/28001/src/pkg/syscall/exec_plan9.go#newcode636\nsrc/pkg/syscall/exec_plan9.go:636: // Make sure that there is a process\nOn 2013/01/07 05:10:00, rsc wrote:\n> procs.Lock()\n> ch := waits[pid]\n> procs.Unlock()\n> \n> var wmsg *waitErr\n> if ch != nil {\n>     wmsg = <-ch\n>     procs.Lock()\n>     if waits[pid] == ch {\n>         delete(waits, pid)\n>     }\n>     procs.Unlock()\n> }\n> if wmsg == nil {\n>     // ch was missing or ch is closed\n>     return NewError(\"process not found\")\n> }\n> if wmsg.err != nil {\n>     return wmsg.err\n> }\n> *w = wmsg.Waitmsg\n> return nil\n\nDone.\n\nI also added a check to make sure w != nil, but not cause an error, since we might want to wait on a process without caring for the Waitmsg.",
+			"disapproval": false,
+			"date": "2013-01-08 04:59:47.689290",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ah, looking into runtime.LockOSThread() again, I think your method\r\nindeed works because only the goroutine that is waiting for the\r\nfork-execed process can be running on the OS thread, until the wait\r\nfinishes. That is, only one process can be forked at any time from\r\nany one OS thread. Then there is no confusion at all, so my proposed\r\nchange might be unnecessarily cautious.\r\n\r\n\r\nThanks and sorry for the noise!\r\nAkshat\r\n\r\n\r\nOn 8 January 2013 02:12,  <seed@mail.nanosouffle.net> wrote:\r\n> On a second thought, I think this is not quite right: in buying the\r\n> ability for multiple goroutines on the same go thread to wait on one\r\n> process without a deadlock, we've lost a proper routing of wait messages\r\n> in the case that multiple processes are started from one go thread (thus\r\n> causing another deadlock).\r\n>\r\n> However, I think the fix is not too drastic and channels are the right\r\n> way forward.\r\n>\r\n>\r\n> https://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go\r\n> File src/pkg/syscall/exec_plan9.go (right):\r\n>\r\n> https://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode560\r\n> src/pkg/syscall/exec_plan9.go:560: ch <- &wmsg\r\n> Note that there is no guarantee here that wmsg.Pid == pid, since this\r\n> thread may have started more than one process. If indeed wmsg.Pid !=\r\n> pid, then anyone waiting on waits[wmsg.Pid] will continue to wait\r\n> forever.\r\n>\r\n> I think the way to fix this is:\r\n>\r\n> if waits[wmsg.Pid] != nil {\r\n>   waits[wmsg.Pid] <- &wmsg\r\n>   close(waits[wmsg.Pid])\r\n> }\r\n>\r\n> (and not to do the close(ch) itself).\r\n>\r\n> https://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode631\r\n> src/pkg/syscall/exec_plan9.go:631: if ch != nil {\r\n> If the above change is not made, then there are no guarantees anymore\r\n> that WaitProcess() will wait for the given pid if the process is still\r\n> running, since it simply gives up after the first wait message that is\r\n> received, regardless of the pid.\r\n>\r\n> https://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode634\r\n> src/pkg/syscall/exec_plan9.go:634: if waits[pid] == ch {\r\n> Should this not be: waits[wmsg.Pid] ? Otherwise, this is a tautology.\r\n>\r\n> https://codereview.appspot.com/6545051/\r\n",
+			"disapproval": false,
+			"date": "2013-01-08 22:29:39.488330",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This is pretty close. I have just a few nitpicks.\n\nThanks for fixing this.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode514\nsrc/pkg/syscall/exec_plan9.go:514: func makeProcs() {\nI would just make this another init function\nand get rid of the sync.Once variable altogether.\n\nThis is just my preference. I'd rather allocate\npackage globals at startup then on the first call\nto a function.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode529\nsrc/pkg/syscall/exec_plan9.go:529: type pidErr struct {\nI think the code would read nicer if this was named \"forkRet\"\nand the variables were \"r\" or \"ret\" instead of \"rval\"\nthroughout.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode540\nsrc/pkg/syscall/exec_plan9.go:540: pid := rval.pid\nDelete this line.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode542\nsrc/pkg/syscall/exec_plan9.go:542: if rval.err != nil || pid == 0 {\nMake this rval.pid.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode548\nsrc/pkg/syscall/exec_plan9.go:548: waits := procs.waits\nDelete this line.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode549\nsrc/pkg/syscall/exec_plan9.go:549: ch := make(chan *waitErr, 1)\nI would name this \"waitc\".\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode553\nsrc/pkg/syscall/exec_plan9.go:553: waits[pid] = ch\nMake this procs.waits.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode558\nsrc/pkg/syscall/exec_plan9.go:558: var wmsg waitErr\nJust \"w\" seems fine. The variable is localized to just these three lines. A longer name isn't worth it.",
+			"disapproval": false,
+			"date": "2013-01-10 00:46:32.751140",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode514\nsrc/pkg/syscall/exec_plan9.go:514: func makeProcs() {\nOn 2013/01/10 00:46:32, ality wrote:\n> I would just make this another init function\n> and get rid of the sync.Once variable altogether.\n> \n> This is just my preference. I'd rather allocate\n> package globals at startup then on the first call\n> to a function.\n\nThe type and struct declarations here (which would have to be moved as well) are nicely localized with the fork, startProcess, and wait code; the init function above is nicely localized with fd code. I think this helps code readability and structure. There does not seem to be an elegant way to reconcile the two.\n\nStill, if there is a second opinion about this, I'm willing to neglect my aesthetic impulses.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode529\nsrc/pkg/syscall/exec_plan9.go:529: type pidErr struct {\nOn 2013/01/10 00:46:32, ality wrote:\n> I think the code would read nicer if this was named \"forkRet\"\n> and the variables were \"r\" or \"ret\" instead of \"rval\"\n> throughout.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode540\nsrc/pkg/syscall/exec_plan9.go:540: pid := rval.pid\nOn 2013/01/10 00:46:32, ality wrote:\n> Delete this line.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode542\nsrc/pkg/syscall/exec_plan9.go:542: if rval.err != nil || pid == 0 {\nOn 2013/01/10 00:46:32, ality wrote:\n> Make this rval.pid.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode548\nsrc/pkg/syscall/exec_plan9.go:548: waits := procs.waits\nOn 2013/01/10 00:46:32, ality wrote:\n> Delete this line.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode549\nsrc/pkg/syscall/exec_plan9.go:549: ch := make(chan *waitErr, 1)\nOn 2013/01/10 00:46:32, ality wrote:\n> I would name this \"waitc\".\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode553\nsrc/pkg/syscall/exec_plan9.go:553: waits[pid] = ch\nOn 2013/01/10 00:46:32, ality wrote:\n> Make this procs.waits.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode558\nsrc/pkg/syscall/exec_plan9.go:558: var wmsg waitErr\nOn 2013/01/10 00:46:32, ality wrote:\n> Just \"w\" seems fine. The variable is localized to just these three lines. A\n> longer name isn't worth it.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-01-12 23:37:05.742400",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode546\nsrc/pkg/syscall/exec_plan9.go:546: procs.once.Do(makeProcs)\nThis is unnecessary, since procs is locked just a few lines later. waits can be initialized then, with a simple if statement.\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode621\nsrc/pkg/syscall/exec_plan9.go:621: procs.once.Do(makeProcs)\nDelete.\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode622\nsrc/pkg/syscall/exec_plan9.go:622: waits := procs.waits\nDelete.\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode625\nsrc/pkg/syscall/exec_plan9.go:625: ch := waits[pid]\ns/waits/proc.waits/\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode632\nsrc/pkg/syscall/exec_plan9.go:632: if waits[pid] == ch {\ns/waits/procs.waits/",
+			"disapproval": false,
+			"date": "2013-01-18 20:28:15.298340",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode546\nsrc/pkg/syscall/exec_plan9.go:546: procs.once.Do(makeProcs)\nOn 2013/01/18 20:28:15, rsc wrote:\n> This is unnecessary, since procs is locked just a few lines later. waits can be\n> initialized then, with a simple if statement.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode621\nsrc/pkg/syscall/exec_plan9.go:621: procs.once.Do(makeProcs)\nOn 2013/01/18 20:28:15, rsc wrote:\n> Delete.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode622\nsrc/pkg/syscall/exec_plan9.go:622: waits := procs.waits\nOn 2013/01/18 20:28:15, rsc wrote:\n> Delete.\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode625\nsrc/pkg/syscall/exec_plan9.go:625: ch := waits[pid]\nOn 2013/01/18 20:28:15, rsc wrote:\n> s/waits/proc.waits/\n\nDone.\n\nhttps://codereview.appspot.com/6545051/diff/44001/src/pkg/syscall/exec_plan9.go#newcode632\nsrc/pkg/syscall/exec_plan9.go:632: if waits[pid] == ch {\nOn 2013/01/18 20:28:15, rsc wrote:\n> s/waits/procs.waits/\n\nDone.",
+			"disapproval": false,
+			"date": "2013-01-18 21:38:37.464320",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-01-18 21:41:40.586830",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"mirtchovski@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=12eff5fd6f09 ***\n\nsyscall, os: fix a fork-exec/wait race in Plan 9.\n\nOn Plan 9, only the parent of a given process can enter its wait\nqueue. When a Go program tries to fork-exec a child process\nand subsequently waits for it to finish, the goroutines doing\nthese two tasks do not necessarily tie themselves to the same\n(or any single) OS thread. In the case that the fork and the wait\nsystem calls happen on different OS threads (say, due to a\ngoroutine being rescheduled somewhere along the way), the\nwait() will either return an error or end up waiting for a\ncompletely different child than was intended.\n\nThis change forces the fork and wait syscalls to happen in the\nsame goroutine and ties that goroutine to its OS thread until\nthe child exits. The PID of the child is recorded upon fork and\nexit, and de-queued once the child's wait message has been read.\nThe Wait API, then, is translated into a synthetic implementation\nthat simply waits for the requested PID to show up in the queue\nand then reads the associated stats.\n\nR=rsc, rminnich, npe, mirtchovski, ality\nCC=golang-dev\nhttps://codereview.appspot.com/6545051\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2013-01-18 21:43:29.100600",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Russ, looking at package syscall again, I think my point below\r\nstill stands: we are exposing at least two functions - ForkExec\r\nand Exec - separate from StartProcess that will do rfork()s. If\r\neither of these is done before a StartProcess, on the same\r\nOS thread, then the Await() in StartProcess may come back\r\nfor the wrong pid, and we're not checking for this. I think my\r\nchanges below should account for this.\r\n\r\nWhat do you think?\r\n\r\nOn 8 January 2013 02:12,  <seed@mail.nanosouffle.net> wrote:\r\n> On a second thought, I think this is not quite right: in buying the\r\n> ability for multiple goroutines on the same go thread to wait on one\r\n> process without a deadlock, we've lost a proper routing of wait messages\r\n> in the case that multiple processes are started from one go thread (thus\r\n> causing another deadlock).\r\n>\r\n> However, I think the fix is not too drastic and channels are the right\r\n> way forward.\r\n>\r\n>\r\n> https://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go\r\n> File src/pkg/syscall/exec_plan9.go (right):\r\n>\r\n> https://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode560\r\n> src/pkg/syscall/exec_plan9.go:560: ch <- &wmsg\r\n> Note that there is no guarantee here that wmsg.Pid == pid, since this\r\n> thread may have started more than one process. If indeed wmsg.Pid !=\r\n> pid, then anyone waiting on waits[wmsg.Pid] will continue to wait\r\n> forever.\r\n>\r\n> I think the way to fix this is:\r\n>\r\n> if waits[wmsg.Pid] != nil {\r\n>   waits[wmsg.Pid] <- &wmsg\r\n>   close(waits[wmsg.Pid])\r\n> }\r\n>\r\n> (and not to do the close(ch) itself).\r\n>\r\n> https://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode631\r\n> src/pkg/syscall/exec_plan9.go:631: if ch != nil {\r\n> If the above change is not made, then there are no guarantees anymore\r\n> that WaitProcess() will wait for the given pid if the process is still\r\n> running, since it simply gives up after the first wait message that is\r\n> received, regardless of the pid.\r\n>\r\n> https://codereview.appspot.com/6545051/diff/37001/src/pkg/syscall/exec_plan9.go#newcode634\r\n> src/pkg/syscall/exec_plan9.go:634: if waits[pid] == ch {\r\n> Should this not be: waits[wmsg.Pid] ? Otherwise, this is a tautology.\r\n>\r\n> https://codereview.appspot.com/6545051/\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 21:43:41.750800",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sure, send a CL.\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 21:49:01.615940",
+			"approval": false
+		}
+	],
+	"owner_email": "seed@mail.nanosouffle.net",
+	"private": false,
+	"base_url": "",
+	"owner": "akumar",
+	"subject": "code review 6545051: pkg/syscall, pkg/os: Fix a fork-exec/wait race in Plan 9.",
+	"created": "2012-09-21 10:13:45.802250",
+	"patchsets": [
+		1,
+		1002,
+		4001,
+		10010,
+		28001,
+		37001,
+		44001,
+		50001
+	],
+	"modified": "2013-01-18 21:46:34.697430",
+	"closed": true,
+	"issue": 6545051
+}

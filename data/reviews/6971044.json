@@ -1,0 +1,89 @@
+{
+	"description": "exp/locale/collate: include composed characters into the table. This eliminates\nthe need to decompose characters for the majority of cases.  This considerably\nspeeds up collation while increasing the table size minimally.\n\nTo detect non-normalized strings, rather than relying on exp/norm, the table\nnow includes CCC information. The inclusion of this information does not\nincrease table size.\n\nDETAILS\n - Raw collation elements are now a struct that includes the CCC, rather\n   than a slice of ints.\n - Builder now ensures that NFD and NFC counterparts are included in the table.\n   This also fixes a bug for Korean which is responsible for most of the growth\n   of the table size.\n - As there is no more normalization step, code should now handle both strings\n   and byte slices as input. Introduced source type to facilitate this.\n\nNOTES\n - This change does not handle normalization correctly entirely for contractions.\n   This causes a few failures with the regtest. table_test.go contains a few\n   uncommented tests that can be enabled once this is fixed.  The easiest is to\n   fix this once we have the new norm.Iter.\n - Removed a test cases in table_test that covers cases that are now guaranteed\n   to not exist.",
+	"cc": [
+		"rsc@golang.org",
+		"mpvl@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "mpvl@golang.org",
+			"recipients": [
+				"mpvl@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg",
+			"disapproval": false,
+			"date": "2012-12-19 09:47:48.232670",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"mpvl@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nDoes the trie encoding make sure that you don't accept 4-byte sequences with value > 0x10FFFF, and that you don't, say, accept a 2-byte sequence with value 0x00 ?\n\nhttps://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/build/builder.go\nFile src/pkg/exp/locale/collate/build/builder.go (right):\n\nhttps://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/build/builder.go#newcode662\nsrc/pkg/exp/locale/collate/build/builder.go:662: log.Fatalf(\"%s:processContractions: unexpected length for '%X'; len=%d; want %d\", o.id, e.runes, sn, len(str))\nspace after %s\n\nhttps://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/build/builder.go#newcode666\nsrc/pkg/exp/locale/collate/build/builder.go:666: log.Fatalf(\"%s:multiple contractions for position %d for rune %U\", o.id, p, e.runes[0])\nsame\n\nhttps://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/collate.go\nFile src/pkg/exp/locale/collate/collate.go (right):\n\nhttps://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/collate.go#newcode292\nsrc/pkg/exp/locale/collate/collate.go:292: func (src source) done() bool {\nprobably all of these should be pointer receivers.",
+			"disapproval": false,
+			"date": "2012-12-21 20:12:52.871250",
+			"approval": true
+		},
+		{
+			"sender": "mpvl@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Good point regarding trie.   4-byte values > 0x10FFFF are treated as\r\nunknown code points and get assigned an implicit weight (will simply be\r\nsorted at the end). Sequences with a too-small value will be treated in the\r\nsame way.  I will ensure the semantics is the same as with unicode/utf8.\r\n Interesting example, though: Modified UTF-8 actually *requires* the value\r\n0x00 to be encoded with 2 bytes, allowing the 1-byte 0x00 to be used as a\r\nterminator. Java uses this for object serialization. To disallow it is\r\nconsistent with the recent change of disallowing surrogate pairs encoded in\r\nUTF-8, though.\r\n\r\n\r\nOn Fri, Dec 21, 2012 at 9:12 PM, <rsc@golang.org> wrote:\r\n\r\n> LGTM\r\n>\r\n> Does the trie encoding make sure that you don't accept 4-byte sequences\r\n> with value > 0x10FFFF, and that you don't, say, accept a 2-byte sequence\r\n> with value 0x00 ?\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/6971044/diff/2001/src/pkg/**\r\n> exp/locale/collate/build/**builder.go<https://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/build/builder.go>\r\n> File src/pkg/exp/locale/collate/**build/builder.go (right):\r\n>\r\n> https://codereview.appspot.**com/6971044/diff/2001/src/pkg/**\r\n> exp/locale/collate/build/**builder.go#newcode662<https://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/build/builder.go#newcode662>\r\n> src/pkg/exp/locale/collate/**build/builder.go:662:\r\n> log.Fatalf(\"%s:**processContractions: unexpected length for '%X'; len=%d;\r\n> want %d\", o.id, e.runes, sn, len(str))\r\n> space after %s\r\n>\r\n> https://codereview.appspot.**com/6971044/diff/2001/src/pkg/**\r\n> exp/locale/collate/build/**builder.go#newcode666<https://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/build/builder.go#newcode666>\r\n> src/pkg/exp/locale/collate/**build/builder.go:666: log.Fatalf(\"%s:multiple\r\n> contractions for position %d for rune %U\", o.id, p, e.runes[0])\r\n> same\r\n>\r\n> https://codereview.appspot.**com/6971044/diff/2001/src/pkg/**\r\n> exp/locale/collate/collate.go<https://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/collate.go>\r\n> File src/pkg/exp/locale/collate/**collate.go (right):\r\n>\r\n> https://codereview.appspot.**com/6971044/diff/2001/src/pkg/**\r\n> exp/locale/collate/collate.go#**newcode292<https://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/collate.go#newcode292>\r\n> src/pkg/exp/locale/collate/**collate.go:292: func (src source) done() bool\r\n> {\r\n> probably all of these should be pointer receivers.\r\n>\r\n> https://codereview.appspot.**com/6971044/<https://codereview.appspot.com/6971044/>\r\n>\r\n\r\n\r\n\r\n-- \r\nTrying this for a while: http://go/OnlyCheckEmailTwiceADay.\r\nMarcel van Lohuizen -- Google Switzerland GmbH -- Identifikationsnummer:\r\nCH-020.4.028.116-1\r\n",
+			"disapproval": false,
+			"date": "2012-12-24 15:20:30.847230",
+			"approval": false
+		},
+		{
+			"sender": "mpvl@golang.org",
+			"recipients": [
+				"mpvl@golang.org",
+				"rsc@golang.org",
+				"mpvl@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/build/builder.go\nFile src/pkg/exp/locale/collate/build/builder.go (right):\n\nhttps://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/build/builder.go#newcode662\nsrc/pkg/exp/locale/collate/build/builder.go:662: log.Fatalf(\"%s:processContractions: unexpected length for '%X'; len=%d; want %d\", o.id, e.runes, sn, len(str))\nOn 2012/12/21 20:12:52, rsc wrote:\n> space after %s\n\nDone.\n\nhttps://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/build/builder.go#newcode666\nsrc/pkg/exp/locale/collate/build/builder.go:666: log.Fatalf(\"%s:multiple contractions for position %d for rune %U\", o.id, p, e.runes[0])\nOn 2012/12/21 20:12:52, rsc wrote:\n> same\n\nDone.\n\nhttps://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/collate.go\nFile src/pkg/exp/locale/collate/collate.go (right):\n\nhttps://codereview.appspot.com/6971044/diff/2001/src/pkg/exp/locale/collate/collate.go#newcode292\nsrc/pkg/exp/locale/collate/collate.go:292: func (src source) done() bool {\nOn 2012/12/21 20:12:52, rsc wrote:\n> probably all of these should be pointer receivers.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-12-24 15:41:12.279340",
+			"approval": false
+		},
+		{
+			"sender": "mpvl@golang.org",
+			"recipients": [
+				"mpvl@golang.org",
+				"rsc@golang.org",
+				"mpvl@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=4115d29db6bb ***\n\nexp/locale/collate: include composed characters into the table. This eliminates\nthe need to decompose characters for the majority of cases.  This considerably\nspeeds up collation while increasing the table size minimally.\n\nTo detect non-normalized strings, rather than relying on exp/norm, the table\nnow includes CCC information. The inclusion of this information does not\nincrease table size.\n\nDETAILS\n - Raw collation elements are now a struct that includes the CCC, rather\n   than a slice of ints.\n - Builder now ensures that NFD and NFC counterparts are included in the table.\n   This also fixes a bug for Korean which is responsible for most of the growth\n   of the table size.\n - As there is no more normalization step, code should now handle both strings\n   and byte slices as input. Introduced source type to facilitate this.\n\nNOTES\n - This change does not handle normalization correctly entirely for contractions.\n   This causes a few failures with the regtest. table_test.go contains a few\n   uncommented tests that can be enabled once this is fixed.  The easiest is to\n   fix this once we have the new norm.Iter.\n - Removed a test cases in table_test that covers cases that are now guaranteed\n   to not exist.\n\nR=rsc, mpvl\nCC=golang-dev\nhttps://codereview.appspot.com/6971044",
+			"disapproval": false,
+			"date": "2012-12-24 15:42:49.287040",
+			"approval": false
+		}
+	],
+	"owner_email": "mpvl@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "mpvl",
+	"subject": "code review 6971044: exp/locale/collate: include composed characters into th...",
+	"created": "2012-12-19 09:41:21.211130",
+	"patchsets": [
+		1,
+		2001,
+		14002
+	],
+	"modified": "2012-12-24 15:42:50.778840",
+	"closed": true,
+	"issue": 6971044
+}

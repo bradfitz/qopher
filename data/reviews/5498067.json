@@ -1,0 +1,137 @@
+{
+	"description": "dashboard: cache packages, introduce caching helpers",
+	"cc": [
+		"rsc@golang.org",
+		"gary.burd@gmail.com",
+		"adg@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "adg@google.com",
+			"recipients": [
+				"adg@golang.org",
+				"rsc@golang.org",
+				"gary.burd@gmail.com",
+				"adg@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Also added a nocache query parameter, so calling any handler with nocache=x will disable the cache.\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/build/handler.go\nFile misc/dashboard/app/build/handler.go (right):\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/build/handler.go#newcode10\nmisc/dashboard/app/build/handler.go:10: \"cache\"\nOn 2011/12/23 03:37:56, rsc wrote:\n> Move down to end, after blank line?\n\nDone.\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/build/ui.go\nFile misc/dashboard/app/build/ui.go (right):\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/build/ui.go#newcode14\nmisc/dashboard/app/build/ui.go:14: \"cache\"\nOn 2011/12/23 03:37:56, rsc wrote:\n> Same.\n\nDone.\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/cache/cache.go\nFile misc/dashboard/app/cache/cache.go (right):\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/cache/cache.go#newcode42\nmisc/dashboard/app/cache/cache.go:42: // Get fetches data for name.now from memcache and unmarshals it into value.\nOn 2011/12/23 03:37:56, rsc wrote:\n> s/.now/at time now/\n\nDone.\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/cache/cache.go#newcode42\nmisc/dashboard/app/cache/cache.go:42: // Get fetches data for name.now from memcache and unmarshals it into value.\nOn 2011/12/23 03:37:56, rsc wrote:\n> s/.now/at time now/\n\nDone.\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/cache/cache.go#newcode43\nmisc/dashboard/app/cache/cache.go:43: // It returns whether it found the cache record and\nOn 2011/12/23 03:37:56, rsc wrote:\n> s/returns/reports/\n\nDone.\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/cache/cache.go#newcode62\nmisc/dashboard/app/cache/cache.go:62: // Set puts value into memcache under name.now.\nOn 2011/12/23 03:37:56, rsc wrote:\n> under name at time now.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-12-23 03:41:17.277912",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"rsc@golang.org",
+				"gary.burd@gmail.com",
+				"adg@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=41e43c447b16 ***\n\ndashboard: cache packages, introduce caching helpers\n\nR=rsc, gary.burd, adg\nCC=golang-dev\nhttp://codereview.appspot.com/5498067",
+			"disapproval": false,
+			"date": "2011-12-23 03:45:10.544419",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"rsc@golang.org",
+				"gary.burd@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2011/12/23 02:20:54, gburd wrote:\n> Write a sentinel value with memcache.Set to invalidate a key. Use \n> memcache.CompareAndSwap to update the cache after reading \n> the sentinel value.  Use memcache.Add to update the cache after a miss.\n\nThis works if you know all the keys you want to invalidate.\nPart of the reason for the logical times is that invalidating all\nkeys in a group becomes O(1).",
+			"disapproval": false,
+			"date": "2011-12-23 03:29:48.688366",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg",
+			"disapproval": false,
+			"date": "2011-12-22 04:30:27.883585",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Caching is not as easy as it looks.\n\nFirst, I don't see any way for a request to bypass the cache,\nwhich you are sure to want while debugging the inevitable bugs.\n\nMore generally, though, caching is not as simple as it looks.\nAdding a cache is one of the easiest ways to write a fast, incorrect\nprogram; it has to be done very carefully.  I believe that Cache.Set\nin particular is impossible to use correctly, and cacheTodo is likely\nunsafe too.  In both cases the problem is that you might have\n\n\t... request 1\n\t... look in cache, find nothing\n\t... spend some time reading data and creating result\n\t\t... request 2\n\t\t... update data store\n\t\t... invalidateCache\n\t... set cache entry\n\t\n\t... request 3\n\t... look in cache, find old data (without request 2's update)\n\t... return stale information\n\nNow the cache entry is describing something from before the data\nstore was updated.\n\nI think most of the strain here is caused by trying to limit yourself\nto a fixed set of cache keys so that you can implement the \n\"invalidate cache\" operation with a DeleteMulti on a known set of keys.\nThere is a better way.\n\nYou need a reliable sequence number to serve as a clock.\nYou want to move the clock after every datastore update and\nhandle the case where the clock falls out of memcache entirely.\n\nI believe this will work:\n\n// cacheNow returns the current logical datastore time to use for cache lookups.\nfunc cacheNow(c appengine.Context) int64 {\n\tt, err := memcache.Increment(c, \"cachetime\", 0, time.Now().Unix()<<32)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\treturn t\n}\n\n// cacheTick sets the current logical datastore time to a never-before-used time\n// and returns that time.\nfunc cacheTick(c appengine.Context) {\n\t_, err := memcache.Increment(c, \"cachetime\", 1, time.Now().Unix()<<32)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n}\n\nThe idea is that you just keep incrementing a value stored in memcache,\nand when it falls out you put it back using the current Unix time <<32.\nThe <<32 gives you room for increments later.  Unless you can do\n4 billion requests with increments per second on App Engine, it is\nguaranteed that the current \"cachetime\" value will never be ahead\nof the current Unix time <<32, so the current Unix time<<32 will always\nbe a fresh value when you need a new one.\n\nThen at the beginning of a request, you do:\n\n\tnow := cacheNow()\n\nand then when you look up other cached things, you always lookup\nusing fmt.Sprintf(\"%s.%d\", basekey, now).  If that isn't there, you take\nthe time to generate the thing and then store it under that same key.\nIt is critically important that you only call cacheNow once, before\ndoing any datastore reads, and later use that same value for doing\nthe put if you filled in a cache entry.  Then anything you write to the\ncache must definitively include everything that was stored at that time\n(and maybe a little extra that was stored after that time; not a problem).\n\nAfter applying writes to the datastore, you call cacheUpdate() to move\nthe value of \"cachetime\" to something that it has never been before.\nThis will invalidate any existing cache entries and even any entries\nthat are in the process of being created (because those creations are\ngoing to use old values of cachetime that no one will ever use in a\nlookup anymore).  It is similarly critically important that the call to\ncacheUpdate happens after all the datastore writes.\n\nCombined these ensure that any cache entry marked as time t will\ninclude all the datastore writes that happened before time t, so the\ncache entries marked with the current time will be, well, current.\n\nfunc cacheGet(c appengine.Context, now int64, name string, value interface{}) {\n\tkey := fmt.Sprintf(\"%s.%d\", name, now)\n\tfetch key into value\n}\n\nfunc cachePut(c appengine.Context, now int64, name string, value interface{}) {\n\tkey := fmt.Sprintf(\"%s.%d\", name, now)\n\tstore value under key\n}\n\nfunc cacheInvalidateAll(c appengine.Context) {\n\tcacheTick(c)\n}\n\nIf we go back to the scenario I mentioned at the beginning of the email,\nthis new approach will handle it:\n\n\t... request 1\n\t... look up \"cachetime\", get 5 (say)\n\t... do something, miss cache\n\t... spend some time creating result\n\t\t... request 2\n\t\t... update data store\n\t\t... increment \"cachetime\" to 6\n\t... set cache entry for time 5\n\t\n\t... request 3\n\t... look up \"cachetime\", get 6\n\t... look in cache find nothing (does not find entry request 1 wrote)\n\t... compute up-to-date information\n\t... set cache entry for time 6\n\t... return up-to-date information\n\nThe cache entry that request 1 wrote doesn't cause any problems, because\ntime has moved on without it.\n\nThere are two nice benefits to this approach.  One is that it correctly\nhandles races between datastore writes and cache updates by other\nrequests, which I believe the helpers in this CL do not.  The second is\nthat it scales to any number of names you want to use.  Instead of needing\nthat mega build-todo cache entry, you can use smaller individual\nentries named build-todo:darwin-amd64, build-todo:linux-386, and so on.\nThe single cacheInvalidateAll call handles all of them, even ones that\nhaven't been created yet!\n\nAt this point you also don't need the explicit type Cache anymore.\nThe expiry time is nearly irrelevant if you've arranged for the cache\nto be truly consistent, and in many of the cases you want the flexibility\nto be able to specify a programmatically constructed key.\nOf course you might still want the lighter weight:\n\nconst (\n\tpackagesCache = \"build-packages\"\n\tuiCache = \"build-ui\"\n\ttodoCachePrefix = \"build-todo:\"\n)\n\nI'd suggest using the API above (just functions) and hard-coding a fixed\nexpiry like 10 minutes.  There's little point to more than that.  If you can't\nspend the CPU to do something 6 times an hour, you probably can't \nspend the CPU to do it once an hour either, at least not in response to an\nactive HTTP request.",
+			"disapproval": false,
+			"date": "2011-12-22 21:28:09.900471",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-12-23 01:09:05.023647",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"rsc@golang.org",
+				"gary.burd@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThe point of the import comment is just to make it clear\nthat \"cache\" is not a standard package.  The appengine/\npackages could go down there too if cache looks lonely.\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/build/handler.go\nFile misc/dashboard/app/build/handler.go (right):\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/build/handler.go#newcode10\nmisc/dashboard/app/build/handler.go:10: \"cache\"\nMove down to end, after blank line?\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/build/ui.go\nFile misc/dashboard/app/build/ui.go (right):\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/build/ui.go#newcode14\nmisc/dashboard/app/build/ui.go:14: \"cache\"\nSame.\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/cache/cache.go\nFile misc/dashboard/app/cache/cache.go (right):\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/cache/cache.go#newcode42\nmisc/dashboard/app/cache/cache.go:42: // Get fetches data for name.now from memcache and unmarshals it into value.\ns/.now/at time now/\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/cache/cache.go#newcode43\nmisc/dashboard/app/cache/cache.go:43: // It returns whether it found the cache record and\ns/returns/reports/\n\nhttp://codereview.appspot.com/5498067/diff/5/misc/dashboard/app/cache/cache.go#newcode62\nmisc/dashboard/app/cache/cache.go:62: // Set puts value into memcache under name.now.\nunder name at time now.",
+			"disapproval": false,
+			"date": "2011-12-23 03:37:56.227656",
+			"approval": true
+		},
+		{
+			"sender": "gary.burd@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Another approach is to use memcache.CompareAndSwap. \n\nWrite a sentinel value with memcache.Set to invalidate a key. Use \nmemcache.CompareAndSwap to update the cache after reading \nthe sentinel value.  Use memcache.Add to update the cache after a miss.\n",
+			"disapproval": false,
+			"date": "2011-12-23 02:20:54.095070",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 5498067: dashboard: cache packages, introduce caching helpers",
+	"created": "2011-12-22 04:30:21.260571",
+	"patchsets": [
+		1,
+		4001,
+		5001,
+		5004,
+		5005,
+		5,
+		4008,
+		5007
+	],
+	"modified": "2011-12-23 03:45:12.735607",
+	"closed": true,
+	"issue": 5498067
+}

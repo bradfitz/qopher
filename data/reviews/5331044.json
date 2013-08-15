@@ -1,0 +1,61 @@
+{
+	"description": "exec: introduce ExitError\n\nThe existing code uses *os.Waitmsg as an os.Error,\nbut *os.Waitmsg is really just a stringer.\n\nIntroduce an explicit error type for the real error.\n\nNot to be submitted until just before error goes in;\nthe gofix for error updates type assertions\n        err.(*os.Waitmsg)\nto\n        err.(*exec.ExitError)\n\nThe seemingly redundant String method will become\nan Error method when error goes in, and will no longer\nbe redundant.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d0eeadc0f073 ***\n\nexec: introduce ExitError\n\nThe existing code uses *os.Waitmsg as an os.Error,\nbut *os.Waitmsg is really just a stringer.\n\nIntroduce an explicit error type for the real error.\n\nNot to be submitted until just before error goes in;\nthe gofix for error updates type assertions\n        err.(*os.Waitmsg)\nto\n        err.(*exec.ExitError)\n\nThe seemingly redundant String method will become\nan Error method when error goes in, and will no longer\nbe redundant.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5331044",
+			"disapproval": false,
+			"date": "2011-11-02 01:49:47.109286",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg",
+			"disapproval": false,
+			"date": "2011-10-28 01:42:47.737856",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nI seem to recall that it was like this at some point during code review\niterations.\n\n\nOn Thu, Oct 27, 2011 at 6:42 PM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg\n>\n>\n> Description:\n> exec: introduce ExitError\n>\n> The existing code uses *os.Waitmsg as an os.Error,\n> but *os.Waitmsg is really just a stringer.\n>\n> Introduce an explicit error type for the real error.\n>\n> Not to be submitted until just before error goes in;\n> the gofix for error updates type assertions\n>        err.(*os.Waitmsg)\n> to\n>        err.(*exec.ExitError)\n>\n> The seemingly redundant String method will become\n> an Error method when error goes in, and will no longer\n> be redundant.\n>\n> Please review this at http://codereview.appspot.com/**5331044/<http://codereview.appspot.com/5331044/>\n>\n> Affected files:\n>  M src/pkg/exec/exec.go\n>  M src/pkg/exec/exec_test.go\n>\n>\n> Index: src/pkg/exec/exec.go\n> ==============================**==============================**=======\n> --- a/src/pkg/exec/exec.go\n> +++ b/src/pkg/exec/exec.go\n> @@ -203,7 +203,7 @@\n>  // status.\n>  //\n>  // If the command fails to run or doesn't complete successfully, the\n> -// error is of type *os.Waitmsg. Other error types may be\n> +// error is of type *ExitError. Other error types may be\n>  // returned for I/O problems.\n>  func (c *Cmd) Run() os.Error {\n>        if err := c.Start(); err != nil {\n> @@ -256,6 +256,15 @@\n>        return nil\n>  }\n>\n> +// An ExitError reports an unsuccessful exit by a command.\n> +type ExitError struct {\n> +       *os.Waitmsg\n> +}\n> +\n> +func (e *ExitError) String() string {\n> +       return e.Waitmsg.String()\n> +}\n> +\n>  // Wait waits for the command to exit.\n>  // It must have been started by Start.\n>  //\n> @@ -264,7 +273,7 @@\n>  // status.\n>  //\n>  // If the command fails to run or doesn't complete successfully, the\n> -// error is of type *os.Waitmsg. Other error types may be\n> +// error is of type *ExitError. Other error types may be\n>  // returned for I/O problems.\n>  func (c *Cmd) Wait() os.Error {\n>        if c.Process == nil {\n> @@ -290,7 +299,7 @@\n>        if err != nil {\n>                return err\n>        } else if !msg.Exited() || msg.ExitStatus() != 0 {\n> -               return msg\n> +               return &ExitError{msg}\n>        }\n>\n>        return copyError\n> Index: src/pkg/exec/exec_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/exec/exec_test.go\n> +++ b/src/pkg/exec/exec_test.go\n> @@ -53,8 +53,8 @@\n>  func TestCatGoodAndBadFile(t *testing.T) {\n>        // Testing combined output and error values.\n>        bs, err := helperCommand(\"cat\", \"/bogus/file.foo\", \"exec_test.go\").\n> **CombinedOutput()\n> -       if _, ok := err.(*os.Waitmsg); !ok {\n> -               t.Errorf(\"expected Waitmsg from cat combined; got %T: %v\",\n> err, err)\n> +       if _, ok := err.(*ExitError); !ok {\n> +               t.Errorf(\"expected *ExitError from cat combined; got %T:\n> %v\", err, err)\n>        }\n>        s := string(bs)\n>        sp := strings.SplitN(s, \"\\n\", 2)\n> @@ -81,12 +81,12 @@\n>  func TestExitStatus(t *testing.T) {\n>        // Test that exit values are returned correctly\n>        err := helperCommand(\"exit\", \"42\").Run()\n> -       if werr, ok := err.(*os.Waitmsg); ok {\n> +       if werr, ok := err.(*ExitError); ok {\n>                if s, e := werr.String(), \"exit status 42\"; s != e {\n>                        t.Errorf(\"from exit 42 got exit %q, want %q\", s, e)\n>                }\n>        } else {\n> -               t.Fatalf(\"expected Waitmsg from exit 42; got %T: %v\", err,\n> err)\n> +               t.Fatalf(\"expected *ExitError from exit 42; got %T: %v\",\n> err, err)\n>        }\n>  }\n>\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-28 01:47:48.729405",
+			"approval": true
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5331044: exec: introduce ExitError",
+	"created": "2011-10-28 01:13:26.021663",
+	"patchsets": [
+		1,
+		1001,
+		3003,
+		4,
+		9001
+	],
+	"modified": "2011-11-02 19:28:45.872689",
+	"closed": true,
+	"issue": 5331044
+}

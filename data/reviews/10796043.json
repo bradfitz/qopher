@@ -1,0 +1,165 @@
+{
+	"description": "runtime: preempt long-running goroutines\nIf a goroutine runs for more than 10ms, preempt it.\nUpdate issue 543.",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10796043/diff/3001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10796043/diff/3001/src/pkg/runtime/stack.c#newcode251\nsrc/pkg/runtime/stack.c:251: if(oldstatus != Grunning || m->locks || m->mallocing || m->gcing || m->p->status != Prunning) {\nDuring GC P can be in Pgcstop status, then it crashes as:\n\nfatal error: runtime: g is running but p is not\n\ngoroutine 0 [idle]:\nruntime.throw(0x392098)\n\tsrc/pkg/runtime/panic.c:474 +0x69\nruntime.newstack()\n\tsrc/pkg/runtime/stack.c:248 +0x214\nruntime.morestack()\n\tsrc/pkg/runtime/asm_amd64.s:213 +0x61\n\ngoroutine 200100 [stack split]:\npidleget()\n\tsrc/pkg/runtime/proc.c:2261 fp=0x22109a9ef8\nruntime.stoptheworld()\n\tsrc/pkg/runtime/proc.c:379 +0xce fp=0x22109a9f28\nruntime.gc(0x1)\n\tsrc/pkg/runtime/mgc0.c:1993 +0x11c fp=0x22109a9f60\nruntime.GC()\n\tsrc/pkg/runtime/zmalloc_darwin_amd64.c:734 +0x26 fp=0x22109a9f70\nruntime_test.func\u00b7030()\n\tsrc/pkg/runtime/proc_test.go:34 +0x37 fp=0x22109a9fa0\nruntime.goexit()\n\tsrc/pkg/runtime/proc.c:1276 fp=0x22109a9fa8\ncreated by runtime_test.TestStopTheWorldDeadlock\n\tsrc/pkg/runtime/proc_test.go:37 +0x13f",
+			"disapproval": false,
+			"date": "2013-06-29 19:40:03.227910",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This patch doesn't apply cleanly to tip. Can you please update it?",
+			"disapproval": false,
+			"date": "2013-07-18 16:25:51.733040",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/18 21:16:55, dvyukov wrote:\n> I've successfully run\n> $ GOARCH=386 ./all.bash && GOMAXPROCS=4 ./all.bash && GOARCH=386 ./all.bash &&\n> GOMAXPROCS=4 ./all.bash\n> \n> but when I've run hg submit, it said:\n> \n> $ hg submit 10796043\n> Issue updated. URL: https://codereview.appspot.com/10796043\n> gofmt errors:\n> runtime: newstack framesize=0x0 argsize=0x20 sp=0x21034b090 stack=[0x21034c000,\n> 0x21034d530]\n> \tmorebuf={pc:0x64c2c sp:0x21034b0a0 lr:0x0}\n> \tsched={pc:0x72ca0 sp:0x21034b098 lr:0x0 ctxt:0x6e9}\n> runtime: split stack overflow: 0x21034b090 < 0x21034c000\n> fatal error: runtime: split stack overflow\n> \n> goroutine 0 [idle]:\n> runtime.throw(0x23bf38)\n> \tsrc/pkg/runtime/panic.c:474 +0x69 fp=0x21030de88\n> runtime.newstack()\n> \tsrc/pkg/runtime/stack.c:236 +0x136 fp=0x21030df80\n> runtime.morestack()\n> \tsrc/pkg/runtime/asm_amd64.s:213 +0x61 fp=0x21030df88\n> \n> goroutine 1 [stack split]:\n> go/printer.(*printer).print(0x210325500, 0x21034bcf8, 0x1, 0x1)\n> \tsrc/pkg/go/printer/printer.go:786 fp=0x21034b0a0\n> go/printer.(*printer).expr1(0x210325500, 0x297950, 0x210323e00, 0x4, 0x2)\n> \tsrc/pkg/go/printer/nodes.go:676 +0xcc fp=0x21034c210\n> go/printer.(*printer).binaryExpr(0x210325500, 0x2102ccc60, 0x0, 0x6, 0x1)\n> \tsrc/pkg/go/printer/nodes.go:664 +0x54e fp=0x21034c398\n> go/printer.(*printer).expr1(0x210325500, 0x297c98, 0x2102ccc60, 0x0, 0x1)\n> \tsrc/pkg/go/printer/nodes.go:690 +0x1077 fp=0x21034d508\n> ----- stack segment boundary -----\n> go/printer.(*printer).expr(0x210325500, 0x297c98, 0x2102ccc60)\n> \tsrc/pkg/go/printer/nodes.go:891 +0x4d fp=0x2210445e50\n> go/printer.(*printer).controlClause(0x210325500, 0x2210446301, 0x297c60,\n> 0x210329340, 0x297c98, ...)\n> \tsrc/pkg/go/printer/nodes.go:994 +0x30f fp=0x2210445f60\n> ----- stack segment boundary -----\n> go/printer.(*printer).stmt(0x210325500, 0x297cd0, 0x210329800, 0x290000)\n> \tsrc/pkg/go/printer/nodes.go:1201 +0x4de fp=0x2210446ea8\n> go/printer.(*printer).stmtList(0x210325500, 0x210329840, 0x4, 0x4, 0x1, ...)\n> \tsrc/pkg/go/printer/nodes.go:916 +0x256 fp=0x2210446f70\n> ----- stack segment boundary -----\n> go/printer.(*printer).block(0x210325500, 0x2102ccf00, 0x1)\n> \tsrc/pkg/go/printer/nodes.go:929 +0xef fp=0x22104371d0\n> go/printer.(*printer).stmt(0x210325500, 0x297cd0, 0x210329980, 0x290001)\n> \tsrc/pkg/go/printer/nodes.go:1202 +0x509 fp=0x2210437f80\n> ----- stack segment boundary -----\n> go/printer.(*printer).stmtList(0x210325500, 0x2103299c0, 0x3, 0x4, 0x1, ...)\n> \tsrc/pkg/go/printer/nodes.go:916 +0x256 fp=0x2210326608\n> go/printer.(*printer).block(0x210325500, 0x2102ccf30, 0x1)\n> \tsrc/pkg/go/printer/nodes.go:929 +0xef fp=0x22103266c0\n> go/printer.(*printer).adjBlock(0x210325500, 0x2b, 0xb, 0x2102ccf30)\n> \tsrc/pkg/go/printer/nodes.go:1498 +0x5d9 fp=0x2210326878\n> go/printer.(*printer).funcDecl(0x210325500, 0x2102ccf60)\n> \tsrc/pkg/go/printer/nodes.go:1522 +0x2a2 fp=0x2210326920\n> go/printer.(*printer).decl(0x210325500, 0x297a68, 0x2102ccf60)\n> \tsrc/pkg/go/printer/nodes.go:1532 +0x9f fp=0x22103269a8\n> go/printer.(*printer).declList(0x210325500, 0x210340c00, 0x26, 0x40)\n> \tsrc/pkg/go/printer/nodes.go:1573 +0x174 fp=0x2210326a18\n> go/printer.(*printer).file(0x210325500, 0x21030e780)\n> \tsrc/pkg/go/printer/nodes.go:1581 +0x16f fp=0x2210326ac0\n> go/printer.(*printer).printNode(0x210325500, 0x1217c0, 0x21030e780, 0x2103224c0,\n> 0xfbb1)\n> \tsrc/pkg/go/printer/printer.go:1026 +0x7b4 fp=0x2210326be8\n> go/printer.(*Config).fprint(0x2210326e30, 0x298088, 0x210312230, 0x2102e6540,\n> 0x1217c0, ...)\n> \tsrc/pkg/go/printer/printer.go:1165 +0xa8 fp=0x2210326c70\n> go/printer.(*Config).Fprint(0x2210326e30, 0x298088, 0x210312230, 0x2102e6540,\n> 0x1217c0, ...)\n> \tsrc/pkg/go/printer/printer.go:1223 +0x7e fp=0x2210326cc0\n> main.processFile(0x7fff5fbffb61, 0x1c, 0x0, 0x0, 0x297890, ...)\n> \tsrc/cmd/gofmt/gofmt.go:121 +0x2ef fp=0x2210326e70\n> main.gofmtMain()\n> \tsrc/cmd/gofmt/gofmt.go:220 +0x597 fp=0x2210326f68\n> main.main()\n> \tsrc/cmd/gofmt/gofmt.go:176 +0x1e fp=0x2210326f78\n> runtime.main()\n> \tsrc/pkg/runtime/proc.c:182 +0x94 fp=0x2210326fa0\n> runtime.goexit()\n> \tsrc/pkg/runtime/proc.c:1276 fp=0x2210326fa8\n\n\nthis is still with preemption disabled\nI think I've seen this before, but I thought that it's related to interaction between new handling of big stack frames and preemption...",
+			"disapproval": false,
+			"date": "2013-07-18 21:21:13.517550",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-07-18 16:40:56.883430",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Done\r\n\r\nOn Thu, Jul 18, 2013 at 8:25 PM,  <rsc@golang.org> wrote:\r\n> This patch doesn't apply cleanly to tip. Can you please update it?\r\n>\r\n>\r\n> https://codereview.appspot.com/10796043/\r\n",
+			"disapproval": false,
+			"date": "2013-07-18 16:41:48.688510",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-07-18 17:27:50.157910",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've successfully run\n$ GOARCH=386 ./all.bash && GOMAXPROCS=4 ./all.bash && GOARCH=386 ./all.bash && GOMAXPROCS=4 ./all.bash\n\nbut when I've run hg submit, it said:\n\n$ hg submit 10796043\nIssue updated. URL: https://codereview.appspot.com/10796043\ngofmt errors:\nruntime: newstack framesize=0x0 argsize=0x20 sp=0x21034b090 stack=[0x21034c000, 0x21034d530]\n\tmorebuf={pc:0x64c2c sp:0x21034b0a0 lr:0x0}\n\tsched={pc:0x72ca0 sp:0x21034b098 lr:0x0 ctxt:0x6e9}\nruntime: split stack overflow: 0x21034b090 < 0x21034c000\nfatal error: runtime: split stack overflow\n\ngoroutine 0 [idle]:\nruntime.throw(0x23bf38)\n\tsrc/pkg/runtime/panic.c:474 +0x69 fp=0x21030de88\nruntime.newstack()\n\tsrc/pkg/runtime/stack.c:236 +0x136 fp=0x21030df80\nruntime.morestack()\n\tsrc/pkg/runtime/asm_amd64.s:213 +0x61 fp=0x21030df88\n\ngoroutine 1 [stack split]:\ngo/printer.(*printer).print(0x210325500, 0x21034bcf8, 0x1, 0x1)\n\tsrc/pkg/go/printer/printer.go:786 fp=0x21034b0a0\ngo/printer.(*printer).expr1(0x210325500, 0x297950, 0x210323e00, 0x4, 0x2)\n\tsrc/pkg/go/printer/nodes.go:676 +0xcc fp=0x21034c210\ngo/printer.(*printer).binaryExpr(0x210325500, 0x2102ccc60, 0x0, 0x6, 0x1)\n\tsrc/pkg/go/printer/nodes.go:664 +0x54e fp=0x21034c398\ngo/printer.(*printer).expr1(0x210325500, 0x297c98, 0x2102ccc60, 0x0, 0x1)\n\tsrc/pkg/go/printer/nodes.go:690 +0x1077 fp=0x21034d508\n----- stack segment boundary -----\ngo/printer.(*printer).expr(0x210325500, 0x297c98, 0x2102ccc60)\n\tsrc/pkg/go/printer/nodes.go:891 +0x4d fp=0x2210445e50\ngo/printer.(*printer).controlClause(0x210325500, 0x2210446301, 0x297c60, 0x210329340, 0x297c98, ...)\n\tsrc/pkg/go/printer/nodes.go:994 +0x30f fp=0x2210445f60\n----- stack segment boundary -----\ngo/printer.(*printer).stmt(0x210325500, 0x297cd0, 0x210329800, 0x290000)\n\tsrc/pkg/go/printer/nodes.go:1201 +0x4de fp=0x2210446ea8\ngo/printer.(*printer).stmtList(0x210325500, 0x210329840, 0x4, 0x4, 0x1, ...)\n\tsrc/pkg/go/printer/nodes.go:916 +0x256 fp=0x2210446f70\n----- stack segment boundary -----\ngo/printer.(*printer).block(0x210325500, 0x2102ccf00, 0x1)\n\tsrc/pkg/go/printer/nodes.go:929 +0xef fp=0x22104371d0\ngo/printer.(*printer).stmt(0x210325500, 0x297cd0, 0x210329980, 0x290001)\n\tsrc/pkg/go/printer/nodes.go:1202 +0x509 fp=0x2210437f80\n----- stack segment boundary -----\ngo/printer.(*printer).stmtList(0x210325500, 0x2103299c0, 0x3, 0x4, 0x1, ...)\n\tsrc/pkg/go/printer/nodes.go:916 +0x256 fp=0x2210326608\ngo/printer.(*printer).block(0x210325500, 0x2102ccf30, 0x1)\n\tsrc/pkg/go/printer/nodes.go:929 +0xef fp=0x22103266c0\ngo/printer.(*printer).adjBlock(0x210325500, 0x2b, 0xb, 0x2102ccf30)\n\tsrc/pkg/go/printer/nodes.go:1498 +0x5d9 fp=0x2210326878\ngo/printer.(*printer).funcDecl(0x210325500, 0x2102ccf60)\n\tsrc/pkg/go/printer/nodes.go:1522 +0x2a2 fp=0x2210326920\ngo/printer.(*printer).decl(0x210325500, 0x297a68, 0x2102ccf60)\n\tsrc/pkg/go/printer/nodes.go:1532 +0x9f fp=0x22103269a8\ngo/printer.(*printer).declList(0x210325500, 0x210340c00, 0x26, 0x40)\n\tsrc/pkg/go/printer/nodes.go:1573 +0x174 fp=0x2210326a18\ngo/printer.(*printer).file(0x210325500, 0x21030e780)\n\tsrc/pkg/go/printer/nodes.go:1581 +0x16f fp=0x2210326ac0\ngo/printer.(*printer).printNode(0x210325500, 0x1217c0, 0x21030e780, 0x2103224c0, 0xfbb1)\n\tsrc/pkg/go/printer/printer.go:1026 +0x7b4 fp=0x2210326be8\ngo/printer.(*Config).fprint(0x2210326e30, 0x298088, 0x210312230, 0x2102e6540, 0x1217c0, ...)\n\tsrc/pkg/go/printer/printer.go:1165 +0xa8 fp=0x2210326c70\ngo/printer.(*Config).Fprint(0x2210326e30, 0x298088, 0x210312230, 0x2102e6540, 0x1217c0, ...)\n\tsrc/pkg/go/printer/printer.go:1223 +0x7e fp=0x2210326cc0\nmain.processFile(0x7fff5fbffb61, 0x1c, 0x0, 0x0, 0x297890, ...)\n\tsrc/cmd/gofmt/gofmt.go:121 +0x2ef fp=0x2210326e70\nmain.gofmtMain()\n\tsrc/cmd/gofmt/gofmt.go:220 +0x597 fp=0x2210326f68\nmain.main()\n\tsrc/cmd/gofmt/gofmt.go:176 +0x1e fp=0x2210326f78\nruntime.main()\n\tsrc/pkg/runtime/proc.c:182 +0x94 fp=0x2210326fa0\nruntime.goexit()\n\tsrc/pkg/runtime/proc.c:1276 fp=0x2210326fa8",
+			"disapproval": false,
+			"date": "2013-07-18 21:16:55.082410",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=77be25034f84 ***\n\nruntime: preempt long-running goroutines\nIf a goroutine runs for more than 10ms, preempt it.\nUpdate issue 543.\n\nR=rsc\nCC=golang-dev\nhttps://codereview.appspot.com/10796043",
+			"disapproval": false,
+			"date": "2013-07-18 21:22:18.773920",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/18 21:21:13, dvyukov wrote:\n> On 2013/07/18 21:16:55, dvyukov wrote:\n> > I've successfully run\n> > $ GOARCH=386 ./all.bash && GOMAXPROCS=4 ./all.bash && GOARCH=386 ./all.bash &&\n> > GOMAXPROCS=4 ./all.bash\n> > \n> > but when I've run hg submit, it said:\n> > \n> > $ hg submit 10796043\n> > Issue updated. URL: https://codereview.appspot.com/10796043\n> > gofmt errors:\n> > runtime: newstack framesize=0x0 argsize=0x20 sp=0x21034b090\n> stack=[0x21034c000,\n> > 0x21034d530]\n> > \tmorebuf={pc:0x64c2c sp:0x21034b0a0 lr:0x0}\n> > \tsched={pc:0x72ca0 sp:0x21034b098 lr:0x0 ctxt:0x6e9}\n> > runtime: split stack overflow: 0x21034b090 < 0x21034c000\n> > fatal error: runtime: split stack overflow\n> > \n> > goroutine 0 [idle]:\n> > runtime.throw(0x23bf38)\n> > \tsrc/pkg/runtime/panic.c:474 +0x69 fp=0x21030de88\n> > runtime.newstack()\n> > \tsrc/pkg/runtime/stack.c:236 +0x136 fp=0x21030df80\n> > runtime.morestack()\n> > \tsrc/pkg/runtime/asm_amd64.s:213 +0x61 fp=0x21030df88\n> > \n> > goroutine 1 [stack split]:\n> > go/printer.(*printer).print(0x210325500, 0x21034bcf8, 0x1, 0x1)\n> > \tsrc/pkg/go/printer/printer.go:786 fp=0x21034b0a0\n> > go/printer.(*printer).expr1(0x210325500, 0x297950, 0x210323e00, 0x4, 0x2)\n> > \tsrc/pkg/go/printer/nodes.go:676 +0xcc fp=0x21034c210\n> > go/printer.(*printer).binaryExpr(0x210325500, 0x2102ccc60, 0x0, 0x6, 0x1)\n> > \tsrc/pkg/go/printer/nodes.go:664 +0x54e fp=0x21034c398\n> > go/printer.(*printer).expr1(0x210325500, 0x297c98, 0x2102ccc60, 0x0, 0x1)\n> > \tsrc/pkg/go/printer/nodes.go:690 +0x1077 fp=0x21034d508\n> > ----- stack segment boundary -----\n> > go/printer.(*printer).expr(0x210325500, 0x297c98, 0x2102ccc60)\n> > \tsrc/pkg/go/printer/nodes.go:891 +0x4d fp=0x2210445e50\n> > go/printer.(*printer).controlClause(0x210325500, 0x2210446301, 0x297c60,\n> > 0x210329340, 0x297c98, ...)\n> > \tsrc/pkg/go/printer/nodes.go:994 +0x30f fp=0x2210445f60\n> > ----- stack segment boundary -----\n> > go/printer.(*printer).stmt(0x210325500, 0x297cd0, 0x210329800, 0x290000)\n> > \tsrc/pkg/go/printer/nodes.go:1201 +0x4de fp=0x2210446ea8\n> > go/printer.(*printer).stmtList(0x210325500, 0x210329840, 0x4, 0x4, 0x1, ...)\n> > \tsrc/pkg/go/printer/nodes.go:916 +0x256 fp=0x2210446f70\n> > ----- stack segment boundary -----\n> > go/printer.(*printer).block(0x210325500, 0x2102ccf00, 0x1)\n> > \tsrc/pkg/go/printer/nodes.go:929 +0xef fp=0x22104371d0\n> > go/printer.(*printer).stmt(0x210325500, 0x297cd0, 0x210329980, 0x290001)\n> > \tsrc/pkg/go/printer/nodes.go:1202 +0x509 fp=0x2210437f80\n> > ----- stack segment boundary -----\n> > go/printer.(*printer).stmtList(0x210325500, 0x2103299c0, 0x3, 0x4, 0x1, ...)\n> > \tsrc/pkg/go/printer/nodes.go:916 +0x256 fp=0x2210326608\n> > go/printer.(*printer).block(0x210325500, 0x2102ccf30, 0x1)\n> > \tsrc/pkg/go/printer/nodes.go:929 +0xef fp=0x22103266c0\n> > go/printer.(*printer).adjBlock(0x210325500, 0x2b, 0xb, 0x2102ccf30)\n> > \tsrc/pkg/go/printer/nodes.go:1498 +0x5d9 fp=0x2210326878\n> > go/printer.(*printer).funcDecl(0x210325500, 0x2102ccf60)\n> > \tsrc/pkg/go/printer/nodes.go:1522 +0x2a2 fp=0x2210326920\n> > go/printer.(*printer).decl(0x210325500, 0x297a68, 0x2102ccf60)\n> > \tsrc/pkg/go/printer/nodes.go:1532 +0x9f fp=0x22103269a8\n> > go/printer.(*printer).declList(0x210325500, 0x210340c00, 0x26, 0x40)\n> > \tsrc/pkg/go/printer/nodes.go:1573 +0x174 fp=0x2210326a18\n> > go/printer.(*printer).file(0x210325500, 0x21030e780)\n> > \tsrc/pkg/go/printer/nodes.go:1581 +0x16f fp=0x2210326ac0\n> > go/printer.(*printer).printNode(0x210325500, 0x1217c0, 0x21030e780,\n> 0x2103224c0,\n> > 0xfbb1)\n> > \tsrc/pkg/go/printer/printer.go:1026 +0x7b4 fp=0x2210326be8\n> > go/printer.(*Config).fprint(0x2210326e30, 0x298088, 0x210312230, 0x2102e6540,\n> > 0x1217c0, ...)\n> > \tsrc/pkg/go/printer/printer.go:1165 +0xa8 fp=0x2210326c70\n> > go/printer.(*Config).Fprint(0x2210326e30, 0x298088, 0x210312230, 0x2102e6540,\n> > 0x1217c0, ...)\n> > \tsrc/pkg/go/printer/printer.go:1223 +0x7e fp=0x2210326cc0\n> > main.processFile(0x7fff5fbffb61, 0x1c, 0x0, 0x0, 0x297890, ...)\n> > \tsrc/cmd/gofmt/gofmt.go:121 +0x2ef fp=0x2210326e70\n> > main.gofmtMain()\n> > \tsrc/cmd/gofmt/gofmt.go:220 +0x597 fp=0x2210326f68\n> > main.main()\n> > \tsrc/cmd/gofmt/gofmt.go:176 +0x1e fp=0x2210326f78\n> > runtime.main()\n> > \tsrc/pkg/runtime/proc.c:182 +0x94 fp=0x2210326fa0\n> > runtime.goexit()\n> > \tsrc/pkg/runtime/proc.c:1276 fp=0x2210326fa8\n> \n> \n> this is still with preemption disabled\n> I think I've seen this before, but I thought that it's related to interaction\n> between new handling of big stack frames and preemption...\n\nnot reproducible",
+			"disapproval": false,
+			"date": "2013-07-18 21:22:33.545330",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you please mail me a copy of the gofmt binary that crashed? You may\r\nhave to gzip it to attach it to a mail message. Thanks.\r\n\r\nWhy do your file names begin with \"src/\" instead of being absolute paths?\r\nAre you running with local patches?\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-07-19 02:48:34.829090",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Jul 19, 2013 at 6:48 AM, Russ Cox <rsc@golang.org> wrote:\r\n> Can you please mail me a copy of the gofmt binary that crashed? You may have\r\n> to gzip it to attach it to a mail message. Thanks.\r\n>\r\n> Why do your file names begin with \"src/\" instead of being absolute paths?\r\n> Are you running with local patches?\r\n\r\n\r\nSorry, it was inconsistent build (phew!)\r\n",
+			"disapproval": false,
+			"date": "2013-07-19 09:10:18.491340",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 10796043: runtime: preempt long-running goroutines",
+	"created": "2013-06-29 18:56:26.786830",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		2,
+		11001,
+		14001,
+		12005,
+		18001,
+		22001,
+		14002,
+		16011,
+		28001,
+		29001
+	],
+	"modified": "2013-07-19 09:10:18.617500",
+	"closed": true,
+	"issue": 10796043
+}

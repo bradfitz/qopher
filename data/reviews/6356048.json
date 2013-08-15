@@ -1,0 +1,61 @@
+{
+	"description": "syscall: fix FreeBSD 386 sendfile\nThe previous version was not handling an off_t (64 bit)\nparameter on 32 bit i386 systems.  This patch splits sendfile\ninto two implementations in their respective arch-specific files.\nTested on FreeBSD amd64 and i386.",
+	"cc": [
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave.andersen@gmail.com",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-06-29 03:18:00.801698",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=8950f70cd258 ***\n\nsyscall: fix FreeBSD 386 sendfile\nThe previous version was not handling an off_t (64 bit)\nparameter on 32 bit i386 systems.  This patch splits sendfile\ninto two implementations in their respective arch-specific files.\nTested on FreeBSD amd64 and i386.\n\nR=bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6356048\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2012-07-03 15:16:47.986276",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Mon, Jul 2, 2012 at 12:03 PM, dga <dave.andersen@gmail.com> wrote:\r\n\r\n> Bumping this back into the attention queue now that I/O is over.  Would be\r\n> nice to have -tip build on FreeBSD/386 again.\r\n>\r\n>\r\n> On Thursday, June 28, 2012 11:20:58 PM UTC-4, dga wrote:\r\n>>\r\n>> (Sorry - revised version posted that leaves the Syscall9 definition in\r\n>> the right order for the _386.go version)\r\n>>\r\n>>   -Dave\r\n>>\r\n>> On Thursday, June 28, 2012 11:18:00 PM UTC-4, dga wrote:\r\n>>>\r\n>>> Reviewers: bradfitz,\r\n>>>\r\n>>> Message:\r\n>>> Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\r\n>>>\r\n>>> I'd like you to review this change to\r\n>>> https://code.google.com/p/go\r\n>>>\r\n>>>\r\n>>> Description:\r\n>>> syscall: fix FreeBSD 386 sendfile\r\n>>> The previous version was not handling an off_t (64 bit)\r\n>>> parameter on 32 bit i386 systems.  This patch splits sendfile\r\n>>> into two implementations in their respective arch-specific files.\r\n>>> Tested on FreeBSD amd64 and i386.\r\n>>>\r\n>>> Please review this at http://codereview.appspot.com/**6356048/<http://codereview.appspot.com/6356048/>\r\n>>>\r\n>>> Affected files:\r\n>>>    M src/pkg/syscall/syscall_**freebsd.go\r\n>>>    M src/pkg/syscall/syscall_**freebsd_386.go\r\n>>>    M src/pkg/syscall/syscall_**freebsd_amd64.go\r\n>>>\r\n>>>\r\n>>> Index: src/pkg/syscall/syscall_**freebsd.go\r\n>>> ==============================**==============================**=======\r\n>>> --- a/src/pkg/syscall/syscall_**freebsd.go\r\n>>> +++ b/src/pkg/syscall/syscall_**freebsd.go\r\n>>> @@ -89,18 +89,6 @@\r\n>>>           return\r\n>>>   }\r\n>>>\r\n>>> -func Sendfile(outfd int, infd int, offset *int64, count int) (written\r\n>>> int,\r\n>>> err error) {\r\n>>> -        var writtenOut uint64 = 0\r\n>>> -        _, _, e1 := Syscall9(SYS_SENDFILE, uintptr(infd),\r\n>>> uintptr(outfd),\r\n>>> uintptr(*offset), uintptr(count), 0, uintptr(unsafe.Pointer(&**writtenOut)),\r\n>>>\r\n>>> 0, 0, 0)\r\n>>> -\r\n>>> -        written = int(writtenOut)\r\n>>> -\r\n>>> -        if e1 != 0 {\r\n>>> -                err = e1\r\n>>> -        }\r\n>>> -        return\r\n>>> -}\r\n>>> -\r\n>>>   func GetsockoptIPMreqn(fd, level, opt int) (*IPMreqn, error) {\r\n>>>           var value IPMreqn\r\n>>>           vallen := _Socklen(SizeofIPMreqn)\r\n>>> Index: src/pkg/syscall/syscall_**freebsd_386.go\r\n>>> ==============================**==============================**=======\r\n>>> --- a/src/pkg/syscall/syscall_**freebsd_386.go\r\n>>> +++ b/src/pkg/syscall/syscall_**freebsd_386.go\r\n>>> @@ -4,6 +4,8 @@\r\n>>>\r\n>>>   package syscall\r\n>>>\r\n>>> +import \"unsafe\"\r\n>>> +\r\n>>>   func Getpagesize() int { return 4096 }\r\n>>>\r\n>>>   func TimespecToNsec(ts Timespec) int64 { return int64(ts.Sec)*1e9 +\r\n>>> int64(ts.Nsec) }\r\n>>> @@ -42,3 +44,15 @@\r\n>>>   }\r\n>>>\r\n>>>   func Syscall9(num, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) (r1, r2\r\n>>>\r\n>>> uintptr, err Errno) // sic\r\n>>> +\r\n>>> +func Sendfile(outfd int, infd int, offset *int64, count int) (written\r\n>>> int,\r\n>>> err error) {\r\n>>> +        var writtenOut uint64 = 0\r\n>>> +        _, _, e1 := Syscall9(SYS_SENDFILE, uintptr(infd),\r\n>>> uintptr(outfd),\r\n>>> uintptr(*offset), uintptr((*offset)>>32), uintptr(count), 0,\r\n>>> uintptr(unsafe.Pointer(&**writtenOut)), 0, 0)\r\n>>> +\r\n>>> +        written = int(writtenOut)\r\n>>> +\r\n>>> +        if e1 != 0 {\r\n>>> +                err = e1\r\n>>> +        }\r\n>>> +        return\r\n>>> +}\r\n>>> Index: src/pkg/syscall/syscall_**freebsd_amd64.go\r\n>>> ==============================**==============================**=======\r\n>>> --- a/src/pkg/syscall/syscall_**freebsd_amd64.go\r\n>>> +++ b/src/pkg/syscall/syscall_**freebsd_amd64.go\r\n>>> @@ -4,6 +4,8 @@\r\n>>>\r\n>>>   package syscall\r\n>>>\r\n>>> +import \"unsafe\"\r\n>>> +\r\n>>>   func Getpagesize() int { return 4096 }\r\n>>>\r\n>>>   func TimespecToNsec(ts Timespec) int64 { return int64(ts.Sec)*1e9 +\r\n>>> int64(ts.Nsec) }\r\n>>> @@ -41,4 +43,16 @@\r\n>>>           cmsg.Len = uint32(length)\r\n>>>   }\r\n>>>\r\n>>> +func Sendfile(outfd int, infd int, offset *int64, count int) (written\r\n>>> int,\r\n>>> err error) {\r\n>>> +        var writtenOut uint64 = 0\r\n>>> +        _, _, e1 := Syscall9(SYS_SENDFILE, uintptr(infd),\r\n>>> uintptr(outfd),\r\n>>> uintptr(*offset), uintptr(count), 0, uintptr(unsafe.Pointer(&**writtenOut)),\r\n>>>\r\n>>> 0, 0, 0)\r\n>>> +\r\n>>> +        written = int(writtenOut)\r\n>>> +\r\n>>> +        if e1 != 0 {\r\n>>> +                err = e1\r\n>>> +        }\r\n>>> +        return\r\n>>> +}\r\n>>> +\r\n>>>   func Syscall9(num, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) (r1, r2\r\n>>>\r\n>>> uintptr, err Errno)\r\n>>>\r\n>>>\r\n>>>\r\n",
+			"disapproval": false,
+			"date": "2012-07-03 15:16:33.449646",
+			"approval": true
+		}
+	],
+	"owner_email": "dave.andersen@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dga",
+	"subject": "code review 6356048: syscall: fix FreeBSD 386 sendfile",
+	"created": "2012-06-29 03:17:17.228971",
+	"patchsets": [
+		1,
+		2001,
+		6001,
+		6005
+	],
+	"modified": "2012-07-04 17:31:19.401280",
+	"closed": true,
+	"issue": 6356048
+}

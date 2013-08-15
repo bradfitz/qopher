@@ -1,0 +1,155 @@
+{
+	"description": "gc: disallow declaration of variables outside package.\n\nFixes issue 2231.\n\nDeclaring main.i in package main in the same way already triggers syntax errors.",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-12-14 16:57:34.756379",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5483078/diff/5001/src/cmd/gc/dcl.c\nFile src/cmd/gc/dcl.c (right):\n\nhttp://codereview.appspot.com/5483078/diff/5001/src/cmd/gc/dcl.c#newcode180\nsrc/cmd/gc/dcl.c:180: if((importpkg == nil && !typecheckok) && s->pkg != localpkg)\nDrop inner ()\n\nhttp://codereview.appspot.com/5483078/diff/5001/src/cmd/gc/dcl.c#newcode181\nsrc/cmd/gc/dcl.c:181: yyerror(\"cannot declare %S outside of package %s\", s, s->pkg->name);\n\"cannot declare name %S\"\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go\nFile test/fixedbugs/bug388.go (right):\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go#newcode12\ntest/fixedbugs/bug388.go:12: func foo(runtime.UintType, i int) {  // ERROR \"cannot declare\"\ncannot declare name runtime.UintType\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go#newcode17\ntest/fixedbugs/bug388.go:17: runtime.UintType := i       // ERROR \"cannot declare\"\nsame\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go#newcode22\ntest/fixedbugs/bug388.go:22: main.i := 1\t// ERROR \"non-name main.i\" \"undefined\" \"cannot assign\"\nMight as well change the non-name error to use the same wording as the new error.\n\nPlease add a test case for foo.i (foo is undeclared).\nIs it any different than main.i?\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go#newcode26\ntest/fixedbugs/bug388.go:26: func main() {\nPlease rename this to func f and add a case for f.i elsewhere.",
+			"disapproval": false,
+			"date": "2011-12-14 17:37:30.166742",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Dec 14, 2011 at 17:57,  <lvd@google.com> wrote:\n> Reviewers: rsc,\n>\n> Message:\n> Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> gc: disallow declaration of variables outside package.\n>\n> Fixes issue 2231.\n>\n> But still allows you to call your param or local variable main.p. in\n> package main.\n> Not sure if that's a feature.\n>\n\nI was wrong, main.i is not allowed either.  Updated cl description and the test.\n\n> Please review this at http://codereview.appspot.com/5483078/\n>\n> Affected files:\n> \u00a0M src/cmd/gc/dcl.c\n> \u00a0A test/fixedbugs/bug388.go\n>\n>\n> Index: src/cmd/gc/dcl.c\n> ===================================================================\n> --- a/src/cmd/gc/dcl.c\n> +++ b/src/cmd/gc/dcl.c\n> @@ -175,6 +175,11 @@\n>\n> \u00a0 \u00a0 \u00a0 \u00a0n->lineno = parserline();\n> \u00a0 \u00a0 \u00a0 \u00a0s = n->sym;\n> +\n> + \u00a0 \u00a0 \u00a0 // kludgy: typecheckok means we're past parsing. \u00a0Eg genwrapper may\n> declare out of package names later.\n> + \u00a0 \u00a0 \u00a0 if((importpkg == nil && !typecheckok) && s->pkg != localpkg)\n> + \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 yyerror(\"cannot declare %S outside of package %s\", s,\n> s->pkg->name);\n> +\n> \u00a0 \u00a0 \u00a0 \u00a0gen = 0;\n> \u00a0 \u00a0 \u00a0 \u00a0if(ctxt == PEXTERN) {\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0externdcl = list(externdcl, n);\n> Index: test/fixedbugs/bug388.go\n> ===================================================================\n> new file mode 100644\n> --- /dev/null\n> +++ b/test/fixedbugs/bug388.go\n> @@ -0,0 +1,28 @@\n> +// errchk $G $D/$F.go\n> +\n> +// Copyright 2011 The Go Authors. \u00a0All rights reserved.\n> +// Use of this source code is governed by a BSD-style\n> +// license that can be found in the LICENSE file.\n> +\n> +// Issue 2231\n> +\n> +package main\n> +import \"runtime\"\n> +\n> +func foo(runtime.UintType, i int) { \u00a0// ERROR \"cannot declare\"\n> + \u00a0 \u00a0 \u00a0 println(i, runtime.UintType)\n> +}\n> +\n> +func bar(i int) {\n> + \u00a0 \u00a0 \u00a0 runtime.UintType := i \u00a0 \u00a0 \u00a0 // ERROR \"cannot declare\"\n> + \u00a0 \u00a0 \u00a0 println(runtime.UintType)\n> +}\n> +\n> +func baz(main.i int) { // probably want this one outlawed too.\n> + \u00a0 \u00a0 \u00a0 println(main.i)\n> +}\n> +\n> +func main() {\n> + \u00a0 \u00a0 \u00a0 foo(42,43)\n> + \u00a0 \u00a0 \u00a0 bar(1969)\n> +}\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-12-14 17:03:51.469039",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5483078/diff/5001/src/cmd/gc/dcl.c\nFile src/cmd/gc/dcl.c (right):\n\nhttp://codereview.appspot.com/5483078/diff/5001/src/cmd/gc/dcl.c#newcode180\nsrc/cmd/gc/dcl.c:180: if((importpkg == nil && !typecheckok) && s->pkg != localpkg)\nOn 2011/12/14 17:37:30, rsc wrote:\n> Drop inner ()\n\nDone.\n\nhttp://codereview.appspot.com/5483078/diff/5001/src/cmd/gc/dcl.c#newcode181\nsrc/cmd/gc/dcl.c:181: yyerror(\"cannot declare %S outside of package %s\", s, s->pkg->name);\nOn 2011/12/14 17:37:30, rsc wrote:\n> \"cannot declare name %S\"\n\nDone.\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go\nFile test/fixedbugs/bug388.go (right):\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go#newcode12\ntest/fixedbugs/bug388.go:12: func foo(runtime.UintType, i int) {  // ERROR \"cannot declare\"\nOn 2011/12/14 17:37:30, rsc wrote:\n> cannot declare name runtime.UintType\n\nDone.\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go#newcode17\ntest/fixedbugs/bug388.go:17: runtime.UintType := i       // ERROR \"cannot declare\"\nOn 2011/12/14 17:37:30, rsc wrote:\n> same\n\nDone.\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go#newcode22\ntest/fixedbugs/bug388.go:22: main.i := 1\t// ERROR \"non-name main.i\" \"undefined\" \"cannot assign\"\nOn 2011/12/14 17:37:30, rsc wrote:\n> Might as well change the non-name error to use the same wording as the new\n\nbut that one gets triggered for non- ONAME's as well.  want me to change it  for those only?\n\n> error.\n> \n> Please add a test case for foo.i (foo is undeclared).\n> Is it any different than main.i?\n\nhttp://codereview.appspot.com/5483078/diff/5001/test/fixedbugs/bug388.go#newcode26\ntest/fixedbugs/bug388.go:26: func main() {\nOn 2011/12/14 17:37:30, rsc wrote:\n> Please rename this to func f and add a case for f.i elsewhere.\n\nnot sure what you mean.",
+			"disapproval": false,
+			"date": "2011-12-15 12:57:42.048959",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5483078/diff/9001/test/fixedbugs/bug388.go\nFile test/fixedbugs/bug388.go (right):\n\nhttp://codereview.appspot.com/5483078/diff/9001/test/fixedbugs/bug388.go#newcode22\ntest/fixedbugs/bug388.go:22: main.i := 1\t// ERROR \"non-name main.i\"\nPlease put both\n\nvar main.i int\nmain.j := 1\n\nThese are different cases.  The := case has always worked,\nbecause := also has to reject things like\n\nx+y := z\n\nhttp://codereview.appspot.com/5483078/diff/9001/test/fixedbugs/bug388.go#newcode27\ntest/fixedbugs/bug388.go:27: var foo.i int  // ERROR \"unexpected .\"\n\"unexpected [.]\"",
+			"disapproval": false,
+			"date": "2011-12-15 16:00:22.384940",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-12-15 12:58:13.622393",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "All done. Also changed the sequence of test function names to be RFC3092 compliant instead of my personal 'pipo/lala' sequence.\n\nhttp://codereview.appspot.com/5483078/diff/9001/test/fixedbugs/bug388.go\nFile test/fixedbugs/bug388.go (right):\n\nhttp://codereview.appspot.com/5483078/diff/9001/test/fixedbugs/bug388.go#newcode22\ntest/fixedbugs/bug388.go:22: main.i := 1\t// ERROR \"non-name main.i\"\nOn 2011/12/15 16:00:22, rsc wrote:\n> Please put both\n> \n> var main.i int\n> main.j := 1\n> \n> These are different cases.  The := case has always worked,\n> because := also has to reject things like\n> \n> x+y := z\n> \n\nDone.\n\nhttp://codereview.appspot.com/5483078/diff/9001/test/fixedbugs/bug388.go#newcode22\ntest/fixedbugs/bug388.go:22: main.i := 1\t// ERROR \"non-name main.i\"\nOn 2011/12/15 16:00:22, rsc wrote:\n> Please put both\n> \n> var main.i int\n> main.j := 1\n> \n> These are different cases.  The := case has always worked,\n> because := also has to reject things like\n> \n> x+y := z\n> \n\nDone.\n\nhttp://codereview.appspot.com/5483078/diff/9001/test/fixedbugs/bug388.go#newcode27\ntest/fixedbugs/bug388.go:27: var foo.i int  // ERROR \"unexpected .\"\nOn 2011/12/15 16:00:22, rsc wrote:\n> \"unexpected [.]\"\n\nDone.",
+			"disapproval": false,
+			"date": "2012-01-03 10:39:39.681637",
+			"approval": false
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-03 10:39:59.423660",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-01-10 04:32:47.112008",
+			"approval": true
+		},
+		{
+			"sender": "lvd@google.com",
+			"recipients": [
+				"lvd@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d6c9e69bf784 ***\n\ngc: disallow declaration of variables outside package.\n\nFixes issue 2231.\n\nDeclaring main.i in package main in the same way already triggers syntax errors.\n\nR=rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5483078",
+			"disapproval": false,
+			"date": "2012-01-10 10:18:59.672076",
+			"approval": false
+		}
+	],
+	"owner_email": "lvd@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "lvd",
+	"subject": "code review 5483078: gc: disallow declaration of variables outside package.",
+	"created": "2011-12-14 16:26:26.590922",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		5001,
+		9001,
+		13001,
+		18001
+	],
+	"modified": "2012-01-10 10:19:00.436398",
+	"closed": true,
+	"issue": 5483078
+}

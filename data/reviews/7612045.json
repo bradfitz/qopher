@@ -1,0 +1,797 @@
+{
+	"description": "net: band-aid for windows network poller\nFixes performance of the current windows network poller\nwith the new scheduler.\nGives runtime a hint when GetQueuedCompletionStatus() will block.\nFixes issue 5068.\n\nbenchmark                    old ns/op    new ns/op    delta\nBenchmarkTCP4Persistent        4004000        33906  -99.15%\nBenchmarkTCP4Persistent-2        21790        17513  -19.63%\nBenchmarkTCP4Persistent-4        44760        34270  -23.44%\nBenchmarkTCP4Persistent-6        45280        43000   -5.04%",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"coocood@gmail.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [
+		"alex.brainman@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/18 08:27:31, brainman wrote:\n> I don't know of any. But what do I do, if one of my syscalls is suddenly\n> significantly slower then before. How do I give hint to the scheduler?\n\n\nHumm... perhaps we can make all syscalls blocking on windows?",
+			"disapproval": false,
+			"date": "2013-03-18 08:37:29.995530",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Do you have a plan for *general* solution. I suspect many other syscalls will be affected too.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-18 07:59:27.621910",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-18 06:56:34.742400",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/18 07:59:27, brainman wrote:\n> Do you have a plan for *general* solution. I suspect many other syscalls will be\n> affected too.\n\nWhat other syscalls are affected?",
+			"disapproval": false,
+			"date": "2013-03-18 08:07:50.002660",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't know of any. But what do I do, if one of my syscalls is suddenly significantly slower then before. How do I give hint to the scheduler?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-18 08:27:31.565210",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I re-run net benchmarks to see regression on windows. I compared two \"clean\" versions before and after new scheduler:\n\n# ~/go/root/misc/benchcmp id16000.txt id16303.txt\nbenchmark                          old ns/op    new ns/op    delta\nBenchmarkTCPPersistent                 87501       265628  +203.57%\nBenchmarkTCPPersistent-2               42188        52813  +25.18%\nBenchmarkTCPPersistent-4               39375        65625  +66.67%\nBenchmarkTCPPersistentTimeout          94532       253128  +167.77%\nBenchmarkTCPPersistentTimeout-2        43438        59375  +36.69%\nBenchmarkTCPPersistentTimeout-4        42813        64688  +51.09%\n\nI also compared you proposed change:\n\n# ~/go/root/misc/benchcmp id16000.txt id16303cl7612045.txt\nbenchmark                          old ns/op    new ns/op    delta\nBenchmarkTCPPersistent                 87501        57500  -34.29%\nBenchmarkTCPPersistent-2               42188        58125  +37.78%\nBenchmarkTCPPersistent-4               39375        70938  +80.16%\nBenchmarkTCPPersistentTimeout          94532        62813  -33.55%\nBenchmarkTCPPersistentTimeout-2        43438        63750  +46.76%\nBenchmarkTCPPersistentTimeout-4        42813        71094  +66.06%\n\nwhich is better, but, still regression on some tests.\n\nThen I got rid of net.runtime_blockingSyscallHint altogether, as per your suggestion:\n\n# hg diff\ndiff -r 1130cc72c645 src/pkg/runtime/cgocall.c\n--- a/src/pkg/runtime/cgocall.c Mon Mar 18 15:33:04 2013 -0700\n+++ b/src/pkg/runtime/cgocall.c Tue Mar 19 11:34:51 2013 +1100\n@@ -145,7 +145,10 @@\n         * so it is safe to call while \"in a system call\", outside\n         * the $GOMAXPROCS accounting.\n         */\n-       runtime\u00c2\u00b7entersyscall();\n+       if(Windows) {\n+               runtime\u00c2\u00b7entersyscallblock();\n+       } else\n+               runtime\u00c2\u00b7entersyscall();\n        runtime\u00c2\u00b7asmcgocall(fn, arg);\n        runtime\u00c2\u00b7exitsyscall();\n\n# ~/go/root/misc/benchcmp id16000.txt id16303alex.txt\nbenchmark                          old ns/op    new ns/op    delta\nBenchmarkTCPPersistent                 87501        92969   +6.25%\nBenchmarkTCPPersistent-2               42188        62813  +48.89%\nBenchmarkTCPPersistent-4               39375        72657  +84.53%\nBenchmarkTCPPersistentTimeout          94532       103126   +9.09%\nBenchmarkTCPPersistentTimeout-2        43438        78907  +81.65%\nBenchmarkTCPPersistentTimeout-4        42813        77344  +80.66%\n#\n\nand it is still bad.\n\nI am not sure what to do.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-19 00:39:32.172330",
+			"approval": false
+		},
+		{
+			"sender": "coocood@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/19 00:39:32, brainman wrote:\n> I re-run net benchmarks to see regression on windows. I compared two \"clean\"\n> versions before and after new scheduler:\n> \n> # ~/go/root/misc/benchcmp id16000.txt id16303.txt\n> benchmark                          old ns/op    new ns/op    delta\n> BenchmarkTCPPersistent                 87501       265628  +203.57%\n> BenchmarkTCPPersistent-2               42188        52813  +25.18%\n> BenchmarkTCPPersistent-4               39375        65625  +66.67%\n> BenchmarkTCPPersistentTimeout          94532       253128  +167.77%\n> BenchmarkTCPPersistentTimeout-2        43438        59375  +36.69%\n> BenchmarkTCPPersistentTimeout-4        42813        64688  +51.09%\n> \n> I also compared you proposed change:\n> \n> # ~/go/root/misc/benchcmp id16000.txt id16303cl7612045.txt\n> benchmark                          old ns/op    new ns/op    delta\n> BenchmarkTCPPersistent                 87501        57500  -34.29%\n> BenchmarkTCPPersistent-2               42188        58125  +37.78%\n> BenchmarkTCPPersistent-4               39375        70938  +80.16%\n> BenchmarkTCPPersistentTimeout          94532        62813  -33.55%\n> BenchmarkTCPPersistentTimeout-2        43438        63750  +46.76%\n> BenchmarkTCPPersistentTimeout-4        42813        71094  +66.06%\n> \n> which is better, but, still regression on some tests.\n> \n> Then I got rid of net.runtime_blockingSyscallHint altogether, as per your\n> suggestion:\n> \n> # hg diff\n> diff -r 1130cc72c645 src/pkg/runtime/cgocall.c\n> --- a/src/pkg/runtime/cgocall.c Mon Mar 18 15:33:04 2013 -0700\n> +++ b/src/pkg/runtime/cgocall.c Tue Mar 19 11:34:51 2013 +1100\n> @@ -145,7 +145,10 @@\n>          * so it is safe to call while \"in a system call\", outside\n>          * the $GOMAXPROCS accounting.\n>          */\n> -       runtime\u00c2\u00b7entersyscall();\n> +       if(Windows) {\n> +               runtime\u00c2\u00b7entersyscallblock();\n> +       } else\n> +               runtime\u00c2\u00b7entersyscall();\n>         runtime\u00c2\u00b7asmcgocall(fn, arg);\n>         runtime\u00c2\u00b7exitsyscall();\n> \n> # ~/go/root/misc/benchcmp id16000.txt id16303alex.txt\n> benchmark                          old ns/op    new ns/op    delta\n> BenchmarkTCPPersistent                 87501        92969   +6.25%\n> BenchmarkTCPPersistent-2               42188        62813  +48.89%\n> BenchmarkTCPPersistent-4               39375        72657  +84.53%\n> BenchmarkTCPPersistentTimeout          94532       103126   +9.09%\n> BenchmarkTCPPersistentTimeout-2        43438        78907  +81.65%\n> BenchmarkTCPPersistentTimeout-4        42813        77344  +80.66%\n> #\n> \n> and it is still bad.\n> \n> I am not sure what to do.\n> \n> Alex\n\nHow about \"if(windows && runtime.NumCPU()==1)\"",
+			"disapproval": false,
+			"date": "2013-03-19 01:55:56.203590",
+			"approval": false
+		},
+		{
+			"sender": "coocood@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm sorry, I misunderstood the comparison.\nSo does it mean the new scheduler is a regression for windows?\nIs it feasible to switch back to old scheduler for windows?",
+			"disapproval": false,
+			"date": "2013-03-19 02:26:25.300470",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/19 02:26:25, Ewan Chou wrote:\n> I'm sorry, I misunderstood the comparison.\n\nYeh, your change does not help on my pc, because I have more then 1 cpu, so your change does nothing.\n\n> So does it mean the new scheduler is a regression for windows?\n\nYes, on net benchmarks at least.\n\n> Is it feasible to switch back to old scheduler for windows?\n\nI don't know.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-19 02:28:58.495430",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/19 00:39:32, brainman wrote:\n> I re-run net benchmarks to see regression on windows. I compared two \"clean\"\n> versions before and after new scheduler:\n> \n> # ~/go/root/misc/benchcmp id16000.txt id16303.txt\n> benchmark                          old ns/op    new ns/op    delta\n> BenchmarkTCPPersistent                 87501       265628  +203.57%\n> BenchmarkTCPPersistent-2               42188        52813  +25.18%\n> BenchmarkTCPPersistent-4               39375        65625  +66.67%\n> BenchmarkTCPPersistentTimeout          94532       253128  +167.77%\n> BenchmarkTCPPersistentTimeout-2        43438        59375  +36.69%\n> BenchmarkTCPPersistentTimeout-4        42813        64688  +51.09%\n> \n> I also compared you proposed change:\n> \n> # ~/go/root/misc/benchcmp id16000.txt id16303cl7612045.txt\n> benchmark                          old ns/op    new ns/op    delta\n> BenchmarkTCPPersistent                 87501        57500  -34.29%\n> BenchmarkTCPPersistent-2               42188        58125  +37.78%\n> BenchmarkTCPPersistent-4               39375        70938  +80.16%\n> BenchmarkTCPPersistentTimeout          94532        62813  -33.55%\n> BenchmarkTCPPersistentTimeout-2        43438        63750  +46.76%\n> BenchmarkTCPPersistentTimeout-4        42813        71094  +66.06%\n> \n> which is better, but, still regression on some tests.\n> \n> Then I got rid of net.runtime_blockingSyscallHint altogether, as per your\n> suggestion:\n> \n> # hg diff\n> diff -r 1130cc72c645 src/pkg/runtime/cgocall.c\n> --- a/src/pkg/runtime/cgocall.c Mon Mar 18 15:33:04 2013 -0700\n> +++ b/src/pkg/runtime/cgocall.c Tue Mar 19 11:34:51 2013 +1100\n> @@ -145,7 +145,10 @@\n>          * so it is safe to call while \"in a system call\", outside\n>          * the $GOMAXPROCS accounting.\n>          */\n> -       runtime\u00c2\u00b7entersyscall();\n> +       if(Windows) {\n> +               runtime\u00c2\u00b7entersyscallblock();\n> +       } else\n> +               runtime\u00c2\u00b7entersyscall();\n>         runtime\u00c2\u00b7asmcgocall(fn, arg);\n>         runtime\u00c2\u00b7exitsyscall();\n> \n> # ~/go/root/misc/benchcmp id16000.txt id16303alex.txt\n> benchmark                          old ns/op    new ns/op    delta\n> BenchmarkTCPPersistent                 87501        92969   +6.25%\n> BenchmarkTCPPersistent-2               42188        62813  +48.89%\n> BenchmarkTCPPersistent-4               39375        72657  +84.53%\n> BenchmarkTCPPersistentTimeout          94532       103126   +9.09%\n> BenchmarkTCPPersistentTimeout-2        43438        78907  +81.65%\n> BenchmarkTCPPersistentTimeout-4        42813        77344  +80.66%\n> #\n> \n> and it is still bad.\n> \n> I am not sure what to do.\n\n\nThanks for the numbers.\n\nI don't have explanation why new sched + this patch is worse than old sched with GOMAXPROCS>1... Does profiling works on Windows? Can you try to collect profiles and CPU utilization?\n\nI am also not sure why this patch is faster than tip on my machine and slower than tip on your machine with GOMAXPROCS>1. Are you sure this patch slowdowns net benchamrks as compared to tip?\n\nProper fix (rewrite) for windows network poller is a significant change. Most likely I won't have time for it until summer.",
+			"disapproval": false,
+			"date": "2013-03-21 09:04:38.170790",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Profiling does work on windows, but I don't know what you want. If you could provide instructions I will collect the info. I will also rerun all my benchmarks again to verify. I tested everything on 386 if it matters.\n\nI would also try to rewrite netpoller myself, but I don't know where to start. If you would describe your plan, perhaps, I will have a go.\n\nThank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-21 11:38:20.711050",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/21 11:38:20, brainman wrote:\n> Profiling does work on windows, but I don't know what you want. If you could\n> provide instructions I will collect the info. I will also rerun all my\n> benchmarks again to verify. I tested everything on 386 if it matters.\n> \n> I would also try to rewrite netpoller myself, but I don't know where to start.\n> If you would describe your plan, perhaps, I will have a go.\n\nHere are some rough ideas.\n\nFirst, Read/Write generate garbage which is unfortunate. Since there is at most\n1 pending Read and 1 pending Write operations, it's possible to embed the\nrequired structures directly into netFD:\n\ntype netFD struct {\n  ...\n  ro syscall.Overlapped\n  rb syscall.WSABuf\n  rt Timer\n\n  wo syscall.Overlapped\n  wb syscall.WSABuf\n  wt Timer\n}\n\nDeadline timer should be set only once (when the deadline is set), instead of\nresetting it on each operation. Expired timer calls CancelIOEx().\n\nRead/Write issue the operation (WSARecv/Send) and block on a lightweight\nsemaphore (see runtime/netpoll.goc).\nruntime.netpoll() calls GetQueuedCompletionStatusEx() and unblocks a batch\nof ready goroutines.\nnetFD.Close() calls CancelIOEx for outstanding operations.\n\nSo, why I expect to see performance improvement.\n1. Do not allocate readOp/writeOp, timer on each operation.\n2. Do not arm timer on each operation (there is global mutex).\n3. Do not do 3-chan select (this is also allocates memory and locks mutexes, in\nparticular cancelc chan mutex is shared between read and write operations).\n4. Dequeue batches of ready operations with GetQueuedCompletionStatusEx().\n5. Better integration with scheduler with runtime.netpoll().\n\nIt's also possible to look into RIO windows API, however it's available only\nin new versions. I remember something about pinning WSA buffers into physical\nmemory, so that kernel does not need to pin/unpin them on every operations.\nBut I can't find how to do it. Perhaps just VirtualLock() will do, but requires\ninvestigation.\n\n1 and 4 look quite simple and most likely  can be done separately.\n2 and 3 are harder to implement.",
+			"disapproval": false,
+			"date": "2013-03-21 18:17:53.122990",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "My reply is in http://play.golang.org/p/9bJ323Me7T. Codereview rejects my message because it is too long.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-22 02:06:06.158240",
+			"approval": false
+		},
+		{
+			"sender": "coocood@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 02:06:06, brainman wrote:\n> My reply is in http://play.golang.org/p/9bJ323Me7T. Codereview rejects my\n> message because it is too long.\n> \n> Alex\n\nWhen I first report this issue 5068, it was on amd64 windows 6g.\n\nBut your result show that amd64 is not suffering from this issue.\n\nMaybe that was a patched result?",
+			"disapproval": false,
+			"date": "2013-03-22 02:25:38.625470",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 02:25:38, Ewan Chou wrote:\n> On 2013/03/22 02:06:06, brainman wrote:\n> > My reply is in http://play.golang.org/p/9bJ323Me7T. Codereview rejects my\n> > message because it is too long.\n> > \n> > Alex\n> \n> When I first report this issue 5068, it was on amd64 windows 6g.\n> \n> But your result show that amd64 is not suffering from this issue.\n> \n> Maybe that was a patched result?\n\nWhat is your OS? How many cpus you have? Can you do investigation similar to mine on your computer and post results here? Thank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-22 02:29:00.473630",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 10:53:36, dvyukov wrote:\n> >\n> > What about a different solution - we leave GetQueuedCompletionStatus\n> > call as before, but will call runtime_blockingSyscallHint right before\n> > it? GetQueuedCompletionStatus is about waiting, let it block\n> > unconditionally.\n> \n> Yes, that's what I meant. It should work.\n> \n\nI will try it next week.\n\n> > If that works, perhaps, we can provide new syscall.Syscall like\n> > functions to provide access to that functionality outside of runtime /\n> > syscall.\n> >\n> > Do you think it worth investigating? I am just talking ... here :-)\n> \n> I had such thing on Linux at one point (locally). So it's doable. But\n> general sentiment about adding additional knobs here is... not\n> completely positive. And it's understandable, because by adding knobs\n> we just transfer our problems onto users.\n\nThere is large regression here. Perhaps knobs are unavoidable.\n\nIt LGTM, if you like to submit now. But, I would wait for Russ. What do I know :-)\n\nThank you for your patience.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-22 11:10:51.285550",
+			"approval": true
+		},
+		{
+			"sender": "coocood@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 02:29:00, brainman wrote:\n> What is your OS? How many cpus you have? Can you do investigation similar to\n> mine on your computer and post results here? Thank you.\n> \n> Alex\nI'm sorry I don't know a graceful way to apply the patch and revert yet. so here is only the tip benchmark, it's windows 7 6g and my CPU has 4-core\n\nPASS\nBenchmarkTCP4OneShot\t     100\t   1890108 ns/op\t    6218 B/op\t      67 allocs/op\nBenchmarkTCP4OneShot-2\t    1000\t    193011 ns/op\t    6059 B/op\t      67 allocs/op\nBenchmarkTCP4OneShot-3\t    5000\t    181610 ns/op\t    6056 B/op\t      67 allocs/op\nBenchmarkTCP4OneShotTimeout\t      50\t   2140122 ns/op\t    6730 B/op\t      75 allocs/op\nBenchmarkTCP4OneShotTimeout-2\t     500\t    210012 ns/op\t    6729 B/op\t      75 allocs/op\nBenchmarkTCP4OneShotTimeout-3\t    5000\t    206611 ns/op\t    6727 B/op\t      75 allocs/op\nBenchmarkTCP4Persistent\t     500\t    372021 ns/op\t    1659 B/op\t      15 allocs/op\nBenchmarkTCP4Persistent-2\t   10000\t     19701 ns/op\t    1541 B/op\t      14 allocs/op\nBenchmarkTCP4Persistent-3\t   20000\t     46102 ns/op\t    1539 B/op\t      14 allocs/op\nBenchmarkTCP4PersistentTimeout\t     500\t    378021 ns/op\t    2364 B/op\t      23 allocs/op\nBenchmarkTCP4PersistentTimeout-2\t    2000\t     58503 ns/op\t    2308 B/op\t      22 allocs/op\nBenchmarkTCP4PersistentTimeout-3\t    2000\t     51002 ns/op\t    2325 B/op\t      23 allocs/op\nBenchmarkTCP6OneShot\t      50\t   2100120 ns/op\t    6169 B/op\t      67 allocs/op\nBenchmarkTCP6OneShot-2\t     500\t    232013 ns/op\t    6237 B/op\t      67 allocs/op\nBenchmarkTCP6OneShot-3\t    1000\t    214012 ns/op\t    6214 B/op\t      67 allocs/op\nBenchmarkTCP6OneShotTimeout\t     100\t   1890108 ns/op\t    6862 B/op\t      75 allocs/op\nBenchmarkTCP6OneShotTimeout-2\t    1000\t    219012 ns/op\t    6915 B/op\t      75 allocs/op\nBenchmarkTCP6OneShotTimeout-3\t    1000\t    137007 ns/op\t    6925 B/op\t      75 allocs/op\nBenchmarkTCP6Persistent\t     500\t    318018 ns/op\t    1664 B/op\t      15 allocs/op\nBenchmarkTCP6Persistent-2\t   10000\t     28501 ns/op\t    1542 B/op\t      14 allocs/op\nBenchmarkTCP6Persistent-3\t    5000\t     47802 ns/op\t    1571 B/op\t      14 allocs/op\nBenchmarkTCP6PersistentTimeout\t     500\t    402023 ns/op\t    2370 B/op\t      23 allocs/op\nBenchmarkTCP6PersistentTimeout-2\t    5000\t     37002 ns/op\t    2273 B/op\t      22 allocs/op\nBenchmarkTCP6PersistentTimeout-3\t    2000\t     52503 ns/op\t    2326 B/op\t      23 allocs/op\nok  \tnet\t7.974s",
+			"disapproval": false,
+			"date": "2013-03-22 02:47:11.150540",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What version of go is this benchmark for? Use \"hg id\" to discover. Please supply benchmarks for 2 versions of go (just like I did) 16007 and 16362. You can bring your workspace files to the correct state by issuing \"hg up -r 16007\" or \"hg up -r 16362\". You would have to rebuild everything (make.bat) before running benchmark.\n\nAlso you didn't tell us what version of windows you have.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-22 03:25:25.715100",
+			"approval": false
+		},
+		{
+			"sender": "coocood@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 03:25:25, brainman wrote:\n> What version of go is this benchmark for? Use \"hg id\" to discover. Please supply\n> benchmarks for 2 versions of go (just like I did) 16007 and 16362. You can bring\n> your workspace files to the correct state by issuing \"hg up -r 16007\" or \"hg up\n> -r 16362\". You would have to rebuild everything (make.bat) before running\n> benchmark.\n> \n> Also you didn't tell us what version of windows you have.\n> \n> Alex\n\ngo version is f12b24ea373f+ tip, windows version is Windows 7 SP1 amd64\uff0c I don't expect my benchmark result would be much different than yours except the one above.",
+			"disapproval": false,
+			"date": "2013-03-22 03:37:10.665380",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 03:37:10, Ewan Chou wrote:\n> \n> go version is f12b24ea373f+ tip, windows version is Windows 7 SP1 amd64\uff0c...\n\nWell you have version 16292 now (it is close enough to 16362 that I tested).\n\n# hg log -r f12b24ea373f\nchangeset:   16292:f12b24ea373f\nuser:        Mikio Hara <mikioh.mikioh@gmail.com>\ndate:        Sun Mar 17 19:50:01 2013 +0900\nsummary:     net: revert Zone in IPNet temporally\n\nCan you re-run it for version 16007 now, so we could compare your two benchmarks.\n\nThank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-22 03:48:14.709080",
+			"approval": false
+		},
+		{
+			"sender": "coocood@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 03:48:14, brainman wrote:\n> \n\nI can only supply valid TCPOneShot benchmark because sometimes I got \"An operation on a socket could not be performed because the system lacked sufficient buffer space or because a queue was full.\" error.\n\nAnd are there any BAT or EXE version of benchcmp?\n\n16007:\nBenchmarkTCPOneShot\t    2000\t    119006 ns/op\nBenchmarkTCPOneShot-2\t    5000\t    108606 ns/op\nBenchmarkTCPOneShot-3\t    5000\t     57803 ns/op\n\n16292:\nBenchmarkTCP4OneShot\t     100\t   1830105 ns/op\nBenchmarkTCP4OneShot-2\t    1000\t    166009 ns/op\nBenchmarkTCP4OneShot-3\t    5000\t     86404 ns/op",
+			"disapproval": false,
+			"date": "2013-03-22 04:52:50.752100",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 04:52:50, Ewan Chou wrote:\n> \n> I can only supply valid TCPOneShot benchmark because sometimes I got \"An\n> operation on a socket could not be performed because the system lacked\n> sufficient buffer space or because a queue was full.\" error.\n\nI had similar problems. I think the benchmark creates too many connections in 1s (default benchmark time). So I used shorter benchmark:\n\ngo test net -run=NONE -bench=TCP -benchmem -benchtime=100ms -cpu=1,2,3\n\nTry shorter benchtime until you see no errors.\n\n> \n> And are there any BAT or EXE version of benchcmp?\n> \n\nNo, but you should be able to rewrite the script into Go or something.\n\n> 16007:\n> BenchmarkTCPOneShot\t    2000\t    119006 ns/op\n> BenchmarkTCPOneShot-2\t    5000\t    108606 ns/op\n> BenchmarkTCPOneShot-3\t    5000\t     57803 ns/op\n> \n> 16292:\n> BenchmarkTCP4OneShot\t     100\t   1830105 ns/op\n> BenchmarkTCP4OneShot-2\t    1000\t    166009 ns/op\n> BenchmarkTCP4OneShot-3\t    5000\t     86404 ns/op\n\nThis is your result:\n\nbenchmark                old ns/op    new ns/op    delta\nBenchmarkTCPOneShot         119006      1830105  +1437.83%\nBenchmarkTCPOneShot-2       108606       166009  +52.85%\nBenchmarkTCPOneShot-3        57803        86404  +49.48%\n\nwhich shows big slowdown. Are you sure, you are using versions as reported? Also, please, make sure your benchmark runs end with no errors.\n\nThank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-22 06:04:12.077950",
+			"approval": false
+		},
+		{
+			"sender": "coocood@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 06:04:12, brainman wrote:\n> On 2013/03/22 04:52:50, Ewan Chou wrote:\n> > \n> > I can only supply valid TCPOneShot benchmark because sometimes I got \"An\n> > operation on a socket could not be performed because the system lacked\n> > sufficient buffer space or because a queue was full.\" error.\n> \n> I had similar problems. I think the benchmark creates too many connections in 1s\n> (default benchmark time). So I used shorter benchmark:\n> \n> go test net -run=NONE -bench=TCP -benchmem -benchtime=100ms -cpu=1,2,3\n> \n> Try shorter benchtime until you see no errors.\n> \n> > \n> > And are there any BAT or EXE version of benchcmp?\n> > \n> \n> No, but you should be able to rewrite the script into Go or something.\n> \n> > 16007:\n> > BenchmarkTCPOneShot\t    2000\t    119006 ns/op\n> > BenchmarkTCPOneShot-2\t    5000\t    108606 ns/op\n> > BenchmarkTCPOneShot-3\t    5000\t     57803 ns/op\n> > \n> > 16292:\n> > BenchmarkTCP4OneShot\t     100\t   1830105 ns/op\n> > BenchmarkTCP4OneShot-2\t    1000\t    166009 ns/op\n> > BenchmarkTCP4OneShot-3\t    5000\t     86404 ns/op\n> \n> This is your result:\n> \n> benchmark                old ns/op    new ns/op    delta\n> BenchmarkTCPOneShot         119006      1830105  +1437.83%\n> BenchmarkTCPOneShot-2       108606       166009  +52.85%\n> BenchmarkTCPOneShot-3        57803        86404  +49.48%\n> \n> which shows big slowdown. Are you sure, you are using versions as reported?\n> Also, please, make sure your benchmark runs end with no errors.\n> \n> Thank you.\n> \n> Alex\n\nYes, I'm sure.",
+			"disapproval": false,
+			"date": "2013-03-22 06:09:22.280840",
+			"approval": false
+		},
+		{
+			"sender": "coocood@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 06:04:12, brainman wrote:\n> On 2013/03/22 04:52:50, Ewan Chou wrote:\n> > \n> > I can only supply valid TCPOneShot benchmark because sometimes I got \"An\n> > operation on a socket could not be performed because the system lacked\n> > sufficient buffer space or because a queue was full.\" error.\n> \n> I had similar problems. I think the benchmark creates too many connections in 1s\n> (default benchmark time). So I used shorter benchmark:\n> \n> go test net -run=NONE -bench=TCP -benchmem -benchtime=100ms -cpu=1,2,3\n> \n> Try shorter benchtime until you see no errors.\n> \n> > \n> > And are there any BAT or EXE version of benchcmp?\n> > \n> \n> No, but you should be able to rewrite the script into Go or something.\n> \n> > 16007:\n> > BenchmarkTCPOneShot\t    2000\t    119006 ns/op\n> > BenchmarkTCPOneShot-2\t    5000\t    108606 ns/op\n> > BenchmarkTCPOneShot-3\t    5000\t     57803 ns/op\n> > \n> > 16292:\n> > BenchmarkTCP4OneShot\t     100\t   1830105 ns/op\n> > BenchmarkTCP4OneShot-2\t    1000\t    166009 ns/op\n> > BenchmarkTCP4OneShot-3\t    5000\t     86404 ns/op\n> \n> This is your result:\n> \n> benchmark                old ns/op    new ns/op    delta\n> BenchmarkTCPOneShot         119006      1830105  +1437.83%\n> BenchmarkTCPOneShot-2       108606       166009  +52.85%\n> BenchmarkTCPOneShot-3        57803        86404  +49.48%\n> \n> which shows big slowdown. Are you sure, you are using versions as reported?\n> Also, please, make sure your benchmark runs end with no errors.\n> \n> Thank you.\n> \n> Alex\n\nYes, I'm sure.",
+			"disapproval": false,
+			"date": "2013-03-22 06:09:54.331700",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Friday, 22 March 2013 17:22:38 UTC+11, Dmitry Vyukov wrote:\r\n>\r\n> ...\r\n> Btw, is it actually relevant? Does people run high performance servers on \r\n> old 386 boxes? It's good that we support them, but perhaps we do not need \r\n> to care about performance much.\r\n>\r\n\r\nIt is large regression. At the very least, I would like to understand why \r\nit is happening.\r\n\r\nAlex \r\n",
+			"disapproval": false,
+			"date": "2013-03-22 06:38:48.509320",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 09:29:09, dvyukov wrote:\n> It helps because new scheduler favors short/non-blocking syscalls\n> (e.g. read/write), but penalizes blocking syscalls (e.g.\n> GetQueuedCompletionStatus )). And it seems that penalty on Windows is\n> larger than on Linux.\n\nHow do you decide if a particular syscall short/non-blocking? None of windows syscalls is marked as such in any way.\n\n> This change uses the old behaviour for GetQueuedCompletionStatus(),\n> i.e. \"do not penalize\" blocking syscalls too much. Actually it's even\n> better, because it first tries to do non-blocking\n> GetQueuedCompletionStatus and only then blocking.\n\nFair enough - it helps here. What happens in other places where some of our syscalls \"block\"? Do we get similar regression there?\n\nAlso, now we replaced every GetQueuedCompletionStatus call with two. It is quite a busy place here - every io completes here. Is there price to pay?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-22 10:00:23.965320",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If you see errors in tcp benchmarks, try to apply the following change:\r\n\r\n--- a/src/pkg/net/tcp_test.go Thu Mar 21 12:54:19 2013 +0400\r\n+++ b/src/pkg/net/tcp_test.go Fri Mar 22 10:08:15 2013 +0400\r\n@@ -58,7 +58,7 @@\r\n func benchmarkTCP(b *testing.B, persistent, timeout bool, laddr string) {\r\n  const msgLen = 512\r\n  conns := b.N\r\n- numConcurrent := runtime.GOMAXPROCS(-1) * 16\r\n+ numConcurrent := runtime.GOMAXPROCS(-1) * 4\r\n  msgs := 1\r\n  if persistent {\r\n  conns = numConcurrent\r\n\r\n\r\nI had to apply it locally, because Linux also has some internal limits on\r\ntcp connections per second. When you hit some limit, kernel throttles tcp\r\nactivity unbelievably. Potentially  this can solve the windows buffers bug.\r\n\r\n\r\n\r\n\r\n\r\nOn Fri, Mar 22, 2013 at 10:04 AM, <alex.brainman@gmail.com> wrote:\r\n\r\n> On 2013/03/22 04:52:50, Ewan Chou wrote:\r\n>\r\n>  I can only supply valid TCPOneShot benchmark because sometimes I got\r\n>>\r\n> \"An\r\n>\r\n>> operation on a socket could not be performed because the system lacked\r\n>> sufficient buffer space or because a queue was full.\" error.\r\n>>\r\n>\r\n> I had similar problems. I think the benchmark creates too many\r\n> connections in 1s (default benchmark time). So I used shorter benchmark:\r\n>\r\n> go test net -run=NONE -bench=TCP -benchmem -benchtime=100ms -cpu=1,2,3\r\n>\r\n> Try shorter benchtime until you see no errors.\r\n>\r\n>\r\n>\r\n>  And are there any BAT or EXE version of benchcmp?\r\n>>\r\n>\r\n>\r\n> No, but you should be able to rewrite the script into Go or something.\r\n>\r\n>\r\n>  16007:\r\n>> BenchmarkTCPOneShot         2000            119006 ns/op\r\n>> BenchmarkTCPOneShot-2       5000            108606 ns/op\r\n>> BenchmarkTCPOneShot-3       5000             57803 ns/op\r\n>>\r\n>\r\n>  16292:\r\n>> BenchmarkTCP4OneShot         100           1830105 ns/op\r\n>> BenchmarkTCP4OneShot-2      1000            166009 ns/op\r\n>> BenchmarkTCP4OneShot-3      5000             86404 ns/op\r\n>>\r\n>\r\n> This is your result:\r\n>\r\n>\r\n> benchmark                old ns/op    new ns/op    delta\r\n> BenchmarkTCPOneShot         119006      1830105  +1437.83%\r\n> BenchmarkTCPOneShot-2       108606       166009  +52.85%\r\n> BenchmarkTCPOneShot-3        57803        86404  +49.48%\r\n>\r\n> which shows big slowdown. Are you sure, you are using versions as\r\n> reported? Also, please, make sure your benchmark runs end with no\r\n> errors.\r\n>\r\n>\r\n> Thank you.\r\n>\r\n> Alex\r\n>\r\n> https://codereview.appspot.**com/7612045/<https://codereview.appspot.com/7612045/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 06:10:13.872890",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=2be8c885acc8 ***\n\nnet: band-aid for windows network poller\nFixes performance of the current windows network poller\nwith the new scheduler.\nGives runtime a hint when GetQueuedCompletionStatus() will block.\nFixes issue 5068.\n\nbenchmark                    old ns/op    new ns/op    delta\nBenchmarkTCP4Persistent        4004000        33906  -99.15%\nBenchmarkTCP4Persistent-2        21790        17513  -19.63%\nBenchmarkTCP4Persistent-4        44760        34270  -23.44%\nBenchmarkTCP4Persistent-6        45280        43000   -5.04%\n\nR=golang-dev, alex.brainman, coocood, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/7612045",
+			"disapproval": false,
+			"date": "2013-03-25 16:57:57.826570",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": ">> 3. Do not do 3-chan select (this is also allocates memory and locks mutexes, in\n>> particular cancelc chan mutex is shared between read and write operations).\n\n>I do not understand details here. Should I get rid of cancelc altogether, and just close >resultc (given that it should move into netFD) instead? Maybe something else ...\n\nPoint 1 is that 3-chan select is just slow operation (relatively), it allocates memory, frees memory, sorts chans, locks and unlocks all mutexes, etc.\nPoint 2 is that AFAIK HTTP1.1 impl reads and writes from the tcp conn concurrently, this means that 2 goroutines execute select involving the closec, this means that they fight over the same closec internal mutex.",
+			"disapproval": false,
+			"date": "2013-03-22 06:15:48.037120",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": ">> 5. Better integration with scheduler with runtime.netpoll().\r\n\r\n> What are the details, and why is it helpful?\r\n\r\nScheduler knows when to poll.\r\nThe integrated version won't suffer from blocking syscall problem, because\r\nthe polling is done on an otherwise idle thread. So it does not need to\r\nwake up another thread to continue executing goroutines.\r\nCurrently if you issue write, you need to block current goroutine, switch\r\nto poller, unblock first goroutine, block poller, switch to goroutine 1.\r\nWith integrated poller it happens much faster.\r\nIntegrated poller evenly distributes newly runnable goroutines across\r\nthreads.\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 06:20:11.017380",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> On 386 (unlike amd64) all IO submission and cancellation happens on\r\nsingle dedicated thread. But I cannot see why this path gets so much slower.\r\n\r\nAha! So most likely it's just due to \"single dedicated thread\" requirement.\r\nPlease patch net package to do \"single dedicated thread\" on amd64 and\r\nbenchmark it.\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 06:21:27.054340",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Mar 22, 2013 at 10:21 AM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> > On 386 (unlike amd64) all IO submission and cancellation happens on\r\n> single dedicated thread. But I cannot see why this path gets so much slower.\r\n>\r\n> Aha! So most likely it's just due to \"single dedicated thread\" requirement.\r\n> Please patch net package to do \"single dedicated thread\" on amd64 and\r\n> benchmark it.\r\n>\r\n>\r\nBtw, is it actually relevant? Does people run high performance servers on\r\nold 386 boxes? It's good that we support them, but perhaps we do not need\r\nto care about performance much.\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 06:22:38.725950",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Friday, 22 March 2013 17:21:26 UTC+11, Dmitry Vyukov wrote:\r\n>\r\n> Please patch net package to do \"single dedicated thread\" on amd64 and \r\n> benchmark it.\r\n>\r\n>\r\nIt gets slower, but marginally:\r\n\r\n# ~/go/root/misc/benchcmp netstats/amd64/id16362.txt a\r\nbenchmark                           old ns/op    new ns/op    delta\r\nBenchmarkTCP6OneShot                   285138       345681  +21.23%\r\nBenchmarkTCP6OneShot-2                 318339       314433   -1.23%\r\nBenchmarkTCP6OneShot-3                 293926       369117  +25.58%\r\nBenchmarkTCP6OneShotTimeout            288067       378882  +31.53%\r\nBenchmarkTCP6OneShotTimeout-2          291973       349587  +19.73%\r\nBenchmarkTCP6OneShotTimeout-3          300762       380835  +26.62%\r\nBenchmarkTCP6Persistent                 47262        66890  +41.53%\r\nBenchmarkTCP6Persistent-2               50289        59371  +18.06%\r\nBenchmarkTCP6Persistent-3               49020        74214  +51.40%\r\nBenchmarkTCP6PersistentTimeout          53707        69819  +30.00%\r\nBenchmarkTCP6PersistentTimeout-2        55660        69722  +25.26%\r\nBenchmarkTCP6PersistentTimeout-3        55269        82026  +48.41%\r\n\r\nbenchmark                          old allocs   new allocs    delta\r\nBenchmarkTCP6OneShot                       67           73    8.96%\r\nBenchmarkTCP6OneShot-2                     67           73    8.96%\r\nBenchmarkTCP6OneShot-3                     67           73    8.96%\r\nBenchmarkTCP6OneShotTimeout                75           81    8.00%\r\nBenchmarkTCP6OneShotTimeout-2              75           81    8.00%\r\nBenchmarkTCP6OneShotTimeout-3              75           81    8.00%\r\nBenchmarkTCP6Persistent                    14           18   28.57%\r\nBenchmarkTCP6Persistent-2                  14           18   28.57%\r\nBenchmarkTCP6Persistent-3                  14           19   35.71%\r\nBenchmarkTCP6PersistentTimeout             22           26   18.18%\r\nBenchmarkTCP6PersistentTimeout-2           22           26   18.18%\r\nBenchmarkTCP6PersistentTimeout-3           22           27   22.73%\r\n\r\nbenchmark                           old bytes    new bytes    delta\r\nBenchmarkTCP6OneShot                     6222         7387   18.72%\r\nBenchmarkTCP6OneShot-2                   6219         7395   18.91%\r\nBenchmarkTCP6OneShot-3                   6217         7370   18.55%\r\nBenchmarkTCP6OneShotTimeout              6927         8071   16.52%\r\nBenchmarkTCP6OneShotTimeout-2            6921         8077   16.70%\r\nBenchmarkTCP6OneShotTimeout-3            6972         8087   15.99%\r\nBenchmarkTCP6Persistent                  1543         2337   51.46%\r\nBenchmarkTCP6Persistent-2                1591         2326   46.20%\r\nBenchmarkTCP6Persistent-3                1571         2381   51.56%\r\nBenchmarkTCP6PersistentTimeout           2286         3058   33.77%\r\nBenchmarkTCP6PersistentTimeout-2         2306         3043   31.96%\r\nBenchmarkTCP6PersistentTimeout-3         2288         3089   35.01%\r\n \r\n",
+			"disapproval": false,
+			"date": "2013-03-22 06:36:39.877480",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Friday, 22 March 2013 17:10:13 UTC+11, Dmitry Vyukov wrote:\r\n>\r\n> If you see errors in tcp benchmarks, try to apply the following change:\r\n>\r\n> --- a/src/pkg/net/tcp_test.go Thu Mar 21 12:54:19 2013 +0400\r\n> +++ b/src/pkg/net/tcp_test.go Fri Mar 22 10:08:15 2013 +0400\r\n> @@ -58,7 +58,7 @@\r\n>  func benchmarkTCP(b *testing.B, persistent, timeout bool, laddr string) {\r\n>   const msgLen = 512\r\n>   conns := b.N\r\n> - numConcurrent := runtime.GOMAXPROCS(-1) * 16\r\n> + numConcurrent := runtime.GOMAXPROCS(-1) * 4\r\n>   msgs := 1\r\n>   if persistent {\r\n>   conns = numConcurrent\r\n>\r\n>\r\n> Tried that, it still too aggressive. I can still see few failed \r\n> connections. The only wat to avoid is set smaller -benchtime. Perhaps this \r\n> benchmark is misleading. Perhaps windows will throttle activity like that \r\n> down for one reason or the other. I don't know :-(\r\n>\r\n\r\nAlex \r\n",
+			"disapproval": false,
+			"date": "2013-03-22 06:47:55.996680",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It is what against what?\r\n\r\nFor amd64/16362 you've posted very different numbers before:\r\n\r\n16007 - 16362 - still very slow, especially for -cpu=1\r\n\r\n# ~/go/root/misc/benchcmp id16007.txt id16362.txt\r\nbenchmark                          old ns/op    new ns/op    delta\r\nBenchmarkTCPOneShot                   281255      2031289  +622.22%\r\nBenchmarkTCPOneShot-2                 218754       281255  +28.57%\r\nBenchmarkTCPOneShot-3                 218754       187503  -14.29%\r\nBenchmarkTCPOneShotTimeout            281255      2187542  +677.78%\r\nBenchmarkTCPOneShotTimeout-2          218754       281255  +28.57%\r\nBenchmarkTCPOneShotTimeout-3          218754       218754   +0.00%\r\nBenchmarkTCPPersistent                 87501       343756  +292.86%\r\nBenchmarkTCPPersistent-2               46875        62501  +33.34%\r\nBenchmarkTCPPersistent-3               43750        70313  +60.72%\r\nBenchmarkTCPPersistentTimeout         101564       312506  +207.69%\r\nBenchmarkTCPPersistentTimeout-2        50000        78126  +56.25%\r\nBenchmarkTCPPersistentTimeout-3        50000        62501  +25.00%\r\n\r\n\r\nOn Fri, Mar 22, 2013 at 10:36 AM, brainman <alex.brainman@gmail.com> wrote:\r\n\r\n> On Friday, 22 March 2013 17:21:26 UTC+11, Dmitry Vyukov wrote:\r\n>>\r\n>> Please patch net package to do \"single dedicated thread\" on amd64 and\r\n>> benchmark it.\r\n>>\r\n>>\r\n> It gets slower, but marginally:\r\n>\r\n> # ~/go/root/misc/benchcmp netstats/amd64/id16362.txt a\r\n>\r\n> benchmark                           old ns/op    new ns/op    delta\r\n> BenchmarkTCP6OneShot                   285138       345681  +21.23%\r\n> BenchmarkTCP6OneShot-2                 318339       314433   -1.23%\r\n> BenchmarkTCP6OneShot-3                 293926       369117  +25.58%\r\n> BenchmarkTCP6OneShotTimeout            288067       378882  +31.53%\r\n> BenchmarkTCP6OneShotTimeout-2          291973       349587  +19.73%\r\n> BenchmarkTCP6OneShotTimeout-3          300762       380835  +26.62%\r\n> BenchmarkTCP6Persistent                 47262        66890  +41.53%\r\n> BenchmarkTCP6Persistent-2               50289        59371  +18.06%\r\n> BenchmarkTCP6Persistent-3               49020        74214  +51.40%\r\n> BenchmarkTCP6PersistentTimeout          53707        69819  +30.00%\r\n> BenchmarkTCP6PersistentTimeout-2        55660        69722  +25.26%\r\n> BenchmarkTCP6PersistentTimeout-3        55269        82026  +48.41%\r\n>\r\n> benchmark                          old allocs   new allocs    delta\r\n> BenchmarkTCP6OneShot                       67           73    8.96%\r\n> BenchmarkTCP6OneShot-2                     67           73    8.96%\r\n> BenchmarkTCP6OneShot-3                     67           73    8.96%\r\n> BenchmarkTCP6OneShotTimeout                75           81    8.00%\r\n> BenchmarkTCP6OneShotTimeout-2              75           81    8.00%\r\n> BenchmarkTCP6OneShotTimeout-3              75           81    8.00%\r\n> BenchmarkTCP6Persistent                    14           18   28.57%\r\n> BenchmarkTCP6Persistent-2                  14           18   28.57%\r\n> BenchmarkTCP6Persistent-3                  14           19   35.71%\r\n> BenchmarkTCP6PersistentTimeout             22           26   18.18%\r\n> BenchmarkTCP6PersistentTimeout-2           22           26   18.18%\r\n> BenchmarkTCP6PersistentTimeout-3           22           27   22.73%\r\n>\r\n> benchmark                           old bytes    new bytes    delta\r\n> BenchmarkTCP6OneShot                     6222         7387   18.72%\r\n> BenchmarkTCP6OneShot-2                   6219         7395   18.91%\r\n> BenchmarkTCP6OneShot-3                   6217         7370   18.55%\r\n> BenchmarkTCP6OneShotTimeout              6927         8071   16.52%\r\n> BenchmarkTCP6OneShotTimeout-2            6921         8077   16.70%\r\n> BenchmarkTCP6OneShotTimeout-3            6972         8087   15.99%\r\n> BenchmarkTCP6Persistent                  1543         2337   51.46%\r\n> BenchmarkTCP6Persistent-2                1591         2326   46.20%\r\n> BenchmarkTCP6Persistent-3                1571         2381   51.56%\r\n> BenchmarkTCP6PersistentTimeout           2286         3058   33.77%\r\n> BenchmarkTCP6PersistentTimeout-2         2306         3043   31.96%\r\n> BenchmarkTCP6PersistentTimeout-3         2288         3089   35.01%\r\n>\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 06:54:43.678360",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Now I must admit that I am lost in all these numbers for 386/amd64, old\r\ntip/tip/patched tip, dedicated thread/no dedicated thread,\r\nGOMAXPROCS=1/>1...\r\nWhat is still slow, if we apply this patch?\r\n\r\n\r\nOn Fri, Mar 22, 2013 at 10:54 AM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> It is what against what?\r\n>\r\n> For amd64/16362 you've posted very different numbers before:\r\n>\r\n> 16007 - 16362 - still very slow, especially for -cpu=1\r\n>\r\n> # ~/go/root/misc/benchcmp id16007.txt id16362.txt\r\n> benchmark                          old ns/op    new ns/op    delta\r\n> BenchmarkTCPOneShot                   281255      2031289  +622.22%\r\n> BenchmarkTCPOneShot-2                 218754       281255  +28.57%\r\n> BenchmarkTCPOneShot-3                 218754       187503  -14.29%\r\n> BenchmarkTCPOneShotTimeout            281255      2187542  +677.78%\r\n> BenchmarkTCPOneShotTimeout-2          218754       281255  +28.57%\r\n> BenchmarkTCPOneShotTimeout-3          218754       218754   +0.00%\r\n> BenchmarkTCPPersistent                 87501       343756  +292.86%\r\n> BenchmarkTCPPersistent-2               46875        62501  +33.34%\r\n> BenchmarkTCPPersistent-3               43750        70313  +60.72%\r\n> BenchmarkTCPPersistentTimeout         101564       312506  +207.69%\r\n> BenchmarkTCPPersistentTimeout-2        50000        78126  +56.25%\r\n> BenchmarkTCPPersistentTimeout-3        50000        62501  +25.00%\r\n>\r\n>\r\n> On Fri, Mar 22, 2013 at 10:36 AM, brainman <alex.brainman@gmail.com>wrote:\r\n>\r\n>> On Friday, 22 March 2013 17:21:26 UTC+11, Dmitry Vyukov wrote:\r\n>>>\r\n>>> Please patch net package to do \"single dedicated thread\" on amd64 and\r\n>>> benchmark it.\r\n>>>\r\n>>>\r\n>> It gets slower, but marginally:\r\n>>\r\n>> # ~/go/root/misc/benchcmp netstats/amd64/id16362.txt a\r\n>>\r\n>> benchmark                           old ns/op    new ns/op    delta\r\n>> BenchmarkTCP6OneShot                   285138       345681  +21.23%\r\n>> BenchmarkTCP6OneShot-2                 318339       314433   -1.23%\r\n>> BenchmarkTCP6OneShot-3                 293926       369117  +25.58%\r\n>> BenchmarkTCP6OneShotTimeout            288067       378882  +31.53%\r\n>> BenchmarkTCP6OneShotTimeout-2          291973       349587  +19.73%\r\n>> BenchmarkTCP6OneShotTimeout-3          300762       380835  +26.62%\r\n>> BenchmarkTCP6Persistent                 47262        66890  +41.53%\r\n>> BenchmarkTCP6Persistent-2               50289        59371  +18.06%\r\n>> BenchmarkTCP6Persistent-3               49020        74214  +51.40%\r\n>> BenchmarkTCP6PersistentTimeout          53707        69819  +30.00%\r\n>> BenchmarkTCP6PersistentTimeout-2        55660        69722  +25.26%\r\n>> BenchmarkTCP6PersistentTimeout-3        55269        82026  +48.41%\r\n>>\r\n>> benchmark                          old allocs   new allocs    delta\r\n>> BenchmarkTCP6OneShot                       67           73    8.96%\r\n>> BenchmarkTCP6OneShot-2                     67           73    8.96%\r\n>> BenchmarkTCP6OneShot-3                     67           73    8.96%\r\n>> BenchmarkTCP6OneShotTimeout                75           81    8.00%\r\n>> BenchmarkTCP6OneShotTimeout-2              75           81    8.00%\r\n>> BenchmarkTCP6OneShotTimeout-3              75           81    8.00%\r\n>> BenchmarkTCP6Persistent                    14           18   28.57%\r\n>> BenchmarkTCP6Persistent-2                  14           18   28.57%\r\n>> BenchmarkTCP6Persistent-3                  14           19   35.71%\r\n>> BenchmarkTCP6PersistentTimeout             22           26   18.18%\r\n>> BenchmarkTCP6PersistentTimeout-2           22           26   18.18%\r\n>> BenchmarkTCP6PersistentTimeout-3           22           27   22.73%\r\n>>\r\n>> benchmark                           old bytes    new bytes    delta\r\n>> BenchmarkTCP6OneShot                     6222         7387   18.72%\r\n>> BenchmarkTCP6OneShot-2                   6219         7395   18.91%\r\n>> BenchmarkTCP6OneShot-3                   6217         7370   18.55%\r\n>> BenchmarkTCP6OneShotTimeout              6927         8071   16.52%\r\n>> BenchmarkTCP6OneShotTimeout-2            6921         8077   16.70%\r\n>> BenchmarkTCP6OneShotTimeout-3            6972         8087   15.99%\r\n>> BenchmarkTCP6Persistent                  1543         2337   51.46%\r\n>> BenchmarkTCP6Persistent-2                1591         2326   46.20%\r\n>> BenchmarkTCP6Persistent-3                1571         2381   51.56%\r\n>> BenchmarkTCP6PersistentTimeout           2286         3058   33.77%\r\n>> BenchmarkTCP6PersistentTimeout-2         2306         3043   31.96%\r\n>> BenchmarkTCP6PersistentTimeout-3         2288         3089   35.01%\r\n>>\r\n>>\r\n>> --\r\n>>\r\n>> ---\r\n>> You received this message because you are subscribed to the Google Groups\r\n>> \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an\r\n>> email to golang-dev+unsubscribe@googlegroups.com.\r\n>> For more options, visit https://groups.google.com/groups/opt_out.\r\n>>\r\n>>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 07:00:43.758250",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Friday, 22 March 2013 17:54:43 UTC+11, Dmitry Vyukov wrote:\r\n\r\n> It is what against what?\r\n>\r\n> For amd64/16362 you've posted very different numbers before:\r\n>\r\n> 16007 - 16362 - still very slow, especially for -cpu=1\r\n>\r\n> # ~/go/root/misc/benchcmp id16007.txt id16362.txt\r\n> benchmark                          old ns/op    new ns/op    delta\r\n> BenchmarkTCPOneShot                   281255      2031289  +622.22%\r\n> BenchmarkTCPOneShot-2                 218754       281255  +28.57%\r\n> BenchmarkTCPOneShot-3                 218754       187503  -14.29%\r\n> ....\r\n>\r\n\r\nThis is a diff between two clean versions (16007 is before new scheduler \r\nand 16362 is \"current tip\") on 386. This is the slow down that I am \r\nconcerned about. Part of my earlier \r\npost http://play.golang.org/p/9bJ323Me7T.\r\n\r\nAlex\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 09:11:51.420140",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Friday, 22 March 2013 18:00:43 UTC+11, Dmitry Vyukov wrote:\r\n\r\n> Now I must admit that I am lost in all these numbers for 386/amd64, old \r\n> tip/tip/patched tip, dedicated thread/no dedicated thread, \r\n> GOMAXPROCS=1/>1...\r\n> What is still slow, if we apply this patch?\r\n>\r\n>\r\nDo you mean your current CL? http://play.golang.org/p/9bJ323Me7T has some \r\nresults:\r\n\r\n...\r\n# ~/go/root/misc/benchcmp id16007.txt id16362patched.txt    \r\nbenchmark                          old ns/op    new ns/op    delta  \r\nBenchmarkTCPOneShot                   281255       281255   +0.00%  \r\nBenchmarkTCPOneShot-2                 218754       218754   +0.00%  \r\nBenchmarkTCPOneShot-3                 218754       203128   -7.14%  \r\nBenchmarkTCPOneShotTimeout            281255       281255   +0.00%  \r\nBenchmarkTCPOneShotTimeout-2          218754       218754   +0.00%  \r\nBenchmarkTCPOneShotTimeout-3          218754       218754   +0.00%  \r\nBenchmarkTCPPersistent                 87501        62501  -28.57%  \r\nBenchmarkTCPPersistent-2               46875        56251  +20.00%  \r\nBenchmarkTCPPersistent-3               43750        62501  +42.86%  \r\nBenchmarkTCPPersistentTimeout         101564        70313  -30.77%  \r\nBenchmarkTCPPersistentTimeout-2        50000        62501  +25.00%  \r\nBenchmarkTCPPersistentTimeout-3        50000        78126  +56.25%  \r\n                                                                    \r\n...\r\n\r\nI do not understand why your fix helps. Perhaps there is better way \r\nto achieve that. That is my concern.\r\n\r\nAlex \r\n",
+			"disapproval": false,
+			"date": "2013-03-22 09:24:38.176520",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Mar 22, 2013 at 10:36 AM, brainman <alex.brainman@gmail.com> wrote:\r\n\r\n> On Friday, 22 March 2013 17:21:26 UTC+11, Dmitry Vyukov wrote:\r\n>>\r\n>> Please patch net package to do \"single dedicated thread\" on amd64 and\r\n>> benchmark it.\r\n>>\r\n>>\r\n> It gets slower, but marginally:\r\n>\r\n> # ~/go/root/misc/benchcmp netstats/amd64/id16362.txt a\r\n>\r\n> benchmark                           old ns/op    new ns/op    delta\r\n> BenchmarkTCP6OneShot                   285138       345681  +21.23%\r\n> BenchmarkTCP6OneShot-2                 318339       314433   -1.23%\r\n> BenchmarkTCP6OneShot-3                 293926       369117  +25.58%\r\n>\r\n\r\nSo with with this patch and \"single dedicated thread\" 386 is significantly\r\n*faster* than amd64, right? In your separate post you've posted the\r\nfollowing numbers for 386:\r\n\r\n# ~/go/root/misc/benchcmp id16007.txt id16362patched.txt\r\nbenchmark                          old ns/op    new ns/op    delta\r\nBenchmarkTCPOneShot                   281255       281255   +0.00%\r\nBenchmarkTCPOneShot-2                 218754       218754   +0.00%\r\nBenchmarkTCPOneShot-3                 218754       203128   -7.14%\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 09:24:40.529570",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Mar 22, 2013 at 1:23 PM, brainman <alex.brainman@gmail.com> wrote:\r\n>\r\n> On Friday, 22 March 2013 18:00:43 UTC+11, Dmitry Vyukov wrote:\r\n>>\r\n>> Now I must admit that I am lost in all these numbers for 386/amd64, old tip/tip/patched tip, dedicated thread/no dedicated thread, GOMAXPROCS=1/>1...\r\n>> What is still slow, if we apply this patch?\r\n>>\r\n>\r\n> Do you mean your current CL? http://play.golang.org/p/9bJ323Me7T has some results:\r\n>\r\n> ...\r\n> # ~/go/root/misc/benchcmp id16007.txt id16362patched.txt\r\n> benchmark                          old ns/op    new ns/op    delta\r\n> BenchmarkTCPOneShot                   281255       281255   +0.00%\r\n> BenchmarkTCPOneShot-2                 218754       218754   +0.00%\r\n> BenchmarkTCPOneShot-3                 218754       203128   -7.14%\r\n> BenchmarkTCPOneShotTimeout            281255       281255   +0.00%\r\n> BenchmarkTCPOneShotTimeout-2          218754       218754   +0.00%\r\n> BenchmarkTCPOneShotTimeout-3          218754       218754   +0.00%\r\n> BenchmarkTCPPersistent                 87501        62501  -28.57%\r\n> BenchmarkTCPPersistent-2               46875        56251  +20.00%\r\n> BenchmarkTCPPersistent-3               43750        62501  +42.86%\r\n> BenchmarkTCPPersistentTimeout         101564        70313  -30.77%\r\n> BenchmarkTCPPersistentTimeout-2        50000        62501  +25.00%\r\n> BenchmarkTCPPersistentTimeout-3        50000        78126  +56.25%\r\n>\r\n> ...\r\n>\r\n> I do not understand why your fix helps. Perhaps there is better way to achieve that. That is my concern.\r\n\r\n\r\nIt helps because new scheduler favors short/non-blocking syscalls\r\n(e.g. read/write), but penalizes blocking syscalls (e.g.\r\nGetQueuedCompletionStatus )). And it seems that penalty on Windows is\r\nlarger than on Linux.\r\nThis change uses the old behaviour for GetQueuedCompletionStatus(),\r\ni.e. \"do not penalize\" blocking syscalls too much. Actually it's even\r\nbetter, because it first tries to do non-blocking\r\nGetQueuedCompletionStatus and only then blocking.\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 09:29:09.119060",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Friday, 22 March 2013 20:24:39 UTC+11, Dmitry Vyukov wrote:\r\n\r\n> On Fri, Mar 22, 2013 at 10:36 AM, brainman <alex.b...@gmail.com<javascript:>\r\n> > wrote:\r\n>\r\n>> On Friday, 22 March 2013 17:21:26 UTC+11, Dmitry Vyukov wrote:\r\n>>>\r\n>>> Please patch net package to do \"single dedicated thread\" on amd64 and \r\n>>> benchmark it.\r\n>>>\r\n>>>\r\n>> It gets slower, but marginally:\r\n>>\r\n>> # ~/go/root/misc/benchcmp netstats/amd64/id16362.txt a\r\n>>\r\n>> benchmark                           old ns/op    new ns/op    delta\r\n>> BenchmarkTCP6OneShot                   285138       345681  +21.23%\r\n>> BenchmarkTCP6OneShot-2                 318339       314433   -1.23%\r\n>> BenchmarkTCP6OneShot-3                 293926       369117  +25.58%\r\n>>\r\n>\r\n> So with with this patch and \"single dedicated thread\" 386 is \r\n> significantly *faster* than amd64, right? In your separate post you've \r\n> posted the following numbers for 386:\r\n>\r\n> # ~/go/root/misc/benchcmp id16007.txt id16362patched.txt    \r\n> benchmark                          old ns/op    new ns/op    delta  \r\n> BenchmarkTCPOneShot                   281255       281255   +0.00%  \r\n> BenchmarkTCPOneShot-2                 218754       218754   +0.00%  \r\n> BenchmarkTCPOneShot-3                 218754       203128   -7.14%  \r\n>\r\n>\r\nI wouldn't compare 386 and amd64 results between themselves. These are two \r\nvery different computers. But, yes your patch helps on 386 (386 does \"single \r\ndedicated thread\" unconditionally - it cannot do anything else). Especially \r\nfor -cpu=1 case.\r\n\r\nAlex\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 09:39:10.244410",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Mar 22, 2013 at 2:00 PM,  <alex.brainman@gmail.com> wrote:\r\n> On 2013/03/22 09:29:09, dvyukov wrote:\r\n>>\r\n>> It helps because new scheduler favors short/non-blocking syscalls\r\n>> (e.g. read/write), but penalizes blocking syscalls (e.g.\r\n>> GetQueuedCompletionStatus )). And it seems that penalty on Windows is\r\n>> larger than on Linux.\r\n>\r\n>\r\n> How do you decide if a particular syscall short/non-blocking? None of\r\n> windows syscalls is marked as such in any way.\r\n\r\nThe scheduler initially assumes that every syscall is non-blocking, so\r\nit does nothing when a thread enters into the syscall.\r\nThen, a background thread that sleeps for a while and then checks\r\nstatuses of all threads. If it finds a thread that sits in a syscall\r\nfor more than X us, then it assumes that the syscall is blocking and\r\nwakes up another worker thread to replace the blocked one.\r\n\r\n\r\n\r\n>> This change uses the old behaviour for GetQueuedCompletionStatus(),\r\n>> i.e. \"do not penalize\" blocking syscalls too much. Actually it's even\r\n>> better, because it first tries to do non-blocking\r\n>> GetQueuedCompletionStatus and only then blocking.\r\n>\r\n>\r\n> Fair enough - it helps here. What happens in other places where some of\r\n> our syscalls \"block\"? Do we get similar regression there?\r\n\r\nIt is possible.\r\n\r\n\r\n> Also, now we replaced every GetQueuedCompletionStatus call with two. It\r\n> is quite a busy place here - every io completes here. Is there price to\r\n> pay?\r\n\r\nI think it depends on workload. If the non-blocking\r\nGetQueuedCompletionStatus usually discovers new completion\r\nnotification then it's a win. If under particular workload we execute\r\nnon-blocking GetQueuedCompletionStatus just to discover that there is\r\nno notifications, then it's a loss.\r\nYou can benchmark a version with only blocking\r\nGetQueuedCompletionStatus (but the net benchmarks are pretty\r\nsynthetic, so it will be difficult to decide).\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 10:12:53.661490",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 10:12:53, dvyukov wrote:\n> ...\n> ..., so it will be difficult to decide).\n\nI agree. :-) It raises more questions then it answers.\n\nWhat about a different solution - we leave GetQueuedCompletionStatus call as before, but will call runtime_blockingSyscallHint right before it? GetQueuedCompletionStatus is about waiting, let it block unconditionally.\n\nIf that works, perhaps, we can provide new syscall.Syscall like functions to provide access to that functionality outside of runtime / syscall.\n\nDo you think it worth investigating? I am just talking ... here :-)\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-22 10:44:20.803460",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Mar 22, 2013 at 2:44 PM,  <alex.brainman@gmail.com> wrote:\r\n> On 2013/03/22 10:12:53, dvyukov wrote:\r\n>>\r\n>> ...\r\n>> ..., so it will be difficult to decide).\r\n>\r\n>\r\n> I agree. :-) It raises more questions then it answers.\r\n>\r\n> What about a different solution - we leave GetQueuedCompletionStatus\r\n> call as before, but will call runtime_blockingSyscallHint right before\r\n> it? GetQueuedCompletionStatus is about waiting, let it block\r\n> unconditionally.\r\n\r\nYes, that's what I meant. It should work.\r\n\r\n> If that works, perhaps, we can provide new syscall.Syscall like\r\n> functions to provide access to that functionality outside of runtime /\r\n> syscall.\r\n>\r\n> Do you think it worth investigating? I am just talking ... here :-)\r\n\r\nI had such thing on Linux at one point (locally). So it's doable. But\r\ngeneral sentiment about adding additional knobs here is... not\r\ncompletely positive. And it's understandable, because by adding knobs\r\nwe just transfer our problems onto users.\r\n\r\nActually windows has a super cool feature called UMS (since Vista\r\nAFAIR). It allows to actually detect thread blocking (w/o guessing).\r\nBut that would require considerable windows-specific parts in the\r\nscheduler, and UMS is not the most trivial API to program. This is not\r\nfor Go1.1 in any way, shape or form. But it would allow to solve all\r\nsyscall problems in the long term.\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 10:53:36.928730",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Russ,\r\n\r\nCan you take a look at this CL?\r\nA brief summary of the discussion:\r\nWindows performance has degraded with new scheduler because of\r\nblocking GetQueuedCompletionStatus() call. Especially for\r\nGOMAXPROCS=1.\r\nThis CL brings the performance to the comparable with old sched level\r\n(somewhere worse, somewhere better, but no pathological degradation).\r\nA proper fix will be to integrate Windows network poller with runtime.\r\nBut this is a lot of work.\r\nAlex said LGTM.\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 12:00:42.915800",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/7612045/diff/4004/src/pkg/runtime/cgocall.c\nFile src/pkg/runtime/cgocall.c (right):\n\nhttps://codereview.appspot.com/7612045/diff/4004/src/pkg/runtime/cgocall.c#newcode157\nsrc/pkg/runtime/cgocall.c:157: if(Windows && g->blockingsyscall) {\nIs it terribly expensive to drop the Windows &&?\nIf not, please drop it.",
+			"disapproval": false,
+			"date": "2013-03-22 14:26:29.920180",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ewan, does this CL helps in your case?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-03-22 19:42:26.603180",
+			"approval": false
+		},
+		{
+			"sender": "coocood@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 19:42:26, brainman wrote:\n> Ewan, does this CL helps in your case?\n> \n> Alex\n\nYes, I applied this patch, it fixed the issue.",
+			"disapproval": false,
+			"date": "2013-03-23 01:31:10.910090",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/22 14:26:29, rsc wrote:\n> LGTM\n> \n> https://codereview.appspot.com/7612045/diff/4004/src/pkg/runtime/cgocall.c\n> File src/pkg/runtime/cgocall.c (right):\n> \n> https://codereview.appspot.com/7612045/diff/4004/src/pkg/runtime/cgocall.c#newcode157\n> src/pkg/runtime/cgocall.c:157: if(Windows && g->blockingsyscall) {\n> Is it terribly expensive to drop the Windows &&?\n> If not, please drop it.\n\nDone",
+			"disapproval": false,
+			"date": "2013-03-25 16:56:12.982320",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/21 18:17:53, dvyukov wrote:\n> ...\n> 5. Better integration with scheduler with runtime.netpoll().\n> \n\nI tried to do that, and I need your advise. I am not sure what to do when net.pollDesc's WaitRead or WaitWrite return errClosing or errTimeout. The problem is that, unlike unix implementation, windows io is in flight at the time (os is in the process of reading/writing of Go buffers), so I cannot just bail out of current function. What I do in our current implementation is call windows CancelIo or CancelIoEx and then go back into waiting forever for my io to finish (it will complete successfully or with ERROR_OPERATION_ABORTED, depending on if io finished or not before my CancelIO call). I don't believe your current runtime netpoll design allows for this situation. What do you suggest I should do.\n\nThank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-12 02:04:42.250120",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Apr 11, 2013 at 7:04 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> On 2013/03/21 18:17:53, dvyukov wrote:\r\n>\r\n>> ...\r\n>> 5. Better integration with scheduler with runtime.netpoll().\r\n>>\r\n>\r\n>\r\n> I tried to do that, and I need your advise. I am not sure what to do\r\n> when net.pollDesc's WaitRead or WaitWrite return errClosing or\r\n> errTimeout. The problem is that, unlike unix implementation, windows io\r\n> is in flight at the time (os is in the process of reading/writing of Go\r\n> buffers), so I cannot just bail out of current function. What I do in\r\n> our current implementation is call windows CancelIo or CancelIoEx and\r\n> then go back into waiting forever for my io to finish (it will complete\r\n> successfully or with ERROR_OPERATION_ABORTED, depending on if io\r\n> finished or not before my CancelIO call). I don't believe your current\r\n> runtime netpoll design allows for this situation. What do you suggest I\r\n> should do.\r\n>\r\n\r\n\r\nI think you need to do roughly the same as now.\r\n\r\nIf WaitRead/Write returns errTimeout, it just means that a timer fired\r\ninside of runtime. Call CancelIO() and wait for operation completion. If it\r\nwill return success, reurn success. If it is cancelled return errTimeout.\r\nAnd similar for errClosing.\r\n",
+			"disapproval": false,
+			"date": "2013-04-12 02:28:50.919990",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/12 02:28:50, dvyukov wrote:\n> ...\n> If WaitRead/Write returns errTimeout, it just means that a timer fired\n> inside of runtime. Call CancelIO() and wait for operation completion. If it\n> will return success, reurn success. If it is cancelled return errTimeout.\n> And similar for errClosing.\n\nThat sounds good, but I am worried about netpoll internal state. For example, when I call Evict from netFD.Close, netpoll marks this connection as \"closing\". But I need to call ReadWait again to wait for io completion after CanelIO. How do I handle that? Also, should netFD.Close() return after calling Evict immediately? The \"wakeup / cancelio / wait-for-io-to-complete\" should be quick, but it is up to OS to decide.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-12 02:51:49.536860",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/12 02:51:49, brainman wrote:\n> On 2013/04/12 02:28:50, dvyukov wrote:\n> > ...\n> > If WaitRead/Write returns errTimeout, it just means that a timer fired\n> > inside of runtime. Call CancelIO() and wait for operation completion. If it\n> > will return success, reurn success. If it is cancelled return errTimeout.\n> > And similar for errClosing.\n> \n> That sounds good, but I am worried about netpoll internal state.\n\nI think for Windows you need a different impl of netpoll.goc.\n\n> For example,\n> when I call Evict from netFD.Close, netpoll marks this connection as \"closing\".\n> But I need to call ReadWait again to wait for io completion after CanelIO. How\n> do I handle that?\n\nI would call CancelIOEx() during Close() or in deadline timer func. So that Read()/Write() just wait once for completion, if Read()/Write() gets ERROR_OPERATION_ABORTED, then it needs to look at some variables to understand whether it's errClosing or errTimeout.\n\n> Also, should netFD.Close() return after calling Evict\n> immediately? The \"wakeup / cancelio / wait-for-io-to-complete\" should be quick,\n> but it is up to OS to decide.\n\nI think that's fine if Close() returns immediately. The last outstanding Read/Write will close the descriptor when completed.\n\nHere is a very dirty sketch of what I would try.\nThis includes both net and runtime parts.\nPart of the complexity is added by the fact that if an operation completes synchronously, I wait for the notification during the *next* operation (when the notification is most likely already happened).\nProbably CancelIoEx() can be moved out the mutex.\nThe state is quite complex, but it's always mutated under the mutex, so it's easy to ensure that it's transfers from one legal state to another.\nThis code contains bugs, but I hope you can get the idea. Then you just need to carefully handle all state transitions.\n\ntype netFD struct {\n  ...\n  ro, wo OVERLAPPED  // to not allocate each time\n  rpending, wpending bool  // ro/wo is pending (another thread can cancel ro/wo)\n  rprevpending, wprevpending bool  // the previous op completed synchronously\n  rcompleted, wcompleted bool // overlapped operation has completed\n  rg, wg *G  // waiting goroutine\n  rdeadline, wdeadline int64\n  rerr, werr error  // read/write result (valid when rcompleted/wcompleted == true)\n  rn, wn int  // read/write result (valid when rcompleted/wcompleted == true)\n  closing bool\n  Lock\n}\n\nfunc (fd *netFD) Read(buf []byte) (int, error) {\n// the same as now\n\tif err := fd.incref(false); err != nil {\n\t\treturn 0, err\n\t}\n\tdefer fd.decref()\n\tfd.rio.Lock()\n\tdefer fd.rio.Unlock()\n// runtime part starts here\n// check that the socket has not yet timed out or been closed\n        runtime.lock(fd)\n        if(fd.closing) {\n          runtime.unlock(fd)\n          return errClosing;\n        }\n        if(fd.rdeadline < 0) {\n          runtime.unlock(fd)\n          return errTimeout\n        }\n        if(fd.rprevpending && !fd.rcompleted) {\n            fd.rg = g;\n            // wait for the *previous* read to complete\n            runtime.park(runtime.unlock, fd, \"IO wait\")\n            runtime.lock(fd)\n        }\n        fd.rcompleted = false\n        fd.rprevpending = false\n        runtime.unlock(fd)\n\n        n, err := WSARecv(fd.sysfd, buf, ..., &fd.ro)\n\n        if(err != ERROR_IO_PENDING)\n          return 0, err\n        if(err == nil) {\n          // operation completed synchronously\n          runtime.lock(fd)\n          if(fd.closing && !fd.rcompleted) {\n            fd.rg = g;\n            // have to waiit for the completion notification\n            runtime.park(runtime.unlock, fd, \"IO wait\")\n          }\n          // let the next reader wait for the notification\n          fd.rprevpending = true;\n          runtime.unlock(fd)\n          return n, err\n        }\n        // err == ERROR_IO_PENDING\n        runtime.lock(fd)\n        if(fd.closing || fd.rdeadline < 0) {\n          fd.rerr = fd.closing ? errClosing : errTimeout\n          CancelIOEx(fd.sysfd, &fd.ro)\n        }\n        if(!fd.rcompleted) {\n          fd.rpending = true\n          fd.rg = g\n          runtime.park(runtime.unlock, fd, \"IO wait\")\n        } else\n          runtime.unlock(fd)\n        return fd.rn, fd.rerr\n}\n\nG *runtime.netpoll(...) {\n  G *glist = nil;\n  syscall.GetQueuedCompletionStatus(...)\n  foreach returned fd, n, err, isread  {\n    runtime.lock(fd)\n    if(isread) {\n      fd.rn = n\n      if(err != ERROR_OPERATION_ABORTED)\n        fd.rerr = err  // whoever cancels the io, sets the fd.rerr\n      fd.rcompleted = true\n      fd.rpending = false\n      if(fd.rg != nil) {\n        fd.rg->link = glist\n        glist = fd.rg\n      }\n    } else {\n      // the same for write\n    }\n    runtime.unlock(fd)\n  }\n  return glist\n}\n\n// the timer is set in setDeadline()\nvoid rdeadline(...) {  // deadline timer handler\n    runtime.lock(fd)\n    fd.rdeadline = -1\n    if(fd.rpending) {\n      fd.rerr = fd.closing ? errClosing : errTimeout\n      CancelIoEx(fd.sysfd, &fd.ro)\n    }\n    runtime.unlock(fd)\n}\n\nvoid evict(...) {\n    runtime.lock(fd)\n    fd.closing = true\n    fd.rerr = errClosing\n    // cancel timers\n    if(fd.rpending)\n      CancelIoEx(fd.sysfd, &fd.ro)\n    if(fd.wpending)\n      CancelIoEx(fd.sysfd, &fd.wo)\n    if(fd.rprevpending) {\n      // have to wait here\n      if(!fd.rcompleted) {\n          fd.rg = g;\n          runtime.park(runtime.unlock, fd, \"IO wait\")\n      }\n      fd.rcompleted = false\n      fd.rprevpending = false\n    }\n    if(fd.wprevpending) {\n      // the same for writes\n    }\n    runtime.unlock(fd)\n}",
+			"disapproval": false,
+			"date": "2013-04-15 05:18:39.437110",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/15 05:18:39, dvyukov wrote:\n> ...\n> I think for Windows you need a different impl of netpoll.goc.\n> ...\n\nThis looks very complicated to me :-( Also, CancelIoEx is present on some systems, but not on others. If not found, we use CancelIo instead. But CancelIo cancels \"all io on the caller thread\". So we use special goroutine (locked to os thread) to do all IO submissions and cancellations. I am not sure how easy it is to implement all this in runtime. Also, all runtime syscall addresses are resolved by windows executable loader, so we cannot use api functions that we know might not be present on some systems.\n\nI just tried to do all cancellation logic inside of fd_windows.go instead. I have added new function similar to runtime_pollWait, but one that does not call checkerr on entry or exit. Then I call CancelIoEx (when runtime_pollWait returns with errClosing or errTimeout) and go wait on that function. I discard any results and return previously reported errClosing or errTimeout.\n\nAll tests pass now. But I don't see any benchmark improvements :-(. I didn't test my changes on amd64 yet, so, perhaps, I will see it there. Still, I would expect some improvements, because I am not piddling with timers. It is hard to benchmark these, because, you cannot run them for very long (os runs out of sockets).\n\nI will keep at it, and report back. Thank you for your help.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-15 07:36:56.397190",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Here are my benchmark results on windows/amd64:\n\n# ~/go/root/misc/benchcmp old.txt new.txt\nbenchmark                           old ns/op    new ns/op    delta\nBenchmarkTCP4OneShot                   314433       292950   -6.83%\nBenchmarkTCP4OneShot-2                 343728       347634   +1.14%\nBenchmarkTCP4OneShot-3                 339822       308574   -9.20%\nBenchmarkTCP4OneShotTimeout            343728       338845   -1.42%\nBenchmarkTCP4OneShotTimeout-2          345681       333963   -3.39%\nBenchmarkTCP4OneShotTimeout-3          353493       341775   -3.31%\nBenchmarkTCP4Persistent                 41013        33591  -18.10%\nBenchmarkTCP4Persistent-2               38669        35544   -8.08%\nBenchmarkTCP4Persistent-3               40231        37692   -6.31%\nBenchmarkTCP4PersistentTimeout          44528        33396  -25.00%\nBenchmarkTCP4PersistentTimeout-2        43942        35349  -19.56%\nBenchmarkTCP4PersistentTimeout-3        48239        36325  -24.70%\n# cat old.txt\nPASS\nBenchmarkTCP4OneShot\t     500\t    314433 ns/op\nBenchmarkTCP4OneShot-2\t     500\t    343728 ns/op\nBenchmarkTCP4OneShot-3\t     500\t    339822 ns/op\nBenchmarkTCP4OneShotTimeout\t     500\t    343728 ns/op\nBenchmarkTCP4OneShotTimeout-2\t     500\t    345681 ns/op\nBenchmarkTCP4OneShotTimeout-3\t     500\t    353493 ns/op\nBenchmarkTCP4Persistent\t    5000\t     41013 ns/op\nBenchmarkTCP4Persistent-2\t    5000\t     38669 ns/op\nBenchmarkTCP4Persistent-3\t    5000\t     40231 ns/op\nBenchmarkTCP4PersistentTimeout\t    5000\t     44528 ns/op\nBenchmarkTCP4PersistentTimeout-2\t    5000\t     43942 ns/op\nBenchmarkTCP4PersistentTimeout-3\t    5000\t     48239 ns/op\n# cat new.txt\nPASS\nBenchmarkTCP4OneShot\t     500\t    292950 ns/op\nBenchmarkTCP4OneShot-2\t    1000\t    347634 ns/op\nBenchmarkTCP4OneShot-3\t     500\t    308574 ns/op\nBenchmarkTCP4OneShotTimeout\t    1000\t    338845 ns/op\nBenchmarkTCP4OneShotTimeout-2\t     500\t    333963 ns/op\nBenchmarkTCP4OneShotTimeout-3\t     500\t    341775 ns/op\nBenchmarkTCP4Persistent\t    5000\t     33591 ns/op\nBenchmarkTCP4Persistent-2\t    5000\t     35544 ns/op\nBenchmarkTCP4Persistent-3\t    5000\t     37692 ns/op\nBenchmarkTCP4PersistentTimeout\t    5000\t     33396 ns/op\nBenchmarkTCP4PersistentTimeout-2\t    5000\t     35349 ns/op\nBenchmarkTCP4PersistentTimeout-3\t    5000\t     36325 ns/op\n# \n\nThese are just with windows runtime netpoll implemented. Speed ups are visible here. Especially where timers involved. I still didn't remove any memory allocations during net IO. I reckon, I should proceed with this. The code changes, so far, aren't substantial. I will clean-up my code and post it for review.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-16 03:09:26.170240",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Apr 15, 2013 at 12:36 AM, <alex.brainman@gmail.com> wrote:\r\n\r\n> On 2013/04/15 05:18:39, dvyukov wrote:\r\n>\r\n>> ...\r\n>>\r\n>> I think for Windows you need a different impl of netpoll.goc.\r\n>> ...\r\n>>\r\n>\r\n> This looks very complicated to me :-( Also, CancelIoEx is present on\r\n> some systems, but not on others. If not found, we use CancelIo instead.\r\n> But CancelIo cancels \"all io on the caller thread\". So we use special\r\n> goroutine (locked to os thread) to do all IO submissions and\r\n> cancellations. I am not sure how easy it is to implement all this in\r\n> runtime. Also, all runtime syscall addresses are resolved by windows\r\n> executable loader, so we cannot use api functions that we know might not\r\n> be present on some systems.\r\n>\r\n\r\n\r\nDo we care much about performance of systems that does not have CancelIoEx?\r\nIt's present for about 6 years.\r\nI would leave the non-CancelIoEx code as is, and implement the integrated\r\npoller only for systems supporting CancelIoEx/GetQueuedCompletionStatusEx.\r\nIt's possible to call CancelIoEx only from Go code in net package, and call\r\nfrom runtime back into net to call it. But it's not that easy to do the\r\nsame for GetQueuedCompletionStatusEx, becase netpoll() can not execute Go\r\ncode (can not allocate memory, switch stacks and so on).\r\n\r\n\r\n\r\n\r\nI just tried to do all cancellation logic inside of fd_windows.go\r\n> instead. I have added new function similar to runtime_pollWait, but one\r\n> that does not call checkerr on entry or exit. Then I call CancelIoEx\r\n> (when runtime_pollWait returns with errClosing or errTimeout) and go\r\n> wait on that function. I discard any results and return previously\r\n> reported errClosing or errTimeout.\r\n>\r\n> All tests pass now. But I don't see any benchmark improvements :-(. I\r\n> didn't test my changes on amd64 yet, so, perhaps, I will see it there.\r\n> Still, I would expect some improvements, because I am not piddling with\r\n> timers. It is hard to benchmark these, because, you cannot run them for\r\n> very long (os runs out of sockets).\r\n>\r\n> I will keep at it, and report back. Thank you for your help.\r\n>\r\n> Alex\r\n>\r\n> https://codereview.appspot.**com/7612045/<https://codereview.appspot.com/7612045/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-17 03:59:49.814910",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/17 03:59:49, dvyukov wrote:\n> ...\n\nHow about https://codereview.appspot.com/8670044/ ?\n\nI will split it into simpler CLs, if it looks OK to you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-18 07:40:33.061370",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Apr 18, 2013 at 12:40 AM, <alex.brainman@gmail.com> wrote:\r\n\r\n> On 2013/04/17 03:59:49, dvyukov wrote:\r\n>\r\n>> ...\r\n>>\r\n>\r\n> How about https://codereview.appspot.**com/8670044/<https://codereview.appspot.com/8670044/>?\r\n>\r\n> I will split it into simpler CLs, if it looks OK to you.\r\n>\r\n\r\n\r\nI will look at it later. Probably in a week or two. This is not for Go1.1,\r\nright? So we have a plenty of time.\r\n",
+			"disapproval": false,
+			"date": "2013-04-20 03:36:22.531310",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/20 03:36:22, dvyukov wrote:\n> \n> I will look at it later. Probably in a week or two. This is not for Go1.1,\n> right? So we have a plenty of time.\n\nSure. No hurry. This is for after go1.1. Thank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-20 07:15:52.024820",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"coocood@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/20 03:36:22, dvyukov wrote:\n> ...\n> I will look at it later. Probably in a week or two. This is not for Go1.1,\n> right? So we have a plenty of time.\n\nJust a reminder. Mikio wants to move it along http://goo.gl/OuoNT.\n\nI am not asking for a thorough review - I just want to make sure, there are no show stoppers. As I said earlier, I am planning to split this change into smaller CLs, so it is easier to review.\n\nThank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-19 03:27:52.832230",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 7612045: net: band-aid for windows network poller",
+	"created": "2013-03-18 06:52:30.413170",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		4004,
+		56001,
+		61001,
+		24002
+	],
+	"modified": "2013-05-19 03:27:52.832230",
+	"closed": true,
+	"issue": 7612045
+}

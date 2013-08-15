@@ -1,0 +1,80 @@
+{
+	"description": "math/big: add lock-free fast path for string conversion",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"gri@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This is follow up to https://codereview.appspot.com/6643053/",
+			"disapproval": false,
+			"date": "2012-10-24 19:04:49.573050",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you please add the benchmark results (before/after) to the CL? Thanks.\n\nhttps://codereview.appspot.com/6766047/diff/2001/src/pkg/math/big/nat.go\nFile src/pkg/math/big/nat.go (right):\n\nhttps://codereview.appspot.com/6766047/diff/2001/src/pkg/math/big/nat.go#newcode926\nsrc/pkg/math/big/nat.go:926: filled int32\nplease add a comment explaining this field",
+			"disapproval": false,
+			"date": "2012-10-24 20:37:45.435520",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/24 20:37:45, gri wrote:\n> Can you please add the benchmark results (before/after) to the CL? Thanks.\n> \n> https://codereview.appspot.com/6766047/diff/2001/src/pkg/math/big/nat.go\n> File src/pkg/math/big/nat.go (right):\n> \n> https://codereview.appspot.com/6766047/diff/2001/src/pkg/math/big/nat.go#newcode926\n> src/pkg/math/big/nat.go:926: filled int32\n> please add a comment explaining this field\n\nThe issue was with the \"defer Unlock\" statement, originally I benchmarked before you removed it.\nLock/defer Unlock causes excessive contention, because defer is slow, and both defer setup and defer call happens *under* the mutex (while it is locked).\n\nThe funny thing is that \"idiomatic\":\nmu.Lock()\ndefer mu.Unlock()\nis significantly slower than at first glance rather strange construction:\ndefer mu.Unlock()\nmu.Lock()\n\nLock-free:\nBenchmarkStringPiParallelSmall\t  500000\t      4499 ns/op\nBenchmarkStringPiParallelSmall-8\t 2000000\t       954 ns/op\nBenchmarkStringPiParallelSmall-16\t 5000000\t       744 ns/op\n\nLock/Unlock:\nBenchmarkStringPiParallelSmall\t  500000\t      4513 ns/op\nBenchmarkStringPiParallelSmall-8\t 1000000\t      1032 ns/op\nBenchmarkStringPiParallelSmall-16\t 2000000\t       776 ns/op\n\nLock/defer Unlock:\nBenchmarkStringPiParallelSmall\t  500000\t      4728 ns/op\nBenchmarkStringPiParallelSmall-8\t 1000000\t      1468 ns/op\nBenchmarkStringPiParallelSmall-16\t 1000000\t      1563 ns/op\n\ndefer Unlock/Lock:\nBenchmarkStringPiParallelSmall\t  500000\t      4721 ns/op\nBenchmarkStringPiParallelSmall-8\t 1000000\t      1087 ns/op\nBenchmarkStringPiParallelSmall-16\t 1000000\t      1186 ns/op",
+			"disapproval": false,
+			"date": "2012-10-25 11:23:17.218880",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Interesting (swapping defer and locking)!\r\n\r\nDid you upload a new version? I still see the old code. And please add the\r\nbenchmark results to the CL description so we have record.\r\n\r\nThanks.\r\n- gri\r\n\r\n\r\nOn Thu, Oct 25, 2012 at 4:23 AM, <dvyukov@google.com> wrote:\r\n\r\n> On 2012/10/24 20:37:45, gri wrote:\r\n>\r\n>> Can you please add the benchmark results (before/after) to the CL?\r\n>>\r\n> Thanks.\r\n>\r\n>\r\n> https://codereview.appspot.**com/6766047/diff/2001/src/pkg/**\r\n> math/big/nat.go<https://codereview.appspot.com/6766047/diff/2001/src/pkg/math/big/nat.go>\r\n>\r\n>> File src/pkg/math/big/nat.go (right):\r\n>>\r\n>\r\n>\r\n> https://codereview.appspot.**com/6766047/diff/2001/src/pkg/**\r\n> math/big/nat.go#newcode926<https://codereview.appspot.com/6766047/diff/2001/src/pkg/math/big/nat.go#newcode926>\r\n>\r\n>> src/pkg/math/big/nat.go:926: filled int32\r\n>> please add a comment explaining this field\r\n>>\r\n>\r\n> The issue was with the \"defer Unlock\" statement, originally I\r\n> benchmarked before you removed it.\r\n> Lock/defer Unlock causes excessive contention, because defer is slow,\r\n> and both defer setup and defer call happens *under* the mutex (while it\r\n> is locked).\r\n>\r\n> The funny thing is that \"idiomatic\":\r\n> mu.Lock()\r\n> defer mu.Unlock()\r\n> is significantly slower than at first glance rather strange\r\n> construction:\r\n> defer mu.Unlock()\r\n> mu.Lock()\r\n>\r\n> Lock-free:\r\n> BenchmarkStringPiParallelSmall    500000              4499 ns/op\r\n> BenchmarkStringPiParallelSmall**-8         2000000               954 ns/op\r\n> BenchmarkStringPiParallelSmall**-16        5000000               744 ns/op\r\n>\r\n> Lock/Unlock:\r\n> BenchmarkStringPiParallelSmall    500000              4513 ns/op\r\n> BenchmarkStringPiParallelSmall**-8         1000000              1032 ns/op\r\n> BenchmarkStringPiParallelSmall**-16        2000000               776 ns/op\r\n>\r\n> Lock/defer Unlock:\r\n> BenchmarkStringPiParallelSmall    500000              4728 ns/op\r\n> BenchmarkStringPiParallelSmall**-8         1000000              1468 ns/op\r\n> BenchmarkStringPiParallelSmall**-16        1000000              1563 ns/op\r\n>\r\n> defer Unlock/Lock:\r\n> BenchmarkStringPiParallelSmall    500000              4721 ns/op\r\n> BenchmarkStringPiParallelSmall**-8         1000000              1087 ns/op\r\n> BenchmarkStringPiParallelSmall**-16        1000000              1186 ns/op\r\n>\r\n>\r\n> https://codereview.appspot.**com/6766047/<https://codereview.appspot.com/6766047/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-26 02:21:36.922880",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Oct 26, 2012 at 6:21 AM, Robert Griesemer <gri@golang.org> wrote:\r\n\r\n> Interesting (swapping defer and locking)!\r\n\r\n\r\nYeah, we need to make it faster until people start using it :)\r\nI have a CL (https://codereview.appspot.com/5435048/), but Russ wants it to\r\nbe faster.\r\n\r\n\r\n\r\n\r\n> Did you upload a new version? I still see the old code. And please add the\r\n> benchmark results to the CL description so we have record.\r\n>\r\n\r\nI've closed the issue instead\r\n\r\n*** ABANDONED ***\r\n\r\n\r\n\r\n>\r\n> Thanks.\r\n> - gri\r\n>\r\n>\r\n> On Thu, Oct 25, 2012 at 4:23 AM, <dvyukov@google.com> wrote:\r\n>\r\n>> On 2012/10/24 20:37:45, gri wrote:\r\n>>\r\n>>> Can you please add the benchmark results (before/after) to the CL?\r\n>>>\r\n>> Thanks.\r\n>>\r\n>>\r\n>> https://codereview.appspot.**com/6766047/diff/2001/src/pkg/**\r\n>> math/big/nat.go<https://codereview.appspot.com/6766047/diff/2001/src/pkg/math/big/nat.go>\r\n>>\r\n>>> File src/pkg/math/big/nat.go (right):\r\n>>>\r\n>>\r\n>>\r\n>> https://codereview.appspot.**com/6766047/diff/2001/src/pkg/**\r\n>> math/big/nat.go#newcode926<https://codereview.appspot.com/6766047/diff/2001/src/pkg/math/big/nat.go#newcode926>\r\n>>\r\n>>> src/pkg/math/big/nat.go:926: filled int32\r\n>>> please add a comment explaining this field\r\n>>>\r\n>>\r\n>> The issue was with the \"defer Unlock\" statement, originally I\r\n>> benchmarked before you removed it.\r\n>> Lock/defer Unlock causes excessive contention, because defer is slow,\r\n>> and both defer setup and defer call happens *under* the mutex (while it\r\n>> is locked).\r\n>>\r\n>> The funny thing is that \"idiomatic\":\r\n>> mu.Lock()\r\n>> defer mu.Unlock()\r\n>> is significantly slower than at first glance rather strange\r\n>> construction:\r\n>> defer mu.Unlock()\r\n>> mu.Lock()\r\n>>\r\n>> Lock-free:\r\n>> BenchmarkStringPiParallelSmall    500000              4499 ns/op\r\n>> BenchmarkStringPiParallelSmall**-8         2000000               954\r\n>> ns/op\r\n>> BenchmarkStringPiParallelSmall**-16        5000000               744\r\n>> ns/op\r\n>>\r\n>> Lock/Unlock:\r\n>> BenchmarkStringPiParallelSmall    500000              4513 ns/op\r\n>> BenchmarkStringPiParallelSmall**-8         1000000              1032\r\n>> ns/op\r\n>> BenchmarkStringPiParallelSmall**-16        2000000               776\r\n>> ns/op\r\n>>\r\n>> Lock/defer Unlock:\r\n>> BenchmarkStringPiParallelSmall    500000              4728 ns/op\r\n>> BenchmarkStringPiParallelSmall**-8         1000000              1468\r\n>> ns/op\r\n>> BenchmarkStringPiParallelSmall**-16        1000000              1563\r\n>> ns/op\r\n>>\r\n>> defer Unlock/Lock:\r\n>> BenchmarkStringPiParallelSmall    500000              4721 ns/op\r\n>> BenchmarkStringPiParallelSmall**-8         1000000              1087\r\n>> ns/op\r\n>> BenchmarkStringPiParallelSmall**-16        1000000              1186\r\n>> ns/op\r\n>>\r\n>>\r\n>> https://codereview.appspot.**com/6766047/<https://codereview.appspot.com/6766047/>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-26 03:59:38.048130",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "math/big: add lock-free fast path for string conversion",
+	"created": "2012-10-24 18:59:47.858870",
+	"patchsets": [
+		1,
+		2001
+	],
+	"modified": "2012-10-25 11:24:04.920440",
+	"closed": true,
+	"issue": 6766047
+}

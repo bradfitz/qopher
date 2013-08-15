@@ -1,0 +1,69 @@
+{
+	"description": "[release-branch.go1.1] cmd/gc: fix issue with method wrappers not having escape analysis run on them.\n\n\u00ab\u00ab\u00ab CL 10383048 / 58e15340e78f\ncmd/gc: fix issue with method wrappers not having escape analysis run on them.\n\nEscape analysis needs the right curfn value on a dclfunc node, otherwise it will not analyze the function.\nWhen generating method value wrappers, we forgot to set the curfn correctly.\n\nFixes issue 5753.\n\nR=golang-dev, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/10383048\n\u00bb\u00bb\u00bb\n\nUpdate issue 5928",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-07-22 08:44:39.965390",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Just waiting for a few more builders to report in.\r\n\r\nOn Mon, Jul 22, 2013 at 6:44 PM,  <adg@golang.org> wrote:\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> [release-branch.go1.1] cmd/gc: fix issue with method wrappers not having\r\n> escape analysis run on them.\r\n>\r\n> \u00ab\u00ab\u00ab CL 10383048 / 58e15340e78f\r\n> cmd/gc: fix issue with method wrappers not having escape analysis run on\r\n> them.\r\n>\r\n> Escape analysis needs the right curfn value on a dclfunc node, otherwise\r\n> it will not analyze the function.\r\n> When generating method value wrappers, we forgot to set the curfn\r\n> correctly.\r\n>\r\n> Fixes issue 5753.\r\n>\r\n> R=golang-dev, rsc\r\n> CC=golang-dev\r\n> https://codereview.appspot.com/10383048\r\n> \u00bb\u00bb\u00bb\r\n>\r\n> Update issue 5928\r\n>\r\n> Please review this at https://codereview.appspot.com/11669043/\r\n>\r\n> Affected files:\r\n>   M src/cmd/gc/closure.c\r\n>   A test/fixedbugs/issue5753.go\r\n>\r\n>\r\n> Index: src/cmd/gc/closure.c\r\n> ===================================================================\r\n> --- a/src/cmd/gc/closure.c\r\n> +++ b/src/cmd/gc/closure.c\r\n> @@ -280,7 +280,7 @@\r\n>  static Node*\r\n>  makepartialcall(Node *fn, Type *t0, Node *meth)\r\n>  {\r\n> -       Node *ptr, *n, *fld, *call, *xtype, *xfunc, *cv;\r\n> +       Node *ptr, *n, *fld, *call, *xtype, *xfunc, *cv, *savecurfn;\r\n>         Type *rcvrtype, *basetype, *t;\r\n>         NodeList *body, *l, *callargs, *retargs;\r\n>         char *p;\r\n> @@ -304,6 +304,9 @@\r\n>         if(sym->flags & SymUniq)\r\n>                 return sym->def;\r\n>         sym->flags |= SymUniq;\r\n> +\r\n> +       savecurfn = curfn;\r\n> +       curfn = N;\r\n>\r\n>         xtype = nod(OTFUNC, N, N);\r\n>         i = 0;\r\n> @@ -311,6 +314,7 @@\r\n>         callargs = nil;\r\n>         ddd = 0;\r\n>         xfunc = nod(ODCLFUNC, N, N);\r\n> +       curfn = xfunc;\r\n>         for(t = getinargx(t0)->type; t; t = t->down) {\r\n>                 snprint(namebuf, sizeof namebuf, \"a%d\", i++);\r\n>                 n = newname(lookup(namebuf));\r\n> @@ -385,6 +389,7 @@\r\n>         typecheck(&xfunc, Etop);\r\n>         sym->def = xfunc;\r\n>         xtop = list(xtop, xfunc);\r\n> +       curfn = savecurfn;\r\n>\r\n>         return xfunc;\r\n>  }\r\n> Index: test/fixedbugs/issue5753.go\r\n> ===================================================================\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/test/fixedbugs/issue5753.go\r\n> @@ -0,0 +1,29 @@\r\n> +// run\r\n> +\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +// issue 5753: bad typecheck info causes escape analysis to\r\n> +// not run on method thunks.\r\n> +\r\n> +package main\r\n> +\r\n> +type Thing struct{}\r\n> +\r\n> +func (t *Thing) broken(s string) []string {\r\n> +       foo := [1]string{s}\r\n> +       return foo[:]\r\n> +}\r\n> +\r\n> +func main() {\r\n> +       t := &Thing{}\r\n> +\r\n> +       f := t.broken\r\n> +       s := f(\"foo\")\r\n> +       _ = f(\"bar\")\r\n> +       if s[0] != \"foo\" {\r\n> +               panic(`s[0] != \"foo\"`)\r\n> +       }\r\n> +\r\n> +}\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-22 10:14:06.604330",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\r\n\r\nOn Mon, Jul 22, 2013 at 8:14 PM, Dave Cheney <dave@cheney.net> wrote:\r\n> Just waiting for a few more builders to report in.\r\n>\r\n> On Mon, Jul 22, 2013 at 6:44 PM,  <adg@golang.org> wrote:\r\n>> Reviewers: golang-dev1,\r\n>>\r\n>> Message:\r\n>> Hello golang-dev@googlegroups.com,\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://code.google.com/p/go\r\n>>\r\n>>\r\n>> Description:\r\n>> [release-branch.go1.1] cmd/gc: fix issue with method wrappers not having\r\n>> escape analysis run on them.\r\n>>\r\n>> \u00ab\u00ab\u00ab CL 10383048 / 58e15340e78f\r\n>> cmd/gc: fix issue with method wrappers not having escape analysis run on\r\n>> them.\r\n>>\r\n>> Escape analysis needs the right curfn value on a dclfunc node, otherwise\r\n>> it will not analyze the function.\r\n>> When generating method value wrappers, we forgot to set the curfn\r\n>> correctly.\r\n>>\r\n>> Fixes issue 5753.\r\n>>\r\n>> R=golang-dev, rsc\r\n>> CC=golang-dev\r\n>> https://codereview.appspot.com/10383048\r\n>> \u00bb\u00bb\u00bb\r\n>>\r\n>> Update issue 5928\r\n>>\r\n>> Please review this at https://codereview.appspot.com/11669043/\r\n>>\r\n>> Affected files:\r\n>>   M src/cmd/gc/closure.c\r\n>>   A test/fixedbugs/issue5753.go\r\n>>\r\n>>\r\n>> Index: src/cmd/gc/closure.c\r\n>> ===================================================================\r\n>> --- a/src/cmd/gc/closure.c\r\n>> +++ b/src/cmd/gc/closure.c\r\n>> @@ -280,7 +280,7 @@\r\n>>  static Node*\r\n>>  makepartialcall(Node *fn, Type *t0, Node *meth)\r\n>>  {\r\n>> -       Node *ptr, *n, *fld, *call, *xtype, *xfunc, *cv;\r\n>> +       Node *ptr, *n, *fld, *call, *xtype, *xfunc, *cv, *savecurfn;\r\n>>         Type *rcvrtype, *basetype, *t;\r\n>>         NodeList *body, *l, *callargs, *retargs;\r\n>>         char *p;\r\n>> @@ -304,6 +304,9 @@\r\n>>         if(sym->flags & SymUniq)\r\n>>                 return sym->def;\r\n>>         sym->flags |= SymUniq;\r\n>> +\r\n>> +       savecurfn = curfn;\r\n>> +       curfn = N;\r\n>>\r\n>>         xtype = nod(OTFUNC, N, N);\r\n>>         i = 0;\r\n>> @@ -311,6 +314,7 @@\r\n>>         callargs = nil;\r\n>>         ddd = 0;\r\n>>         xfunc = nod(ODCLFUNC, N, N);\r\n>> +       curfn = xfunc;\r\n>>         for(t = getinargx(t0)->type; t; t = t->down) {\r\n>>                 snprint(namebuf, sizeof namebuf, \"a%d\", i++);\r\n>>                 n = newname(lookup(namebuf));\r\n>> @@ -385,6 +389,7 @@\r\n>>         typecheck(&xfunc, Etop);\r\n>>         sym->def = xfunc;\r\n>>         xtop = list(xtop, xfunc);\r\n>> +       curfn = savecurfn;\r\n>>\r\n>>         return xfunc;\r\n>>  }\r\n>> Index: test/fixedbugs/issue5753.go\r\n>> ===================================================================\r\n>> new file mode 100644\r\n>> --- /dev/null\r\n>> +++ b/test/fixedbugs/issue5753.go\r\n>> @@ -0,0 +1,29 @@\r\n>> +// run\r\n>> +\r\n>> +// Copyright 2013 The Go Authors. All rights reserved.\r\n>> +// Use of this source code is governed by a BSD-style\r\n>> +// license that can be found in the LICENSE file.\r\n>> +\r\n>> +// issue 5753: bad typecheck info causes escape analysis to\r\n>> +// not run on method thunks.\r\n>> +\r\n>> +package main\r\n>> +\r\n>> +type Thing struct{}\r\n>> +\r\n>> +func (t *Thing) broken(s string) []string {\r\n>> +       foo := [1]string{s}\r\n>> +       return foo[:]\r\n>> +}\r\n>> +\r\n>> +func main() {\r\n>> +       t := &Thing{}\r\n>> +\r\n>> +       f := t.broken\r\n>> +       s := f(\"foo\")\r\n>> +       _ = f(\"bar\")\r\n>> +       if s[0] != \"foo\" {\r\n>> +               panic(`s[0] != \"foo\"`)\r\n>> +       }\r\n>> +\r\n>> +}\r\n>>\r\n>>\r\n>> --\r\n>>\r\n>> ---You received this message because you are subscribed to the Google Groups\r\n>> \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an\r\n>> email to golang-dev+unsubscribe@googlegroups.com.\r\n>> For more options, visit https://groups.google.com/groups/opt_out.\r\n>>\r\n>>\r\n",
+			"disapproval": false,
+			"date": "2013-07-22 10:54:19.426370",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=e503b72350b2 ***\n\n[release-branch.go1.1] cmd/gc: fix issue with method wrappers not having escape analysis run on them.\n\n\u00ab\u00ab\u00ab CL 10383048 / 58e15340e78f\ncmd/gc: fix issue with method wrappers not having escape analysis run on them.\n\nEscape analysis needs the right curfn value on a dclfunc node, otherwise it will not analyze the function.\nWhen generating method value wrappers, we forgot to set the curfn correctly.\n\nFixes issue 5753.\n\nR=golang-dev, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/10383048\n\u00bb\u00bb\u00bb\n\nUpdate issue 5928\n\nR=golang-dev, dave\nCC=golang-dev\nhttps://codereview.appspot.com/11669043",
+			"disapproval": false,
+			"date": "2013-07-22 13:45:31.206940",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 11669043: [release-branch.go1.1] cmd/gc: fix issue with method wr...",
+	"created": "2013-07-22 08:42:26.572530",
+	"patchsets": [
+		1,
+		3001,
+		9001
+	],
+	"modified": "2013-07-22 13:45:34.891280",
+	"closed": true,
+	"issue": 11669043
+}

@@ -1,0 +1,97 @@
+{
+	"description": "cmd/6g, cmd/8g: Allow optimization of return registers.\n\nThe peephole optimizer would keep hands off AX and X0 during returns, even though go doesn't return through registers.",
+	"cc": [
+		"dave@cheney.net",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello,\r\n\r\nCan you provide some before/after asm samples ?\r\n\r\nCheers\r\n\r\nDave\r\n\r\nOn Mon, Dec 31, 2012 at 7:10 AM,  <daniel.morsing@gmail.com> wrote:\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> cmd/6g, cmd/8g: Allow optimization of return registers.\r\n>\r\n> The peephole optimizer would keep hands off AX and X0 during returns,\r\n> even though go doesn't return through registers.\r\n>\r\n> Please review this at https://codereview.appspot.com/7030046/\r\n>\r\n> Affected files:\r\n>   M src/cmd/6g/peep.c\r\n>   M src/cmd/8g/peep.c\r\n>\r\n>\r\n> Index: src/cmd/6g/peep.c\r\n> ===================================================================\r\n> --- a/src/cmd/6g/peep.c\r\n> +++ b/src/cmd/6g/peep.c\r\n> @@ -1157,8 +1157,6 @@\r\n>                 return 0;\r\n>\r\n>         case ARET:      /* funny */\r\n> -               if(v->type == REGRET || v->type == FREGRET)\r\n> -                       return 2;\r\n>                 if(s != A)\r\n>                         return 1;\r\n>                 return 3;\r\n> Index: src/cmd/8g/peep.c\r\n> ===================================================================\r\n> --- a/src/cmd/8g/peep.c\r\n> +++ b/src/cmd/8g/peep.c\r\n> @@ -824,8 +824,6 @@\r\n>                 return 0;\r\n>\r\n>         case ARET:      /* funny */\r\n> -               if(v->type == REGRET || v->type == FREGRET)\r\n> -                       return 2;\r\n>                 if(s != A)\r\n>                         return 1;\r\n>                 return 3;\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-30 21:43:01.170810",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Dec 30, 2012 at 10:43 PM, Dave Cheney <dave@cheney.net> wrote:\r\n> Hello,\r\n>\r\n> Can you provide some before/after asm samples ?\r\n>\r\n> Cheers\r\n>\r\n> Dave\r\n>\r\n\r\npackage foo\r\n\r\ntype X struct {\r\n        X, Y, Z float64\r\n}\r\n\r\nvar y = 2\r\n\r\nfunc bar() X {\r\n        x := X{\r\n                float64(y),float64(y),float64(y),\r\n        }\r\n        return x\r\n}\r\n\r\nbefore:\r\n--- prog list \"bar\" ---\r\n0000 (/home/daniel/src/test/test.go:9) TEXT    bar+0(SB),$0-24\r\n0001 (/home/daniel/src/test/test.go:9) MOVQ    y+0(SB),AX\r\n0002 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+0(SB),X0\r\n0003 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+8(SB),X0\r\n0004 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+16(SB),X0\r\n0005 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n0006 (/home/daniel/src/test/test.go:10) MOVAPD  X1,X3\r\n0007 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n0008 (/home/daniel/src/test/test.go:10) MOVAPD  X1,X2\r\n0009 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n0010 (/home/daniel/src/test/test.go:13) MOVSD   X3,.noname+0(FP)\r\n0011 (/home/daniel/src/test/test.go:13) MOVSD   X2,.noname+8(FP)\r\n0012 (/home/daniel/src/test/test.go:13) MOVAPD  X1,X0\r\n0013 (/home/daniel/src/test/test.go:13) MOVSD   X1,.noname+16(FP)\r\n0014 (/home/daniel/src/test/test.go:13) RET     ,\r\n\r\nafter:\r\n--- prog list \"bar\" ---\r\n0000 (/home/daniel/src/test/test.go:9) TEXT    bar+0(SB),$0-24\r\n0001 (/home/daniel/src/test/test.go:9) MOVQ    y+0(SB),AX\r\n0002 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+0(SB),X0\r\n0003 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+8(SB),X0\r\n0004 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+16(SB),X0\r\n0005 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n0006 (/home/daniel/src/test/test.go:10) MOVAPD  X1,X3\r\n0007 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n0008 (/home/daniel/src/test/test.go:10) MOVAPD  X1,X2\r\n0009 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n0010 (/home/daniel/src/test/test.go:13) MOVSD   X3,.noname+0(FP)\r\n0011 (/home/daniel/src/test/test.go:13) MOVSD   X2,.noname+8(FP)\r\n0012 (/home/daniel/src/test/test.go:13) MOVSD   X1,.noname+16(FP)\r\n0013 (/home/daniel/src/test/test.go:13) RET     ,\r\n\r\nNote instruction 12 on the before listing. This move was not optimized\r\naway because the peephole opt pass thought X0 was the return register.\r\n",
+			"disapproval": false,
+			"date": "2012-12-30 22:25:23.635510",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-12-30 20:09:59.938290",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Excellent. This was a problem in 5g that minux and I had been\r\ndiscussing since September.\r\n\r\nhttps://codereview.appspot.com/7030047/\r\n\r\nOn Mon, Dec 31, 2012 at 9:25 AM, Daniel Morsing\r\n<daniel.morsing@gmail.com> wrote:\r\n> On Sun, Dec 30, 2012 at 10:43 PM, Dave Cheney <dave@cheney.net> wrote:\r\n>> Hello,\r\n>>\r\n>> Can you provide some before/after asm samples ?\r\n>>\r\n>> Cheers\r\n>>\r\n>> Dave\r\n>>\r\n>\r\n> package foo\r\n>\r\n> type X struct {\r\n>         X, Y, Z float64\r\n> }\r\n>\r\n> var y = 2\r\n>\r\n> func bar() X {\r\n>         x := X{\r\n>                 float64(y),float64(y),float64(y),\r\n>         }\r\n>         return x\r\n> }\r\n>\r\n> before:\r\n> --- prog list \"bar\" ---\r\n> 0000 (/home/daniel/src/test/test.go:9) TEXT    bar+0(SB),$0-24\r\n> 0001 (/home/daniel/src/test/test.go:9) MOVQ    y+0(SB),AX\r\n> 0002 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+0(SB),X0\r\n> 0003 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+8(SB),X0\r\n> 0004 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+16(SB),X0\r\n> 0005 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n> 0006 (/home/daniel/src/test/test.go:10) MOVAPD  X1,X3\r\n> 0007 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n> 0008 (/home/daniel/src/test/test.go:10) MOVAPD  X1,X2\r\n> 0009 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n> 0010 (/home/daniel/src/test/test.go:13) MOVSD   X3,.noname+0(FP)\r\n> 0011 (/home/daniel/src/test/test.go:13) MOVSD   X2,.noname+8(FP)\r\n> 0012 (/home/daniel/src/test/test.go:13) MOVAPD  X1,X0\r\n> 0013 (/home/daniel/src/test/test.go:13) MOVSD   X1,.noname+16(FP)\r\n> 0014 (/home/daniel/src/test/test.go:13) RET     ,\r\n>\r\n> after:\r\n> --- prog list \"bar\" ---\r\n> 0000 (/home/daniel/src/test/test.go:9) TEXT    bar+0(SB),$0-24\r\n> 0001 (/home/daniel/src/test/test.go:9) MOVQ    y+0(SB),AX\r\n> 0002 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+0(SB),X0\r\n> 0003 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+8(SB),X0\r\n> 0004 (/home/daniel/src/test/test.go:10) MOVSD   statictmp_0000+16(SB),X0\r\n> 0005 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n> 0006 (/home/daniel/src/test/test.go:10) MOVAPD  X1,X3\r\n> 0007 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n> 0008 (/home/daniel/src/test/test.go:10) MOVAPD  X1,X2\r\n> 0009 (/home/daniel/src/test/test.go:10) CVTSQ2SD AX,X1\r\n> 0010 (/home/daniel/src/test/test.go:13) MOVSD   X3,.noname+0(FP)\r\n> 0011 (/home/daniel/src/test/test.go:13) MOVSD   X2,.noname+8(FP)\r\n> 0012 (/home/daniel/src/test/test.go:13) MOVSD   X1,.noname+16(FP)\r\n> 0013 (/home/daniel/src/test/test.go:13) RET     ,\r\n>\r\n> Note instruction 12 on the before listing. This move was not optimized\r\n> away because the peephole opt pass thought X0 was the return register.\r\n",
+			"disapproval": false,
+			"date": "2012-12-30 22:26:07.778600",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"daniel.morsing@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-01-02 20:02:53.519610",
+			"approval": true
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"daniel.morsing@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=da05833bf12e ***\n\ncmd/6g, cmd/8g: Allow optimization of return registers.\n\nThe peephole optimizer would keep hands off AX and X0 during returns, even though go doesn't return through registers.\n\nR=dave, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/7030046",
+			"disapproval": false,
+			"date": "2013-01-11 14:44:50.429140",
+			"approval": false
+		}
+	],
+	"owner_email": "daniel.morsing@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "DMorsing",
+	"subject": "code review 7030046: cmd/6g, cmd/8g: Allow optimization of return registers.",
+	"created": "2012-12-30 20:08:23.206740",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		9001
+	],
+	"modified": "2013-01-11 14:44:52.341550",
+	"closed": true,
+	"issue": 7030046
+}

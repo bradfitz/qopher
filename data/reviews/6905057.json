@@ -1,0 +1,361 @@
+{
+	"description": "os: Improve the accuracy of os.Chtimes\n\nI've been writing some code which involves syncing files (like\nrsync) and it became apparent that under Linux I could read\nmodification times (os.Lstat) with nanosecond precision but\nonly write them with microsecond precision.  This difference\nin precision is rather annoying when trying to discover\nwhether files need syncing or not!\n\nI've patched syscall and os to increases the accuracy of of\nos.Chtimes for Linux and Windows.  This involved exposing the\nutimensat system call under Linux and a bit of extra code\nunder Windows.  I decided not to expose the \"at\" bit of the\nsystem call as it is impossible to replicate under Windows, so\nthe patch adds syscall.Utimens() to all architectures along\nwith a ImplementsUtimens flag.\n\nIf the utimensat syscall isn't available (utimensat was added\nto Linux in 2.6.22, Released, 8 July 2007) then it silently\nfalls back to the microsecond accuracy version it uses now.\nThe improved accuracy for Windows should be good for all\nversions of Windows.\n\nUnfortunately Darwin doesn't seem to have a utimensat system\ncall that I could find so I couldn't implement it there.  The\nBSDs do, but since they share their syscall implementation\nwith Darwin I couldn't figure out how to define a syscall for\n*BSD and not Darwin.  I've left this as a TODO in the code.\n\nIn the process I implemented the missing methods for Timespec\nunder Windows which I needed which just happened to round out\nthe Timespec API for all platforms!\n\n------------------------------------------------------------\n\nTest code: http://play.golang.org/p/1xnGuYOi4b\n\nLinux Before (1000 ns precision)\n\n$ ./utimetest.linux.before z\nSetting mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 BST\nReading mtime 1344937903123457000: 2012-08-14 10:51:43.123457 +0100 BST\n\nLinux After (1 ns precision)\n\n$ ./utimetest.linux.after z\nSetting mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 BST\nReading mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 BST\n\nWindows Before (1000 ns precision)\n\nX:\\>utimetest.windows.before.exe c:\\Test.txt\nSetting mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 GMTDT\nReading mtime 1344937903123456000: 2012-08-14 10:51:43.123456 +0100 GMTDT\n\nWindows After (100 ns precision)\n\nX:\\>utimetest.windows.after.exe c:\\Test.txt\nSetting mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 GMTDT\nReading mtime 1344937903123456700: 2012-08-14 10:51:43.1234567 +0100 GMTDT",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"alex.brainman@gmail.com",
+		"rsc@golang.org",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Oh, I missed the syscall.NsecToTimeval.\r\nIt seems fine to write a syscall.UtimesNano that just wraps\r\nsyscall.Utimes on the unimplemented systems.\r\nsyscall can do a little to be more regular across systems.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-12-10 18:38:15.446230",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It would be nice if we could avoid func init in package os if possible.\r\nWe're already passing nanoseconds to syscall.Utimes. Can we fix\r\nsyscall.Utimes on systems that support it to do something with the\r\nnanoseconds?\r\nThen package os doesn't need to change at all.\r\n",
+			"disapproval": false,
+			"date": "2012-12-10 18:07:54.420530",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-12-08 22:47:42.751720",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It fails to build on windows with:\n\n# GOOS=windows go install -v syscall\nsyscall\n# syscall\n./syscall_windows.go:460: undefined: utf16PtrFromString\n\nBut, please, wait for others to confirm that your change will be accepted in principle first.\n\nThank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-12-10 06:25:25.438210",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I haven't looked at the code but increasing the resolution of Chtimes is fine.\r\n",
+			"disapproval": false,
+			"date": "2012-12-10 06:49:56.567400",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6905057/diff/3012/src/pkg/os/file_posix.go\nFile src/pkg/os/file_posix.go (right):\n\nhttps://codereview.appspot.com/6905057/diff/3012/src/pkg/os/file_posix.go#newcode156\nsrc/pkg/os/file_posix.go:156: if syscall.ImplementsUtimens {\nI'm not sure I'm a fan of this Implements style, but I guess we do do it in one other case, which I'd never seen before.\n\nI would personally probably instead make a new nil-by-default func variable in the os package like:\n\n// chtimesNano if non-nil is an implementation of Chtimes\n// that supports nanosecond resolution.  If nil or the return\n// value is errNoSys, a portable microsecond resolution implementation\n// is used instead.\nvar chtimesNano func(string, time.Time, time.Time) error\n\n... and then Chtime is:\n\nfunc Chtimes(...) {\n     if chtimesNano != nil {\n        if err := chtimesNano(name, atime, mtime); err != errNoSys {\n             return err\n        }\n     }\n     ... .\n}\n\n... and then make files like:\n\n// +build linux,darwin\n\nfunc init() {\n   chtimesNano = chtimes\n}\n\nfunc chtimes(...) {\n\n}\n\n... then you don't have to have a dummy stub syscall.Utimens on operating systems which don't support it.",
+			"disapproval": false,
+			"date": "2012-12-10 17:44:31.837010",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/10 17:44:31, bradfitz wrote:\n> https://codereview.appspot.com/6905057/diff/3012/src/pkg/os/file_posix.go\n> File src/pkg/os/file_posix.go (right):\n> \n> https://codereview.appspot.com/6905057/diff/3012/src/pkg/os/file_posix.go#newcode156\n> src/pkg/os/file_posix.go:156: if syscall.ImplementsUtimens {\n> I'm not sure I'm a fan of this Implements style, but I guess we do do it in one\n> other case, which I'd never seen before.\n> \n> I would personally probably instead make a new nil-by-default func variable in\n> the os package like:\n[snip]\n\nA good plan - keeps the namespace clean with very little overhead.  I'll have a go in a little while!",
+			"disapproval": false,
+			"date": "2012-12-10 18:10:50.532340",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/10 06:25:25, brainman wrote:\n> It fails to build on windows with:\n[snip]\n> ./syscall_windows.go:460: undefined: utf16PtrFromString\n\nOops - a last minute update fail. Will fix shortly",
+			"disapproval": false,
+			"date": "2012-12-10 18:12:50.479720",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Dec 10, 2012 at 1:07 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> It would be nice if we could avoid func init in package os if possible.\r\n> We're already passing nanoseconds to syscall.Utimes.\r\n\r\n\r\nNo, looks like we're passing microseconds to syscall.Utimes.\r\n\r\nWe can't change that without breaking the Go 1 contract.\r\n\r\nCan we fix\r\n> syscall.Utimes on systems that support it to do something with the\r\n> nanoseconds?\r\n> Then package os doesn't need to change at all.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-10 18:26:12.590000",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/10 18:38:15, rsc wrote:\n> Oh, I missed the syscall.NsecToTimeval.\n> It seems fine to write a syscall.UtimesNano that just wraps\n> syscall.Utimes on the unimplemented systems.\n> syscall can do a little to be more regular across systems.\n\nI like the idea of syscall.UtimesNano falling back to syscall.Utimes instead of returning not implemented.  That then guarantees best accuracy and avoids the pain for the users of making different builds for different OSes.\n\nAs far as I can see the whole `utimes` syscall was a mistake in POSIX which was corrected later with the `utimensat` syscall.  We can do better in Go :-)\n\nI'll have a go with Russ' suggestion.",
+			"disapproval": false,
+			"date": "2012-12-10 20:56:27.878420",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think this CL is fine as is. Please don't put any more syscall-specific stuff in package os.\n\nI would agree with Alex if Utimes wasn't already defined on Windows. If we're going to have Utimes we might as well have Utimes and UtimesNano like the other systems.\n\nhttps://codereview.appspot.com/6905057/diff/13001/src/pkg/syscall/syscall_bsd.go\nFile src/pkg/syscall/syscall_bsd.go (right):\n\nhttps://codereview.appspot.com/6905057/diff/13001/src/pkg/syscall/syscall_bsd.go#newcode615\nsrc/pkg/syscall/syscall_bsd.go:615: //s*ys\tutimensat(dirfd int, path string, times *[2]Timespec) (err error)\nDelete this line if you're not using it.",
+			"disapproval": false,
+			"date": "2012-12-11 15:22:27.950810",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, alex.brainman@gmail.com, rsc@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-10 23:28:54.712200",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/10 23:28:54, Nick Craig-Wood wrote:\n> Hello mailto:golang-dev@googlegroups.com, mailto:alex.brainman@gmail.com, mailto:rsc@golang.org,\n> mailto:bradfitz@golang.org (cc: mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nI hope I've addressed your concerns\n\n  * removed syscall.ImplementsUtimens\n  * rename syscall.Utimens to syscall.UtimesNano\n  * implement UtimesNano on all architectures\n  * If the underlying high resolution syscall isn't avalable then UtimesNano falls back to Utimes (all BSD and very old Linux)",
+			"disapproval": false,
+			"date": "2012-12-10 23:32:34.634070",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/11 15:22:27, rsc wrote:\n> I think this CL is fine as is. Please don't put any more syscall-specific stuff\n> in package os.\n> \n> I would agree with Alex if Utimes wasn't already defined on Windows. If we're\n> going to have Utimes we might as well have Utimes and UtimesNano like the other\n> systems.\n> \n> https://codereview.appspot.com/6905057/diff/13001/src/pkg/syscall/syscall_bsd.go\n> File src/pkg/syscall/syscall_bsd.go (right):\n> \n> https://codereview.appspot.com/6905057/diff/13001/src/pkg/syscall/syscall_bsd.go#newcode615\n> src/pkg/syscall/syscall_bsd.go:615: //s*ys\tutimensat(dirfd int, path string,\n> times *[2]Timespec) (err error)\n> Delete this line if you're not using it.\n\nI have updated the patch with this change and restested it on linux, os x and windows",
+			"disapproval": false,
+			"date": "2012-12-12 13:01:57.945260",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/10 18:38:15, rsc wrote:\n> ...\n> It seems fine to write a syscall.UtimesNano that just wraps\n> syscall.Utimes on the unimplemented systems.\n> syscall can do a little to be more regular across systems.\n> \n\nI think, there is nothing \"regular\" about syscall.UtimesNano on windows - there is no such windows syscall.\n\nAlso this approach will end up with new public interface (syscall.UtimesNano as a minimum) and complicated windows logic (convert from time.Time to int64 then to syscall.Timeval in os.Chtimes, then call to syscall.UtimesNano, then convert to syscall.Timespec, then convert to int64, then convert to Filetime, then call syscall).\n\nWhy can't we just move os.Chtimes from file_posix.go into file_unix.go and file_windows.go, Then we could implement whatever needs to be done for windows in file_windows.go without doing all conversion song and dance.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-12-10 23:41:23.098300",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/10 23:41:23, brainman wrote:\n> On 2012/12/10 18:38:15, rsc wrote:\n> > ...\n> > It seems fine to write a syscall.UtimesNano that just wraps\n> > syscall.Utimes on the unimplemented systems.\n> > syscall can do a little to be more regular across systems.\n> > \n> \n> I think, there is nothing \"regular\" about syscall.UtimesNano on windows - there\n> is no such windows syscall.\n> \n> Also this approach will end up with new public interface (syscall.UtimesNano as\n> a minimum) and complicated windows logic (convert from time.Time to int64 then\n> to syscall.Timeval in os.Chtimes, then call to syscall.UtimesNano, then convert\n> to syscall.Timespec, then convert to int64, then convert to Filetime, then call\n> syscall).\n> \n> Why can't we just move os.Chtimes from file_posix.go into file_unix.go and\n> file_windows.go, Then we could implement whatever needs to be done for windows\n> in file_windows.go without doing all conversion song and dance.\n\nI'd be happy to have a go at that if everyone is happy with the idea.\n\nIt certainly seems sensible to me, though I haven't looked at the details of how hard it would be to divorce it from the posix code yet.\n\nAlso what do you think about making it part of this patch set?",
+			"disapproval": false,
+			"date": "2012-12-11 14:58:36.620300",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nbut should wait on Alex for Windows.\n\nhttps://codereview.appspot.com/6905057/diff/21001/src/pkg/syscall/syscall_bsd.go\nFile src/pkg/syscall/syscall_bsd.go (right):\n\nhttps://codereview.appspot.com/6905057/diff/21001/src/pkg/syscall/syscall_bsd.go#newcode612\nsrc/pkg/syscall/syscall_bsd.go:612: // TODO: The BSDs can do utimensat with SYS_UTIMENSAT but it isn't supported by darwin\nmove the TODO inside the function.  where you have it now will make it render as documentation on the function in godoc.\n\nhttps://codereview.appspot.com/6905057/diff/21001/src/pkg/syscall/syscall_bsd.go#newcode614\nsrc/pkg/syscall/syscall_bsd.go:614: func UtimesNano(path string, ts []Timespec) (err error) {\ndrop the named result parameter stutter.  just \"error\" works.",
+			"disapproval": false,
+			"date": "2012-12-12 19:52:38.793350",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nLeaving for Brad to submit once you have made his changes.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-12-13 00:51:45.219200",
+			"approval": true
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, alex.brainman@gmail.com, rsc@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-12 13:00:14.266540",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, alex.brainman@gmail.com, rsc@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-13 17:00:13.386490",
+			"approval": false
+		},
+		{
+			"sender": "nickcw@gmail.com",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/12 19:52:38, bradfitz wrote:\n> LGTM\n> \n> but should wait on Alex for Windows.\n> \n> https://codereview.appspot.com/6905057/diff/21001/src/pkg/syscall/syscall_bsd.go\n> File src/pkg/syscall/syscall_bsd.go (right):\n> \n> https://codereview.appspot.com/6905057/diff/21001/src/pkg/syscall/syscall_bsd.go#newcode612\n> src/pkg/syscall/syscall_bsd.go:612: // TODO: The BSDs can do utimensat with\n> SYS_UTIMENSAT but it isn't supported by darwin\n> move the TODO inside the function.  where you have it now will make it render as\n> documentation on the function in godoc.\n> \n> https://codereview.appspot.com/6905057/diff/21001/src/pkg/syscall/syscall_bsd.go#newcode614\n> src/pkg/syscall/syscall_bsd.go:614: func UtimesNano(path string, ts []Timespec)\n> (err error) {\n> drop the named result parameter stutter.  just \"error\" works.\n\nI've fixed both of those.\n\nI note that there are lots of other instances of (err error) in that file which could also be changed, but I haven't done so",
+			"disapproval": false,
+			"date": "2012-12-13 17:01:41.004650",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Nick,\r\n\r\nI don't see a CLA on file for you.\r\n\r\nSee http://golang.org/doc/contribute.html#copyright\r\n\r\nOnce a CLA is submitted, let me know, then I can submit this CL.\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 20:23:36.232490",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"nickcw@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=b7482cb67996 ***\n\nos: Improve the accuracy of os.Chtimes\n\nI've been writing some code which involves syncing files (like\nrsync) and it became apparent that under Linux I could read\nmodification times (os.Lstat) with nanosecond precision but\nonly write them with microsecond precision.  This difference\nin precision is rather annoying when trying to discover\nwhether files need syncing or not!\n\nI've patched syscall and os to increases the accuracy of of\nos.Chtimes for Linux and Windows.  This involved exposing the\nutimensat system call under Linux and a bit of extra code\nunder Windows.  I decided not to expose the \"at\" bit of the\nsystem call as it is impossible to replicate under Windows, so\nthe patch adds syscall.Utimens() to all architectures along\nwith a ImplementsUtimens flag.\n\nIf the utimensat syscall isn't available (utimensat was added\nto Linux in 2.6.22, Released, 8 July 2007) then it silently\nfalls back to the microsecond accuracy version it uses now.\nThe improved accuracy for Windows should be good for all\nversions of Windows.\n\nUnfortunately Darwin doesn't seem to have a utimensat system\ncall that I could find so I couldn't implement it there.  The\nBSDs do, but since they share their syscall implementation\nwith Darwin I couldn't figure out how to define a syscall for\n*BSD and not Darwin.  I've left this as a TODO in the code.\n\nIn the process I implemented the missing methods for Timespec\nunder Windows which I needed which just happened to round out\nthe Timespec API for all platforms!\n\n------------------------------------------------------------\n\nTest code: http://play.golang.org/p/1xnGuYOi4b\n\nLinux Before (1000 ns precision)\n\n$ ./utimetest.linux.before z\nSetting mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 BST\nReading mtime 1344937903123457000: 2012-08-14 10:51:43.123457 +0100 BST\n\nLinux After (1 ns precision)\n\n$ ./utimetest.linux.after z\nSetting mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 BST\nReading mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 BST\n\nWindows Before (1000 ns precision)\n\nX:\\>utimetest.windows.before.exe c:\\Test.txt\nSetting mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 GMTDT\nReading mtime 1344937903123456000: 2012-08-14 10:51:43.123456 +0100 GMTDT\n\nWindows After (100 ns precision)\n\nX:\\>utimetest.windows.after.exe c:\\Test.txt\nSetting mtime 1344937903123456789: 2012-08-14 10:51:43.123456789 +0100 GMTDT\nReading mtime 1344937903123456700: 2012-08-14 10:51:43.1234567 +0100 GMTDT\n\nR=golang-dev, alex.brainman, rsc, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/6905057\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2012-12-13 21:02:43.038890",
+			"approval": false
+		}
+	],
+	"owner_email": "nickcw@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Nick Craig-Wood",
+	"subject": "code review 6905057: os: Improve the accuracy of os.Chtimes",
+	"created": "2012-12-08 22:32:16.688590",
+	"patchsets": [
+		1,
+		2001,
+		3012,
+		13001,
+		21001,
+		23001
+	],
+	"modified": "2012-12-14 12:18:29.391830",
+	"closed": true,
+	"issue": 6905057
+}

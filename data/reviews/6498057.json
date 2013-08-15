@@ -1,0 +1,197 @@
+{
+	"description": "runtime: discard SIGPROF delivered to non-Go threads.\n\nSignal handlers are global resources but many language\nenvironments (Go, C++ at Google, etc) assume they have sole\nownership of a particular handler.  Signal handlers in\nmixed-language applications must therefore be robust against\nunexpected delivery of certain signals, such as SIGPROF.\n\nThe default Go signal handler runtime\u00b7sigtramp assumes that it\nwill never be called on a non-Go thread, but this assumption\nis violated by when linking in C++ code that spawns threads.\nSpecifically, the handler asserts the thread has an associated\n\"m\" (Go scheduler).\n\nThis CL is a very simple workaround: discard SIGPROF delivered to non-Go threads.  runtime.badsignal(int32) now receives the signal number; if it returns without panicking (e.g. sig==SIGPROF) the signal is discarded.\n\nI don't think there is any really satisfactory solution to the\nproblem of signal-based profiling in a mixed-language\napplication.  It's not only the issue of handler clobbering,\nbut also that a C++ SIGPROF handler called in a Go thread\ncan't unwind the Go stack (and vice versa).  The best we can\nhope for is not crashing.\n\nNote:\n- I've ported this to all POSIX platforms, except ARM-linux which already ignores unexpected signals on m-less threads.\n- I've avoided tail-calling runtime.badsignal because AFAICT the 6a/6l don't support it.\n- I've avoided hoisting 'push sig' (common to both function calls) because it makes the code harder to read.\n- Fixed an (apparently incorrect?) docstring.",
+	"cc": [
+		"iant@golang.org",
+		"rsc@golang.org",
+		"minux.ma@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This CL only fixes one instance.  Suppose we change all the instances to pass the signal number to badsignal.  Then we have a consistent way to ignore the SIGPROF.\n\nI don't understand how the C code would ever use the same TLS slot as the Go code, unless somebody is doing something really wacky.  That's not how TLS works.\n\nAnother thing we could consider is having cgocall mask signals.  Then the C code would not receive any signals by default.  Of course it might re-enable signals, or even change the signal handler, but there is no much we can do about that.",
+			"disapproval": false,
+			"date": "2012-08-29 21:55:48.594540",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 29 August 2012 17:55,  <iant@golang.org> wrote:\r\n> This CL only fixes one instance.  Suppose we change all the instances to\r\n> pass the signal number to badsignal.  Then we have a consistent way to\r\n> ignore the SIGPROF.\r\n\r\nOk.  Should badsignal return a bool to indicate whether to RET\r\n(discard signal) or continue (and encounter a SIGSEGV)?  Better\r\nperhaps for it to abort within the C routine; what's the recommended\r\nasync-signal-safe way to do that?\r\n\r\n\r\n> I don't understand how the C code would ever use the same TLS slot as\r\n> the Go code, unless somebody is doing something really wacky.  That's\r\n> not how TLS works.\r\n\r\nI was hoping that was the case.  Is that because Go's TLS (on\r\nlinux-amd64) based on %GS as opposed to sysvabi's %FS?\r\n\r\n\r\n> Another thing we could consider is having cgocall mask signals.  Then\r\n> the C code would not receive any signals by default.  Of course it might\r\n> re-enable signals, or even change the signal handler, but there is no\r\n> much we can do about that.\r\n\r\nGoogle C++ enables and disables SIGPROF (to name but one) from many\r\nplaces, so I'm not sure much would be gained from this.\r\n",
+			"disapproval": false,
+			"date": "2012-08-29 22:11:03.862510",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-08-29 21:22:47.578100",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 29 August 2012 19:38,  <iant@golang.org> wrote:\r\n>> Ok.  Should badsignal return a bool to indicate whether to RET\r\n>> (discard signal) or continue (and encounter a SIGSEGV)?  Better\r\n>> perhaps for it to abort within the C routine; what's the recommended\r\n>> async-signal-safe way to do that?\r\n>\r\n> The abort function works by raising SIGABRT.  So the async-signal safe\r\n> way to abort is to call sigaction to restore the default SIGABRT handler\r\n> and then call kill(getpid(), SIGABRT).\r\n>\r\n> That said I don't know how hard we need to work here.\r\n\r\nWhat I meant to ask was: what's the local idiom for abort()?  Seems\r\nlike the answer is runtime\u00b7panicstring(), so I've used that.\r\n\r\n\r\n> Actually Go uses the same TLS segment registers as ordinary ELF\r\n> programs: %fs on amd64, %gs on 386.  When using cgo to produce a\r\n> dynamically linked executable, the Go linker generates a PT_TLS segment\r\n> that reserves the TLS entries that it uses.\r\n\r\nOk; thanks for the explanation.\r\n",
+			"disapproval": false,
+			"date": "2012-08-30 16:52:49.019790",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/09/01 07:41:07, minux wrote:\n> linux/arm's behavior is different.\n> \n> it will always try to load saved g and m from TLS.\n> code for badsignal is added latter and for some reason,\n> Linux/ARM doesn't change.\n> \n> perhaps we need to revise it now (in another CL), for if\n> a signal received on a thread not created by go\n> (thus g and m TLS slot would be nil),  the program\n> will still crash.\n\nQuite right; I've added a TODO(adonovan) comment to make this consistent.\n\n\n> http://codereview.appspot.com/6498057/diff/1021/src/pkg/runtime/signal_linux_amd64.c#newcode138\n> src/pkg/runtime/signal_linux_amd64.c:138: // Linux manpage says \"sa_restart\n> element is obsolete and\n> s/sa_restart/sa_restorer/\n\nFixed.\n\n> btw, why add this comment? it seems confusing\n> if we add this comment but don't explain why\n> we use it.\n\nYeah; it now reads:\n\n  // TODO(adonovan): \"Linux manpage says...\". Avoid it here, and test.",
+			"disapproval": false,
+			"date": "2012-09-04 16:39:38.171020",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/29 22:11:03, adonovan wrote:\n> On 29 August 2012 17:55,  <mailto:iant@golang.org> wrote:\n> > This CL only fixes one instance.  Suppose we change all the instances to\n> > pass the signal number to badsignal.  Then we have a consistent way to\n> > ignore the SIGPROF.\n> \n> Ok.  Should badsignal return a bool to indicate whether to RET\n> (discard signal) or continue (and encounter a SIGSEGV)?  Better\n> perhaps for it to abort within the C routine; what's the recommended\n> async-signal-safe way to do that?\n\nThe abort function works by raising SIGABRT.  So the async-signal safe way to abort is to call sigaction to restore the default SIGABRT handler and then call kill(getpid(), SIGABRT).\n\nThat said I don't know how hard we need to work here.\n\n\n> > I don't understand how the C code would ever use the same TLS slot as\n> > the Go code, unless somebody is doing something really wacky.  That's\n> > not how TLS works.\n> \n> I was hoping that was the case.  Is that because Go's TLS (on\n> linux-amd64) based on %GS as opposed to sysvabi's %FS?\n\nActually Go uses the same TLS segment registers as ordinary ELF programs: %fs on amd64, %gs on 386.  When using cgo to produce a dynamically linked executable, the Go linker generates a PT_TLS segment that reserves the TLS entries that it uses.",
+			"disapproval": false,
+			"date": "2012-08-29 23:38:56.697600",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Seems good. Please keep using the same runtime.write that was there, and then call runtime.exit(1).\n\nNormally you'd want runtime.throw for fatal errors like this, but you're running on a non-Go stack so there is very little that is safe to do.\n\nhttps://codereview.appspot.com/6498057/diff/7001/src/pkg/runtime/thread_openbsd.c\nFile src/pkg/runtime/thread_openbsd.c (right):\n\nhttps://codereview.appspot.com/6498057/diff/7001/src/pkg/runtime/thread_openbsd.c#newcode240\nsrc/pkg/runtime/thread_openbsd.c:240: /* Ignore SIGPROFs intended for a non-Go thread. */\nreturn\n}\n\nNo else.\n\nhttp://golang.org/doc/effective_go.html#if",
+			"disapproval": false,
+			"date": "2012-08-31 17:42:18.683390",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"adonovan@google.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "linux/arm's behavior is different.\n\nit will always try to load saved g and m from TLS.\ncode for badsignal is added latter and for some reason,\nLinux/ARM doesn't change.\n\nperhaps we need to revise it now (in another CL), for if\na signal received on a thread not created by go\n(thus g and m TLS slot would be nil),  the program\nwill still crash.\n\nhttp://codereview.appspot.com/6498057/diff/1021/src/pkg/runtime/signal_linux_amd64.c\nFile src/pkg/runtime/signal_linux_amd64.c (right):\n\nhttp://codereview.appspot.com/6498057/diff/1021/src/pkg/runtime/signal_linux_amd64.c#newcode138\nsrc/pkg/runtime/signal_linux_amd64.c:138: // Linux manpage says \"sa_restart element is obsolete and\ns/sa_restart/sa_restorer/\n\nbtw, why add this comment? it seems confusing\nif we add this comment but don't explain why\nwe use it.",
+			"disapproval": false,
+			"date": "2012-09-01 07:41:07.398220",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 30 August 2012 12:52, Alan Donovan <adonovan@google.com> wrote:\r\n> What I meant to ask was: what's the local idiom for abort()?  Seems\r\n> like the answer is runtime\u00b7panicstring(), so I've used that.\r\n\r\nHmm... actually this just initiates a Go panic, which is not what I want.\r\nI'll use runtime\u00b7write followed by abort.\r\n",
+			"disapproval": false,
+			"date": "2012-08-30 19:19:10.202850",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, iant@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-30 16:52:26.367790",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello iant@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-31 18:10:37.418120",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nI added you to the list of committers. You should be able to submit\r\nthis change yourself after following the directions at\r\nhttp://swtch.com/~rsc/gohg.html.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-08-31 19:17:36.196730",
+			"approval": true
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=ef1158a73717 ***\n\nruntime: discard SIGPROF delivered to non-Go threads.\n\nSignal handlers are global resources but many language\nenvironments (Go, C++ at Google, etc) assume they have sole\nownership of a particular handler.  Signal handlers in\nmixed-language applications must therefore be robust against\nunexpected delivery of certain signals, such as SIGPROF.\n\nThe default Go signal handler runtime\u00b7sigtramp assumes that it\nwill never be called on a non-Go thread, but this assumption\nis violated by when linking in C++ code that spawns threads.\nSpecifically, the handler asserts the thread has an associated\n\"m\" (Go scheduler).\n\nThis CL is a very simple workaround: discard SIGPROF delivered to non-Go threads.  runtime.badsignal(int32) now receives the signal number; if it returns without panicking (e.g. sig==SIGPROF) the signal is discarded.\n\nI don't think there is any really satisfactory solution to the\nproblem of signal-based profiling in a mixed-language\napplication.  It's not only the issue of handler clobbering,\nbut also that a C++ SIGPROF handler called in a Go thread\ncan't unwind the Go stack (and vice versa).  The best we can\nhope for is not crashing.\n\nNote:\n- I've ported this to all POSIX platforms, except ARM-linux which already ignores unexpected signals on m-less threads.\n- I've avoided tail-calling runtime.badsignal because AFAICT the 6a/6l don't support it.\n- I've avoided hoisting 'push sig' (common to both function calls) because it makes the code harder to read.\n- Fixed an (apparently incorrect?) docstring.\n\nR=iant, rsc, minux.ma\nCC=golang-dev\nhttp://codereview.appspot.com/6498057\n\nhttp://codereview.appspot.com/6498057/diff/7001/src/pkg/runtime/thread_openbsd.c\nFile src/pkg/runtime/thread_openbsd.c (right):\n\nhttp://codereview.appspot.com/6498057/diff/7001/src/pkg/runtime/thread_openbsd.c#newcode240\nsrc/pkg/runtime/thread_openbsd.c:240: /* Ignore SIGPROFs intended for a non-Go thread. */\nOn 2012/08/31 17:42:18, rsc wrote:\n> return\n> }\n> \n> No else.\n> \n> http://golang.org/doc/effective_go.html#if\n\nDone, everywhere.",
+			"disapproval": false,
+			"date": "2012-09-04 18:41:04.529240",
+			"approval": false
+		}
+	],
+	"owner_email": "adonovan@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "adonovan",
+	"subject": "code review 6498057: runtime: discard SIGPROF delivered to non-Go threads.",
+	"created": "2012-08-29 21:19:25.864120",
+	"patchsets": [
+		1,
+		2001,
+		1002,
+		7001,
+		1021,
+		3005
+	],
+	"modified": "2012-09-04 18:41:05.888870",
+	"closed": true,
+	"issue": 6498057
+}

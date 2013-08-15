@@ -1,0 +1,166 @@
+{
+	"description": "os,syscall: fix windows build\n\nmake syscall.ProcAttr.Files be []uintptr\n\nall.bash passes on Linux.\nthings seem to compile on GOOS={darwin,windows}",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"mattn.jp@gmail.com",
+		"alex.brainman@gmail.com",
+		"rsc@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Fixed sendfile_windows.go now.\n\nNow it builds with:\n\n$ GOOS=windows go build os syscall net\n$ GOOS=darwin go build os syscall\n(can't test net, because of cgo)\n\n\nOn Fri, Feb 10, 2012 at 5:57 PM, <bradfitz@golang.org> wrote:\n\n> Hello golang-dev@googlegroups.com, mattn.jp@gmail.com,\n> alex.brainman@gmail.com (cc: golang-dev@googlegroups.com),\n>\n> Please take another look.\n>\n>\n> http://codereview.appspot.com/**5653055/<http://codereview.appspot.com/5653055/>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-10 06:58:31.448469",
+			"approval": false
+		},
+		{
+			"sender": "mattn.jp@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mattn.jp@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn 2012/02/10 06:33:30, bradfitz wrote:\n> I have to leave for dinner in a few minutes here, so feel free to submit if\n> you think this is the right solution.\n> \n> I'm not sure we want to change syscall.ProcAttr.Files from []int to\n> []uintptr, though.\n> \n> If we don't, we need to break src/pkg/os/exec_posix.go (or at least part of\n> it) into unix-vs-windows files, though.\n> \n> I could imagine making a helper function syscallFds(fds []uintptr) []int\n> for unix and []syscall.Handle for windows in two separate pkg os files.\n> \n> Not sure which is more desirable.\n> \n> \n> On Fri, Feb 10, 2012 at 5:30 PM, <mailto:bradfitz@golang.org> wrote:\n> \n> > Reviewers: http://golang-dev_googlegroups.com,\n> >\n> > Message:\n> > Hello mailto:golang-dev@googlegroups.com (cc: mailto:golang-dev@googlegroups.com),\n> >\n> > I'd like you to review this change to\n> > https://go.googlecode.com/hg/\n> >\n> >\n> > Description:\n> > os,syscall: fix windows build\n> >\n> > make syscall.ProcAttr.Files be []uintptr\n> >\n> > all.bash passes on Linux.\n> > things seem to compile on GOOS={darwin,windows}\n> >\n> > Please review this at\n> http://codereview.appspot.com/**5653055/%3Chttp://codereview.appspot.com/5653055/>\n> >\n> > Affected files:\n> >  M src/pkg/os/exec_posix.go\n> >  M src/pkg/os/file_windows.go\n> >  M src/pkg/syscall/exec_bsd.go\n> >  M src/pkg/syscall/exec_linux.go\n> >  M src/pkg/syscall/exec_unix.go\n> >  M src/pkg/syscall/exec_windows.**go\n> >\n> >\n> > Index: src/pkg/os/exec_posix.go\n> > ==============================**==============================**=======\n> > --- a/src/pkg/os/exec_posix.go\n> > +++ b/src/pkg/os/exec_posix.go\n> > @@ -38,7 +38,7 @@\n> >                sysattr.Env = Environ()\n> >        }\n> >        for _, f := range attr.Files {\n> > -               sysattr.Files = append(sysattr.Files, int(f.Fd()))\n> > +               sysattr.Files = append(sysattr.Files, f.Fd())\n> >        }\n> >\n> >        pid, h, e := syscall.StartProcess(name, argv, sysattr)\n> > Index: src/pkg/os/file_windows.go\n> > ==============================**==============================**=======\n> > --- a/src/pkg/os/file_windows.go\n> > +++ b/src/pkg/os/file_windows.go\n> > @@ -70,7 +70,7 @@\n> >                syscall.CloseOnExec(r)\n> >        }\n> >\n> > -       return NewFile(r, name), nil\n> > +       return NewFile(uintptr(r), name), nil\n> >  }\n> >\n> >  func openDir(name string) (file *File, err error) {\n> > @@ -79,7 +79,7 @@\n> >        if e != nil {\n> >                return nil, &PathError{\"open\", name, e}\n> >        }\n> > -       f := NewFile(r, name)\n> > +       f := NewFile(uintptr(r), name)\n> >        f.dirinfo = d\n> >        return f, nil\n> >  }\n> > @@ -313,7 +313,7 @@\n> >        syscall.CloseOnExec(p[1])\n> >        syscall.ForkLock.RUnlock()\n> >\n> > -       return NewFile(p[0], \"|0\"), NewFile(p[1], \"|1\"), nil\n> > +       return NewFile(uintptr(p[0]), \"|0\"), NewFile(uintptr(p[1]), \"|1\"),\n> > nil\n> >  }\n> >\n> >  // TempDir returns the default directory to use for temporary files.\n> > Index: src/pkg/syscall/exec_bsd.go\n> > ==============================**==============================**=======\n> > --- a/src/pkg/syscall/exec_bsd.go\n> > +++ b/src/pkg/syscall/exec_bsd.go\n> > @@ -39,8 +39,10 @@\n> >                i      int\n> >        )\n> >\n> > -       // guard against side effects of shuffling fds below.\n> > -       fd := append([]int(nil), attr.Files...)\n> > +       fd := make([]int, len(attr.Files))\n> > +       for i, ufd := range attr.Files {\n> > +               fd[i] = int(ufd)\n> > +       }\n> >\n> >        darwin := runtime.GOOS == \"darwin\"\n> >\n> > Index: src/pkg/syscall/exec_linux.go\n> > ==============================**==============================**=======\n> > --- a/src/pkg/syscall/exec_linux.**go\n> > +++ b/src/pkg/syscall/exec_linux.**go\n> > @@ -40,7 +40,10 @@\n> >        )\n> >\n> >        // guard against side effects of shuffling fds below.\n> > -       fd := append([]int(nil), attr.Files...)\n> > +       fd := make([]int, len(attr.Files))\n> > +       for i, ufd := range attr.Files {\n> > +               fd[i] = int(ufd)\n> > +       }\n> >\n> >        // About to call fork.\n> >        // No more allocation or calls of non-assembly functions.\n> > Index: src/pkg/syscall/exec_unix.go\n> > ==============================**==============================**=======\n> > --- a/src/pkg/syscall/exec_unix.go\n> > +++ b/src/pkg/syscall/exec_unix.go\n> > @@ -101,9 +101,9 @@\n> >  // ProcAttr holds attributes that will be applied to a new process started\n> >  // by StartProcess.\n> >  type ProcAttr struct {\n> > -       Dir   string   // Current working directory.\n> > -       Env   []string // Environment.\n> > -       Files []int    // File descriptors.\n> > +       Dir   string    // Current working directory.\n> > +       Env   []string  // Environment.\n> > +       Files []uintptr // File descriptors.\n> >        Sys   *SysProcAttr\n> >  }\n> >\n> > Index: src/pkg/syscall/exec_windows.**go\n> > ==============================**==============================**=======\n> > --- a/src/pkg/syscall/exec_**windows.go\n> > +++ b/src/pkg/syscall/exec_**windows.go\n> > @@ -220,7 +220,7 @@\n> >  type ProcAttr struct {\n> >        Dir   string\n> >        Env   []string\n> > -       Files []Handle\n> > +       Files []uintptr\n> >        Sys   *SysProcAttr\n> >  }\n> >\n> >\n> >\n> >",
+			"disapproval": false,
+			"date": "2012-02-10 06:43:16.418483",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mattn.jp@gmail.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It still fails to build. Now in net:\n...\n# net\npkg\\net\\sendfile_windows.go:59: cannot use f.Fd() (type uintptr) as type syscall.Handle in assignment\n...\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-10 06:51:25.868785",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mattn.jp@gmail.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/10 06:58:31, bradfitz wrote:\n> Fixed sendfile_windows.go now.\n> \n> Now it builds with:\n> \n> $ GOOS=windows go build os syscall net\n> $ GOOS=darwin go build os syscall\n> (can't test net, because of cgo)\n> \n\nAll packages build now, but test in os/exec still does not compile:\n\n# os/exec\npkg\\os\\exec\\exec_test.go:157: cannot use fd (type int) as type syscall.Handle in function argument\nFAIL    os/exec [build failed]\n\nGOOS=windows go test -c os/exec\n\nwill compile it for you.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-10 08:29:18.239171",
+			"approval": false
+		},
+		{
+			"sender": "rsc@google.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mattn.jp@gmail.com",
+				"alex.brainman@gmail.com",
+				"rsc@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nSeems fine.  I'm not too worried about syscall.",
+			"disapproval": false,
+			"date": "2012-02-10 21:06:27.484468",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mattn.jp@gmail.com",
+				"alex.brainman@gmail.com",
+				"rsc@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=707cc1968634 ***\n\nos,syscall: fix windows build\n\nmake syscall.ProcAttr.Files be []uintptr\n\nall.bash passes on Linux.\nthings seem to compile on GOOS={darwin,windows}\n\nR=golang-dev, mattn.jp, alex.brainman, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5653055",
+			"disapproval": false,
+			"date": "2012-02-10 21:47:28.629660",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mattn.jp@gmail.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, mattn.jp@gmail.com, alex.brainman@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-02-10 06:57:00.275022",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-10 06:30:40.245404",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have to leave for dinner in a few minutes here, so feel free to submit if\nyou think this is the right solution.\n\nI'm not sure we want to change syscall.ProcAttr.Files from []int to\n[]uintptr, though.\n\nIf we don't, we need to break src/pkg/os/exec_posix.go (or at least part of\nit) into unix-vs-windows files, though.\n\nI could imagine making a helper function syscallFds(fds []uintptr) []int\nfor unix and []syscall.Handle for windows in two separate pkg os files.\n\nNot sure which is more desirable.\n\n\nOn Fri, Feb 10, 2012 at 5:30 PM, <bradfitz@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> os,syscall: fix windows build\n>\n> make syscall.ProcAttr.Files be []uintptr\n>\n> all.bash passes on Linux.\n> things seem to compile on GOOS={darwin,windows}\n>\n> Please review this at http://codereview.appspot.com/**5653055/<http://codereview.appspot.com/5653055/>\n>\n> Affected files:\n>  M src/pkg/os/exec_posix.go\n>  M src/pkg/os/file_windows.go\n>  M src/pkg/syscall/exec_bsd.go\n>  M src/pkg/syscall/exec_linux.go\n>  M src/pkg/syscall/exec_unix.go\n>  M src/pkg/syscall/exec_windows.**go\n>\n>\n> Index: src/pkg/os/exec_posix.go\n> ==============================**==============================**=======\n> --- a/src/pkg/os/exec_posix.go\n> +++ b/src/pkg/os/exec_posix.go\n> @@ -38,7 +38,7 @@\n>                sysattr.Env = Environ()\n>        }\n>        for _, f := range attr.Files {\n> -               sysattr.Files = append(sysattr.Files, int(f.Fd()))\n> +               sysattr.Files = append(sysattr.Files, f.Fd())\n>        }\n>\n>        pid, h, e := syscall.StartProcess(name, argv, sysattr)\n> Index: src/pkg/os/file_windows.go\n> ==============================**==============================**=======\n> --- a/src/pkg/os/file_windows.go\n> +++ b/src/pkg/os/file_windows.go\n> @@ -70,7 +70,7 @@\n>                syscall.CloseOnExec(r)\n>        }\n>\n> -       return NewFile(r, name), nil\n> +       return NewFile(uintptr(r), name), nil\n>  }\n>\n>  func openDir(name string) (file *File, err error) {\n> @@ -79,7 +79,7 @@\n>        if e != nil {\n>                return nil, &PathError{\"open\", name, e}\n>        }\n> -       f := NewFile(r, name)\n> +       f := NewFile(uintptr(r), name)\n>        f.dirinfo = d\n>        return f, nil\n>  }\n> @@ -313,7 +313,7 @@\n>        syscall.CloseOnExec(p[1])\n>        syscall.ForkLock.RUnlock()\n>\n> -       return NewFile(p[0], \"|0\"), NewFile(p[1], \"|1\"), nil\n> +       return NewFile(uintptr(p[0]), \"|0\"), NewFile(uintptr(p[1]), \"|1\"),\n> nil\n>  }\n>\n>  // TempDir returns the default directory to use for temporary files.\n> Index: src/pkg/syscall/exec_bsd.go\n> ==============================**==============================**=======\n> --- a/src/pkg/syscall/exec_bsd.go\n> +++ b/src/pkg/syscall/exec_bsd.go\n> @@ -39,8 +39,10 @@\n>                i      int\n>        )\n>\n> -       // guard against side effects of shuffling fds below.\n> -       fd := append([]int(nil), attr.Files...)\n> +       fd := make([]int, len(attr.Files))\n> +       for i, ufd := range attr.Files {\n> +               fd[i] = int(ufd)\n> +       }\n>\n>        darwin := runtime.GOOS == \"darwin\"\n>\n> Index: src/pkg/syscall/exec_linux.go\n> ==============================**==============================**=======\n> --- a/src/pkg/syscall/exec_linux.**go\n> +++ b/src/pkg/syscall/exec_linux.**go\n> @@ -40,7 +40,10 @@\n>        )\n>\n>        // guard against side effects of shuffling fds below.\n> -       fd := append([]int(nil), attr.Files...)\n> +       fd := make([]int, len(attr.Files))\n> +       for i, ufd := range attr.Files {\n> +               fd[i] = int(ufd)\n> +       }\n>\n>        // About to call fork.\n>        // No more allocation or calls of non-assembly functions.\n> Index: src/pkg/syscall/exec_unix.go\n> ==============================**==============================**=======\n> --- a/src/pkg/syscall/exec_unix.go\n> +++ b/src/pkg/syscall/exec_unix.go\n> @@ -101,9 +101,9 @@\n>  // ProcAttr holds attributes that will be applied to a new process started\n>  // by StartProcess.\n>  type ProcAttr struct {\n> -       Dir   string   // Current working directory.\n> -       Env   []string // Environment.\n> -       Files []int    // File descriptors.\n> +       Dir   string    // Current working directory.\n> +       Env   []string  // Environment.\n> +       Files []uintptr // File descriptors.\n>        Sys   *SysProcAttr\n>  }\n>\n> Index: src/pkg/syscall/exec_windows.**go\n> ==============================**==============================**=======\n> --- a/src/pkg/syscall/exec_**windows.go\n> +++ b/src/pkg/syscall/exec_**windows.go\n> @@ -220,7 +220,7 @@\n>  type ProcAttr struct {\n>        Dir   string\n>        Env   []string\n> -       Files []Handle\n> +       Files []uintptr\n>        Sys   *SysProcAttr\n>  }\n>\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-10 06:33:30.198237",
+			"approval": false
+		},
+		{
+			"sender": "mattn.jp@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mattn.jp@gmail.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "please include change of net/sendfile_windows.go\n\ndiff -r caf7dca9d711 src/pkg/net/sendfile_windows.go\n--- a/src/pkg/net/sendfile_windows.go\tFri Feb 10 18:49:19 2012 +1100\n+++ b/src/pkg/net/sendfile_windows.go\tFri Feb 10 16:53:15 2012 +0900\n@@ -56,7 +56,7 @@\n \tvar o sendfileOp\n \to.Init(c, 'w')\n \to.n = uint32(n)\n-\to.src = f.Fd()\n+\to.src = syscall.Handle(f.Fd())\n \tdone, err := iosrv.ExecIO(&o, 0)\n \tif err != nil {\n \t\treturn 0, err, false\n\n\nOn 2012/02/10 06:58:31, bradfitz wrote:\n> Fixed sendfile_windows.go now.\n> \n> Now it builds with:\n> \n> $ GOOS=windows go build os syscall net\n> $ GOOS=darwin go build os syscall\n> (can't test net, because of cgo)\n> \n> \n> On Fri, Feb 10, 2012 at 5:57 PM, <mailto:bradfitz@golang.org> wrote:\n> \n> > Hello mailto:golang-dev@googlegroups.com, mailto:mattn.jp@gmail.com,\n> > mailto:alex.brainman@gmail.com (cc: mailto:golang-dev@googlegroups.com),\n> >\n> > Please take another look.\n> >\n> >\n> >\n> http://codereview.appspot.com/**5653055/%3Chttp://codereview.appspot.com/5653055/>\n> >",
+			"disapproval": false,
+			"date": "2012-02-10 07:54:04.828815",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 5653055: os,syscall: fix windows build",
+	"created": "2012-02-10 06:30:21.580150",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		1008,
+		4013
+	],
+	"modified": "2012-02-10 21:47:31.599793",
+	"closed": true,
+	"issue": 5653055
+}

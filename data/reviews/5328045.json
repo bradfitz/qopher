@@ -1,0 +1,291 @@
+{
+	"description": "exp/ssh: improved client authentication support\n\nThis CL adds an API for handling the various SSH\nauthenticaton methods. None and password continue\nto be the only supported methods.",
+	"cc": [
+		"bradfitz@golang.org",
+		"agl@golang.org",
+		"n13m3y3r@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"cw@f00f.org"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I was hoping for something significantly more general.\nThis is just two hard-coded things instead of one.\nI don't want to have to hand my secrets to the \nssh package at startup or really ever.  I should be able\nto plug in access to ssh agents, access to a system\nkeyring, etc.\n\nI was imagining that the config would have a []ClientAuth\ndefined as:\n\n// A ClientAuth is a client authentication method.\ntype ClientAuth interface {\n    whateverSSHNeeds()\n}\n\n// A ClientPublicKey implements access to a client key ring.\ntype ClientPublicKey interface {\n    // Key returns the i'th key, or ssh.ErrNoKeys if there is no i'th key.\n    // The algorithm is typically \"ssh-rsa\" or \"ssh-dsa\".\n    // For \"ssh-rsa\" the pub list is {ek, mod}.\n    // For \"ssh-dsa\" the pub list is {p, q, alpha, key}. \n    Key(i int) (alg string, pub []*big.Int, err os.Error)\n\n    // Sign returns a signature of the given data using the i'th key.\n    Sign(i int, data []byte) (sig []byte, err os.Error)\n}\n\n// ClientAuthPublicKey returns a ClientAuth using public key authentication.\nfunc ClientAuthPublicKey(impl ClientPublicKey) ClientAuth\n\n// A ClientPassword implements access to a client's passwords.\ntype ClientPassword interface {\n    // Password returns the password to use for authentication as id,\n    // which is of the form user@host.\n    Password(id string) (password string, err os.Error)\n}\n\n// ClientAuthPassword returns a ClientAuth using password authentication.\nfunc ClientAuthPassword(impl ClientPassword) ClientAuth\n\n// ClientInteractive implements interactive authentication,\n// in which the user responds to prompts from the server.\ntype ClientInteractive interface {\n    // Prompt displays the prompt and returns the user's response.\n    Prompt(prompt string) (response string, err os.Error)\n}\n\n// ClientAuthInteractive returns a ClientAuth using interactive authentication.\nfunc ClientAuthInteractive(impl ClientInteractive) ClientAuth",
+			"disapproval": false,
+			"date": "2011-10-28 15:25:11.905584",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Thu, Nov 3, 2011 at 12:15,  <cw@f00f.org> wrote:\n> Are client auth and server different?\n\nYes.  For example, for password auth the client\nfunction is func() password while the server\nfunction is func(password) bool.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-03 16:21:35.186725",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, agl@golang.org, n13m3y3r@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-28 12:22:51.067172",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Please take another look.\n\nSorry it took so long, it took me a few days to integrate Russ's suggestions into this change. Hopefully the result is more in line with what everyone was imagining.\n\nA simple example:\n\ntype pw string\n\n// Password always returns the string(pw) regardless of the\n// name provided.\nfunc (p pw) Password(name string) (string, error) {\n        return string(p), nil\n}\n\nfunc main() {\n        config := &ssh.ClientConfig{\n                User:           \"username\",\n                Auth: []ssh.ClientAuth{ ssh.ClientAuthPassword(pw(\"password\")) },\n        } \n        client, err := ssh.Dial(...)\n}\n\nAgain, public key authentication has not been implemented, but will follow the suggested interface that Russ provided when I get some time on the weekend.",
+			"disapproval": false,
+			"date": "2011-11-02 10:55:36.029393",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5328045/diff/2007/src/pkg/exp/ssh/auth.go\nFile src/pkg/exp/ssh/auth.go (right):\n\nhttp://codereview.appspot.com/5328045/diff/2007/src/pkg/exp/ssh/auth.go#newcode38\nsrc/pkg/exp/ssh/auth.go:38: ok, m, err = a.Authenticate(c.transport)\nthe next if can be folded into this line.\n\nhttp://codereview.appspot.com/5328045/diff/2007/src/pkg/exp/ssh/auth.go#newcode48\nsrc/pkg/exp/ssh/auth.go:48: methods = append(methods, m...)\nI don't think that we should go into an infinite loop if the server happens to slip up on this point.\n\nhttp://codereview.appspot.com/5328045/diff/2007/src/pkg/exp/ssh/auth.go#newcode50\nsrc/pkg/exp/ssh/auth.go:50: return os.NewError(\"ssh: unable to authenticate, not supported methods remain\")\ns/not/no.",
+			"disapproval": false,
+			"date": "2011-10-28 13:42:06.910086",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for your comments Russ. I'll have another go.\n\nOn Sat, Oct 29, 2011 at 2:25 AM,  <rsc@golang.org> wrote:\n> I was hoping for something significantly more general.\n> This is just two hard-coded things instead of one.\n> I don't want to have to hand my secrets to the\n> ssh package at startup or really ever. \u00a0I should be able\n> to plug in access to ssh agents, access to a system\n> keyring, etc.\n>\n> I was imagining that the config would have a []ClientAuth\n> defined as:\n>\n> // A ClientAuth is a client authentication method.\n> type ClientAuth interface {\n> \u00a0 \u00a0whateverSSHNeeds()\n> }\n>\n> // A ClientPublicKey implements access to a client key ring.\n> type ClientPublicKey interface {\n> \u00a0 \u00a0// Key returns the i'th key, or ssh.ErrNoKeys if there is no i'th\n> key.\n> \u00a0 \u00a0// The algorithm is typically \"ssh-rsa\" or \"ssh-dsa\".\n> \u00a0 \u00a0// For \"ssh-rsa\" the pub list is {ek, mod}.\n> \u00a0 \u00a0// For \"ssh-dsa\" the pub list is {p, q, alpha, key}.\n> \u00a0 \u00a0Key(i int) (alg string, pub []*big.Int, err os.Error)\n>\n> \u00a0 \u00a0// Sign returns a signature of the given data using the i'th key.\n> \u00a0 \u00a0Sign(i int, data []byte) (sig []byte, err os.Error)\n> }\n>\n> // ClientAuthPublicKey returns a ClientAuth using public key\n> authentication.\n> func ClientAuthPublicKey(impl ClientPublicKey) ClientAuth\n>\n> // A ClientPassword implements access to a client's passwords.\n> type ClientPassword interface {\n> \u00a0 \u00a0// Password returns the password to use for authentication as id,\n> \u00a0 \u00a0// which is of the form user@host.\n> \u00a0 \u00a0Password(id string) (password string, err os.Error)\n> }\n>\n> // ClientAuthPassword returns a ClientAuth using password\n> authentication.\n> func ClientAuthPassword(impl ClientPassword) ClientAuth\n>\n> // ClientInteractive implements interactive authentication,\n> // in which the user responds to prompts from the server.\n> type ClientInteractive interface {\n> \u00a0 \u00a0// Prompt displays the prompt and returns the user's response.\n> \u00a0 \u00a0Prompt(prompt string) (response string, err os.Error)\n> }\n>\n> // ClientAuthInteractive returns a ClientAuth using interactive\n> authentication.\n> func ClientAuthInteractive(impl ClientInteractive) ClientAuth\n>\n>\n>\n> http://codereview.appspot.com/5328045/\n>\n",
+			"disapproval": false,
+			"date": "2011-10-28 22:04:41.252335",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, agl@golang.org, n13m3y3r@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-03 10:49:46.418045",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Are client auth and server different?\n\nI'm wondering why the authentication interfaces can't be used for both.",
+			"disapproval": false,
+			"date": "2011-11-03 16:15:34.978642",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Thu, Nov 3, 2011 at 6:49 AM,  <dave@cheney.net> wrote:\n> Please take another look.\n\nWill hopefully take a look today, although today is shaping up to be very busy.\n\n\nCheers\n\nAGL\n",
+			"disapproval": false,
+			"date": "2011-11-03 16:21:21.192677",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, agl@golang.org, n13m3y3r@gmail.com, rsc@golang.org, cw@f00f.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-07 09:53:05.006941",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "A few more small tweaks over the weekend.",
+			"disapproval": false,
+			"date": "2011-11-06 10:45:31.053728",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go\nFile src/pkg/exp/ssh/client_auth.go (right):\n\nhttp://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go#newcode11\nsrc/pkg/exp/ssh/client_auth.go:11: type set map[string]string\nnot map[string]bool? I don't know if it would actually be faster, but:\n\ntried[\"foo\"] = true\n\nreads better to me.\n\nhttp://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go#newcode51\nsrc/pkg/exp/ssh/client_auth.go:51: if !remain.contains(meth) {\nThe |remain| set appears to be superfluous, or I'm missing the point.\n\nhttp://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go#newcode54\nsrc/pkg/exp/ssh/client_auth.go:54: for _, a := range c.config.Auth {\nIt looks like you're trying to find the first element of c.config.Auth which is a remaining method. The \"auth == nil\" clause looks like a latch so that the outer for loop can continue and not override the first value found, but I think you could say:\n\nEachMethod:\nfor _, meth := range methods {\n  ...\n  for _, a := range c.config.Auth {\n    if ... {\n      auth = a\n      break EachMethod\n    }\n  }\n}\n\nhttp://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go#newcode159\nsrc/pkg/exp/ssh/client_auth.go:159: Password(id string) (password string, err error)\ns/id/user/ ? Might be clearer.",
+			"disapproval": false,
+			"date": "2011-11-06 15:36:36.922799",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for your comments agl. Please take another look.\n\nhttp://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go\nFile src/pkg/exp/ssh/client_auth.go (right):\n\nhttp://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go#newcode11\nsrc/pkg/exp/ssh/client_auth.go:11: type set map[string]string\nOn 2011/11/06 15:36:37, agl1 wrote:\n> not map[string]bool? I don't know if it would actually be faster, but:\n> \nI agree, a lot cleaner using the map zero value.\n\n> tried[\"foo\"] = true\n> \n> reads better to me.\n\nhttp://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go#newcode51\nsrc/pkg/exp/ssh/client_auth.go:51: if !remain.contains(meth) {\nThe logic goes,\n\n1. try method m, if that works, you're done\n2. if not, the server will return a set of methods that may be tried next, this may or may not include methods previously tried. There are even some tricky cases where trying method a may reveal methods b,c and d.\n3. of the methods returned, we exclude any in the tried map, then we add any that pass that that check into the remain method. \n\nYou are right, I don't need to check for existing entries in remain, because if they have previously been tried they will already be in tried.\n\nOn 2011/11/06 15:36:37, agl1 wrote:\n> The |remain| set appears to be superfluous, or I'm missing the point.\n\nhttp://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go#newcode54\nsrc/pkg/exp/ssh/client_auth.go:54: for _, a := range c.config.Auth {\nPTAL\n\nOn 2011/11/06 15:36:37, agl1 wrote:\n> It looks like you're trying to find the first element of c.config.Auth which is\n> a remaining method. The \"auth == nil\" clause looks like a latch so that the\n> outer for loop can continue and not override the first value found, but I think\n> you could say:\n> \n> EachMethod:\n> for _, meth := range methods {\n>   ...\n>   for _, a := range c.config.Auth {\n>     if ... {\n>       auth = a\n>       break EachMethod\n>     }\n>   }\n> }\n\nhttp://codereview.appspot.com/5328045/diff/19001/src/pkg/exp/ssh/client_auth.go#newcode159\nsrc/pkg/exp/ssh/client_auth.go:159: Password(id string) (password string, err error)\nOn 2011/11/06 15:36:37, agl1 wrote:\n> s/id/user/ ? Might be clearer.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-11-07 09:54:00.500441",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM. I'm not sure that the logic will work when there are multiple public keys for authentication. ('publickey' will be in tried and then ignored.) But this change doesn't try to implement public key auth on the client-side yet so we can always fix that when we have support.",
+			"disapproval": false,
+			"date": "2011-11-07 17:33:58.352451",
+			"approval": true
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=ad6ad18f5013 ***\n\nexp/ssh: improved client authentication support\n\nThis CL adds an API for handling the various SSH\nauthenticaton methods. None and password continue\nto be the only supported methods.\n\nR=bradfitz, agl, n13m3y3r, rsc, cw\nCC=golang-dev\nhttp://codereview.appspot.com/5328045\n\nCommitter: Adam Langley <agl@golang.org>",
+			"disapproval": false,
+			"date": "2011-11-07 17:37:21.876076",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thank you for committing this CL. I know it is not perfect, but hopefully it will provide a base for others to improve upon.\n\nSent from my iPad\n\nOn 08/11/2011, at 4:37, agl@golang.org wrote:\n\n> *** Submitted as\n> http://code.google.com/p/go/source/detail?r=ad6ad18f5013 ***\n> \n> exp/ssh: improved client authentication support\n> \n> This CL adds an API for handling the various SSH\n> authenticaton methods. None and password continue\n> to be the only supported methods.\n> \n> R=bradfitz, agl, n13m3y3r, rsc, cw\n> CC=golang-dev\n> http://codereview.appspot.com/5328045\n> \n> Committer: Adam Langley <agl@golang.org>\n> \n> \n> http://codereview.appspot.com/5328045/\n",
+			"disapproval": false,
+			"date": "2011-11-07 19:44:58.972140",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"dave@cheney.net",
+				"cw@f00f.org",
+				"bradfitz@golang.org",
+				"agl@golang.org",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I'm using this code (somewhat).\n\nFor fixed pw's the interface now seems a lot more complicated and perhaps that's my doing.  It seems I have to define a type that satisfies ssh.ClientPassword and use ssh.ClientAuthPassword as a wrapper for that.\n\nWhere as in the past I could use a string.\n\nso I have for my ClientConfig:\n\n   Auth: []ssh.ClientAuth{ssh.ClientAuthPassword(ssh.ClientPassword(&sshPw{}))},\n\nI don't expect it should be as simple as it once was, but I was more hoping that I could do something like:\n\n   Auth: []ssh.ClientAuth{ssh.PwAuth(\"myPassword\")}\n\nsort of thing.",
+			"disapproval": false,
+			"date": "2011-11-08 22:56:22.460302",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 5328045: exp/ssh: improved client authentication support",
+	"created": "2011-10-27 11:28:45.921766",
+	"patchsets": [
+		1,
+		1001,
+		3001,
+		2007,
+		8002,
+		2008,
+		13001,
+		2009,
+		2013,
+		19001,
+		26001
+	],
+	"modified": "2011-11-08 22:56:22.600432",
+	"closed": true,
+	"issue": 5328045
+}

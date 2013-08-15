@@ -1,0 +1,69 @@
+{
+	"description": "net/url: use bytes.Buffer in (*URL).String\n\nBenchmarkString before:\n\n        11990 ns/op            1621 B/op         73 allocs/op\n\nUsing bytes.Buffer:\n\n        8774 ns/op            1994 B/op         40 allocs/op\n\nI also tried making a version of escape() that writes directly to the\nbytes.Buffer, but it only saved 1 alloc/op and increased CPU time by\nabout 10%. Didn't seem worth the extra code path.",
+	"cc": [
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-01-23 00:59:49.324300",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nI'm not sure that StopTimer/StartTimer resets allocation counts.  Forget.\r\n\r\nBut you could be being mislead by allocations from Parsing/etc.\r\n\r\n\r\nOn Tue, Jan 22, 2013 at 4:59 PM, <adg@golang.org> wrote:\r\n\r\n> Reviewers: bradfitz,\r\n>\r\n> Message:\r\n> Hello bradfitz (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> net/url: use bytes.Buffer in (*URL).String\r\n>\r\n> BenchmarkString before:\r\n>\r\n>         11990 ns/op            1621 B/op         73 allocs/op\r\n>\r\n> Using bytes.Buffer:\r\n>\r\n>         8774 ns/op            1994 B/op         40 allocs/op\r\n>\r\n> I also tried making a version of escape() that writes directly to the\r\n> bytes.Buffer, but it only saved 1 alloc/op and increased CPU time by\r\n> about 10%. Didn't seem worth the extra code path.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7182050/<https://codereview.appspot.com/7182050/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/url/url.go\r\n>   M src/pkg/net/url/url_test.go\r\n>\r\n>\r\n> Index: src/pkg/net/url/url.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/url/url.go\r\n> +++ b/src/pkg/net/url/url.go\r\n> @@ -434,32 +434,35 @@\r\n>\r\n>  // String reassembles the URL into a valid URL string.\r\n>  func (u *URL) String() string {\r\n> -       // TODO: Rewrite to use bytes.Buffer\r\n> -       result := \"\"\r\n> +       var buf bytes.Buffer\r\n>         if u.Scheme != \"\" {\r\n> -               result += u.Scheme + \":\"\r\n> +               buf.WriteString(u.Scheme)\r\n> +               buf.WriteByte(':')\r\n>         }\r\n>         if u.Opaque != \"\" {\r\n> -               result += u.Opaque\r\n> +               buf.WriteString(u.Opaque)\r\n>         } else {\r\n>                 if u.Scheme != \"\" || u.Host != \"\" || u.User != nil {\r\n> -                       result += \"//\"\r\n> +                       buf.WriteString(\"//\")\r\n>                         if u := u.User; u != nil {\r\n> -                               result += u.String() + \"@\"\r\n> +                               buf.WriteString(u.String())\r\n> +                               buf.WriteByte('@')\r\n>                         }\r\n>                         if h := u.Host; h != \"\" {\r\n> -                               result += u.Host\r\n> +                               buf.WriteString(h)\r\n>                         }\r\n>                 }\r\n> -               result += escape(u.Path, encodePath)\r\n> +               buf.WriteString(escape(u.Path, encodePath))\r\n>         }\r\n>         if u.RawQuery != \"\" {\r\n> -               result += \"?\" + u.RawQuery\r\n> +               buf.WriteByte('?')\r\n> +               buf.WriteString(u.RawQuery)\r\n>         }\r\n>         if u.Fragment != \"\" {\r\n> -               result += \"#\" + escape(u.Fragment, encodeFragment)\r\n> +               buf.WriteByte('#')\r\n> +               buf.WriteString(escape(u.**Fragment, encodeFragment))\r\n>         }\r\n> -       return result\r\n> +       return buf.String()\r\n>  }\r\n>\r\n>  // Values maps a string key to a list of values.\r\n> Index: src/pkg/net/url/url_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/url/url_test.go\r\n> +++ b/src/pkg/net/url/url_test.go\r\n> @@ -280,6 +280,30 @@\r\n>         }\r\n>  }\r\n>\r\n> +func BenchmarkString(b *testing.B) {\r\n> +       b.StopTimer()\r\n> +       b.ReportAllocs()\r\n> +       for _, tt := range urltests {\r\n> +               u, err := Parse(tt.in)\r\n> +               if err != nil {\r\n> +                       b.Errorf(\"Parse(%q) returned error %s\", tt.in,\r\n> err)\r\n> +                       continue\r\n> +               }\r\n> +               if tt.roundtrip == \"\" {\r\n> +                       continue\r\n> +               }\r\n> +               b.StartTimer()\r\n> +               var g string\r\n> +               for i := 0; i < b.N; i++ {\r\n> +                       g = u.String()\r\n> +               }\r\n> +               b.StopTimer()\r\n> +               if w := tt.roundtrip; g != w {\r\n> +                       b.Errorf(\"Parse(%q).String() == %q, want %q\",\r\n> tt.in, g, w)\r\n> +               }\r\n> +       }\r\n> +}\r\n> +\r\n>  func TestParse(t *testing.T) {\r\n>         DoTest(t, Parse, \"Parse\", urltests)\r\n>  }\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-23 01:12:13.821200",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=c3f6b7dd0104 ***\n\nnet/url: use bytes.Buffer in (*URL).String\n\nBenchmarkString before:\n\n        11990 ns/op            1621 B/op         73 allocs/op\n\nUsing bytes.Buffer:\n\n        8774 ns/op            1994 B/op         40 allocs/op\n\nI also tried making a version of escape() that writes directly to the\nbytes.Buffer, but it only saved 1 alloc/op and increased CPU time by\nabout 10%. Didn't seem worth the extra code path.\n\nR=bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/7182050",
+			"disapproval": false,
+			"date": "2013-01-23 01:17:18.273710",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 23 January 2013 12:12, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n\r\n> I'm not sure that StopTimer/StartTimer resets allocation counts.  Forget.\r\n>\r\n> But you could be being mislead by allocations from Parsing/etc.\r\n>\r\n\r\nThe Parse allocations will always be some value theta, so whatever theta is\r\nwe're still saving on average 33 allocs per iteration.\r\n\r\nThe Start/Stop timer was helpful for CPU time.\r\n",
+			"disapproval": false,
+			"date": "2013-01-23 01:17:15.376450",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 7182050: net/url: use bytes.Buffer in (*URL).String",
+	"created": "2013-01-23 00:59:41.944520",
+	"patchsets": [
+		1,
+		4001
+	],
+	"modified": "2013-01-23 01:17:21.931620",
+	"closed": true,
+	"issue": 7182050
+}

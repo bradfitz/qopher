@@ -1,0 +1,184 @@
+{
+	"description": "cmd/gc: use escape analysis result for make([]T, constant\n\nEscape analysis already gives that the underlying array\ndoes not escape but the result was ignored.\n\nFixes issue 5484.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"daniel.morsing@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-05-22 21:41:28.122760",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you. Why did the CL not need any modifications to test/escape*.go ?\r\n\r\n\r\n\r\nOn 23/05/2013, at 7:41, remyoudompheng@gmail.com wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n> \r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n> \r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n> \r\n> \r\n> Description:\r\n> cmd/gc: use escape analysis result for make([]T, constant\r\n> \r\n> Escape analsyis already gives that the underlying array\r\n> does not escape but the result was ignored.\r\n> \r\n> Fixes issue 5484.\r\n> \r\n> Please review this at https://codereview.appspot.com/9662046/\r\n> \r\n> Affected files:\r\n>  src/cmd/gc/walk.c\r\n> \r\n> \r\n> Index: src/cmd/gc/walk.c\r\n> ===================================================================\r\n> --- a/src/cmd/gc/walk.c\r\n> +++ b/src/cmd/gc/walk.c\r\n> @@ -1246,18 +1246,35 @@\r\n>        goto ret;\r\n> \r\n>    case OMAKESLICE:\r\n> -        // makeslice(t *Type, nel int64, max int64) (ary []any)\r\n>        l = n->left;\r\n>        r = n->right;\r\n>        if(r == nil)\r\n>            l = r = safeexpr(l, init);\r\n>        t = n->type;\r\n> -        fn = syslook(\"makeslice\", 1);\r\n> -        argtype(fn, t->type);            // any-1\r\n> -        n = mkcall1(fn, n->type, init,\r\n> -            typename(n->type),\r\n> -            conv(l, types[TINT64]),\r\n> -            conv(r, types[TINT64]));\r\n> +        if(n->esc == EscNone\r\n> +            && smallintconst(l) && smallintconst(r)\r\n> +            && mpgetfix(r->val.u.xval) < (1ULL<<16) / t->type->width) {\r\n> +            // var arr [r]T\r\n> +            // n = arr[:l]\r\n> +            t = aindex(r, t->type); // [r]T\r\n> +            var = temp(t);\r\n> +            a = nod(OAS, var, N); // zero temp\r\n> +            typecheck(&a, Etop);\r\n> +            *init = list(*init, a);\r\n> +            r = nod(OSLICE, var, nod(OKEY, N, l)); // arr[:l]\r\n> +            r = conv(r, n->type); // in case n->type is named.\r\n> +            typecheck(&r, Erv);\r\n> +            walkexpr(&r, init);\r\n> +            n = r;\r\n> +        } else {\r\n> +            // makeslice(t *Type, nel int64, max int64) (ary []any)\r\n> +            fn = syslook(\"makeslice\", 1);\r\n> +            argtype(fn, t->type);            // any-1\r\n> +            n = mkcall1(fn, n->type, init,\r\n> +                typename(n->type),\r\n> +                conv(l, types[TINT64]),\r\n> +                conv(r, types[TINT64]));\r\n> +        }\r\n>        goto ret;\r\n> \r\n>    case ORUNESTR:\r\n> \r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-05-22 21:44:34.189970",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The occurences of the pattern in the standard library are the following:\n\npkg/compress/bzip2/bzip2.go:189: putting make([]bool, 256) on stack\npkg/go/ast/ast.go:105: putting make([]string, 0, 10) on stack\ncmd/yacc/yacc.go:537: putting make([]int, RULEINC) on stack\npkg/net/interface_linux.go:185: putting make([]byte, IPv4len) on stack\npkg/net/interface_linux.go:218: putting make([]byte, IPv6len) on stack\npkg/net/dnsmsg.go:622: putting make(IP, IPv6len) on stack\npkg/net/textproto/reader.go:391: putting make([]byte, 128) on stack\npkg/net/mail/message.go:372: putting make([]byte, 0, 10) on stack\npkg/crypto/tls/handshake_server.go:325: putting make([]byte, 4) on stack\npkg/net/http/fcgi/child.go:231: putting make([]byte, 8) on stack\npkg/net/http/fcgi/fcgi.go:167: putting make([]byte, 8) on stack",
+			"disapproval": false,
+			"date": "2013-05-22 21:44:45.479580",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/22 21:44:34, dfc wrote:\n> Thank you. Why did the CL not need any modifications to test/escape*.go ?\n> \n\nEscape analysis already works. The result is just ignored in code generation.",
+			"disapproval": false,
+			"date": "2013-05-22 21:45:14.621750",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ok, that was my mistake, I didn't realise that the escape*.go tests were only looking at the front end. \r\n\r\n\r\n\r\nOn 23/05/2013, at 7:45, remyoudompheng@gmail.com wrote:\r\n\r\n> On 2013/05/22 21:44:34, dfc wrote:\r\n>> Thank you. Why did the CL not need any modifications to\r\n> test/escape*.go ?\r\n> \r\n> \r\n> Escape analysis already works. The result is just ignored in code\r\n> generation.\r\n> \r\n> \r\n> https://codereview.appspot.com/9662046/\r\n",
+			"disapproval": false,
+			"date": "2013-05-22 21:53:35.010290",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks R\u00e9my, I think there is also a typo in the CL description.\n\nhttps://codereview.appspot.com/9662046/diff/4001/src/cmd/gc/walk.c\nFile src/cmd/gc/walk.c (right):\n\nhttps://codereview.appspot.com/9662046/diff/4001/src/cmd/gc/walk.c#newcode1256\nsrc/cmd/gc/walk.c:1256: && mpgetfix(r->val.u.xval) < (1ULL<<16) / t->type->width) {\nMagic number alert, could this be defined somewhere ?",
+			"disapproval": false,
+			"date": "2013-05-23 04:48:52.476420",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hmm, I thought that 1ULL<<16 would be common constant, but there are\r\nno other occurrences, and plenty of other uncommented 1ULL<< shifts.\r\nPlease ignore my request.\r\n\r\nOn Thu, May 23, 2013 at 4:11 PM,  <remyoudompheng@gmail.com> wrote:\r\n> (fixed typo in description)\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.com/9662046/diff/4001/src/cmd/gc/walk.c\r\n> File src/cmd/gc/walk.c (right):\r\n>\r\n> https://codereview.appspot.com/9662046/diff/4001/src/cmd/gc/walk.c#newcode1256\r\n> src/cmd/gc/walk.c:1256: && mpgetfix(r->val.u.xval) < (1ULL<<16) /\r\n> t->type->width) {\r\n> On 2013/05/23 04:48:52, dfc wrote:\r\n>>\r\n>> Magic number alert, could this be defined somewhere ?\r\n>\r\n>\r\n> Maybe, but it would need a name. The constant is used in the ONEW case,\r\n> it's the size beyond which we ignore escape analysis and allocate on\r\n> heap anyway.\r\n>\r\n> https://codereview.appspot.com/9662046/\r\n",
+			"disapproval": false,
+			"date": "2013-05-23 07:53:05.000790",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "(fixed typo in description)\n\nhttps://codereview.appspot.com/9662046/diff/4001/src/cmd/gc/walk.c\nFile src/cmd/gc/walk.c (right):\n\nhttps://codereview.appspot.com/9662046/diff/4001/src/cmd/gc/walk.c#newcode1256\nsrc/cmd/gc/walk.c:1256: && mpgetfix(r->val.u.xval) < (1ULL<<16) / t->type->width) {\nOn 2013/05/23 04:48:52, dfc wrote:\n> Magic number alert, could this be defined somewhere ?\n\nMaybe, but it would need a name. The constant is used in the ONEW case, it's the size beyond which we ignore escape analysis and allocate on heap anyway.",
+			"disapproval": false,
+			"date": "2013-05-23 06:11:20.277200",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping",
+			"disapproval": false,
+			"date": "2013-05-27 22:05:57.928530",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.",
+			"disapproval": false,
+			"date": "2013-05-28 06:21:04.607860",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I will submit this in a few hours if no-one objects.",
+			"disapproval": false,
+			"date": "2013-05-29 21:42:26.954360",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7bd52af9db1c ***\n\ncmd/gc: use escape analysis result for make([]T, constant\n\nEscape analysis already gives that the underlying array\ndoes not escape but the result was ignored.\n\nFixes issue 5484.\n\nR=golang-dev, dave, daniel.morsing\nCC=golang-dev\nhttps://codereview.appspot.com/9662046",
+			"disapproval": false,
+			"date": "2013-05-30 06:32:14.669900",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 9662046: cmd/gc: use escape analysis result for make([]T, constant",
+	"created": "2013-05-22 21:41:14.794800",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		14001,
+		22001
+	],
+	"modified": "2013-05-30 06:32:16.117800",
+	"closed": true,
+	"issue": 9662046
+}

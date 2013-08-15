@@ -1,0 +1,121 @@
+{
+	"description": "exp/html: generate replacement for <isindex> correctly\n\nWhen generating replacement elements for an <isindex> tag, the old\naddSyntheticElement method was producing the wrong nesting. Replace\nit with parseImpliedToken.\n\nPass the one remaining test in the test suite.",
+	"cc": [
+		"nigeltao@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"uriel@berlinblue.org",
+		"cw@f00f.org"
+	],
+	"messages": [
+		{
+			"sender": "uriel@berlinblue.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Aug 13, 2012 at 11:40 PM,  <andybalholm@gmail.com> wrote:\r\n> Pass the one remaining test in the test suite.\r\n\r\nAwesome! Thanks for all your great work!\r\n\r\nUriel\r\n\r\n\r\n> Please review this at http://codereview.appspot.com/6453114/\r\n>\r\n> Affected files:\r\n>   M src/pkg/exp/html/parse.go\r\n>   M src/pkg/exp/html/testlogs/webkit02.dat.log\r\n>\r\n>\r\n> Index: src/pkg/exp/html/parse.go\r\n> ===================================================================\r\n> --- a/src/pkg/exp/html/parse.go\r\n> +++ b/src/pkg/exp/html/parse.go\r\n> @@ -19,9 +19,8 @@\r\n>         tokenizer *Tokenizer\r\n>         // tok is the most recently read token.\r\n>         tok Token\r\n> -       // Self-closing tags like <hr/> are re-interpreted as a two-token\r\n> sequence:\r\n> -       // <hr> followed by </hr>. hasSelfClosingToken is true if we have\r\n> just read\r\n> -       // the synthetic start tag and the next one due is the matching end\r\n> tag.\r\n> +       // Self-closing tags like <hr/> are treated as start tags, except\r\n> that\r\n> +       // hasSelfClosingToken is set while they are being processed.\r\n>         hasSelfClosingToken bool\r\n>         // doc is the document root element.\r\n>         doc *Node\r\n> @@ -313,16 +312,6 @@\r\n>         })\r\n>  }\r\n>\r\n> -// addSyntheticElement adds a child element with the given tag and\r\n> attributes.\r\n> -func (p *parser) addSyntheticElement(tagAtom a.Atom, attr []Attribute) {\r\n> -       p.addChild(&Node{\r\n> -               Type:     ElementNode,\r\n> -               DataAtom: tagAtom,\r\n> -               Data:     tagAtom.String(),\r\n> -               Attr:     attr,\r\n> -       })\r\n> -}\r\n> -\r\n>  // Section 12.2.3.3.\r\n>  func (p *parser) addFormattingElement() {\r\n>         tagAtom, attr := p.tok.DataAtom, p.tok.Attr\r\n> @@ -935,22 +924,23 @@\r\n>                         }\r\n>                         p.acknowledgeSelfClosingTag()\r\n>                         p.popUntil(buttonScope, a.P)\r\n> -                       p.addSyntheticElement(a.Form, nil)\r\n> -                       p.form = p.top()\r\n> +                       p.parseImpliedToken(StartTagToken, a.Form,\r\n> a.Form.String())\r\n>                         if action != \"\" {\r\n>                                 p.form.Attr = []Attribute{{Key: \"action\",\r\n> Val: action}}\r\n>                         }\r\n> -                       p.addSyntheticElement(a.Hr, nil)\r\n> +                       p.parseImpliedToken(StartTagToken, a.Hr,\r\n> a.Hr.String())\r\n> +                       p.parseImpliedToken(StartTagToken, a.Label,\r\n> a.Label.String())\r\n> +                       p.addText(prompt)\r\n> +                       p.addChild(&Node{\r\n> +                               Type:     ElementNode,\r\n> +                               DataAtom: a.Input,\r\n> +                               Data:     a.Input.String(),\r\n> +                               Attr:     attr,\r\n> +                       })\r\n>                         p.oe.pop()\r\n> -                       p.addSyntheticElement(a.Label, nil)\r\n> -                       p.addText(prompt)\r\n> -                       p.addSyntheticElement(a.Input, attr)\r\n> -                       p.oe.pop()\r\n> -                       p.oe.pop()\r\n> -                       p.addSyntheticElement(a.Hr, nil)\r\n> -                       p.oe.pop()\r\n> -                       p.oe.pop()\r\n> -                       p.form = nil\r\n> +                       p.parseImpliedToken(EndTagToken, a.Label,\r\n> a.Label.String())\r\n> +                       p.parseImpliedToken(StartTagToken, a.Hr,\r\n> a.Hr.String())\r\n> +                       p.parseImpliedToken(EndTagToken, a.Form,\r\n> a.Form.String())\r\n>                 case a.Textarea:\r\n>                         p.addElement()\r\n>                         p.setOriginalIM()\r\n> @@ -1036,7 +1026,7 @@\r\n>                         p.oe.remove(node)\r\n>                 case a.P:\r\n>                         if !p.elementInScope(buttonScope, a.P) {\r\n> -                               p.addSyntheticElement(a.P, nil)\r\n> +                               p.parseImpliedToken(StartTagToken, a.P,\r\n> a.P.String())\r\n>                         }\r\n>                         p.popUntil(buttonScope, a.P)\r\n>                 case a.Li:\r\n> Index: src/pkg/exp/html/testlogs/webkit02.dat.log\r\n> ===================================================================\r\n> --- a/src/pkg/exp/html/testlogs/webkit02.dat.log\r\n> +++ b/src/pkg/exp/html/testlogs/webkit02.dat.log\r\n> @@ -9,5 +9,5 @@\r\n>  PASS \"<legend>test</legend>\"\r\n>  PASS \"<table><input>\"\r\n>  PASS\r\n> \"<b><em><dcell><postfield><postfield><postfield><postfield><missing_glyph><missing_glyph><missing_glyph><missing_glyph><hkern><aside></b></em>\"\r\n> -FAIL \"<isindex action=\\\"x\\\">\"\r\n> +PASS \"<isindex action=\\\"x\\\">\"\r\n>  PASS \"<option><XH<optgroup></optgroup>\"\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-08-14 03:04:36.385910",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 15 August 2012 12:01, Andy Balholm <andybalholm@gmail.com> wrote:\r\n> Well, should we get rid of the testlogs directory, since the only information it now contains is the fact that all tests pass? Or should we keep it around in case we need it for a revised test suite some day?\r\n\r\nI'm happy to remove testlogs and the corresponding parseTestResult\r\ncode in parser_test.go.\r\n",
+			"disapproval": false,
+			"date": "2012-08-15 04:51:45.281400",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"uriel@berlinblue.org",
+				"cw@f00f.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Pass the one remaining test in the test suite.\n\nThat is freakishly awesome.\n\nI'm super impressed and will gladly buy you beer :-)",
+			"disapproval": false,
+			"date": "2012-08-14 19:50:31.056480",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Aug 13, 2012, at 4:36 PM, nigeltao@golang.org wrote:\r\n> What's next, after the PARSE tests?\r\n\r\nWell, should we get rid of the testlogs directory, since the only information it now contains is the fact that all tests pass? Or should we keep it around in case we need it for a revised test suite some day?\r\n\r\nOn API changes, it seems to me that revising the tokenizer API so that the parser doesn't need to use a private interface would be a good idea. Then anyone who wants to use it will have its full power available. \r\n\r\nGo's visibility-by-capitalization rule makes it very simple to find the uses of private tokenizer APIs. I just searched for /tokenizer\\.[a-z]/ in Vim. It looks like the private APIs we need to deal with are rawTag and cdataOK.",
+			"disapproval": false,
+			"date": "2012-08-15 02:01:41.271080",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-08-13 21:40:33.245780",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\nWoot!\n\nWhat's next, after the PARSE tests?",
+			"disapproval": false,
+			"date": "2012-08-13 23:36:52.897990",
+			"approval": true
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\r\nOn Aug 13, 2012, at 4:36 PM, nigeltao@golang.org wrote:\r\n\r\n> LGTM.\r\n> \r\n> Woot!\r\n> \r\n> What's next, after the PARSE tests?\r\n\r\nWhatever we want to do to the API, I guess.\r\n",
+			"disapproval": false,
+			"date": "2012-08-13 23:37:38.761680",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=f1bf0abeff93 ***\n\nexp/html: generate replacement for <isindex> correctly\n\nWhen generating replacement elements for an <isindex> tag, the old\naddSyntheticElement method was producing the wrong nesting. Replace\nit with parseImpliedToken.\n\nPass the one remaining test in the test suite.\n\nR=nigeltao\nCC=golang-dev\nhttp://codereview.appspot.com/6453114\n\nCommitter: Nigel Tao <nigeltao@golang.org>",
+			"disapproval": false,
+			"date": "2012-08-13 23:53:20.440430",
+			"approval": false
+		}
+	],
+	"owner_email": "andybalholm@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "andybalholm",
+	"subject": "code review 6453114: exp/html: generate replacement for <isindex> correctly",
+	"created": "2012-08-13 21:39:57.968760",
+	"patchsets": [
+		1,
+		2001,
+		5001
+	],
+	"modified": "2012-08-15 00:05:07.020640",
+	"closed": true,
+	"issue": 6453114
+}

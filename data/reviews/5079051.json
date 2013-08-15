@@ -1,0 +1,133 @@
+{
+	"description": "graphics: rotate and scale (bilinear interpolation)",
+	"cc": [
+		"nigeltao@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://crawshaw%40google.com@code.google.com/p/graphics-go/",
+			"disapproval": false,
+			"date": "2011-09-23 03:40:24.025602",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Some general notes:\n\nThe idiomatic argument ordering is dst before src: the built-in copy function is like this, as is io.Copy, draw.Draw, and plain assignment: d = s.\n\nI would like the ability to operate on a sub-image of dst. For example, if rendering a web page with an <img>, I might want Scale to draw on only part of the screen image. There's no need to allocate and garbage-collect an intermediate pixel buffer.\n\nThus, I would make each function start with the same four parameters. Actually, it might be nice if all the ops had the same signature:\nfunc Blur(dst draw.Image, dr image.Rectangle, src image.Image, sr image.Rectangle, opts *Options)\nfunc Rotate(dst draw.Image, dr image.Rectangle, src image.Image, sr image.Rectangle, opts *Options)\nfunc Scale(dst draw.Image, dr image.Rectangle, src image.Image, sr image.Rectangle, opts *Options)\nThis would then look pretty similar to the image/draw package.\n\nMaybe not for this CL, but I also think it would be nice if we could work in integer math (i.e. uint32 or uint64) instead of float64 if possible. For example, http://code.google.com/p/freetype-go/source/browse/freetype/raster/geom.go demonstrates how to work with 24.8 and 48.16 fixed point numbers.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/Makefile\nFile graphics/Makefile (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/Makefile#newcode10\ngraphics/Makefile:10: scale.go\\\nSort this list.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/Makefile#newcode12\ngraphics/Makefile:12: bilinear_interpolate.go\\\nThere's no need to be so wordy. Just call the file bilinear.go.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/bilinear_interpolate.go\nFile graphics/bilinear_interpolate.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/bilinear_interpolate.go#newcode18\ngraphics/bilinear_interpolate.go:18: func binterpRGBA(src *image.RGBA, posx, posy float64, dst *image.RGBA, x, y int) {\nIf you're only going to work with RGBA internally, just call the func binterp (and rename blurRGBA to blur, etc).\n\nAlso, rename posx, posy to sx, sy.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/bilinear_interpolate.go#newcode44\ngraphics/bilinear_interpolate.go:44: lowerLeftOff := offRGBA(lowX, lowY, src)\nThese variable names are pretty wordy. I'd just say:\n\n// In the variables below, the {t,b,l,r} prefix means top, bottom,\n// left and right.\nblOff := etc\nbrOff := etc\netc\nblX := etc\nblY := etc\netc\nblPortion := etc\netc\n\nOr\n\n// In the variables below, the 0 suffix indicates top/left, and the\n// 1 suffix indicates bottom/right.\noff00 := etc\noff01 := etc\netc\nx00 := etc\ny00 := etc\netc\nportion00 := etc\netc\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/rotate.go\nFile graphics/rotate.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/rotate.go#newcode32\ngraphics/rotate.go:32: lx := ldx*math.Cos(angle) - ldy*math.Sin(angle)\nHoist the cos and sin call outside of the inner loop.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/rotate.go#newcode54\ngraphics/rotate.go:54: // Angle is the angle, in radians to rotate the image.\nSpecify \"anti-clockwise\", but actually I would have expected clockwise. The y-axis points down, and I would expect rotating the x-axis by Pi/2 would become the y-axis.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/scale.go\nFile graphics/scale.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/scale.go#newcode29\ngraphics/scale.go:29: // Scale prodcues a scaled versino of the image using bilinear interpolation.\nTypo in \"produces\" and in \"version\".\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/scale_test.go\nFile graphics/scale_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/scale_test.go#newcode22\ngraphics/scale_test.go:22: 0x00, 0x80},\nInsert a comma and a new-line before the \"}\".\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/shared_test.go\nFile graphics/shared_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/shared_test.go#newcode17\ngraphics/shared_test.go:17: srcWidth  int\nThe usual Go ordering is dst before src. Same at line 46.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/shared_test.go#newcode26\ngraphics/shared_test.go:26: func mkTransformTestSrc(oc *transformOneColorTest) *image.RGBA {\nThe function name becomes much easier if it's a method:\nfunc (oc *transformOneColorTest) src() *image.RGBA\n\nAlso, this would be much easier if you simply made an image.Alpha:\n\nfunc (oc *transformOneColorTest) src() image.Image {\n  m := image.NewAlpha(image.Rect(0, 0, oc.srcWidth, oc.srcHeight))\n  copy(m.Pix, oc.src)\n  return m\n}\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/shared_test.go#newcode97\ngraphics/shared_test.go:97: func imageWithinTolerance(i0, i1 image.Image, t int) os.Error {\nI usually use m0 and m1 for image variables, and i0 and i1 for int variables.",
+			"disapproval": false,
+			"date": "2011-09-25 04:53:16.370397",
+			"approval": false
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thank you for the review!\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go\nFile graphics/shared_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go#newcode103\ngraphics/shared_test.go:103: return os.NewError(fmt.Sprintf(\"bounds got %v want %v\", b, bm1))\nOn 2011/09/27 02:39:29, nigeltao wrote:\n> On 2011/09/27 01:16:16, crawshaw1 wrote:\n> > On 2011/09/26 06:08:08, nigeltao wrote:\n> > > return fmt.Errorf(\"got bounds %v want %v\", b, bm1)\n> > > \n> > > Similarly at line 111.\n> > \n> > Done.\n> \n> Not done.\n\nThanks for double checking. It's done in my client, I think something went wrong with my hg upload.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/bilinear.go\nFile graphics/bilinear.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/bilinear.go#newcode13\ngraphics/bilinear.go:13: func offRGBA(x, y float64, src *image.RGBA) int {\nOn 2011/09/27 02:39:29, nigeltao wrote:\n> I'd order the arguments: src, x, y.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/bilinear.go#newcode89\ngraphics/bilinear.go:89: frac01 = (sx - (x00)) * (y11 - sy)\nOn 2011/09/27 02:39:29, nigeltao wrote:\n> Drop the ()s around x00, and similarly below for y00, x10 and y01.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/blur_test.go\nFile graphics/blur_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/blur_test.go#newcode129\ngraphics/blur_test.go:129: src := oc.newSrc()\nOn 2011/09/27 02:39:29, nigeltao wrote:\n> I'd swap the two lines around: dst before src.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/scale.go\nFile graphics/scale.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/scale.go#newcode22\ngraphics/scale.go:22: posx := (float64(x) + 0.5) * xratio\nOn 2011/09/27 02:39:29, nigeltao wrote:\n> sx, sy.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/scale_test.go\nFile graphics/scale_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/scale_test.go#newcode93\ngraphics/scale_test.go:93: src := oc.newSrc()\nOn 2011/09/27 02:39:29, nigeltao wrote:\n> I'd swap the two lines around: dst before src.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-27 03:23:33.700392",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go\nFile graphics/shared_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go#newcode103\ngraphics/shared_test.go:103: return os.NewError(fmt.Sprintf(\"bounds got %v want %v\", b, bm1))\nOn 2011/09/27 01:16:16, crawshaw1 wrote:\n> On 2011/09/26 06:08:08, nigeltao wrote:\n> > return fmt.Errorf(\"got bounds %v want %v\", b, bm1)\n> > \n> > Similarly at line 111.\n> \n> Done.\n\nNot done.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/bilinear.go\nFile graphics/bilinear.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/bilinear.go#newcode13\ngraphics/bilinear.go:13: func offRGBA(x, y float64, src *image.RGBA) int {\nI'd order the arguments: src, x, y.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/bilinear.go#newcode89\ngraphics/bilinear.go:89: frac01 = (sx - (x00)) * (y11 - sy)\nDrop the ()s around x00, and similarly below for y00, x10 and y01.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/blur_test.go\nFile graphics/blur_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/blur_test.go#newcode129\ngraphics/blur_test.go:129: src := oc.newSrc()\nI'd swap the two lines around: dst before src.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/scale.go\nFile graphics/scale.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/scale.go#newcode22\ngraphics/scale.go:22: posx := (float64(x) + 0.5) * xratio\nsx, sy.\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/scale_test.go\nFile graphics/scale_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/40008/graphics/scale_test.go#newcode93\ngraphics/scale_test.go:93: src := oc.newSrc()\nI'd swap the two lines around: dst before src.",
+			"disapproval": false,
+			"date": "2011-09-27 02:39:29.447020",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I'd still like to see rectangles as part of the API, but I need to think about it, and we can check this in while we have that discussion.\n\nNote: the standard image package spells gray with an \"a\", not an \"e\".\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/Makefile\nFile graphics/Makefile (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/Makefile#newcode11\ngraphics/Makefile:11: convolve.go\\\nDid you \"hg add convolve.go\", or are you saving that for a follow-up CL?\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/bilinear.go\nFile graphics/bilinear.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/bilinear.go#newcode18\ngraphics/bilinear.go:18: func binterpRGBA(src *image.RGBA, sx, sy float64, dst *image.RGBA, x, y int) {\ndst before src.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/bilinear.go#newcode120\ngraphics/bilinear.go:120: dst.Pix[off+0] = uint8(math.Fmin(255.0, r) + 0.5)\nI suspect that you don't need the math.Fmin call. It was there in the original check-in because of the kernelSum bug, but I think that if the inputs are in [0, 255] then the outputs should also be.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/rotate.go\nFile graphics/rotate.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/rotate.go#newcode21\ngraphics/rotate.go:21: cosAngle := math.Cos(angle)\nGo names usually aren't so long. I'd just write\ncos, sin := math.Cos(angle), math.Sin(angle)\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/rotate.go#newcode34\ngraphics/rotate.go:34: //lx := ldx*cosAngle - ldy*sinAngle\nDelete the commented-out code.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/rotate.go#newcode40\ngraphics/rotate.go:40: posx := lx + srcCenterX\nAgain, I'd s/posx/sx/.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/scale_test.go\nFile graphics/scale_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/scale_test.go#newcode5\ngraphics/scale_test.go:5: package graphics_test\nI forgot to say earlier: this doesn't have to be a separate package. Just say \"package graphics\", drop the import at line 11, and change the \"graphics.Scale\" call at line 114 to just \"Scale\". Similarly at line 128 and in the other _test.go files.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go\nFile graphics/shared_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go#newcode36\ngraphics/shared_test.go:36: A: oc.src[i]})\nInsert a \",\\n\" before the \"}\".\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go#newcode99\ngraphics/shared_test.go:99: b := m0.Bounds()\nI'd call them b0 and b1, to mirror m0 and m1, and c0 and c1.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go#newcode103\ngraphics/shared_test.go:103: return os.NewError(fmt.Sprintf(\"bounds got %v want %v\", b, bm1))\nreturn fmt.Errorf(\"got bounds %v want %v\", b, bm1)\n\nSimilarly at line 111.",
+			"disapproval": false,
+			"date": "2011-09-26 06:08:08.127642",
+			"approval": false
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> The idiomatic argument ordering is dst before src: the built-in copy function is\n> like this, as is io.Copy, draw.Draw, and plain assignment: d = s.\n\nDone.\n\n> I would like the ability to operate on a sub-image of dst. For example, if\n> rendering a web page with an <img>, I might want Scale to draw on only part of\n> the screen image. There's no need to allocate and garbage-collect an\n> intermediate pixel buffer.\n> \n> Thus, I would make each function start with the same four parameters. Actually,\n> it might be nice if all the ops had the same signature:\n> func Blur(dst draw.Image, dr image.Rectangle, src image.Image, sr\n> image.Rectangle, opts *Options)\n> func Rotate(dst draw.Image, dr image.Rectangle, src image.Image, sr\n> image.Rectangle, opts *Options)\n> func Scale(dst draw.Image, dr image.Rectangle, src image.Image, sr\n> image.Rectangle, opts *Options)\n> This would then look pretty similar to the image/draw package.\n\nCan we simplify this problem with image slices? I.e.\n\nfunc SubImage(m image.Image, r image.Rectangle) image.Image {\n  switch m1 := m.(type) {\n    case image.RGBA: return m1.SubImage(r)\n    ...\n  }\n}\nfunc DrawSubImage ...\n\nfunc ScaleRect(dst draw.Image, dr image.Rectangle, src image.Image, sr image.Rectangle) {\n  Scale(DrawSubImage(dst, dr), SubImage(src, sr))\n}\n\nThe image and draw packages don't offer image slices over the generic interface, but they could.\n\nOn Options: how could I get to a place where all of these functions share a signature? They take different options.\n\n> Maybe not for this CL, but I also think it would be nice if we could work in\n> integer math (i.e. uint32 or uint64) instead of float64 if possible. For\n> example,\n> http://code.google.com/p/freetype-go/source/browse/freetype/raster/geom.go\n> demonstrates how to work with 24.8 and 48.16 fixed point numbers.\n\nThanks for the link. My current TODO list:\n\n1. Convolve(dst, src Image, k Kernel) / ConvolveSep\n2. Some useful convolution-based operators (e.g. Sobel)\n2. Less floats\n3. Grey support\n4. AdaBoost-based boundary/object detection\n\nSo I'll get to fixed point numbers in a couple of weeks at my current weekend pace.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/Makefile\nFile graphics/Makefile (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/Makefile#newcode10\ngraphics/Makefile:10: scale.go\\\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> Sort this list.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/Makefile#newcode12\ngraphics/Makefile:12: bilinear_interpolate.go\\\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> There's no need to be so wordy. Just call the file bilinear.go.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/bilinear_interpolate.go\nFile graphics/bilinear_interpolate.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/bilinear_interpolate.go#newcode18\ngraphics/bilinear_interpolate.go:18: func binterpRGBA(src *image.RGBA, posx, posy float64, dst *image.RGBA, x, y int) {\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> If you're only going to work with RGBA internally, just call the func binterp\n> (and rename blurRGBA to blur, etc).\n\nI do plan to add other versions (in the near future, greyscale).\n\n> Also, rename posx, posy to sx, sy.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/bilinear_interpolate.go#newcode44\ngraphics/bilinear_interpolate.go:44: lowerLeftOff := offRGBA(lowX, lowY, src)\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> These variable names are pretty wordy. I'd just say:\n> \n> // In the variables below, the {t,b,l,r} prefix means top, bottom,\n> // left and right.\n> blOff := etc\n> brOff := etc\n> etc\n> blX := etc\n> blY := etc\n> etc\n> blPortion := etc\n> etc\n> \n> Or\n> \n> // In the variables below, the 0 suffix indicates top/left, and the\n> // 1 suffix indicates bottom/right.\n> off00 := etc\n> off01 := etc\n> etc\n> x00 := etc\n> y00 := etc\n> etc\n> portion00 := etc\n> etc\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/rotate.go\nFile graphics/rotate.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/rotate.go#newcode32\ngraphics/rotate.go:32: lx := ldx*math.Cos(angle) - ldy*math.Sin(angle)\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> Hoist the cos and sin call outside of the inner loop.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/rotate.go#newcode54\ngraphics/rotate.go:54: // Angle is the angle, in radians to rotate the image.\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> Specify \"anti-clockwise\", but actually I would have expected clockwise. The\n> y-axis points down, and I would expect rotating the x-axis by Pi/2 would become\n> the y-axis.\n\nSound. I changed the direction of rotation.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/scale.go\nFile graphics/scale.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/scale.go#newcode29\ngraphics/scale.go:29: // Scale prodcues a scaled versino of the image using bilinear interpolation.\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> Typo in \"produces\" and in \"version\".\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/scale_test.go\nFile graphics/scale_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/scale_test.go#newcode22\ngraphics/scale_test.go:22: 0x00, 0x80},\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> Insert a comma and a new-line before the \"}\".\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/shared_test.go\nFile graphics/shared_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/shared_test.go#newcode17\ngraphics/shared_test.go:17: srcWidth  int\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> The usual Go ordering is dst before src. Same at line 46.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/shared_test.go#newcode26\ngraphics/shared_test.go:26: func mkTransformTestSrc(oc *transformOneColorTest) *image.RGBA {\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> The function name becomes much easier if it's a method:\n> func (oc *transformOneColorTest) src() *image.RGBA\n\nNice! Done.\n\n> Also, this would be much easier if you simply made an image.Alpha:\n> \n> func (oc *transformOneColorTest) src() image.Image {\n>   m := image.NewAlpha(image.Rect(0, 0, oc.srcWidth, oc.srcHeight))\n>   copy(m.Pix, oc.src)\n>   return m\n> }\n\nTried this, but I need to convert back to RGBA for checkTransformTest which means importing draw and doing another copy. Not convinced the code came out simpler.\n\nhttp://codereview.appspot.com/5079051/diff/17001/graphics/shared_test.go#newcode97\ngraphics/shared_test.go:97: func imageWithinTolerance(i0, i1 image.Image, t int) os.Error {\nOn 2011/09/25 04:53:16, nigeltao wrote:\n> I usually use m0 and m1 for image variables, and i0 and i1 for int variables.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-25 16:28:18.587562",
+			"approval": false
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as ec7c1e01e3e8 ***\n\ngraphics: rotate and scale (bilinear interpolation)\n\nR=nigeltao\nCC=golang-dev\nhttp://codereview.appspot.com/5079051",
+			"disapproval": false,
+			"date": "2011-09-27 03:25:07.024251",
+			"approval": false
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5079051/diff/32002/graphics/Makefile\nFile graphics/Makefile (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/Makefile#newcode11\ngraphics/Makefile:11: convolve.go\\\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> Did you \"hg add convolve.go\", or are you saving that for a follow-up CL?\n\nLater. Removed.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/bilinear.go\nFile graphics/bilinear.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/bilinear.go#newcode18\ngraphics/bilinear.go:18: func binterpRGBA(src *image.RGBA, sx, sy float64, dst *image.RGBA, x, y int) {\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> dst before src.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/bilinear.go#newcode120\ngraphics/bilinear.go:120: dst.Pix[off+0] = uint8(math.Fmin(255.0, r) + 0.5)\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> I suspect that you don't need the math.Fmin call. It was there in the original\n> check-in because of the kernelSum bug, but I think that if the inputs are in [0,\n> 255] then the outputs should also be.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/rotate.go\nFile graphics/rotate.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/rotate.go#newcode21\ngraphics/rotate.go:21: cosAngle := math.Cos(angle)\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> Go names usually aren't so long. I'd just write\n> cos, sin := math.Cos(angle), math.Sin(angle)\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/rotate.go#newcode34\ngraphics/rotate.go:34: //lx := ldx*cosAngle - ldy*sinAngle\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> Delete the commented-out code.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/rotate.go#newcode40\ngraphics/rotate.go:40: posx := lx + srcCenterX\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> Again, I'd s/posx/sx/.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/scale_test.go\nFile graphics/scale_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/scale_test.go#newcode5\ngraphics/scale_test.go:5: package graphics_test\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> I forgot to say earlier: this doesn't have to be a separate package. Just say\n> \"package graphics\", drop the import at line 11, and change the \"graphics.Scale\"\n> call at line 114 to just \"Scale\". Similarly at line 128 and in the other\n> _test.go files.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go\nFile graphics/shared_test.go (right):\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go#newcode36\ngraphics/shared_test.go:36: A: oc.src[i]})\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> Insert a \",\\n\" before the \"}\".\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go#newcode99\ngraphics/shared_test.go:99: b := m0.Bounds()\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> I'd call them b0 and b1, to mirror m0 and m1, and c0 and c1.\n\nDone.\n\nhttp://codereview.appspot.com/5079051/diff/32002/graphics/shared_test.go#newcode103\ngraphics/shared_test.go:103: return os.NewError(fmt.Sprintf(\"bounds got %v want %v\", b, bm1))\nOn 2011/09/26 06:08:08, nigeltao wrote:\n> return fmt.Errorf(\"got bounds %v want %v\", b, bm1)\n> \n> Similarly at line 111.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-27 01:16:16.712948",
+			"approval": false
+		}
+	],
+	"owner_email": "crawshaw@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "crawshaw1",
+	"subject": "code review 5079051: graphics: rotate and scale (bilinear interpolation)",
+	"created": "2011-09-23 03:35:59.784268",
+	"patchsets": [
+		1,
+		2001,
+		17001,
+		30001,
+		32002,
+		40008,
+		31006,
+		34007
+	],
+	"modified": "2011-09-27 03:25:08.479481",
+	"closed": true,
+	"issue": 5079051
+}

@@ -1,0 +1,269 @@
+{
+	"description": "crypto/x509: reject IP address in VerifyHostname\n\nNew dependency: x509 depends on net for checking whether the\nhost name is in the form of a valid IP address. Since the primary\nclient of x509 is crypto/tls, and the latter already depends on net,\nno big change.\n\nFixes issue 4658.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"agl@golang.org",
+		"bradfitz@golang.org",
+		"mikioh.mikioh@gmail.com",
+		"richmoore44@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 4, 2013 at 6:40 PM,  <mikioh.mikioh@gmail.com> wrote:\r\n> I'm a bit confused. Are you guys talking about:\r\n> Subject Alternative Names for SSL or\r\n\r\nSubject Alternative Names only :)\r\n\r\n\r\nCheers\r\n\r\nAGL\r\n",
+			"disapproval": false,
+			"date": "2013-02-04 23:42:47.554530",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Too bad this breaks net/http's tests:\r\n\r\n--- FAIL: TestClientWithCorrectTLSServerName (0.02 seconds)\r\nclient_test.go:625: expected successful TLS connection, got error: Get\r\nhttps://127.0.0.1:65091: certificate is valid for 127.0.0.1, [::1], not\r\n127.0.0.1\r\nFAIL\r\nFAIL net/http 4.095s\r\n\r\nI assume the http test is depending on exactly the bug we're trying to kill?\r\n",
+			"disapproval": false,
+			"date": "2013-02-04 05:18:39.134080",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This change is probably the right thing to do - although perhaps we should add IP SAN support in the same change.\n\nAlthough, as Brad notes, the bug was only against matching IP addresses against wildcards. i.e. 1.2.3.4 shouldn't match against *.2.3.4.\n\nIf you're thinking \"WTF are IP SANs?\" then I'm happy to take over this bug.",
+			"disapproval": false,
+			"date": "2013-02-04 20:17:44.412770",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm a bit confused. Are you guys talking about: \nSubject Alternative Names for SSL or\nStorage Area Networks or\nboth?",
+			"disapproval": false,
+			"date": "2013-02-04 23:40:44.508280",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello agl1 (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-02-04 05:08:39.787340",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Sun, Feb 3, 2013 at 9:08 PM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: agl1,\r\n>\r\n> Message:\r\n> Hello agl1 (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> crypto/x509: reject IP address in VerifyHostname\r\n>\r\n> New dependency: x509 depends on net for checking whether the\r\n> host name is in the form of a valid IP address. Since the primary\r\n> client of x509 is crypto/tls, and the latter already depends on net,\r\n> no big change.\r\n>\r\n> Fixes issue 4658.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7277051/<https://codereview.appspot.com/7277051/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/crypto/x509/verify.go\r\n>   M src/pkg/crypto/x509/x509_test.**go\r\n>   M src/pkg/go/build/deps_test.go\r\n>\r\n>\r\n> Index: src/pkg/crypto/x509/verify.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/x509/verify.**go\r\n> +++ b/src/pkg/crypto/x509/verify.**go\r\n> @@ -5,6 +5,7 @@\r\n>  package x509\r\n>\r\n>  import (\r\n> +       \"net\"\r\n>         \"runtime\"\r\n>         \"strings\"\r\n>         \"time\"\r\n> @@ -334,6 +335,13 @@\r\n>  // VerifyHostname returns nil if c is a valid certificate for the named\r\n> host.\r\n>  // Otherwise it returns an error describing the mismatch.\r\n>  func (c *Certificate) VerifyHostname(h string) error {\r\n> +       ip := net.ParseIP(h)\r\n> +       if ip != nil {\r\n> +               // IP addresses must not be matched against DNS names.\r\n> +               // See issue 4658.\r\n> +               return HostnameError{c, h}\r\n> +       }\r\n> +\r\n>         lowered := toLowerCaseASCII(h)\r\n>\r\n>         if len(c.DNSNames) > 0 {\r\n> Index: src/pkg/crypto/x509/x509_test.**go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/x509/x509_**test.go\r\n> +++ b/src/pkg/crypto/x509/x509_**test.go\r\n> @@ -174,6 +174,33 @@\r\n>         }\r\n>  }\r\n>\r\n> +func TestMatchIP(t *testing.T) {\r\n> +       // Check that pattern matching is working.\r\n> +       c := &Certificate{\r\n> +               DNSNames: []string{\"*.foo.bar.baz\"},\r\n> +               Subject: pkix.Name{\r\n> +                       CommonName: \"*.foo.bar.baz\",\r\n> +               },\r\n> +       }\r\n> +       err := c.VerifyHostname(\"quux.foo.**bar.baz\")\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"VerifyHostname(quux.**foo.bar.baz): %v\", err)\r\n> +       }\r\n> +\r\n> +       // But check that if we change it to be matching against an IP\r\n> address,\r\n> +       // it is rejected.\r\n> +       c = &Certificate{\r\n> +               DNSNames: []string{\"*.2.3.4\"},\r\n> +               Subject: pkix.Name{\r\n> +                       CommonName: \"*.2.3.4\",\r\n> +               },\r\n> +       }\r\n> +       err = c.VerifyHostname(\"1.2.3.4\")\r\n> +       if err == nil {\r\n> +               t.Fatalf(\"VerifyHostname(1.2.**3.4) should have failed,\r\n> did not\")\r\n> +       }\r\n> +}\r\n> +\r\n>  func TestCertificateParse(t *testing.T) {\r\n>         s, _ := hex.DecodeString(certBytes)\r\n>         certs, err := ParseCertificates(s)\r\n> Index: src/pkg/go/build/deps_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/go/build/deps_test.**go\r\n> +++ b/src/pkg/go/build/deps_test.**go\r\n> @@ -306,7 +306,7 @@\r\n>         },\r\n>         \"crypto/x509\": {\r\n>                 \"L4\", \"CRYPTO-MATH\", \"OS\", \"CGO\",\r\n> -               \"crypto/x509/pkix\", \"encoding/pem\", \"encoding/hex\",\r\n> \"syscall\",\r\n> +               \"crypto/x509/pkix\", \"encoding/pem\", \"encoding/hex\", \"net\",\r\n> \"syscall\",\r\n>         },\r\n>         \"crypto/x509/pkix\": {\"L4\", \"CRYPTO-MATH\"},\r\n>\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-04 05:12:39.462630",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The net/http/httptest certificate IIRC has a subject of \"127.0.0.1\".\r\n\r\nI thought this bug was only about not matching *wildcards* against IP\r\naddresses.\r\n\r\nIn this failing net/http test, no wildcard is involved.\r\n\r\n\r\nOn Sun, Feb 3, 2013 at 9:18 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Too bad this breaks net/http's tests:\r\n>\r\n> --- FAIL: TestClientWithCorrectTLSServerName (0.02 seconds)\r\n> client_test.go:625: expected successful TLS connection, got error: Get\r\n> https://127.0.0.1:65091: certificate is valid for 127.0.0.1, [::1], not\r\n> 127.0.0.1\r\n> FAIL\r\n> FAIL net/http 4.095s\r\n>\r\n> I assume the http test is depending on exactly the bug we're trying to\r\n> kill?\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-04 05:21:35.293270",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 4, 2013 at 12:17 PM, <agl@golang.org> wrote:\r\n\r\n> This change is probably the right thing to do - although perhaps we\r\n> should add IP SAN support in the same change.\r\n>\r\n> Although, as Brad notes, the bug was only against matching IP addresses\r\n> against wildcards. i.e. 1.2.3.4 shouldn't match against *.2.3.4.\r\n>\r\n> If you're thinking \"WTF are IP SANs?\" then I'm happy to take over this\r\n> bug.\r\n>\r\n\r\nAs long as that doesn't involve a new iSCSI implementation in the standard\r\nlibrary.\r\n",
+			"disapproval": false,
+			"date": "2013-02-04 20:46:25.564890",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's all yours if you have time.\r\n\r\nThanks.\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-02-05 01:36:07.793820",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On second thoughts, I like this change and think it should be submitted as is.\n\nThe reason that I hesitated is that some people actually have certificates for IP addresses, as silly as that is. However, the CAs should be phasing that out and there are plenty of other corners of X.509 that we omit for sanity's sake. I'm happy with this being one of them.",
+			"disapproval": false,
+			"date": "2013-02-11 19:42:11.901640",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "That's what I thought \"we\" were going to do too, but agl changed his mind.\r\n I don't claim to understand the pros and cons to either approach.\r\n\r\nOn Tue, Feb 12, 2013 at 9:26 AM, <richmoore44@gmail.com> wrote:\r\n\r\n> I'd suggest you take the approach of allowing IP addresses in DNS\r\n> subject alternative names, but disallowing wildcards if the user has\r\n> asked to connect an IP address rather than a domainname. This is the\r\n> approach other people have taken to fixing the issue. It is still common\r\n> to see certificates with IP addresses in the subjectAltNames when\r\n> looking at certificates automatically generated by firewalls etc.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7277051/<https://codereview.appspot.com/7277051/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-12 17:47:35.111500",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"richmoore44@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/02/12 19:04:01, agl1 wrote:\n\n> In light of that, supporting IP SANs seems like the best approach and I'll do that.\n\nyay!",
+			"disapproval": false,
+			"date": "2013-02-12 23:56:29.854740",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It can't be submitted as-is, as it breaks the net/http tests, since\r\nnet/http/httptest relies on certs for IP addresses (127.0.0.1).\r\n\r\nWhat do you propose?\r\n\r\n\r\nOn Mon, Feb 11, 2013 at 11:42 AM, <agl@golang.org> wrote:\r\n\r\n> On second thoughts, I like this change and think it should be submitted\r\n> as is.\r\n>\r\n> The reason that I hesitated is that some people actually have\r\n> certificates for IP addresses, as silly as that is. However, the CAs\r\n> should be phasing that out and there are plenty of other corners of\r\n> X.509 that we omit for sanity's sake. I'm happy with this being one of\r\n> them.\r\n>\r\n> https://codereview.appspot.**com/7277051/<https://codereview.appspot.com/7277051/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-11 19:44:07.172210",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 11, 2013 at 2:44 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> It can't be submitted as-is, as it breaks the net/http tests, since\r\n> net/http/httptest relies on certs for IP addresses (127.0.0.1).\r\n\r\nOh nuts, missed that.\r\n\r\nCan we depend on \"localhost\" working in Go tests?\r\n\r\n\r\nCheers\r\n\r\nAGL\r\n",
+			"disapproval": false,
+			"date": "2013-02-11 20:29:56.439760",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 11, 2013 at 12:29 PM, Adam Langley <agl@golang.org> wrote:\r\n\r\n> On Mon, Feb 11, 2013 at 2:44 PM, Brad Fitzpatrick <bradfitz@golang.org>\r\n> wrote:\r\n> > It can't be submitted as-is, as it breaks the net/http tests, since\r\n> > net/http/httptest relies on certs for IP addresses (127.0.0.1).\r\n>\r\n> Oh nuts, missed that.\r\n>\r\n> Can we depend on \"localhost\" working in Go tests?\r\n>\r\n\r\nNo.  But we could fake the http.Transport.Dialer to special-case \"DNS\" for\r\na name.  But if we do that, I'd rather be explicit and make that magic name\r\nand magic cert be for \"go-test-suite.example.com\", rather than \"localhost\",\r\nto root out tests accidentally getting away with \"localhost\".\r\n",
+			"disapproval": false,
+			"date": "2013-02-11 20:32:20.154820",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 11, 2013 at 12:32 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n>\r\n>\r\n> On Mon, Feb 11, 2013 at 12:29 PM, Adam Langley <agl@golang.org> wrote:\r\n>\r\n>> On Mon, Feb 11, 2013 at 2:44 PM, Brad Fitzpatrick <bradfitz@golang.org>\r\n>> wrote:\r\n>> > It can't be submitted as-is, as it breaks the net/http tests, since\r\n>> > net/http/httptest relies on certs for IP addresses (127.0.0.1).\r\n>>\r\n>> Oh nuts, missed that.\r\n>>\r\n>> Can we depend on \"localhost\" working in Go tests?\r\n>>\r\n>\r\n> No.  But we could fake the http.Transport.Dialer to special-case \"DNS\" for\r\n> a name.  But if we do that, I'd rather be explicit and make that magic name\r\n> and magic cert be for \"go-test-suite.example.com\", rather than\r\n> \"localhost\", to root out tests accidentally getting away with \"localhost\".\r\n>\r\n\r\nI've created  https://codereview.appspot.com/7307098 for this approach, but\r\nit doesn't yet work.  A couple tests fail with:\r\n\r\n--- FAIL: TestClientWithCorrectTLSServerName (0.06 seconds)\r\nclient_test.go:607: expected successful TLS connection, got error: Get\r\nhttps://go-local-test: x509: certificate signed by unknown authority\r\n--- FAIL: TestNextProtoUpgrade (0.06 seconds)\r\nnpn_test.go:49: Get https://go-local-test: x509: certificate signed by\r\nunknown authority\r\n--- FAIL: TestTLSServer (0.05 seconds)\r\nserve_test.go:695: Get https://go-local-test: x509: certificate signed by\r\nunknown authority\r\n\r\nMaybe I generated the cert wrong?  I want it to be self-signed.  I added\r\nthat cert to the RootCAs list as used by the Transport.\r\n\r\nAny clues?\r\n",
+			"disapproval": false,
+			"date": "2013-02-12 01:49:14.600770",
+			"approval": false
+		},
+		{
+			"sender": "richmoore44@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"richmoore44@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'd suggest you take the approach of allowing IP addresses in DNS subject alternative names, but disallowing wildcards if the user has asked to connect an IP address rather than a domainname. This is the approach other people have taken to fixing the issue. It is still common to see certificates with IP addresses in the subjectAltNames when looking at certificates automatically generated by firewalls etc.",
+			"disapproval": false,
+			"date": "2013-02-12 17:26:21.099000",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Feb 12, 2013 at 12:47 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> That's what I thought \"we\" were going to do too, but agl changed his mind.\r\n> I don't claim to understand the pros and cons to either approach.\r\n\r\nI didn't know that the http tests would be a problem. In light of\r\nthat, supporting IP SANs seems like the best approach and I'll do\r\nthat.\r\n\r\n\r\nCheers\r\n\r\nAGL\r\n",
+			"disapproval": false,
+			"date": "2013-02-12 19:04:01.902600",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"richmoore44@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This can be closed now.",
+			"disapproval": false,
+			"date": "2013-02-24 19:04:29.669110",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"richmoore44@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Discarded by hand.",
+			"disapproval": false,
+			"date": "2013-02-25 22:01:27.771740",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 7277051: crypto/x509: reject IP address in VerifyHostname",
+	"created": "2013-02-04 05:07:42.670330",
+	"patchsets": [
+		1,
+		2001,
+		4001
+	],
+	"modified": "2013-02-25 22:01:27.861590",
+	"closed": true,
+	"issue": 7277051
+}

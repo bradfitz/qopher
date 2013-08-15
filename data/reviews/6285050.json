@@ -1,0 +1,258 @@
+{
+	"description": "fmt, encoding/gob: fix misuse of Read\nreader.Read() can return both 0,nil and len(buf),err.\nTo be safe, we use io.ReadFull instead of doing reader.Read directly.\n\nFixes issue 3472.",
+	"cc": [
+		"bradfitz@golang.org",
+		"rsc@golang.org",
+		"ality@pbrane.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7ea3674ce4b5 ***\n\nfmt, encoding/gob: fix misuse of Read\nreader.Read() can return both 0,nil and len(buf),err.\nTo be safe, we use io.ReadFull instead of doing reader.Read directly.\n\nFixes issue 3472.\n\nR=bradfitz, rsc, ality\nCC=golang-dev\nhttps://codereview.appspot.com/6285050",
+			"disapproval": false,
+			"date": "2012-12-17 17:27:04.954940",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please change this code to use io.ReadFull. Then at least we can get\r\nthis CL behind us. The other issue remains open.\r\n\r\nThanks.\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-12-17 16:17:23.356520",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\r\n\r\nOn Fri, Dec 14, 2012 at 12:15 AM, <rsc@golang.org> wrote:\r\n\r\n> https://codereview.appspot.**com/6285050/diff/11002/src/**\r\n> pkg/encoding/gob/decode.go#**newcode66<https://codereview.appspot.com/6285050/diff/11002/src/pkg/encoding/gob/decode.go#newcode66>\r\n> src/pkg/encoding/gob/decode.**go:66: if n < 1 {\r\n> You can just use\r\n>\r\n> if n == 0 {\r\n>     return\r\n> }\r\n>\r\n> The only goal is to avoid bailing when we get n==1, err != nil.\r\n>\r\n> <https://codereview.appspot.com/6285050/diff/11002/src/pkg/fmt/scan.go#newcode341>\r\n>\r\n\r\n\r\n> https://codereview.appspot.**com/6285050/diff/11002/src/**\r\n> pkg/fmt/scan.go#newcode341<https://codereview.appspot.com/6285050/diff/11002/src/pkg/fmt/scan.go#newcode341>\r\n> src/pkg/fmt/scan.go:341: if n == 1 {\r\n> Same here: if n == 1 { err = nil }\r\n> is all you need.\r\n>\r\nSo we choose to not handle the 0, nil case?\r\nIf we can't find a way to deal with that case, can we say that Read\r\nshouldn't return 0, nil\r\nas imo it will break most of the code.\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 16:25:58.121970",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 13, 2012 at 3:25 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> What does a UDP socket have to do with this?\r\n\r\nThe readers that can return 0, nil are ones modeling a packet-based\r\ninput stream, such as UDP datagrams.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 20:30:50.123200",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks.",
+			"disapproval": false,
+			"date": "2012-12-17 17:01:32.347780",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I need to think more about all this but I don't have any uninterrupted\r\nchunks of time today. Issue 4544 reminds me to do that later. :-)\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 20:40:24.561960",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Dec 14, 2012 at 12:16 AM, minux <minux.ma@gmail.com> wrote:\r\n\r\n> ReadFull has its own problems dealing with \"naughty\" io.Readers.\r\n\r\nconsider a reader r which returns len(buf), err\r\nbut err != io.EOF\r\n\r\nshould io.ReadFull(r, buf) return an error or not?\r\n\r\nI tried to fix ReadFull by not returning the error if Read already\r\nfills the buf, however, at least one test failed.\r\n\r\n--- FAIL: TestDecoderIssue3577 (5.00 seconds)\r\nbase64_test.go:275:     timeout; Decoder blocked without returning an error\r\nFAIL\r\n\r\nmaybe we should note for ReadFull that users should still look at n instead\r\nof\r\nerr first, but unfortunately, a lot of code make the assumption that if\r\nReadFull\r\nreturns an error, the buf is not completely filled.\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 16:37:48.514300",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Brad Fitzpatrick <bradfitz@golang.org> once said:\r\n> b) outright ban (0, nil) from io.Readers\r\n\r\nIt's not just UDP. The preservation of message boundaries can be very\r\nuseful if you're not stuck with Unix. On Plan 9 there are a few programs\r\nthat take advantage of zero length writes and I want to be able to\r\ninterface with them.\r\n\r\nPlease don't add this artificial restriction to io.Readers.\r\n\r\n  Anthony\r\n",
+			"disapproval": false,
+			"date": "2012-12-14 00:24:36.381040",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 13, 2012 at 8:49 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> I am not worried about Read returning 0, nil in these cases. That's\r\n> allowed but if you are doing Fscanf on a UDP socket you kind of\r\n> deserve whatever you get.\r\n>\r\n\r\nWhat does a UDP socket have to do with this?\r\n\r\nEither Read can return (0, nil) and we have to deal with it, or Read can't\r\nreturn (0, nil) and we don't.\r\n\r\nWhether it's a UDP socket or package foo or package bar doesn't matter.\r\n\r\nEven if pkg foo vs pkg bar were an issue, both fmt and encoding/gob can\r\nwork with many types of Readers.\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 20:25:29.349980",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 13, 2012 at 12:30 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> On Thu, Dec 13, 2012 at 3:25 PM, Brad Fitzpatrick <bradfitz@golang.org>\r\n> wrote:\r\n> > What does a UDP socket have to do with this?\r\n>\r\n> The readers that can return 0, nil are ones modeling a packet-based\r\n> input stream, such as UDP datagrams.\r\n\r\n\r\nWow, crazy.  Not the answer I was expecting.\r\n\r\nI thought io.Reader was a byte stream interface, not a message-stream\r\ninterface.\r\n\r\nIf somebody cares about UDP boundaries, they can just use package net and\r\nUDPConn directly, can't they?\r\n\r\nCan we update the docs on io.Reader to either a) make this explicit about\r\nUDP sockets, or b) outright ban (0, nil) from io.Readers and fix\r\nUDPConn.Read?  (I would prefer b)\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 20:36:14.378150",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-12-13 14:18:57.018470",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6285050/diff/11002/src/pkg/fmt/scan.go\nFile src/pkg/fmt/scan.go (right):\n\nhttps://codereview.appspot.com/6285050/diff/11002/src/pkg/fmt/scan.go#newcode343\nsrc/pkg/fmt/scan.go:343: } else if n == 0 && err == nil {\ndoe this ever happen?  The way I've always read io.Reader's contract,\n\n\"If some data is available but not len(p) bytes, Read conventionally returns what is available instead of waiting for more.\"\n\n... is that you block until at least 1 byte.\n\nI know it doesn't say that, though.\n\nIt feels like this file doesn't need changing.  Or if so, why not ReadFull?",
+			"disapproval": false,
+			"date": "2012-12-13 16:05:37.367910",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6285050/diff/11002/src/pkg/encoding/gob/decode.go\nFile src/pkg/encoding/gob/decode.go (right):\n\nhttps://codereview.appspot.com/6285050/diff/11002/src/pkg/encoding/gob/decode.go#newcode66\nsrc/pkg/encoding/gob/decode.go:66: if n < 1 {\nYou can just use \n\nif n == 0 {\n    return\n}\n\nThe only goal is to avoid bailing when we get n==1, err != nil.\n\nhttps://codereview.appspot.com/6285050/diff/11002/src/pkg/fmt/scan.go\nFile src/pkg/fmt/scan.go (right):\n\nhttps://codereview.appspot.com/6285050/diff/11002/src/pkg/fmt/scan.go#newcode341\nsrc/pkg/fmt/scan.go:341: if n == 1 {\nSame here: if n == 1 { err = nil }\nis all you need.",
+			"disapproval": false,
+			"date": "2012-12-13 16:15:00.083030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I am not worried about Read returning 0, nil in these cases. That's\r\nallowed but if you are doing Fscanf on a UDP socket you kind of\r\ndeserve whatever you get.\r\n\r\nWhether we should change ReadAtLeast and ReadFull to clear err when\r\nreturning a full buffer is something I'd still like to think more\r\nabout. I created 4544 for that.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 16:49:22.375520",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Dec 14, 2012 at 12:05 AM, <bradfitz@golang.org> wrote:\r\n\r\n> https://codereview.appspot.**com/6285050/diff/11002/src/**\r\n> pkg/fmt/scan.go#newcode343<https://codereview.appspot.com/6285050/diff/11002/src/pkg/fmt/scan.go#newcode343>\r\n> src/pkg/fmt/scan.go:343: } else if n == 0 && err == nil {\r\n> doe this ever happen?  The way I've always read io.Reader's contract,\r\n>\r\n> \"If some data is available but not len(p) bytes, Read conventionally\r\n> returns what is available instead of waiting for more.\"\r\n>\r\n> ... is that you block until at least 1 byte.\r\n>\r\n> I know it doesn't say that, though.\r\n>\r\nI originally though so too, but as Russ commented in\r\nhttp://code.google.com/p/go/issues/detail?id=3472#c1\r\nRead can return 0, nil (which I think most of Read users are not able to\r\ndeal with), or\r\nlen(buf), err\r\n\r\n> It feels like this file doesn't need changing.  Or if so, why not\r\n> ReadFull?\r\n>\r\nReadFull has its own problems dealing with \"naughty\" io.Readers.\r\n\r\nI think the essential question is: what to do with a Read that returns 0,\r\nnil?\r\nShould we report an error or try again?\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 16:16:47.365740",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Dec 14, 2012 at 4:36 AM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n>\r\n> On Thu, Dec 13, 2012 at 12:30 PM, Russ Cox <rsc@golang.org> wrote:\r\n>\r\n>> On Thu, Dec 13, 2012 at 3:25 PM, Brad Fitzpatrick <bradfitz@golang.org>\r\n>> wrote:\r\n>> > What does a UDP socket have to do with this?\r\n>>\r\n>> The readers that can return 0, nil are ones modeling a packet-based\r\n>> input stream, such as UDP datagrams.\r\n>\r\n> I thought io.Reader was a byte stream interface, not a message-stream\r\n> interface.\r\n>\r\n> If somebody cares about UDP boundaries, they can just use package net and\r\n> UDPConn directly, can't they?\r\n>\r\n> Can we update the docs on io.Reader to either a) make this explicit about\r\n> UDP sockets, or b) outright ban (0, nil) from io.Readers and fix\r\n> UDPConn.Read?  (I would prefer b)\r\n\r\ni think option b will break (*net.UDPConn).Read's established Go 1\r\nsemantics.\r\nAlthough I agree with you about the implied byte stream style interface for\r\nio.Reader.\r\n\r\nno matter which solution we choose, i think we need more extensive\r\ndocumentation\r\non io.Reader, and the official and correct way to deal with its returned\r\nvalues.\r\n\r\nthe docs for io.Writer is much clearer about error returns than io.Reader,\r\ni wonder\r\nwhere does the extra complexities for io.Reader come from?\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 20:47:53.186590",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/17 16:17:23, rsc wrote:\n> Please change this code to use io.ReadFull. Then at least we can get\n> this CL behind us. The other issue remains open.\nSure. PTAL.",
+			"disapproval": false,
+			"date": "2012-12-17 16:33:00.080360",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Dec 14, 2012 at 8:24 AM, Anthony Martin <ality@pbrane.org> wrote:\r\n\r\n> Brad Fitzpatrick <bradfitz@golang.org> once said:\r\n> > b) outright ban (0, nil) from io.Readers\r\n>\r\n> It's not just UDP. The preservation of message boundaries can be very\r\n> useful if you're not stuck with Unix. On Plan 9 there are a few programs\r\n> that take advantage of zero length writes and I want to be able to\r\n> interface with them.\r\n>\r\nCould you please elaborate a bit?\r\n\r\n>\r\n> Please don't add this artificial restriction to io.Readers.\r\n>\r\nI think the problem is: allowing (0, nil) return will complicate all users\r\nof\r\nio.Readers, while few programs actually require this capability.\r\n\r\nAllowing it means you are on your own if you're using this capability\r\nbecause\r\neven the standard library could not handle it (i think correctly handle it\r\nmeans\r\nwe can't use Read() directly, and must resort to something like\r\nio.ReadAtLeast\r\nor io.ReadFull)\r\n",
+			"disapproval": false,
+			"date": "2012-12-14 04:56:36.037150",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Dec 14, 2012 at 4:25 AM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> On Thu, Dec 13, 2012 at 8:49 AM, Russ Cox <rsc@golang.org> wrote:\r\n>\r\n>> I am not worried about Read returning 0, nil in these cases. That's\r\n>> allowed but if you are doing Fscanf on a UDP socket you kind of\r\n>> deserve whatever you get.\r\n>>\r\n>\r\n> What does a UDP socket have to do with this?\r\n>\r\ni guess it's because it's possible to get a 0-byte (payload) UDP packet, so\r\nit's ok for (*net.UDPConn).Read\r\nto return 0, nil for that case.\r\n\r\n>\r\n> Either Read can return (0, nil) and we have to deal with it, or Read can't\r\n> return (0, nil) and we don't.\r\n>\r\nI think the situation is: Read can return (0, nil) for the UDP case, but we\r\nreally can't do much about it.\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 20:31:25.397210",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 13, 2012 at 4:24 PM, Anthony Martin <ality@pbrane.org> wrote:\r\n\r\n> Brad Fitzpatrick <bradfitz@golang.org> once said:\r\n> > b) outright ban (0, nil) from io.Readers\r\n>\r\n> It's not just UDP. The preservation of message boundaries can be very\r\n> useful if you're not stuck with Unix. On Plan 9 there are a few programs\r\n> that take advantage of zero length writes and I want to be able to\r\n> interface with them.\r\n>\r\n> Please don't add this artificial restriction to io.Readers.\r\n>\r\n\r\nThis isn't a discussion about Plan 9 semantics.  This is a discussion about\r\nio.Reader semantics.\r\n\r\nio.Reader does not document any message boundary guarantees today.  Any you\r\nhappen to get right now are a side-effect of the Plan 9 port's\r\nimplementation, and not language guarantees.\r\n",
+			"disapproval": false,
+			"date": "2012-12-14 04:47:07.609100",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 6285050: fmt, encoding/gob: fix misuse of Read",
+	"created": "2012-06-04 17:56:09.449270",
+	"patchsets": [
+		1,
+		1002,
+		7001,
+		9001,
+		14001,
+		11002,
+		15005,
+		18003,
+		14004
+	],
+	"modified": "2012-12-17 17:27:11.665630",
+	"closed": true,
+	"issue": 6285050
+}

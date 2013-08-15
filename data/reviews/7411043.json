@@ -1,0 +1,91 @@
+{
+	"description": "exp/ssa: make invokation of deferred procedure calls explicit.\n\nThe correct semantics of named result parameters and deferred\nprocedures cannot be implemented with the existing Ret\ninstruction alone, since the required sequence is:\n(1) evaluate return operands and parallel-assign them to\n    named result parameters\n(2) invoke deferred procedures\n(3) load named result parameters to form result tuple.\n\nWe introduce a new 'rundefers' instruction that explicitly\ninvokes the deferred procedure calls, and we generate code\nthat follows the sequence above.\n\nMost functions do not use deferred procedures but this cannot\nbe known in a single pass.  So, we add an optimisation to\neliminate redundant 'rundefers'; it is piggybacked on the\nexisting pass done for \"lifting\".\n\nAdded tests.",
+	"cc": [
+		"gri@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gri@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-02-26 23:21:18.179460",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go\nFile src/pkg/exp/ssa/builder.go (left):\n\nhttps://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go#oldcode2052\nsrc/pkg/exp/ssa/builder.go:2052: //\nthis seemed like nicely symmetric - not sure why it's gone\n\nhttps://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go#oldcode2102\nsrc/pkg/exp/ssa/builder.go:2102: //\ndiito\n\nhttps://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go\nFile src/pkg/exp/ssa/builder.go (right):\n\nhttps://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go#newcode2705\nsrc/pkg/exp/ssa/builder.go:2705: init.emit(new(RunDefers))\nisn't this already done in buildFunction?",
+			"disapproval": false,
+			"date": "2013-02-27 05:47:35.222590",
+			"approval": true
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/02/27 05:47:35, gri wrote:\n> LGTM\n> \n> https://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go\n> File src/pkg/exp/ssa/builder.go (left):\n> \n> https://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go#oldcode2052\n> src/pkg/exp/ssa/builder.go:2052: //\n> this seemed like nicely symmetric - not sure why it's gone\n> \n> https://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go#oldcode2102\n> src/pkg/exp/ssa/builder.go:2102: //\n> diito\n> \n> https://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go\n> File src/pkg/exp/ssa/builder.go (right):\n> \n> https://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go#newcode2705\n> src/pkg/exp/ssa/builder.go:2705: init.emit(new(RunDefers))\n> isn't this already done in buildFunction?\n\nI have also:\n- renamed Function.results to namedResults for clarity.\n- slightly refactored the ReturnStmt logic so that both\n  named- and unnamed-result cases share the same emit(RunDefers).\nWill submit.",
+			"disapproval": false,
+			"date": "2013-02-27 15:14:50.148130",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go\nFile src/pkg/exp/ssa/builder.go (left):\n\nhttps://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go#oldcode2052\nsrc/pkg/exp/ssa/builder.go:2052: //\nOn 2013/02/27 05:47:35, gri wrote:\n> this seemed like nicely symmetric - not sure why it's gone\n\n\nOk, reverted.\n\nhttps://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go\nFile src/pkg/exp/ssa/builder.go (right):\n\nhttps://codereview.appspot.com/7411043/diff/2002/src/pkg/exp/ssa/builder.go#newcode2705\nsrc/pkg/exp/ssa/builder.go:2705: init.emit(new(RunDefers))\nOn 2013/02/27 05:47:35, gri wrote:\n> isn't this already done in buildFunction?\n\nbuildFunction isn't use for 'init'.\n\nI've added these comments prior to each emit(RunDefers); hopefully they clarifies things.\n\n// Run function calls deferred in this init\n// block when falling off the end of the block.\n...\n// Run function calls deferred in this init\n// block when explicitly returning from it.\n...\n// Run function calls deferred in this\n// function when explicitly returning from it.\n...\n// Run function calls deferred in this function when\n// falling off the end of the body block.",
+			"disapproval": false,
+			"date": "2013-02-27 15:14:58.060430",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=865d2efc4bf0 ***\n\nexp/ssa: make invokation of deferred procedure calls explicit.\n\nThe correct semantics of named result parameters and deferred\nprocedures cannot be implemented with the existing Ret\ninstruction alone, since the required sequence is:\n(1) evaluate return operands and parallel-assign them to\n    named result parameters\n(2) invoke deferred procedures\n(3) load named result parameters to form result tuple.\n\nWe introduce a new 'rundefers' instruction that explicitly\ninvokes the deferred procedure calls, and we generate code\nthat follows the sequence above.\n\nMost functions do not use deferred procedures but this cannot\nbe known in a single pass.  So, we add an optimisation to\neliminate redundant 'rundefers'; it is piggybacked on the\nexisting pass done for \"lifting\".\n\nAdded tests.\n\nR=gri\nCC=golang-dev\nhttps://codereview.appspot.com/7411043",
+			"disapproval": false,
+			"date": "2013-02-27 15:35:26.593440",
+			"approval": false
+		}
+	],
+	"owner_email": "adonovan@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "adonovan",
+	"subject": "code review 7411043: exp/ssa: make invokation of deferred procedure calls ex...",
+	"created": "2013-02-26 22:52:59.775720",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		2002,
+		14001
+	],
+	"modified": "2013-02-27 15:35:27.318590",
+	"closed": true,
+	"issue": 7411043
+}

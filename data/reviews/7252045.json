@@ -1,0 +1,60 @@
+{
+	"description": "net: use windows GetAddrInfoW in LookupPort when possible",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-02-01 06:03:57.974330",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Thu, Jan 31, 2013 at 10:03 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> net: use windows GetAddrInfoW in LookupPort when possible\r\n>\r\n> Please review this at https://codereview.appspot.**com/7252045/<https://codereview.appspot.com/7252045/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/fd_windows.go\r\n>   M src/pkg/net/lookup_windows.go\r\n>   M src/pkg/net/port_test.go\r\n>\r\n>\r\n> Index: src/pkg/net/fd_windows.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/fd_windows.go\r\n> +++ b/src/pkg/net/fd_windows.go\r\n> @@ -37,6 +37,7 @@\r\n>         }\r\n>         canCancelIO = syscall.LoadCancelIoEx() == nil\r\n>         if syscall.LoadGetAddrInfo() == nil {\r\n> +               lookupPort = newLookupPort\r\n>                 lookupIP = newLookupIP\r\n>         }\r\n>  }\r\n> Index: src/pkg/net/lookup_windows.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/lookup_windows.**go\r\n> +++ b/src/pkg/net/lookup_windows.**go\r\n> @@ -17,6 +17,11 @@\r\n>         serventLock  sync.Mutex\r\n>  )\r\n>\r\n> +var (\r\n> +       lookupPort = oldLookupPort\r\n> +       lookupIP   = oldLookupIP\r\n> +)\r\n> +\r\n>  // lookupProtocol looks up IP protocol name and returns correspondent\r\n> protocol number.\r\n>  func lookupProtocol(name string) (proto int, err error) {\r\n>         protoentLock.Lock()\r\n> @@ -40,8 +45,6 @@\r\n>         return\r\n>  }\r\n>\r\n> -var lookupIP = oldLookupIP\r\n> -\r\n>  func oldLookupIP(name string) (addrs []IP, err error) {\r\n>         hostentLock.Lock()\r\n>         defer hostentLock.Unlock()\r\n> @@ -92,7 +95,7 @@\r\n>         return addrs, nil\r\n>  }\r\n>\r\n> -func lookupPort(network, service string) (port int, err error) {\r\n> +func oldLookupPort(network, service string) (port int, err error) {\r\n>         switch network {\r\n>         case \"tcp4\", \"tcp6\":\r\n>                 network = \"tcp\"\r\n> @@ -108,6 +111,40 @@\r\n>         return int(syscall.Ntohs(s.Port)), nil\r\n>  }\r\n>\r\n> +func newLookupPort(network, service string) (port int, err error) {\r\n> +       var stype int32\r\n> +       switch network {\r\n> +       case \"tcp4\", \"tcp6\":\r\n> +               stype = syscall.SOCK_STREAM\r\n> +       case \"udp4\", \"udp6\":\r\n> +               stype = syscall.SOCK_DGRAM\r\n> +       }\r\n> +       hints := syscall.AddrinfoW{\r\n> +               Family:   syscall.AF_UNSPEC,\r\n> +               Socktype: stype,\r\n> +               Protocol: syscall.IPPROTO_IP,\r\n> +       }\r\n> +       var result *syscall.AddrinfoW\r\n> +       e := syscall.GetAddrInfoW(nil, syscall.StringToUTF16Ptr(**service),\r\n> &hints, &result)\r\n> +       if e != nil {\r\n> +               return 0, os.NewSyscallError(\"**GetAddrInfoW\", e)\r\n> +       }\r\n> +       defer syscall.FreeAddrInfoW(result)\r\n> +       if result == nil {\r\n> +               return 0, os.NewSyscallError(\"**LookupPort\",\r\n> syscall.EINVAL)\r\n> +       }\r\n> +       addr := unsafe.Pointer(result.Addr)\r\n> +       switch result.Family {\r\n> +       case syscall.AF_INET:\r\n> +               a := (*syscall.RawSockaddrInet4)(**addr)\r\n> +               return int(syscall.Ntohs(a.Port)), nil\r\n> +       case syscall.AF_INET6:\r\n> +               a := (*syscall.RawSockaddrInet6)(**addr)\r\n> +               return int(syscall.Ntohs(a.Port)), nil\r\n> +       }\r\n> +       return 0, os.NewSyscallError(\"**LookupPort\", syscall.EINVAL)\r\n> +}\r\n> +\r\n>  func lookupCNAME(name string) (cname string, err error) {\r\n>         var r *syscall.DNSRecord\r\n>         e := syscall.DnsQuery(name, syscall.DNS_TYPE_CNAME, 0, nil, &r,\r\n> nil)\r\n> Index: src/pkg/net/port_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/port_test.go\r\n> +++ b/src/pkg/net/port_test.go\r\n> @@ -46,7 +46,7 @@\r\n>         for i := 0; i < len(porttests); i++ {\r\n>                 tt := porttests[i]\r\n>                 if port, err := LookupPort(tt.netw, tt.name); port !=\r\n> tt.port || (err == nil) != tt.ok {\r\n> -                       t.Errorf(\"LookupPort(%q, %q) = %v, %s; want %v\",\r\n> +                       t.Errorf(\"LookupPort(%q, %q) = %v, %v; want %v\",\r\n>                                 tt.netw, tt.name, port, err, tt.port)\r\n>                 }\r\n>         }\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-01 17:47:31.799750",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=6f83f5d348ee ***\n\nnet: use windows GetAddrInfoW in LookupPort when possible\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/7252045",
+			"disapproval": false,
+			"date": "2013-02-02 01:24:24.689490",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 7252045: net: use windows GetAddrInfoW in LookupPort when possible",
+	"created": "2013-02-01 06:02:51.297290",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		3004
+	],
+	"modified": "2013-02-02 01:24:27.638290",
+	"closed": true,
+	"issue": 7252045
+}

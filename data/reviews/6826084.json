@@ -1,0 +1,118 @@
+{
+	"description": "net/http: handle 413 responses more robustly\n\nWhen HTTP bodies were too large and we didn't want to finish\nreading them for DoS reasons, we previously found it necessary\nto send a FIN and then pause before closing the connection\n(which might send a RST) if we wanted the client to have a\nbetter chance at receiving our error response. That was Issue 3595.\n\nThis issue adds the same fix to request headers which\nare too large, which might fix the Windows flakiness\nwe observed on TestRequestLimit at:\nhttp://build.golang.org/log/146a2a7d9b24441dc14602a1293918191d4e75f1",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [
+		"alex.brainman@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, alex.brainman@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-12 06:11:50.108910",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Cool, thanks for testing! Good to hear.\r\n\r\nOn Mon, Nov 12, 2012 at 3:23 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> On 2012/11/12 16:16:00, bradfitz wrote:\r\n>\r\n>> On Sun, Nov 11, 2012 at 10:35 PM, <mailto:alex.brainman@gmail.**com<alex.brainman@gmail.com>\r\n>> >\r\n>>\r\n> wrote:\r\n>\r\n>  > I do not think it will help any.\r\n>>\r\n>\r\n>\r\n>  I think it will: ...\r\n>>\r\n>\r\n> You are right. I am wrong. It does help here. This test:\r\n>\r\n> diff --git a/src/pkg/net/net_test.go b/src/pkg/net/net_test.go\r\n> --- a/src/pkg/net/net_test.go\r\n> +++ b/src/pkg/net/net_test.go\r\n> @@ -213,3 +213,85 @@\r\n>                 t.Fatal(err)\r\n>         }\r\n>  }\r\n> +\r\n> +func TestALEX(t *testing.T) {\r\n> +       l, err := Listen(\"tcp\", \"127.0.0.1:0\")\r\n> +       if err != nil {\r\n> +               t.Fatal(err)\r\n> +       }\r\n> +       defer l.Close()\r\n> +\r\n> +       read := func(r io.Reader) error {\r\n> +               var m [1]byte\r\n> +               _, err := r.Read(m[:])\r\n> +               return err\r\n> +       }\r\n> +\r\n> +       write := func(w io.Writer) error {\r\n> +               var m [1]byte\r\n> +               _, err := w.Write(m[:])\r\n> +               return err\r\n> +       }\r\n> +\r\n> +       ec := make(chan error)\r\n> +\r\n> +       // server\r\n> +       go func() (err error) {\r\n> +               defer func() {\r\n> +                       ec <- err\r\n> +               }()\r\n> +\r\n> +               c, err := l.Accept()\r\n> +               if err != nil {\r\n> +                       t.Fatal(err)\r\n> +               }\r\n> +               defer c.Close()\r\n> +\r\n> +               err = read(c)\r\n> +               if err != nil {\r\n> +                       return err\r\n> +               }\r\n> +               err = write(c)\r\n> +               if err != nil {\r\n> +                       return err\r\n> +               }\r\n> +\r\n> +//             err = c.(*TCPConn).CloseWrite()\r\n> +               if err != nil {\r\n> +                       return err\r\n> +               }\r\n> +               return nil\r\n> +       }()\r\n> +\r\n> +       // client\r\n> +       c, err := Dial(\"tcp\", l.Addr().String())\r\n> +       if err != nil {\r\n> +               t.Fatal(err)\r\n> +       }\r\n> +       defer c.Close()\r\n> +\r\n> +       go func() {\r\n> +               var m [1000]byte\r\n> +               for {\r\n> +                       _, err := c.Write(m[:])\r\n> +                       if err != nil {\r\n> +                               return\r\n> +                       }\r\n> +               }\r\n> +       }()\r\n> +\r\n> +       for {\r\n> +               err := read(c)\r\n> +               if err != nil {\r\n> +                       if err == io.EOF {\r\n> +                               break\r\n> +                       }\r\n> +                       t.Fatal(err)\r\n> +               }\r\n> +       }\r\n> +\r\n> +       err = <-ec\r\n> +       if err != nil {\r\n> +               t.Fatal(err)\r\n> +       }\r\n> +}\r\n>\r\n> fails on linux\r\n>\r\n> # go test -v -run=ALEX\r\n> === RUN TestALEX\r\n> --- FAIL: TestALEX (0.00 seconds)\r\n> net_test.go:289:        read tcp 127.0.0.1:38968: connection reset by\r\n> peer\r\n> FAIL\r\n> exit status 1\r\n> FAIL    net     0.009s\r\n>\r\n> and fails on windows\r\n>\r\n> C:\\>test.exe -test.v -test.run=ALE\r\n> === RUN TestALEX\r\n> --- FAIL: TestALEX (0.03 seconds)\r\n> net_test.go:289:        WSARecv tcp 127.0.0.1:1444: An existing\r\n> connection was forcibly closed by the remote host.\r\n> FAIL\r\n>\r\n> But both PASS if CloseWrite added.\r\n>\r\n> Alex\r\n>\r\n> http://codereview.appspot.com/**6826084/<http://codereview.appspot.com/6826084/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-12 23:24:44.331360",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I do not think it will help any. But, I can't see it hurt either.\n\nThe implementation LGTM. It is the idea I do not like. I think reset is fine in these situations.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-11-12 06:35:44.151440",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Nov 11, 2012 at 10:35 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> I do not think it will help any.\r\n\r\n\r\nI think it will: it'll give some HTTP clients (those that read while\r\nwriting, like ours) a chance to handle the error before the RST arrives.\r\n This worked before, in our POST-body-too-large case.  It should work here\r\ntoo.  This is just another case of too much data arriving and us rejecting\r\nit.  We should reject it in the same way.\r\n\r\nBut, I can't see it hurt either.\r\n>\r\n> The implementation LGTM. It is the idea I do not like. I think reset is\r\n> fine in these situations.\r\n>\r\n\r\nReset still comes, but I want to increase the chance that HTTP clients see\r\nerrors, like we did before.\r\n",
+			"disapproval": false,
+			"date": "2012-11-12 16:16:00.324750",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/12 16:16:00, bradfitz wrote:\n> On Sun, Nov 11, 2012 at 10:35 PM, <mailto:alex.brainman@gmail.com> wrote:\n>\n> > I do not think it will help any.\n>\n>\n> I think it will: ...\n\nYou are right. I am wrong. It does help here. This test:\n\ndiff --git a/src/pkg/net/net_test.go b/src/pkg/net/net_test.go\n--- a/src/pkg/net/net_test.go\n+++ b/src/pkg/net/net_test.go\n@@ -213,3 +213,85 @@\n \t\tt.Fatal(err)\n \t}\n }\n+\n+func TestALEX(t *testing.T) {\n+\tl, err := Listen(\"tcp\", \"127.0.0.1:0\")\n+\tif err != nil {\n+\t\tt.Fatal(err)\n+\t}\n+\tdefer l.Close()\n+\n+\tread := func(r io.Reader) error {\n+\t\tvar m [1]byte\n+\t\t_, err := r.Read(m[:])\n+\t\treturn err\n+\t}\n+\n+\twrite := func(w io.Writer) error {\n+\t\tvar m [1]byte\n+\t\t_, err := w.Write(m[:])\n+\t\treturn err\n+\t}\n+\n+\tec := make(chan error)\n+\n+\t// server\n+\tgo func() (err error) {\n+\t\tdefer func() {\n+\t\t\tec <- err\n+\t\t}()\n+\n+\t\tc, err := l.Accept()\n+\t\tif err != nil {\n+\t\t\tt.Fatal(err)\n+\t\t}\n+\t\tdefer c.Close()\n+\n+\t\terr = read(c)\n+\t\tif err != nil {\n+\t\t\treturn err\n+\t\t}\n+\t\terr = write(c)\n+\t\tif err != nil {\n+\t\t\treturn err\n+\t\t}\n+\n+//\t\terr = c.(*TCPConn).CloseWrite()\n+\t\tif err != nil {\n+\t\t\treturn err\n+\t\t}\n+\t\treturn nil\n+\t}()\n+\n+\t// client\n+\tc, err := Dial(\"tcp\", l.Addr().String())\n+\tif err != nil {\n+\t\tt.Fatal(err)\n+\t}\n+\tdefer c.Close()\n+\n+\tgo func() {\n+\t\tvar m [1000]byte\n+\t\tfor {\n+\t\t\t_, err := c.Write(m[:])\n+\t\t\tif err != nil {\n+\t\t\t\treturn\n+\t\t\t}\n+\t\t}\n+\t}()\n+\n+\tfor {\n+\t\terr := read(c)\n+\t\tif err != nil {\n+\t\t\tif err == io.EOF {\n+\t\t\t\tbreak\n+\t\t\t}\n+\t\t\tt.Fatal(err)\n+\t\t}\n+\t}\n+\n+\terr = <-ec\n+\tif err != nil {\n+\t\tt.Fatal(err)\n+\t}\n+}\n\nfails on linux\n\n# go test -v -run=ALEX\n=== RUN TestALEX\n--- FAIL: TestALEX (0.00 seconds)\nnet_test.go:289:        read tcp 127.0.0.1:38968: connection reset by peer\nFAIL\nexit status 1\nFAIL    net     0.009s\n\nand fails on windows\n\nC:\\>test.exe -test.v -test.run=ALE\n=== RUN TestALEX\n--- FAIL: TestALEX (0.03 seconds)\nnet_test.go:289:        WSARecv tcp 127.0.0.1:1444: An existing connection was forcibly closed by the remote host.\nFAIL\n\nBut both PASS if CloseWrite added.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-11-12 23:23:53.482430",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nWhat a mess.",
+			"disapproval": false,
+			"date": "2012-11-12 20:54:03.444040",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=e6b3e4d247ef ***\n\nnet/http: handle 413 responses more robustly\n\nWhen HTTP bodies were too large and we didn't want to finish\nreading them for DoS reasons, we previously found it necessary\nto send a FIN and then pause before closing the connection\n(which might send a RST) if we wanted the client to have a\nbetter chance at receiving our error response. That was Issue 3595.\n\nThis issue adds the same fix to request headers which\nare too large, which might fix the Windows flakiness\nwe observed on TestRequestLimit at:\nhttp://build.golang.org/log/146a2a7d9b24441dc14602a1293918191d4e75f1\n\nR=golang-dev, alex.brainman, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6826084",
+			"disapproval": false,
+			"date": "2012-11-12 23:20:21.400770",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 6826084: net/http: handle 413 responses more robustly",
+	"created": "2012-11-12 06:11:36.361280",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		7002
+	],
+	"modified": "2012-11-12 23:23:53.622870",
+	"closed": true,
+	"issue": 6826084
+}

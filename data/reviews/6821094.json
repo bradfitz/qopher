@@ -1,0 +1,118 @@
+{
+	"description": "reflect: fix FieldByNameFunc\n\nThe existing algorithm did not properly propagate the type\ncount from one level to the next, and as a consequence it\nmissed collisions.\n\nProperly propagate multiplicity (count) information to the\nnext level.\n\nbenchmark                old ns/op    new ns/op    delta\nBenchmarkFieldByName1          182          180   -1.10%\nBenchmarkFieldByName2         6273         6183   -1.43%\nBenchmarkFieldByName3        49267        46784   -5.04%\n\nFixes issue 4355.",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-07 23:24:18.603690",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-11-07 19:41:16.385620",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "hold your horses - I think there's a faster way\r\n- gri\r\n\r\nOn Wed, Nov 7, 2012 at 11:41 AM,  <gri@golang.org> wrote:\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> reflect: fix FieldByNameFunc\r\n>\r\n> The existing algorithm eliminated types occuring multiple\r\n> times on the same level early, under the assumption that\r\n> if they contain matches, they would cancel each other out.\r\n> However, by eliminating them early, we miss potential\r\n> collisions with other types, reaching the same match on\r\n> a different path, and as a result we return false matches.\r\n>\r\n> It seems that there's no easy way around and we must\r\n> search all unvisited types. As a result, the worst-case\r\n> scenario becomes massively slower.\r\n>\r\n> benchmark                old ns/op    new ns/op    delta\r\n> BenchmarkFieldByName1          190          196   +3.16%\r\n> BenchmarkFieldByName2         6266         6245   -0.34%\r\n> BenchmarkFieldByName3        49903      3697419  +7309.21%\r\n>\r\n> Fixes issue 4355.\r\n>\r\n> Please review this at http://codereview.appspot.com/6821094/\r\n>\r\n> Affected files:\r\n>   M src/pkg/reflect/all_test.go\r\n>   M src/pkg/reflect/type.go\r\n>\r\n>\r\n> Index: src/pkg/reflect/all_test.go\r\n> ===================================================================\r\n> --- a/src/pkg/reflect/all_test.go\r\n> +++ b/src/pkg/reflect/all_test.go\r\n> @@ -1694,6 +1694,20 @@\r\n>         S8\r\n>  }\r\n>\r\n> +// The X in S15.S11.S1 and S16.S11.S1 annihilate.\r\n> +type S14 struct {\r\n> +       S15\r\n> +       S16\r\n> +}\r\n> +\r\n> +type S15 struct {\r\n> +       S11\r\n> +}\r\n> +\r\n> +type S16 struct {\r\n> +       S11\r\n> +}\r\n> +\r\n>  var fieldTests = []FTest{\r\n>         {struct{}{}, \"\", nil, 0},\r\n>         {struct{}{}, \"Foo\", nil, 0},\r\n> @@ -1719,6 +1733,7 @@\r\n>         {S5{}, \"Y\", []int{2, 0, 1}, 0},\r\n>         {S10{}, \"X\", nil, 0},\r\n>         {S10{}, \"Y\", []int{2, 0, 0, 1}, 0},\r\n> +       {S14{}, \"X\", nil, 0},\r\n>  }\r\n>\r\n>  func TestFieldByIndex(t *testing.T) {\r\n> Index: src/pkg/reflect/type.go\r\n> ===================================================================\r\n> --- a/src/pkg/reflect/type.go\r\n> +++ b/src/pkg/reflect/type.go\r\n> @@ -856,18 +856,10 @@\r\n>         // The algorithm is breadth first search, one depth level at a time.\r\n>\r\n>         // The current and next slices are work queues:\r\n> -       // current lists the fields to visit on this depth level,\r\n> -       // and next lists the fields on the next lower level.\r\n> -       current := []fieldScan{}\r\n> -       next := []fieldScan{{typ: t}}\r\n> -\r\n> -       // nextCount records the number of times an embedded type has been\r\n> -       // encountered and considered for queueing in the 'next' slice.\r\n> -       // We only queue the first one, but we increment the count on each.\r\n> -       // If a struct type T can be reached more than once at a given depth\r\n> level,\r\n> -       // then it annihilates itself and need not be considered at all when\r\n> we\r\n> -       // process that next depth level.\r\n> -       var nextCount map[*structType]int\r\n> +       // current lists the types to visit on this depth level,\r\n> +       // and next lists the types on the next lower level.\r\n> +       current := []fieldScan{{typ: t}}\r\n> +       next := []fieldScan{}\r\n>\r\n>         // visited records the structs that have been considered already.\r\n>         // Embedded pointer fields can create cycles in the graph of\r\n> @@ -876,23 +868,15 @@\r\n>         // embedded type T at level 2, we won't find it in one at level 4\r\n> either.\r\n>         visited := map[*structType]bool{}\r\n>\r\n> -       for len(next) > 0 {\r\n> -               current, next = next, current[:0]\r\n> -               count := nextCount\r\n> -               nextCount = nil\r\n> +       for len(current) > 0 {\r\n> +               // Start with empty next list\r\n> +               next = next[:0] // don't waste underlying array\r\n>\r\n> -               // Process all the fields at this depth, now listed in\r\n> 'current'.\r\n> -               // The loop queues embedded fields found in 'next', for\r\n> processing during the next\r\n> -               // iteration. The multiplicity of the 'current' field counts\r\n> is recorded\r\n> -               // in 'count'; the multiplicity of the 'next' field counts\r\n> is recorded in 'nextCount'.\r\n> +               // Process all the types at this depth, listed in 'current'.\r\n> +               // The loop queues embedded fields found in 'next', for\r\n> +               // processing during the next iteration.\r\n>                 for _, scan := range current {\r\n>                         t := scan.typ\r\n> -                       if visited[t] {\r\n> -                               // We've looked through this type before, at\r\n> a higher level.\r\n> -                               // That higher level would shadow the lower\r\n> level we're now at,\r\n> -                               // so this one can't be useful to us. Ignore\r\n> it.\r\n> -                               continue\r\n> -                       }\r\n>                         visited[t] = true\r\n>                         for i := range t.fields {\r\n>                                 f := &t.fields[i]\r\n> @@ -914,9 +898,10 @@\r\n>                                 // Does it match?\r\n>                                 if match(fname) {\r\n>                                         // Potential match\r\n> -                                       if count[t] > 1 || ok {\r\n> +                                       if ok {\r\n>                                                 // Name appeared multiple\r\n> times at this level: annihilate.\r\n> -                                               return StructField{}, false\r\n> +                                               ok = false\r\n> +                                               return\r\n>                                         }\r\n>                                         result = t.Field(i)\r\n>                                         result.Index = nil\r\n> @@ -927,29 +912,35 @@\r\n>                                 }\r\n>\r\n>                                 // Queue embedded struct fields for\r\n> processing with next level,\r\n> -                               // but only if we haven't seen a match yet\r\n> at this level and only\r\n> -                               // if the embedded types haven't alredy been\r\n> queued.\r\n> -                               if ok || ntyp == nil || ntyp.Kind() !=\r\n> Struct {\r\n> -                                       continue\r\n> +                               // but only if we haven't seen a match yet\r\n> at this level and\r\n> +                               // the kind is Struct.\r\n> +                               if !ok && ntyp != nil && ntyp.Kind() ==\r\n> Struct {\r\n> +                                       styp :=\r\n> (*structType)(unsafe.Pointer(ntyp))\r\n> +                                       var index []int\r\n> +                                       index = append(index, scan.index...)\r\n> +                                       index = append(index, i)\r\n> +                                       next = append(next, fieldScan{styp,\r\n> index})\r\n>                                 }\r\n> -                               styp := (*structType)(unsafe.Pointer(ntyp))\r\n> -                               if nextCount[styp] > 0 {\r\n> -                                       nextCount[styp]++\r\n> -                                       continue\r\n> -                               }\r\n> -                               if nextCount == nil {\r\n> -                                       nextCount = map[*structType]int{}\r\n> -                               }\r\n> -                               nextCount[styp] = 1\r\n> -                               var index []int\r\n> -                               index = append(index, scan.index...)\r\n> -                               index = append(index, i)\r\n> -                               next = append(next, fieldScan{styp, index})\r\n>                         }\r\n>                 }\r\n>                 if ok {\r\n> -                       break\r\n> +                       // Found a match at this level.\r\n> +                       return\r\n>                 }\r\n> +\r\n> +               // No match so far; compute the list to search for the next\r\n> level.\r\n> +               current = current[:0] // don't waste underlying array\r\n> +               for _, fs := range next {\r\n> +                       // We can ignore types visited already, but we\r\n> cannot ignore\r\n> +                       // types appearing multiple times on the next level:\r\n> If they\r\n> +                       // contain a match they would cancel each other out,\r\n> but if\r\n> +                       // we eliminate them now, we miss potential\r\n> collisions with\r\n> +                       // other types also containing a match.\r\n> +                       if !visited[fs.typ] {\r\n> +                               current = append(current, fs)\r\n> +                       }\r\n> +               }\r\n> +\r\n>         }\r\n>         return\r\n>  }\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-07 20:31:40.205550",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The test looks good. I don't think FieldByName needs to be changed\r\nquite so much, though. The bug in the current code is that it always\r\nsets nextCount[styp] = 1, instead of setting nextCount[styp] =\r\ncount[t]. This is a bug left because in the first draft the loop body\r\nwas bypassed for count[t] != 1. There is a slight subtlety because\r\ncount is initialized lazily so count[t] may be 0 but mean 1:\r\n\r\ndiff -r 9ef24096faf2 src/pkg/reflect/type.go\r\n--- a/src/pkg/reflect/type.go Mon Nov 12 15:31:23 2012 +0000\r\n+++ b/src/pkg/reflect/type.go Mon Nov 12 15:30:48 2012 -0500\r\n@@ -934,13 +934,16 @@\r\n  }\r\n  styp := (*structType)(unsafe.Pointer(ntyp))\r\n  if nextCount[styp] > 0 {\r\n- nextCount[styp]++\r\n+ nextCount[styp] = 2\r\n  continue\r\n  }\r\n  if nextCount == nil {\r\n  nextCount = map[*structType]int{}\r\n  }\r\n  nextCount[styp] = 1\r\n+ if count[t] > 1 {\r\n+ nextCount[styp] = count[t]\r\n+ }\r\n  var index []int\r\n  index = append(index, scan.index...)\r\n  index = append(index, i)\r\n\r\nThis patch passes the test in this CL.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-12 20:31:43.724660",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-13 18:41:32.875540",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-11-13 18:44:48.813240",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=40ba4d4e4672 ***\n\nreflect: fix FieldByNameFunc\n\nThe existing algorithm did not properly propagate the type\ncount from one level to the next, and as a consequence it\nmissed collisions.\n\nProperly propagate multiplicity (count) information to the\nnext level.\n\nbenchmark                old ns/op    new ns/op    delta\nBenchmarkFieldByName1          182          180   -1.10%\nBenchmarkFieldByName2         6273         6183   -1.43%\nBenchmarkFieldByName3        49267        46784   -5.04%\n\nFixes issue 4355.\n\nR=rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6821094",
+			"disapproval": false,
+			"date": "2012-11-13 18:45:35.242660",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 6821094: reflect: fix FieldByNameFunc",
+	"created": "2012-11-07 19:37:42.473570",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		4004,
+		11001,
+		13001,
+		4010,
+		15001,
+		16001,
+		19001,
+		22001,
+		23003
+	],
+	"modified": "2012-11-13 18:45:36.664250",
+	"closed": true,
+	"issue": 6821094
+}

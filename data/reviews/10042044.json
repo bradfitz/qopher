@@ -1,0 +1,174 @@
+{
+	"description": "runtime: improve scheduler fairness\nCurrently global runqueue is starved if a group of goroutines\nconstantly respawn each other (local runqueue never becomes empty).\nFixes issue 5639.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"iant@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-06-05 12:22:18.040200",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c#newcode1164\nsrc/pkg/runtime/proc.c:1164: if((int32)(p->tick - p->tickglobcheck) > 0)  // be careful with overflow\nI don't really see the point of tickglobcheck.  Pulling in another goroutine every so often shouldn't be too expensive, and it's hard for me to believe that adjusting tickglobcheck based on the size of the P's run queue will matter very much.  Suppose you just say something like\n    if ((p->tick & 0x3f) == 0)\n\nhttps://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c#newcode2209\nsrc/pkg/runtime/proc.c:2209: // Try get one G from the global queue.\ns/Try get/Try to get/\n\nhttps://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c#newcode2213\nsrc/pkg/runtime/proc.c:2213: gp = runtime\u00b7sched.runqhead;\nThis introduces another spot that needs to manage this list, but it's not performance critical at all.  Suppose we just call globrunqget here.  Or, if you really don't want that many g's (though I don't know why that would matter), add an argument to globrunqget: the maximum number of g's to move.  For the other calls pass, I don't know, 32 or something.  Here, pass 1.",
+			"disapproval": false,
+			"date": "2013-06-06 23:56:10.530490",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c#newcode1164\nsrc/pkg/runtime/proc.c:1164: if((int32)(p->tick - p->tickglobcheck) > 0)  // be careful with overflow\nOn 2013/06/06 23:56:10, iant wrote:\n> I don't really see the point of tickglobcheck.  Pulling in another goroutine\n> every so often shouldn't be too expensive, and it's hard for me to believe that\n> adjusting tickglobcheck based on the size of the P's run queue will matter very\n> much.  Suppose you just say something like\n>     if ((p->tick & 0x3f) == 0)\n\n\nThat's probably fine. But this it too simple check, I was actually able to exploit it with the following program, so that the global queue is never polled.\nIs it possible to do a less exploitable check w/o using division?\n\nfunc TestTimerFairness2(t *testing.T) {\n\tdone := make(chan bool)\n\tc := make(chan bool)\n\tfor i := 0; i < 2; i++ {\n\t\tgo func() {\n\t\t\ttimer := time.After(20 * time.Millisecond)\n\t\t\tvar buf [1]byte\n\t\t\tfor {\n\t\t\t\tsyscall.Read(0, buf[0:0])\n\t\t\t\tselect {\n\t\t\t\tcase c <- true:\n\t\t\t\tcase <-c:\n\t\t\t\tcase <-timer:\n\t\t\t\t\tdone <- true\n\t\t\t\t\treturn\n\t\t\t\t}\n\t\t\t}\n\t\t}()\n\t}\n\t<-done\n\t<-done\n}",
+			"disapproval": false,
+			"date": "2013-06-07 14:42:06.367330",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Added a comment explaining why we don't want to poll global queue too often.\n\nhttps://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c#newcode2213\nsrc/pkg/runtime/proc.c:2213: gp = runtime\u00b7sched.runqhead;\nOn 2013/06/06 23:56:10, iant wrote:\n> This introduces another spot that needs to manage this list, but it's not\n> performance critical at all.  Suppose we just call globrunqget here.  Or, if you\n> really don't want that many g's (though I don't know why that would matter), add\n> an argument to globrunqget: the maximum number of g's to move.  For the other\n> calls pass, I don't know, 32 or something.  Here, pass 1.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-07 15:10:57.451760",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/07 14:42:06, dvyukov wrote:\n> https://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c\n> File src/pkg/runtime/proc.c (right):\n> \n> https://codereview.appspot.com/10042044/diff/11001/src/pkg/runtime/proc.c#newcode1164\n> src/pkg/runtime/proc.c:1164: if((int32)(p->tick - p->tickglobcheck) > 0)  // be\n> careful with overflow\n> On 2013/06/06 23:56:10, iant wrote:\n> > I don't really see the point of tickglobcheck.  Pulling in another goroutine\n> > every so often shouldn't be too expensive, and it's hard for me to believe\n> that\n> > adjusting tickglobcheck based on the size of the P's run queue will matter\n> very\n> > much.  Suppose you just say something like\n> >     if ((p->tick & 0x3f) == 0)\n> \n> \n> That's probably fine. But this it too simple check, I was actually able to\n> exploit it with the following program, so that the global queue is never polled.\n> Is it possible to do a less exploitable check w/o using division?\n\nA good check would be something like (tick%59)==0 || (tick%61)==0 (both prime numbers), but I don't want 2 divisions on scheduler fast path.\n\n\n> func TestTimerFairness2(t *testing.T) {\n> \tdone := make(chan bool)\n> \tc := make(chan bool)\n> \tfor i := 0; i < 2; i++ {\n> \t\tgo func() {\n> \t\t\ttimer := time.After(20 * time.Millisecond)\n> \t\t\tvar buf [1]byte\n> \t\t\tfor {\n> \t\t\t\tsyscall.Read(0, buf[0:0])\n> \t\t\t\tselect {\n> \t\t\t\tcase c <- true:\n> \t\t\t\tcase <-c:\n> \t\t\t\tcase <-timer:\n> \t\t\t\t\tdone <- true\n> \t\t\t\t\treturn\n> \t\t\t\t}\n> \t\t\t}\n> \t\t}()\n> \t}\n> \t<-done\n> \t<-done\n> }",
+			"disapproval": false,
+			"date": "2013-06-07 15:12:10.397140",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Jun 7, 2013 at 8:12 AM,  <dvyukov@google.com> wrote:\r\n>\r\n> A good check would be something like (tick%59)==0 || (tick%61)==0 (both\r\n> prime numbers), but I don't want 2 divisions on scheduler fast path.\r\n\r\nWell, how would you feel about some multiplications on the fast path?\r\nDivision by an unsigned constant is equivalent to multiplication by a\r\nlarge unsigned constant.  Look at the code that GCC -O2 generates for\r\nx % 59.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2013-06-10 17:38:25.129310",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, iant@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-06-13 11:43:16.341140",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/13 11:43:16, dvyukov wrote:\n> Hello mailto:golang-dev@googlegroups.com, mailto:iant@golang.org (cc:\n> mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nOK, let's try MUL, it's a bit better than DIV:\n\nwith DIV:\n      4.22%  runtime.test  runtime.test       [.] schedule       \n3.78 :          418fa8:       xor    %edx,%edx                                                                                                                                                0.00 :          418faa:       movl   $0x3d,0xc(%rsp)                                                                                                                                          0.00 :          418fb2:       divl   0xc(%rsp)                                                                                            \n37.11:          418fb6:       cmp    $0x0,%edx                                                                                        \n0.00 :          418fb9:       jne    418fe0 <schedule+0xa0>  \t\n      \nwith MUL:\n      3.39%  runtime.test  runtime.test       [.] schedule     \n8.19 :          418fa8:       mov    %edx,%eax                                                                                                                                                1.72 :          418faa:       imul   $0x4325c53f,%rax,%rax                                                                                 \n1.29 :          418fb1:       shr    $0x24,%rax                                                                                        \n2.16 :          418fb5:       imul   $0x3d,%rax,%rax                                                                                   \n7.76 :          418fb9:       mov    %edx,%ecx                                                                                         \n0.00 :          418fbb:       sub    %rax,%rcx                                                                                         \n0.00 :          418fbe:       cmp    $0x0,%rcx                                                                                         \n0.00 :          418fc2:       jne    418fe9 <schedule+0xa9>",
+			"disapproval": false,
+			"date": "2013-06-13 11:45:35.457990",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks.\n\nhttps://codereview.appspot.com/10042044/diff/33001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10042044/diff/33001/src/pkg/runtime/proc.c#newcode1027\nsrc/pkg/runtime/proc.c:1027: gp = globrunqget(m->p, -1);\nSince nobody is ever going to pass a max of 0, it might be infinitesimally more efficient to pass 0 rather than -1 when there is no max.\n\nhttps://codereview.appspot.com/10042044/diff/33001/src/pkg/runtime/proc.c#newcode1164\nsrc/pkg/runtime/proc.c:1164: // it uses 2 MUL instructions instead of a single DIV and so faster on modern processors.\ns/so faster/so is faster/",
+			"disapproval": false,
+			"date": "2013-06-14 15:40:37.548540",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10042044/diff/33001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10042044/diff/33001/src/pkg/runtime/proc.c#newcode1027\nsrc/pkg/runtime/proc.c:1027: gp = globrunqget(m->p, -1);\nOn 2013/06/14 15:40:37, iant wrote:\n> Since nobody is ever going to pass a max of 0, it might be infinitesimally more\n> efficient to pass 0 rather than -1 when there is no max.\n\nDone.\n\nhttps://codereview.appspot.com/10042044/diff/33001/src/pkg/runtime/proc.c#newcode1164\nsrc/pkg/runtime/proc.c:1164: // it uses 2 MUL instructions instead of a single DIV and so faster on modern processors.\nOn 2013/06/14 15:40:37, iant wrote:\n> s/so faster/so is faster/\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-15 12:03:03.447290",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=81e554ab7787 ***\n\nruntime: improve scheduler fairness\nCurrently global runqueue is starved if a group of goroutines\nconstantly respawn each other (local runqueue never becomes empty).\nFixes issue 5639.\n\nR=golang-dev, iant\nCC=golang-dev\nhttps://codereview.appspot.com/10042044",
+			"disapproval": false,
+			"date": "2013-06-15 12:06:39.578460",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 10042044: runtime: improve scheduler fairness",
+	"created": "2013-06-05 11:38:49.061330",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		11001,
+		20001,
+		27001,
+		30001,
+		33001,
+		41001
+	],
+	"modified": "2013-06-15 12:06:40.588830",
+	"closed": true,
+	"issue": 10042044
+}

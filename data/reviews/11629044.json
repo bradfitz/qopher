@@ -1,0 +1,59 @@
+{
+	"description": "[release-branch.go1.1] cmd/gc: fix missing export data for inlining in a few other cases.\n\n\u00ab\u00ab\u00ab CL 10464043 / c224c549a3c7\ncmd/gc: fix missing export data for inlining in a few other cases.\n\nExported inlined functions that perform a string conversion\nusing a non-exported named type may miss it in export data.\n\nFixes issue 5755.\n\nR=rsc, golang-dev, ality, r\nCC=golang-dev\nhttps://codereview.appspot.com/10464043\n\u00bb\u00bb\u00bb\n\nUpdate issue 5928",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. \r\n\r\n\r\n\r\nOn 22/07/2013, at 18:24, adg@golang.org wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n> \r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n> \r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n> \r\n> \r\n> Description:\r\n> [release-branch.go1.1] cmd/gc: fix missing export data for inlining in a\r\n> few other cases.\r\n> \r\n> \u00ab\u00ab\u00ab CL 10464043 / c224c549a3c7\r\n> cmd/gc: fix missing export data for inlining in a few other cases.\r\n> \r\n> Exported inlined functions that perform a string conversion\r\n> using a non-exported named type may miss it in export data.\r\n> \r\n> Fixes issue 5755.\r\n> \r\n> R=rsc, golang-dev, ality, r\r\n> CC=golang-dev\r\n> https://codereview.appspot.com/10464043\r\n> \u00bb\u00bb\u00bb\r\n> \r\n> Update issue 5928\r\n> \r\n> Please review this at https://codereview.appspot.com/11629044/\r\n> \r\n> Affected files:\r\n>  M src/cmd/gc/export.c\r\n>  A test/fixedbugs/issue5755.dir/a.go\r\n>  A test/fixedbugs/issue5755.dir/main.go\r\n>  A test/fixedbugs/issue5755.go\r\n> \r\n> \r\n> Index: src/cmd/gc/export.c\r\n> ===================================================================\r\n> --- a/src/cmd/gc/export.c\r\n> +++ b/src/cmd/gc/export.c\r\n> @@ -161,6 +161,11 @@\r\n>    case OCONV:\r\n>    case OCONVIFACE:\r\n>    case OCONVNOP:\r\n> +    case ORUNESTR:\r\n> +    case OARRAYBYTESTR:\r\n> +    case OARRAYRUNESTR:\r\n> +    case OSTRARRAYBYTE:\r\n> +    case OSTRARRAYRUNE:\r\n>    case ODOTTYPE:\r\n>    case ODOTTYPE2:\r\n>    case OSTRUCTLIT:\r\n> Index: test/fixedbugs/issue5755.dir/a.go\r\n> ===================================================================\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/test/fixedbugs/issue5755.dir/a.go\r\n> @@ -0,0 +1,60 @@\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +package a\r\n> +\r\n> +type I interface {\r\n> +    F()\r\n> +}\r\n> +\r\n> +type foo1 []byte\r\n> +type foo2 []rune\r\n> +type foo3 []uint8\r\n> +type foo4 []int32\r\n> +type foo5 string\r\n> +type foo6 string\r\n> +type foo7 string\r\n> +type foo8 string\r\n> +type foo9 string\r\n> +\r\n> +func (f foo1) F() { return }\r\n> +func (f foo2) F() { return }\r\n> +func (f foo3) F() { return }\r\n> +func (f foo4) F() { return }\r\n> +func (f foo5) F() { return }\r\n> +func (f foo6) F() { return }\r\n> +func (f foo7) F() { return }\r\n> +func (f foo8) F() { return }\r\n> +func (f foo9) F() { return }\r\n> +\r\n> +func Test1(s string) I  { return foo1(s) }\r\n> +func Test2(s string) I  { return foo2(s) }\r\n> +func Test3(s string) I  { return foo3(s) }\r\n> +func Test4(s string) I  { return foo4(s) }\r\n> +func Test5(s []byte) I  { return foo5(s) }\r\n> +func Test6(s []rune) I  { return foo6(s) }\r\n> +func Test7(s []uint8) I { return foo7(s) }\r\n> +func Test8(s []int32) I { return foo8(s) }\r\n> +func Test9(s int) I     { return foo9(s) }\r\n> +\r\n> +type bar map[int]int\r\n> +\r\n> +func (b bar) F() { return }\r\n> +\r\n> +func TestBar() I { return bar{1: 2} }\r\n> +\r\n> +type baz int\r\n> +\r\n> +func IsBaz(x interface{}) bool { _, ok := x.(baz); return ok }\r\n> +\r\n> +type baz2 int\r\n> +\r\n> +func IsBaz2(x interface{}) bool {\r\n> +    switch x.(type) {\r\n> +    case baz2:\r\n> +        return true\r\n> +    default:\r\n> +        return false\r\n> +    }\r\n> +}\r\n> Index: test/fixedbugs/issue5755.dir/main.go\r\n> ===================================================================\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/test/fixedbugs/issue5755.dir/main.go\r\n> @@ -0,0 +1,23 @@\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +package main\r\n> +\r\n> +import \"./a\"\r\n> +\r\n> +func main() {\r\n> +    a.Test1(\"frumious\")\r\n> +    a.Test2(\"frumious\")\r\n> +    a.Test3(\"frumious\")\r\n> +    a.Test4(\"frumious\")\r\n> +\r\n> +    a.Test5(nil)\r\n> +    a.Test6(nil)\r\n> +    a.Test7(nil)\r\n> +    a.Test8(nil)\r\n> +    a.Test9(0)\r\n> +\r\n> +    a.TestBar()\r\n> +    a.IsBaz(nil)\r\n> +}\r\n> Index: test/fixedbugs/issue5755.go\r\n> ===================================================================\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/test/fixedbugs/issue5755.go\r\n> @@ -0,0 +1,10 @@\r\n> +// compiledir\r\n> +\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +// Issue 5755: exported data for inlining may miss\r\n> +// named types when used in string conversions.\r\n> +\r\n> +package ignored\r\n> \r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-07-22 08:26:44.550670",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-07-22 08:24:14.381740",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7f7bdef7fc85 ***\n\n[release-branch.go1.1] cmd/gc: fix missing export data for inlining in a few other cases.\n\n\u00ab\u00ab\u00ab CL 10464043 / c224c549a3c7\ncmd/gc: fix missing export data for inlining in a few other cases.\n\nExported inlined functions that perform a string conversion\nusing a non-exported named type may miss it in export data.\n\nFixes issue 5755.\n\nR=rsc, golang-dev, ality, r\nCC=golang-dev\nhttps://codereview.appspot.com/10464043\n\u00bb\u00bb\u00bb\n\nUpdate issue 5928\n\nR=golang-dev, dave\nCC=golang-dev\nhttps://codereview.appspot.com/11629044",
+			"disapproval": false,
+			"date": "2013-07-22 08:34:49.201490",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 11629044: [release-branch.go1.1] cmd/gc: fix missing export data ...",
+	"created": "2013-07-22 08:23:15.258410",
+	"patchsets": [
+		1,
+		3001,
+		7001
+	],
+	"modified": "2013-07-22 08:34:52.767660",
+	"closed": true,
+	"issue": 11629044
+}

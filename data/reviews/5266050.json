@@ -1,0 +1,160 @@
+{
+	"description": "reflect: store unsafe.Pointer in {Slice,String}Header\n\nThis is in order to mark these types as containing pointers, so the gc won't free the memory behind the Data field from under us.",
+	"cc": [
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"rsc@golang.org",
+		"alex.brainman@gmail.com",
+		"dvyukov@google.com",
+		"krautz@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"krautz@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/16 23:05:23, brainman wrote:\n> Can't comment about your change. Do not know enough about gc.\n> \n> http://codereview.appspot.com/5266050/diff/5001/src/pkg/crypto/tls/root_windows.go\n> File src/pkg/crypto/tls/root_windows.go (right):\n> \n> http://codereview.appspot.com/5266050/diff/5001/src/pkg/crypto/tls/root_windows.go#newcode29\n> src/pkg/crypto/tls/root_windows.go:29: hdrp.Data =\n> unsafe.Pointer(cert.EncodedCert)\n> Please, get rid of reflect altogether.\n> \n> diff -r f6f99bbc5576 src/pkg/crypto/tls/root_windows.go\n> --- a/src/pkg/crypto/tls/root_windows.go\tSun Oct 16 20:50:11 2011 +1100\n> +++ b/src/pkg/crypto/tls/root_windows.go\tMon Oct 17 09:59:57 2011 +1100\n> @@ -6,7 +6,6 @@\n>  \n>  import (\n>  \t\"crypto/x509\"\n> -\t\"reflect\"\n>  \t\"syscall\"\n>  \t\"unsafe\"\n>  )\n> @@ -23,17 +22,8 @@\n>  \t\tif cert == nil {\n>  \t\t\tbreak\n>  \t\t}\n> -\n> -\t\tvar asn1Slice []byte\n> -\t\thdrp := (*reflect.SliceHeader)(unsafe.Pointer(&asn1Slice))\n> -\t\thdrp.Data = cert.EncodedCert\n> -\t\thdrp.Len = int(cert.Length)\n> -\t\thdrp.Cap = int(cert.Length)\n> -\n> -\t\tbuf := make([]byte, len(asn1Slice))\n> -\t\tcopy(buf, asn1Slice)\n> -\n> -\t\tif cert, err := x509.ParseCertificate(buf); err == nil {\n> +\t\tp := (*[1<<20]byte)(unsafe.Pointer(cert.EncodedCert))\n> +\t\tif cert, err := x509.ParseCertificate((*p)[:cert.Length]); err == nil {\n>  \t\t\troots.AddCert(cert)\n>  \t\t}\n>  \t}\n\nThe copy should be kept around. The struct returned from\nx509.ParseCertificate contains subslices of the passed-in\ndata.\n\nEvery time we call CertEnumCertificatesInStore, it frees\nthe previous CertContext.",
+			"disapproval": false,
+			"date": "2011-10-17 12:22:27.650098",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/17 07:15:43, dvyukov wrote:\n> On 2011/10/17 07:05:05, dvyukov wrote:\n> > Ouch!\n> > Don't we want 6g to consider types containing uintptr's as containing\n> pointers?\n> \n> I think we do, []uintptr was always dangerous.\n> I can reproduce it on my machine, please, test the following patch:\n\n/\\/\\/\\/\\/\\\ncan *not*\n\n> http://codereview.appspot.com/5278048/",
+			"disapproval": false,
+			"date": "2011-10-17 07:16:19.364022",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: bradfitz@golang.org, golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-16 21:55:40.189203",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Can't comment about your change. Do not know enough about gc.\n\nhttp://codereview.appspot.com/5266050/diff/5001/src/pkg/crypto/tls/root_windows.go\nFile src/pkg/crypto/tls/root_windows.go (right):\n\nhttp://codereview.appspot.com/5266050/diff/5001/src/pkg/crypto/tls/root_windows.go#newcode29\nsrc/pkg/crypto/tls/root_windows.go:29: hdrp.Data = unsafe.Pointer(cert.EncodedCert)\nPlease, get rid of reflect altogether.\n\ndiff -r f6f99bbc5576 src/pkg/crypto/tls/root_windows.go\n--- a/src/pkg/crypto/tls/root_windows.go\tSun Oct 16 20:50:11 2011 +1100\n+++ b/src/pkg/crypto/tls/root_windows.go\tMon Oct 17 09:59:57 2011 +1100\n@@ -6,7 +6,6 @@\n \n import (\n \t\"crypto/x509\"\n-\t\"reflect\"\n \t\"syscall\"\n \t\"unsafe\"\n )\n@@ -23,17 +22,8 @@\n \t\tif cert == nil {\n \t\t\tbreak\n \t\t}\n-\n-\t\tvar asn1Slice []byte\n-\t\thdrp := (*reflect.SliceHeader)(unsafe.Pointer(&asn1Slice))\n-\t\thdrp.Data = cert.EncodedCert\n-\t\thdrp.Len = int(cert.Length)\n-\t\thdrp.Cap = int(cert.Length)\n-\n-\t\tbuf := make([]byte, len(asn1Slice))\n-\t\tcopy(buf, asn1Slice)\n-\n-\t\tif cert, err := x509.ParseCertificate(buf); err == nil {\n+\t\tp := (*[1<<20]byte)(unsafe.Pointer(cert.EncodedCert))\n+\t\tif cert, err := x509.ParseCertificate((*p)[:cert.Length]); err == nil {\n \t\t\troots.AddCert(cert)\n \t\t}\n \t}",
+			"disapproval": false,
+			"date": "2011-10-16 23:05:23.215406",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Ouch!\nDon't we want 6g to consider types containing uintptr's as containing pointers?",
+			"disapproval": false,
+			"date": "2011-10-17 07:05:05.286325",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/17 07:05:05, dvyukov wrote:\n> Ouch!\n> Don't we want 6g to consider types containing uintptr's as containing pointers?\n\nI think we do, []uintptr was always dangerous.\nI can reproduce it on my machine, please, test the following patch:\nhttp://codereview.appspot.com/5278048/",
+			"disapproval": false,
+			"date": "2011-10-17 07:15:43.760056",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 17 October 2011 08:05,  <dvyukov@google.com> wrote:\n> Ouch!\n> Don't we want 6g to consider types containing uintptr's as containing\n> pointers?\n\nMaybe.  I did consider this solution.\nI'll let Russ decide on what's best.\n",
+			"disapproval": false,
+			"date": "2011-10-17 07:23:56.431967",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I'd prefer to use Dmitriy's patch for now.\nThis is a compiler bug introduced only in the\nlast few days.  It may be necessary to make an\nAPI change, but for now I'd prefer to just undo\na little bit of the compiler change and buy more\ntime to think about any possible API change.\n\nThanks.\nRuss\n",
+			"disapproval": false,
+			"date": "2011-10-17 18:57:49.678990",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"krautz@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2011-10-17 19:33:42.799758",
+			"approval": false
+		}
+	],
+	"owner_email": "hectorchu@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "hector",
+	"subject": "code review 5266050: reflect: store unsafe.Pointer in {Slice,String}Header",
+	"created": "2011-10-16 21:47:34.276205",
+	"patchsets": [
+		1,
+		2001,
+		5001
+	],
+	"modified": "2011-10-17 19:33:44.517599",
+	"closed": true,
+	"issue": 5266050
+}

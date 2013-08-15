@@ -1,0 +1,122 @@
+{
+	"description": "encoding/binary: skip blank fields when (en/de)coding structs\n\n- minor unrelated cleanups\n- performance impact in the noise\n\nbenchmark                       old ns/op    new ns/op    delta\nBenchmarkReadSlice1000Int32s        83462        83346   -0.14%\nBenchmarkReadStruct                  4141         4247   +2.56%\nBenchmarkReadInts                    1588         1586   -0.13%\nBenchmarkWriteInts                   1550         1489   -3.94%\nBenchmarkPutUvarint32                  39           39   +1.02%\nBenchmarkPutUvarint64                 142          144   +1.41%\n\nbenchmark                        old MB/s     new MB/s  speedup\nBenchmarkReadSlice1000Int32s        47.93        47.99    1.00x\nBenchmarkReadStruct                 16.90        16.48    0.98x\nBenchmarkReadInts                   18.89        18.91    1.00x\nBenchmarkWriteInts                  19.35        20.15    1.04x\nBenchmarkPutUvarint32              101.90       100.82    0.99x\nBenchmarkPutUvarint64               56.11        55.45    0.99x\n\nFixes issue 4185.",
+	"cc": [
+		"r@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello r@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-10-22 22:55:24.242280",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "friendly ping\r\n- gri\r\n\r\n\r\nOn Mon, Oct 22, 2012 at 3:55 PM, <gri@golang.org> wrote:\r\n\r\n> Reviewers: r, rsc,\r\n>\r\n> Message:\r\n> Hello r@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> encoding/binary: when reading, skip blank fields\r\n>\r\n> - minor unrelated cleanups\r\n> - slight performance degradation for reading structs\r\n>\r\n> benchmark                       old ns/op    new ns/op    delta\r\n> BenchmarkReadSlice1000Int32s        90958        90147   -0.89%\r\n> BenchmarkReadStruct                  4476         4655   +4.00%\r\n> BenchmarkReadInts                    1721         1717   -0.23%\r\n> BenchmarkWriteInts                   1616         1604   -0.74%\r\n> BenchmarkPutUvarint32                  54           54   -0.18%\r\n> BenchmarkPutUvarint64                 177          176   -0.56%\r\n>\r\n> benchmark                        old MB/s     new MB/s  speedup\r\n> BenchmarkReadSlice1000Int32s        43.98        44.37    1.01x\r\n> BenchmarkReadStruct                 15.64        15.03    0.96x\r\n> BenchmarkReadInts                   17.42        17.47    1.00x\r\n> BenchmarkWriteInts                  18.56        18.69    1.01x\r\n> BenchmarkPutUvarint32               73.24        73.42    1.00x\r\n> BenchmarkPutUvarint64               45.14        45.32    1.00x\r\n>\r\n> Fixes issue 4185.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6750053/<http://codereview.appspot.com/6750053/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/encoding/binary/**binary.go\r\n>   M src/pkg/encoding/binary/**binary_test.go\r\n>\r\n>\r\n> Index: src/pkg/encoding/binary/**binary.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/encoding/binary/**binary.go\r\n> +++ b/src/pkg/encoding/binary/**binary.go\r\n> @@ -125,6 +125,9 @@\r\n>  // of fixed-size values.\r\n>  // Bytes read from r are decoded using the specified byte order\r\n>  // and written to successive fields of the data.\r\n> +// When reading into structs, the field data for fields with\r\n> +// blank (_) field names is skipped; i.e., blank field names\r\n> +// may be used for padding.\r\n>  func Read(r io.Reader, order ByteOrder, data interface{}) error {\r\n>         // Fast path for basic types.\r\n>         if n := intDestSize(data); n != 0 {\r\n> @@ -154,7 +157,7 @@\r\n>                 return nil\r\n>         }\r\n>\r\n> -       // Fallback to reflect-based.\r\n> +       // Fallback to reflect-based decoding.\r\n>         var v reflect.Value\r\n>         switch d := reflect.ValueOf(data); d.Kind() {\r\n>         case reflect.Ptr:\r\n> @@ -300,15 +303,13 @@\r\n>         return -1\r\n>  }\r\n>\r\n> -type decoder struct {\r\n> +type coder struct {\r\n>         order ByteOrder\r\n>         buf   []byte\r\n>  }\r\n>\r\n> -type encoder struct {\r\n> -       order ByteOrder\r\n> -       buf   []byte\r\n> -}\r\n> +type decoder coder\r\n> +type encoder coder\r\n>\r\n>  func (d *decoder) uint8() uint8 {\r\n>         x := d.buf[0]\r\n> @@ -379,9 +380,18 @@\r\n>                 }\r\n>\r\n>         case reflect.Struct:\r\n> +               t := v.Type()\r\n>                 l := v.NumField()\r\n>                 for i := 0; i < l; i++ {\r\n> -                       d.value(v.Field(i))\r\n> +                       // Note: It would be sufficient to check the field\r\n> name,\r\n> +                       // but creating the StructField info for each\r\n> field is\r\n> +                       // costly (run \"go test -bench=ReadStruct\" and\r\n> compare\r\n> +                       // results when making changes to this code).\r\n> +                       if v := v.Field(i); v.CanSet() || t.Field(i).Name\r\n> != \"_\" {\r\n> +                               d.value(v)\r\n> +                       } else {\r\n> +                               d.buf = d.buf[dataSize(v):] // skip this\r\n> field\r\n> +                       }\r\n>                 }\r\n>\r\n>         case reflect.Slice:\r\n> Index: src/pkg/encoding/binary/**binary_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/encoding/binary/**binary_test.go\r\n> +++ b/src/pkg/encoding/binary/**binary_test.go\r\n> @@ -120,18 +120,14 @@\r\n>         checkResult(t, \"Write\", order, err, buf.Bytes(), b)\r\n>  }\r\n>\r\n> -func TestBigEndianRead(t *testing.T) { testRead(t, BigEndian, big, s) }\r\n> +func TestLittleEndianRead(t *testing.T)     { testRead(t, LittleEndian,\r\n> little, s) }\r\n> +func TestLittleEndianWrite(t *testing.T)    { testWrite(t, LittleEndian,\r\n> little, s) }\r\n> +func TestLittleEndianPtrWrite(t *testing.T) { testWrite(t, LittleEndian,\r\n> little, &s) }\r\n>\r\n> -func TestLittleEndianRead(t *testing.T) { testRead(t, LittleEndian,\r\n> little, s) }\r\n> -\r\n> -func TestBigEndianWrite(t *testing.T) { testWrite(t, BigEndian, big, s) }\r\n> -\r\n> -func TestLittleEndianWrite(t *testing.T) { testWrite(t, LittleEndian,\r\n> little, s) }\r\n> -\r\n> +func TestBigEndianRead(t *testing.T)     { testRead(t, BigEndian, big, s)\r\n> }\r\n> +func TestBigEndianWrite(t *testing.T)    { testWrite(t, BigEndian, big,\r\n> s) }\r\n>  func TestBigEndianPtrWrite(t *testing.T) { testWrite(t, BigEndian, big,\r\n> &s) }\r\n>\r\n> -func TestLittleEndianPtrWrite(t *testing.T) { testWrite(t, LittleEndian,\r\n> little, &s) }\r\n> -\r\n>  func TestReadSlice(t *testing.T) {\r\n>         slice := make([]int32, 2)\r\n>         err := Read(bytes.NewBuffer(src), BigEndian, slice)\r\n> @@ -147,20 +143,45 @@\r\n>  func TestWriteT(t *testing.T) {\r\n>         buf := new(bytes.Buffer)\r\n>         ts := T{}\r\n> -       err := Write(buf, BigEndian, ts)\r\n> -       if err == nil {\r\n> -               t.Errorf(\"WriteT: have nil, want non-nil\")\r\n> +       if err := Write(buf, BigEndian, ts); err == nil {\r\n> +               t.Errorf(\"WriteT: have err == nil, want non-nil\")\r\n>         }\r\n>\r\n>         tv := reflect.Indirect(reflect.**ValueOf(ts))\r\n>         for i, n := 0, tv.NumField(); i < n; i++ {\r\n> -               err = Write(buf, BigEndian, tv.Field(i).Interface())\r\n> -               if err == nil {\r\n> -                       t.Errorf(\"WriteT.%v: have nil, want non-nil\",\r\n> tv.Field(i).Type())\r\n> +               if err := Write(buf, BigEndian, tv.Field(i).Interface());\r\n> err == nil {\r\n> +                       t.Errorf(\"WriteT.%v: have err == nil, want\r\n> non-nil\", tv.Field(i).Type())\r\n>                 }\r\n>         }\r\n>  }\r\n>\r\n> +type UnexportedFields struct {\r\n> +       A uint32\r\n> +       _ int32\r\n> +       B float64\r\n> +       _ [4]int16\r\n> +       C byte\r\n> +       _ [7]byte\r\n> +       _ struct {\r\n> +               f [8]float32\r\n> +       }\r\n> +}\r\n> +\r\n> +func TestUnexportedFields(t *testing.T) {\r\n> +       buf := new(bytes.Buffer)\r\n> +       u1 := UnexportedFields{A: 1234567890, B: 2.718281828, C: 42}\r\n> +       if err := Write(buf, LittleEndian, &u1); err != nil {\r\n> +               t.Error(err)\r\n> +       }\r\n> +       var u2 UnexportedFields\r\n> +       if err := Read(buf, LittleEndian, &u2); err != nil {\r\n> +               t.Error(err)\r\n> +       }\r\n> +       if u1.A != u2.A || u1.B != u2.B || u1.C != u2.C {\r\n> +               t.Errorf(\"%v != %v\", u1, u2)\r\n> +       }\r\n> +}\r\n> +\r\n>  type byteSliceReader struct {\r\n>         remain []byte\r\n>  }\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-29 17:25:08.772460",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This looks fine but it means that Read and Write are asymmetric. Write should write zeros for fields named _ too.\n\nhttps://codereview.appspot.com/6750053/diff/3/src/pkg/encoding/binary/binary.go\nFile src/pkg/encoding/binary/binary.go (right):\n\nhttps://codereview.appspot.com/6750053/diff/3/src/pkg/encoding/binary/binary.go#newcode390\nsrc/pkg/encoding/binary/binary.go:390: if v := v.Field(i); v.CanSet() || t.Field(i).Name != \"_\" {\nUsing v.CanSet here means that binary will not panic anymore if given unexported fields. It should continue to panic in that case. This can be just\n\nif v := v.Field(i); t.Field(i).Name != \"_\" {",
+			"disapproval": false,
+			"date": "2012-11-01 16:31:20.015870",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=1c9411647150 ***\n\nencoding/binary: skip blank fields when (en/de)coding structs\n\n- minor unrelated cleanups\n- performance impact in the noise\n\nbenchmark                       old ns/op    new ns/op    delta\nBenchmarkReadSlice1000Int32s        83462        83346   -0.14%\nBenchmarkReadStruct                  4141         4247   +2.56%\nBenchmarkReadInts                    1588         1586   -0.13%\nBenchmarkWriteInts                   1550         1489   -3.94%\nBenchmarkPutUvarint32                  39           39   +1.02%\nBenchmarkPutUvarint64                 142          144   +1.41%\n\nbenchmark                        old MB/s     new MB/s  speedup\nBenchmarkReadSlice1000Int32s        47.93        47.99    1.00x\nBenchmarkReadStruct                 16.90        16.48    0.98x\nBenchmarkReadInts                   18.89        18.91    1.00x\nBenchmarkWriteInts                  19.35        20.15    1.04x\nBenchmarkPutUvarint32              101.90       100.82    0.99x\nBenchmarkPutUvarint64               56.11        55.45    0.99x\n\nFixes issue 4185.\n\nR=r, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6750053",
+			"disapproval": false,
+			"date": "2012-11-01 19:39:22.662240",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Made write symmetric and added extra test.\n\nNote that removing the use of CanSet causes a massive performance degradation for the decoding structs benchmark. This is presumably due to the cost for creating the field information for each field so that we can get the name.\n\nI think some of this could be fixed by caching some of the decoded field information. Perhaps there should be support for blank fields in reflect.\n\nhttps://codereview.appspot.com/6750053/diff/3/src/pkg/encoding/binary/binary.go\nFile src/pkg/encoding/binary/binary.go (right):\n\nhttps://codereview.appspot.com/6750053/diff/3/src/pkg/encoding/binary/binary.go#newcode390\nsrc/pkg/encoding/binary/binary.go:390: if v := v.Field(i); v.CanSet() || t.Field(i).Name != \"_\" {\nOn 2012/11/01 16:31:20, rsc wrote:\n> Using v.CanSet here means that binary will not panic anymore if given unexported\n> fields. It should continue to panic in that case. This can be just\n> \n> if v := v.Field(i); t.Field(i).Name != \"_\" {\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-01 18:15:23.195290",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You were right about CanSet: I misread the || as &&. It's fine to put it back.\r\nI think for now we can skip caching type information. Read and Write\r\nare here for convenience, not speed.\r\n\r\nOn Thu, Nov 1, 2012 at 2:15 PM,  <gri@golang.org> wrote:\r\n> Made write symmetric and added extra test.\r\n>\r\n> Note that removing the use of CanSet causes a massive performance\r\n> degradation for the decoding structs benchmark. This is presumably due\r\n> to the cost for creating the field information for each field so that we\r\n> can get the name.\r\n>\r\n> I think some of this could be fixed by caching some of the decoded field\r\n> information. Perhaps there should be support for blank fields in\r\n> reflect.\r\n>\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.com/6750053/diff/3/src/pkg/encoding/binary/binary.go\r\n> File src/pkg/encoding/binary/binary.go (right):\r\n>\r\n> https://codereview.appspot.com/6750053/diff/3/src/pkg/encoding/binary/binary.go#newcode390\r\n> src/pkg/encoding/binary/binary.go:390: if v := v.Field(i); v.CanSet() ||\r\n> t.Field(i).Name != \"_\" {\r\n> On 2012/11/01 16:31:20, rsc wrote:\r\n>>\r\n>> Using v.CanSet here means that binary will not panic anymore if given\r\n>\r\n> unexported\r\n>>\r\n>> fields. It should continue to panic in that case. This can be just\r\n>\r\n>\r\n>> if v := v.Field(i); t.Field(i).Name != \"_\" {\r\n>\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.com/6750053/\r\n",
+			"disapproval": false,
+			"date": "2012-11-01 18:27:46.923340",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-11-01 18:28:35.589590",
+			"approval": true
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 6750053: encoding/binary: when reading, skip blank fields",
+	"created": "2012-10-22 21:04:27.866500",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		7001,
+		3,
+		13001,
+		13002,
+		12002,
+		10002,
+		12005
+	],
+	"modified": "2012-11-01 19:39:24.904280",
+	"closed": true,
+	"issue": 6750053
+}

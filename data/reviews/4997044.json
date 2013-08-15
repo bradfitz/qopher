@@ -1,0 +1,292 @@
+{
+	"description": "runtime: eliminate handle churn when churning channels on Windows\n\nThe Windows implementation of the net package churns through a couple of channels for every read/write operation.  This translates into a lot of time spent in the kernel creating and deleting event objects.",
+	"cc": [
+		"rsc@golang.org",
+		"dvyukov@google.com",
+		"alex.brainman@gmail.com",
+		"jp@webmaster.ms",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode126\nsrc/pkg/runtime/windows/thread.c:126: while(m->waitm != m)\nthis has to be load-acquire, because it acquires the lock\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode140\nsrc/pkg/runtime/windows/thread.c:140: if(m = runtime\u00b7atomicloadp(&l->waitm))\nUnbounded active spinning is bad for performance. Especially on single core machines. Here you basically say, if l->waitm is not yet filled, eat whole my quantum in this loop, and only them switch to that other thread to finally fill it.\nAdd runtime.procyield() into the loop + episodic runtime.osyield().\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode144\nsrc/pkg/runtime/windows/thread.c:144: m->waitm = m;\nthis has to be store-release, because it releases the lock\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode145\nsrc/pkg/runtime/windows/thread.c:145: runtime\u00b7stdcall(runtime\u00b7NtAlertThread, 1, m->hthread);\nIf NtAlertThread(T) is called before NtDelayExecution(T), NtDelayExecution(T) will return immediately, right? It's not clear from docs.\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode198\nsrc/pkg/runtime/windows/thread.c:198: m, (uintptr)4/*CREATE_SUSPENDED*/, nil);\nWhat is reason to create a suspended thread and then to resume it?",
+			"disapproval": false,
+			"date": "2011-09-11 13:00:04.622100",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, dvyukov@google.com, alex.brainman@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-10 17:46:25.920932",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "This program doesn't terminate with this change.\n\npackage main\n\nimport (\n\t\"fmt\"\n\t\"runtime\"\n\t\"sync\"\n\t\"time\"\n)\n\nvar (\n\tlock sync.Mutex\n\tm = make(map[int]int)\n)\n\nfunc f(i int) {\n\tfor {\n\t\tlock.Lock()\n\t\tm[i]++\n\t\tlock.Unlock()\n\t}\n}\n\nfunc main() {\n\truntime.GOMAXPROCS(2)\n\tfor i := 0; i < 10; i++ {\n\t\tgo f(i)\n\t}\n\ttime.Sleep(1e10)\n\tlock.Lock()\n\tsum := 0\n\tfor i := 0; i < 10; i++ {\n\t\tsum += m[i]\n\t}\n\tfor i := 0; i < 10; i++ {\n\t\tfmt.Println(i, float64(m[i])*100 / float64(sum))\n\t}\n}\n\nI'll investigate using a doubly linked list to make the lock more fair.\n",
+			"disapproval": false,
+			"date": "2011-09-11 12:03:52.452683",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4997044/diff/9001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4997044/diff/9001/src/pkg/runtime/windows/thread.c#newcode133\nsrc/pkg/runtime/windows/thread.c:133: M *m;\nOn 2011/09/11 07:23:27, jp wrote:\n> rename to avoid confusion with global m\n\nshould be ok, look at proc.c for precedent.\n\nhttp://codereview.appspot.com/4997044/diff/9001/src/pkg/runtime/windows/thread.c#newcode196\nsrc/pkg/runtime/windows/thread.c:196: thandle = runtime\u00b7stdcall(runtime\u00b7CreateThread, 6, (uintptr)0, (uintptr)0, runtime\u00b7tstart_stdcall, m, (uintptr)4, (uintptr)0);\nOn 2011/09/11 07:23:27, jp wrote:\n> comment CREATE_SUSPENDED or add it do defs.h\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-11 08:37:05.759951",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I agree with Hector's idea about changing \nl.waitm from nil to LOCK_HELD as a quick exit.\nThat should eliminate the spinning nicely.\n\nhttp://codereview.appspot.com/4997044/diff/15001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4997044/diff/15001/src/pkg/runtime/windows/thread.c#newcode158\nsrc/pkg/runtime/windows/thread.c:158: // someone else has it; wait\nThis code deserves a bit more explanation.  I suggest:\n\nInsert above this function:\n#define LOCK_HELD ((M*)-1)\n\nRename M.waitm to M.nextwaitm.\n\nThis becomes:\n\n// Someone else has it.\n// l->waitm points to a linked list of M's waiting for this lock,\n// chained through m->nextwaitm.\n// To pass the lock to this m, another M will set m->waitm = LOCK_HELD\n// and signal m->event.\n\n// Queue.\nfor(;;) {\n...\n}\n\n// Wait.\nwhile(runtime...)\n\nhttp://codereview.appspot.com/4997044/diff/15001/src/pkg/runtime/windows/thread.c#newcode172\nsrc/pkg/runtime/windows/thread.c:172: M *m;\nPlease call this M *mp;\n\nThere is a global m, and it is easier to read this code\nif you understand that it is not referring to the global m.\n\nhttp://codereview.appspot.com/4997044/diff/15001/src/pkg/runtime/windows/thread.c#newcode173\nsrc/pkg/runtime/windows/thread.c:173: uint32 i = 0, spin = 0;\ninitializations separate from declaration please.\nmove spin = 0 down before if(proccount > 1)\nand i = 0 down before for(;;).\n\nhttp://codereview.appspot.com/4997044/diff/15001/src/pkg/runtime/windows/thread.c#newcode175\nsrc/pkg/runtime/windows/thread.c:175: if(runtime\u00b7xadd(&l->key, -1) == 0)\nSame comments about explanation.\nThe comments I'd want to see as a reader are:\n\n// Other M's are waiting for the lock.  Wake one.\n\nif(proccount == 0)\n...\n\n// Wait for an M to appear on the waiting list and dequeue it.\nfor(;;) {\n...\n}\n\n// Wake that M.\nruntime.atomicstorep(&m->nextwaitm, LOCK_HELD);\nruntime.stdcall(runtime.SetEvent, 1, m->event);\n\nhttp://codereview.appspot.com/4997044/diff/15001/src/pkg/runtime/windows/thread.c#newcode185\nsrc/pkg/runtime/windows/thread.c:185: while(m = runtime\u00b7atomicloadp(&l->waitm))\nPlease write while((m = ...) != nil)\njust so that it's clear that's not an ==.\n\nhttp://codereview.appspot.com/4997044/diff/15001/src/pkg/runtime/windows/thread.c#newcode188\nsrc/pkg/runtime/windows/thread.c:188: if(++i % (spin + 1) > 0)\nEasier to read:\n\nif(i++ < spin)\n    runtime.procyield(ACTIVE_SPIN_CNT);\nelse {\n    i = 0;\n    runtime.osyield();\n}",
+			"disapproval": false,
+			"date": "2011-09-12 17:37:16.523814",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Nice.\n\nhttp://codereview.appspot.com/4997044/diff/9001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4997044/diff/9001/src/pkg/runtime/windows/thread.c#newcode133\nsrc/pkg/runtime/windows/thread.c:133: M *m;\nrename to avoid confusion with global m\n\nhttp://codereview.appspot.com/4997044/diff/9001/src/pkg/runtime/windows/thread.c#newcode196\nsrc/pkg/runtime/windows/thread.c:196: thandle = runtime\u00b7stdcall(runtime\u00b7CreateThread, 6, (uintptr)0, (uintptr)0, runtime\u00b7tstart_stdcall, m, (uintptr)4, (uintptr)0);\ncomment CREATE_SUSPENDED or add it do defs.h",
+			"disapproval": false,
+			"date": "2011-09-11 07:23:27.456536",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I think the spinning in unlock()  when l->waitm == nil is unnecessary - it\nshould be enough to cas it to -1, and let the thread in lock() pick this up\nand run with it.  Am I off base here?\nOn Sep 12, 2011 11:34 AM, <hectorchu@gmail.com> wrote:\n> PTAL. I looked into using a FIFO queue, but the implementation I looked\n> at (Michael and Scott) requires a dummy node, which implies that it\n> depends on malloc.\n>\n>\n>\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c\n> File src/pkg/runtime/windows/thread.c (right):\n>\n>\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode126\n> src/pkg/runtime/windows/thread.c:126: while(m->waitm != m)\n> On 2011/09/11 13:00:05, dvyukov wrote:\n>> this has to be load-acquire, because it acquires the lock\n>\n> Done.\n>\n>\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode140\n> src/pkg/runtime/windows/thread.c:140: if(m =\n> runtime\u00b7atomicloadp(&l->waitm))\n> On 2011/09/11 13:00:05, dvyukov wrote:\n>> Unbounded active spinning is bad for performance. Especially on single\n> core\n>> machines. Here you basically say, if l->waitm is not yet filled, eat\n> whole my\n>> quantum in this loop, and only them switch to that other thread to\n> finally fill\n>> it.\n>> Add runtime.procyield() into the loop + episodic runtime.osyield().\n>\n> Done.\n>\n>\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode144\n> src/pkg/runtime/windows/thread.c:144: m->waitm = m;\n> On 2011/09/11 13:00:05, dvyukov wrote:\n>> this has to be store-release, because it releases the lock\n>\n> Done.\n>\n>\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode145\n> src/pkg/runtime/windows/thread.c:145:\n> runtime\u00b7stdcall(runtime\u00b7NtAlertThread, 1, m->hthread);\n> On 2011/09/11 13:00:05, dvyukov wrote:\n>> If NtAlertThread(T) is called before NtDelayExecution(T),\n> NtDelayExecution(T)\n>> will return immediately, right? It's not clear from docs.\n>\n> I just tested this and it turns out it __doesn't__. I will go back to\n> using event objects, but only one per M.\n>\n>\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode198\n> src/pkg/runtime/windows/thread.c:198: m, (uintptr)4/*CREATE_SUSPENDED*/,\n> nil);\n> On 2011/09/11 13:00:05, dvyukov wrote:\n>> What is reason to create a suspended thread and then to resume it?\n>\n> So there isn't a race to set m->hthread = thandle.\n>\n> http://codereview.appspot.com/4997044/\n",
+			"disapproval": false,
+			"date": "2011-09-12 16:08:28.306975",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL. I looked into using a FIFO queue, but the implementation I looked at (Michael and Scott) requires a dummy node, which implies that it depends on malloc.\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode126\nsrc/pkg/runtime/windows/thread.c:126: while(m->waitm != m)\nOn 2011/09/11 13:00:05, dvyukov wrote:\n> this has to be load-acquire, because it acquires the lock\n\nDone.\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode140\nsrc/pkg/runtime/windows/thread.c:140: if(m = runtime\u00b7atomicloadp(&l->waitm))\nOn 2011/09/11 13:00:05, dvyukov wrote:\n> Unbounded active spinning is bad for performance. Especially on single core\n> machines. Here you basically say, if l->waitm is not yet filled, eat whole my\n> quantum in this loop, and only them switch to that other thread to finally fill\n> it.\n> Add runtime.procyield() into the loop + episodic runtime.osyield().\n\nDone.\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode144\nsrc/pkg/runtime/windows/thread.c:144: m->waitm = m;\nOn 2011/09/11 13:00:05, dvyukov wrote:\n> this has to be store-release, because it releases the lock\n\nDone.\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode145\nsrc/pkg/runtime/windows/thread.c:145: runtime\u00b7stdcall(runtime\u00b7NtAlertThread, 1, m->hthread);\nOn 2011/09/11 13:00:05, dvyukov wrote:\n> If NtAlertThread(T) is called before NtDelayExecution(T), NtDelayExecution(T)\n> will return immediately, right? It's not clear from docs.\n\nI just tested this and it turns out it __doesn't__.  I will go back to using event objects, but only one per M.\n\nhttp://codereview.appspot.com/4997044/diff/12001/src/pkg/runtime/windows/thread.c#newcode198\nsrc/pkg/runtime/windows/thread.c:198: m, (uintptr)4/*CREATE_SUSPENDED*/, nil);\nOn 2011/09/11 13:00:05, dvyukov wrote:\n> What is reason to create a suspended thread and then to resume it?\n\nSo there isn't a race to set m->hthread = thandle.",
+			"disapproval": false,
+			"date": "2011-09-12 10:34:18.787830",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/11 12:03:52, hector wrote:\n> This program doesn't terminate with this change.\n> I'll investigate using a doubly linked list to make the lock more fair.\n\nI think the event in the current version uses FIFO wakeup. You don't need a doubly linked list (+ it's problematic to implement in lock-free manner), you need singly linked fifo queue.\nHowever, I am not sure whether it's important to make the program work, it seems to be working by occasion.",
+			"disapproval": false,
+			"date": "2011-09-11 13:03:03.155721",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, dvyukov@google.com, alex.brainman@gmail.com, jp@webmaster.ms (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-09-12 23:24:09.551332",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/13 11:06:12, hector wrote:\n> http://codereview.appspot.com/4997044/diff/27001/src/pkg/runtime/windows/thread.c\n> File src/pkg/runtime/windows/thread.c (right):\n> \n\nSorry Hector, I don't comment on your code, because I always miss something with those fiddly locks.\n\nOn the other hand, I will try and change network code to reuse channels like unix code does. I didn't do it at the start to keep code simple. But it is probably worth it, even if only to avoid allocating memory on every io.\n\nAlex",
+			"disapproval": false,
+			"date": "2011-09-13 13:02:57.092776",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "No problem and perfectly understood Alex.  I agree it is a tricky topic,\nthese lock-free concurrent algorithms.  I think Dmitry knows a lot about the\nissues, so I hope he can confirm the final version of the code.  As for\nchanging the net code to reuse channels, sounds great.  I'm happy for the\ntime being, with this change the CPU load is slighty lower under high\nthroughput.\nOn Sep 13, 2011 2:02 PM, <alex.brainman@gmail.com> wrote:\n> On 2011/09/13 11:06:12, hector wrote:\n>\n>\nhttp://codereview.appspot.com/4997044/diff/27001/src/pkg/runtime/windows/thread.c\n>> File src/pkg/runtime/windows/thread.c (right):\n>\n>\n> Sorry Hector, I don't comment on your code, because I always miss\n> something with those fiddly locks.\n>\n> On the other hand, I will try and change network code to reuse channels\n> like unix code does. I didn't do it at the start to keep code simple.\n> But it is probably worth it, even if only to avoid allocating memory on\n> every io.\n>\n> Alex\n>\n> http://codereview.appspot.com/4997044/\n",
+			"disapproval": false,
+			"date": "2011-09-13 13:22:24.985343",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4997044/diff/27001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4997044/diff/27001/src/pkg/runtime/windows/thread.c#newcode132\nsrc/pkg/runtime/windows/thread.c:132: m->nextwaitm = runtime\u00b7atomicloadp(&l->waitm);\nDoes this need to be atomicstorep(&m->nextwaitm, l->waitm)?",
+			"disapproval": false,
+			"date": "2011-09-13 11:06:12.806694",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4997044/diff/27001/src/pkg/runtime/windows/thread.c\nFile src/pkg/runtime/windows/thread.c (right):\n\nhttp://codereview.appspot.com/4997044/diff/27001/src/pkg/runtime/windows/thread.c#newcode132\nsrc/pkg/runtime/windows/thread.c:132: m->nextwaitm = runtime\u00b7atomicloadp(&l->waitm);\nOn 2011/09/13 11:06:12, hector wrote:\n> Does this need to be atomicstorep(&m->nextwaitm, l->waitm)?\n\nTo answer my own question, it doesn't because cas acts as a memory barrier.",
+			"disapproval": false,
+			"date": "2011-09-13 15:54:48.184711",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/13 13:22:24, hector wrote:\n> No problem and perfectly understood Alex.  I agree it is a tricky topic,\n> these lock-free concurrent algorithms.  I think Dmitry knows a lot about the\n> issues, so I hope he can confirm the final version of the code.\n\nHi Hector,\n\nI see no correctness issues at first glance. However, you know, you never sure with such things. I do not have time for really close examination right now. Ideally, one verifies such things with Relacy Race Detector, I can't do better that it. It requires time, though.",
+			"disapproval": false,
+			"date": "2011-09-13 17:42:32.106076",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2011-09-15 00:08:39.188449",
+			"approval": true
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Correct me if I'm wrong, but as far as I'm aware there remains no more\nwork to be done on this.  Can someone please approve the change?\nThanks.\n",
+			"disapproval": false,
+			"date": "2011-09-15 00:03:29.416415",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"alex.brainman@gmail.com",
+				"jp@webmaster.ms",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=af0ac80bbb92 ***\n\nruntime: eliminate handle churn when churning channels on Windows\n\nThe Windows implementation of the net package churns through a couple of channels for every read/write operation.  This translates into a lot of time spent in the kernel creating and deleting event objects.\n\nR=rsc, dvyukov, alex.brainman, jp\nCC=golang-dev\nhttp://codereview.appspot.com/4997044\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2011-09-15 00:23:27.054219",
+			"approval": false
+		}
+	],
+	"owner_email": "hectorchu@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "hector",
+	"subject": "code review 4997044: runtime: eliminate handle churn when churning channels ...",
+	"created": "2011-09-10 17:25:30.367275",
+	"patchsets": [
+		1,
+		9001,
+		12001,
+		15001,
+		27001
+	],
+	"modified": "2011-09-15 06:10:35.101187",
+	"closed": true,
+	"issue": 4997044
+}

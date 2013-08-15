@@ -1,0 +1,102 @@
+{
+	"description": "log/syslog: fix deadlock in test\nThe problem was that server handlers block on done<-,\nthe goroutine that reads from done blocks on count<-,\nand the main goroutine that is supposed to read from count\nwaits for server handlers to exit.\nFixes issue 5547.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "/me shakes head at the amount of energy this package consumes. \r\n\r\nOn 24/05/2013, at 20:30, dvyukov@google.com wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n> \r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n> \r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@code.google.com/p/go/\r\n> \r\n> \r\n> Description:\r\n> log/syslog: fix deadlock in test\r\n> The problem was that server handlers block on done<-,\r\n> the goroutine that reads from done blocks on count<-,\r\n> and the main goroutine that is supposed to read from count\r\n> waits for server handlers to exit.\r\n> Fixes issue 5547.\r\n> \r\n> Please review this at https://codereview.appspot.com/9722043/\r\n> \r\n> Affected files:\r\n>  M src/pkg/log/syslog/syslog_test.go\r\n> \r\n> \r\n> Index: src/pkg/log/syslog/syslog_test.go\r\n> ===================================================================\r\n> --- a/src/pkg/log/syslog/syslog_test.go\r\n> +++ b/src/pkg/log/syslog/syslog_test.go\r\n> @@ -281,12 +281,12 @@\r\n>    for i := 0; i < 10; i++ {\r\n>        wg.Add(1)\r\n>        go func() {\r\n> +            defer wg.Done()\r\n>            err := w.Info(\"test\")\r\n>            if err != nil {\r\n>                t.Errorf(\"Info() failed: %v\", err)\r\n>                return\r\n>            }\r\n> -            wg.Done()\r\n>        }()\r\n>    }\r\n>    wg.Wait()\r\n> @@ -296,8 +296,10 @@\r\n>    crashy = true\r\n>    defer func() { crashy = false }()\r\n> \r\n> +    const N = 10\r\n> +    const M = 100\r\n>    net := \"unix\"\r\n> -    done := make(chan string)\r\n> +    done := make(chan string, N*M)\r\n>    addr, sock, srvWG := startServer(net, \"\", done)\r\n>    defer os.Remove(addr)\r\n> \r\n> @@ -310,7 +312,7 @@\r\n>            // we are looking for 500 out of 1000 events\r\n>            // here because lots of log messages are lost\r\n>            // in buffers (kernel and/or bufio)\r\n> -            if ct > 500 {\r\n> +            if ct > N*M/2 {\r\n>                break\r\n>            }\r\n>        }\r\n> @@ -318,21 +320,21 @@\r\n>    }()\r\n> \r\n>    var wg sync.WaitGroup\r\n> -    for i := 0; i < 10; i++ {\r\n> -        wg.Add(1)\r\n> +    wg.Add(N)\r\n> +    for i := 0; i < N; i++ {\r\n>        go func() {\r\n> +            defer wg.Done()\r\n>            w, err := Dial(net, addr, LOG_USER|LOG_ERR, \"tag\")\r\n>            if err != nil {\r\n>                t.Fatalf(\"syslog.Dial() failed: %v\", err)\r\n>            }\r\n> -            for i := 0; i < 100; i++ {\r\n> +            for i := 0; i < M; i++ {\r\n>                err := w.Info(\"test\")\r\n>                if err != nil {\r\n>                    t.Errorf(\"Info() failed: %v\", err)\r\n>                    return\r\n>                }\r\n>            }\r\n> -            wg.Done()\r\n>        }()\r\n>    }\r\n>    wg.Wait()\r\n> \r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-05-24 10:46:27.770840",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-24 10:30:25.436960",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think it's possible to reproduce it w/o -race by inserting sleeps.\r\n\r\n\r\nOn Fri, May 24, 2013 at 4:43 PM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> The change LGTM, but I am not able to replicate the original deadlock\r\n> on my host. Maybe wait for @fullung\r\n>\r\n> On Fri, May 24, 2013 at 8:45 PM, Dave Cheney <dave@cheney.net> wrote:\r\n> > /me shakes head at the amount of energy this package consumes.\r\n> >\r\n> > On 24/05/2013, at 20:30, dvyukov@google.com wrote:\r\n> >\r\n> >> Reviewers: golang-dev1,\r\n> >>\r\n> >> Message:\r\n> >> Hello golang-dev@googlegroups.com,\r\n> >>\r\n> >> I'd like you to review this change to\r\n> >> https://dvyukov%40google.com@code.google.com/p/go/\r\n> >>\r\n> >>\r\n> >> Description:\r\n> >> log/syslog: fix deadlock in test\r\n> >> The problem was that server handlers block on done<-,\r\n> >> the goroutine that reads from done blocks on count<-,\r\n> >> and the main goroutine that is supposed to read from count\r\n> >> waits for server handlers to exit.\r\n> >> Fixes issue 5547.\r\n> >>\r\n> >> Please review this at https://codereview.appspot.com/9722043/\r\n> >>\r\n> >> Affected files:\r\n> >>  M src/pkg/log/syslog/syslog_test.go\r\n> >>\r\n> >>\r\n> >> Index: src/pkg/log/syslog/syslog_test.go\r\n> >> ===================================================================\r\n> >> --- a/src/pkg/log/syslog/syslog_test.go\r\n> >> +++ b/src/pkg/log/syslog/syslog_test.go\r\n> >> @@ -281,12 +281,12 @@\r\n> >>    for i := 0; i < 10; i++ {\r\n> >>        wg.Add(1)\r\n> >>        go func() {\r\n> >> +            defer wg.Done()\r\n> >>            err := w.Info(\"test\")\r\n> >>            if err != nil {\r\n> >>                t.Errorf(\"Info() failed: %v\", err)\r\n> >>                return\r\n> >>            }\r\n> >> -            wg.Done()\r\n> >>        }()\r\n> >>    }\r\n> >>    wg.Wait()\r\n> >> @@ -296,8 +296,10 @@\r\n> >>    crashy = true\r\n> >>    defer func() { crashy = false }()\r\n> >>\r\n> >> +    const N = 10\r\n> >> +    const M = 100\r\n> >>    net := \"unix\"\r\n> >> -    done := make(chan string)\r\n> >> +    done := make(chan string, N*M)\r\n> >>    addr, sock, srvWG := startServer(net, \"\", done)\r\n> >>    defer os.Remove(addr)\r\n> >>\r\n> >> @@ -310,7 +312,7 @@\r\n> >>            // we are looking for 500 out of 1000 events\r\n> >>            // here because lots of log messages are lost\r\n> >>            // in buffers (kernel and/or bufio)\r\n> >> -            if ct > 500 {\r\n> >> +            if ct > N*M/2 {\r\n> >>                break\r\n> >>            }\r\n> >>        }\r\n> >> @@ -318,21 +320,21 @@\r\n> >>    }()\r\n> >>\r\n> >>    var wg sync.WaitGroup\r\n> >> -    for i := 0; i < 10; i++ {\r\n> >> -        wg.Add(1)\r\n> >> +    wg.Add(N)\r\n> >> +    for i := 0; i < N; i++ {\r\n> >>        go func() {\r\n> >> +            defer wg.Done()\r\n> >>            w, err := Dial(net, addr, LOG_USER|LOG_ERR, \"tag\")\r\n> >>            if err != nil {\r\n> >>                t.Fatalf(\"syslog.Dial() failed: %v\", err)\r\n> >>            }\r\n> >> -            for i := 0; i < 100; i++ {\r\n> >> +            for i := 0; i < M; i++ {\r\n> >>                err := w.Info(\"test\")\r\n> >>                if err != nil {\r\n> >>                    t.Errorf(\"Info() failed: %v\", err)\r\n> >>                    return\r\n> >>                }\r\n> >>            }\r\n> >> -            wg.Done()\r\n> >>        }()\r\n> >>    }\r\n> >>    wg.Wait()\r\n> >>\r\n> >>\r\n> >> --\r\n> >>\r\n> >> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> >> To unsubscribe from this group and stop receiving emails from it, send\r\n> an email to golang-dev+unsubscribe@googlegroups.com.\r\n> >> For more options, visit https://groups.google.com/groups/opt_out.\r\n> >>\r\n> >>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-24 12:47:50.363110",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The change LGTM, but I am not able to replicate the original deadlock\r\non my host. Maybe wait for @fullung\r\n\r\nOn Fri, May 24, 2013 at 8:45 PM, Dave Cheney <dave@cheney.net> wrote:\r\n> /me shakes head at the amount of energy this package consumes.\r\n>\r\n> On 24/05/2013, at 20:30, dvyukov@google.com wrote:\r\n>\r\n>> Reviewers: golang-dev1,\r\n>>\r\n>> Message:\r\n>> Hello golang-dev@googlegroups.com,\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://dvyukov%40google.com@code.google.com/p/go/\r\n>>\r\n>>\r\n>> Description:\r\n>> log/syslog: fix deadlock in test\r\n>> The problem was that server handlers block on done<-,\r\n>> the goroutine that reads from done blocks on count<-,\r\n>> and the main goroutine that is supposed to read from count\r\n>> waits for server handlers to exit.\r\n>> Fixes issue 5547.\r\n>>\r\n>> Please review this at https://codereview.appspot.com/9722043/\r\n>>\r\n>> Affected files:\r\n>>  M src/pkg/log/syslog/syslog_test.go\r\n>>\r\n>>\r\n>> Index: src/pkg/log/syslog/syslog_test.go\r\n>> ===================================================================\r\n>> --- a/src/pkg/log/syslog/syslog_test.go\r\n>> +++ b/src/pkg/log/syslog/syslog_test.go\r\n>> @@ -281,12 +281,12 @@\r\n>>    for i := 0; i < 10; i++ {\r\n>>        wg.Add(1)\r\n>>        go func() {\r\n>> +            defer wg.Done()\r\n>>            err := w.Info(\"test\")\r\n>>            if err != nil {\r\n>>                t.Errorf(\"Info() failed: %v\", err)\r\n>>                return\r\n>>            }\r\n>> -            wg.Done()\r\n>>        }()\r\n>>    }\r\n>>    wg.Wait()\r\n>> @@ -296,8 +296,10 @@\r\n>>    crashy = true\r\n>>    defer func() { crashy = false }()\r\n>>\r\n>> +    const N = 10\r\n>> +    const M = 100\r\n>>    net := \"unix\"\r\n>> -    done := make(chan string)\r\n>> +    done := make(chan string, N*M)\r\n>>    addr, sock, srvWG := startServer(net, \"\", done)\r\n>>    defer os.Remove(addr)\r\n>>\r\n>> @@ -310,7 +312,7 @@\r\n>>            // we are looking for 500 out of 1000 events\r\n>>            // here because lots of log messages are lost\r\n>>            // in buffers (kernel and/or bufio)\r\n>> -            if ct > 500 {\r\n>> +            if ct > N*M/2 {\r\n>>                break\r\n>>            }\r\n>>        }\r\n>> @@ -318,21 +320,21 @@\r\n>>    }()\r\n>>\r\n>>    var wg sync.WaitGroup\r\n>> -    for i := 0; i < 10; i++ {\r\n>> -        wg.Add(1)\r\n>> +    wg.Add(N)\r\n>> +    for i := 0; i < N; i++ {\r\n>>        go func() {\r\n>> +            defer wg.Done()\r\n>>            w, err := Dial(net, addr, LOG_USER|LOG_ERR, \"tag\")\r\n>>            if err != nil {\r\n>>                t.Fatalf(\"syslog.Dial() failed: %v\", err)\r\n>>            }\r\n>> -            for i := 0; i < 100; i++ {\r\n>> +            for i := 0; i < M; i++ {\r\n>>                err := w.Info(\"test\")\r\n>>                if err != nil {\r\n>>                    t.Errorf(\"Info() failed: %v\", err)\r\n>>                    return\r\n>>                }\r\n>>            }\r\n>> -            wg.Done()\r\n>>        }()\r\n>>    }\r\n>>    wg.Wait()\r\n>>\r\n>>\r\n>> --\r\n>>\r\n>> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n>> For more options, visit https://groups.google.com/groups/opt_out.\r\n>>\r\n>>\r\n",
+			"disapproval": false,
+			"date": "2013-05-24 12:43:33.649410",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I think it's possible to reproduce it w/o -race by inserting sleeps.\r\n\r\nThe changes you've made, including moving the wg.Done to a defer look\r\ngood. If someone else is happy, then I'm happy.\r\n",
+			"disapproval": false,
+			"date": "2013-05-24 12:55:30.166290",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\n\r\n\r\nOn Fri, May 24, 2013 at 3:30 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> log/syslog: fix deadlock in test\r\n> The problem was that server handlers block on done<-,\r\n> the goroutine that reads from done blocks on count<-,\r\n> and the main goroutine that is supposed to read from count\r\n> waits for server handlers to exit.\r\n> Fixes issue 5547.\r\n>\r\n> Please review this at https://codereview.appspot.**com/9722043/<https://codereview.appspot.com/9722043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/log/syslog/syslog_**test.go\r\n>\r\n>\r\n> Index: src/pkg/log/syslog/syslog_**test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/log/syslog/syslog_**test.go\r\n> +++ b/src/pkg/log/syslog/syslog_**test.go\r\n> @@ -281,12 +281,12 @@\r\n>         for i := 0; i < 10; i++ {\r\n>                 wg.Add(1)\r\n>                 go func() {\r\n> +                       defer wg.Done()\r\n>                         err := w.Info(\"test\")\r\n>                         if err != nil {\r\n>                                 t.Errorf(\"Info() failed: %v\", err)\r\n>                                 return\r\n>                         }\r\n> -                       wg.Done()\r\n>                 }()\r\n>         }\r\n>         wg.Wait()\r\n> @@ -296,8 +296,10 @@\r\n>         crashy = true\r\n>         defer func() { crashy = false }()\r\n>\r\n> +       const N = 10\r\n> +       const M = 100\r\n>         net := \"unix\"\r\n> -       done := make(chan string)\r\n> +       done := make(chan string, N*M)\r\n>         addr, sock, srvWG := startServer(net, \"\", done)\r\n>         defer os.Remove(addr)\r\n>\r\n> @@ -310,7 +312,7 @@\r\n>                         // we are looking for 500 out of 1000 events\r\n>                         // here because lots of log messages are lost\r\n>                         // in buffers (kernel and/or bufio)\r\n> -                       if ct > 500 {\r\n> +                       if ct > N*M/2 {\r\n>                                 break\r\n>                         }\r\n>                 }\r\n> @@ -318,21 +320,21 @@\r\n>         }()\r\n>\r\n>         var wg sync.WaitGroup\r\n> -       for i := 0; i < 10; i++ {\r\n> -               wg.Add(1)\r\n> +       wg.Add(N)\r\n> +       for i := 0; i < N; i++ {\r\n>                 go func() {\r\n> +                       defer wg.Done()\r\n>                         w, err := Dial(net, addr, LOG_USER|LOG_ERR, \"tag\")\r\n>                         if err != nil {\r\n>                                 t.Fatalf(\"syslog.Dial() failed: %v\", err)\r\n>                         }\r\n> -                       for i := 0; i < 100; i++ {\r\n> +                       for i := 0; i < M; i++ {\r\n>                                 err := w.Info(\"test\")\r\n>                                 if err != nil {\r\n>                                         t.Errorf(\"Info() failed: %v\", err)\r\n>                                         return\r\n>                                 }\r\n>                         }\r\n> -                       wg.Done()\r\n>                 }()\r\n>         }\r\n>         wg.Wait()\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-24 14:29:03.095820",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=ac183442f328 ***\n\nlog/syslog: fix deadlock in test\nThe problem was that server handlers block on done<-,\nthe goroutine that reads from done blocks on count<-,\nand the main goroutine that is supposed to read from count\nwaits for server handlers to exit.\nFixes issue 5547.\n\nR=golang-dev, dave, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/9722043",
+			"disapproval": false,
+			"date": "2013-05-24 15:07:07.067970",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 9722043: log/syslog: fix deadlock in test",
+	"created": "2013-05-24 10:27:15.357220",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		11001
+	],
+	"modified": "2013-05-24 15:07:08.931000",
+	"closed": true,
+	"issue": 9722043
+}

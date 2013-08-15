@@ -1,0 +1,274 @@
+{
+	"description": "exp/cookiejar: make cookie sorting deterministic\n\nSorting of cookies with same path length and same creation\ntime is done by an additional seqNum field.\nThis makes the order in which cookies are returned in Cookies\ndeterministic, even if the system clock is manipulated or on\nsystems with a low-resolution clock.\n\nThe tests now use a synthetic time: This makes cookie testing\nreliable in case of bogus system clocks and speeds up the\nexpiration tests.",
+	"cc": [
+		"nigeltao@golang.org",
+		"alex.brainman@gmail.com",
+		"dave@cheney.net",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM, submitting...\n\nA couple of minor points. First, the CL description should mention re-enabling those tests on Windows.\n\nSecond, I would make the now argument the last one, not the first one, for these two methods:\nfunc (j *Jar) cookies(now time.Time, u *url.URL) (cookies []*http.Cookie)\nfunc (j *Jar) setCookies(now time.Time, u *url.URL, cookies []*http.Cookie)\n\nThird, some of the s/10/1000/ changes can now be reverted.\n\nAs for tNow, I would prefer using a fixed tNow instead of calling time.Now; the former is more predictable.",
+			"disapproval": false,
+			"date": "2013-02-18 00:27:03.276150",
+			"approval": true
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nIncorporated all the feedback and tried to make the\nexpiration code more stable by:\n* replacing \"expires < now\" by \"!(expires > now)\"\n* increasing some deltas\n* waiting 1.6 seconds for expiration as rounding may\n  create Expires 1.5 seconds in the future.\n\nI did some tests with a complete fake clock which reports\nthe same time instance and the deletion tests pass.\nSo this should fix the Windows build.\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go\nFile src/pkg/exp/cookiejar/jar.go (right):\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode68\nsrc/pkg/exp/cookiejar/jar.go:68: cnt uint64\nOn 2013/02/15 04:43:01, nigeltao wrote:\n> I'd call the field nextSeqNum.\n\nDone.\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode84\nsrc/pkg/exp/cookiejar/jar.go:84: // The upper case fields are those of RFC 6265.\nOn 2013/02/15 04:43:01, nigeltao wrote:\n> // entry is the internal representation of a cookie.\n> //\n> // This struct type is not used outside of this package per se, but the exported\n> // fields are those of RFC 6265.\n\nDone.\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode97\nsrc/pkg/exp/cookiejar/jar.go:97: order      uint64 // sequence number of cookies set in one Set-Cookie header\nOn 2013/02/15 04:43:01, nigeltao wrote:\n> I'd write\n> LastAccess time.Time\n> \n> // seqNum is a sequence number so that Cookies returns cookies in a \n> // deterministic order, even for cookies that have equal Path length and\n> // equal Creation time. This simplifies testing.\n> seqNum uint64\n\nDone.\n\nI kept the \"simplifies testing\" even if I think that the\ndeterministic order is required by RFC 6265.\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode142\nsrc/pkg/exp/cookiejar/jar.go:142: in, jn := len(s[i].Path), len(s[j].Path)\nOn 2013/02/15 04:43:01, nigeltao wrote:\n> How about\n> \n> if len(s[i].Path) != len(s[j].Path) {\n>   return len(s[i].Path) > len(s[j].Path)\n> }\n> if !s[i].Creation.Equal(s[j].Creation) {\n>   return s[i].Creation.Before(s[j].Creation)\n> }\n> return s[i].seqNum < s[j].seqNum\n\nDone.\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode270\nsrc/pkg/exp/cookiejar/jar.go:270: e.order = j.cnt\nOn 2013/02/15 04:43:01, nigeltao wrote:\n> e.seqNum = j.nextSeqNum\n> j.nextSeqNum++\n\nDone.",
+			"disapproval": false,
+			"date": "2013-02-15 08:15:01.429980",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Tests PASS on my windows computer now. Thank you.\n\nAlex\n\nPS: I have created http://code.google.com/p/go/issues/detail?id=4838 for the bug we discovered.\n\nhttps://codereview.appspot.com/7323063/diff/32001/src/pkg/exp/cookiejar/jar_test.go\nFile src/pkg/exp/cookiejar/jar_test.go (right):\n\nhttps://codereview.appspot.com/7323063/diff/32001/src/pkg/exp/cookiejar/jar_test.go#newcode207\nsrc/pkg/exp/cookiejar/jar_test.go:207: \nI do not think you need tNow. Just assume your location is UTC for the purpose of this test:\n\nnow := time.Now().In(time.UTC)                  \nt := now.Add(time.Duration(delta) * time.Second)",
+			"disapproval": false,
+			"date": "2013-02-17 23:35:51.994200",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-02-14 10:13:46.949290",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Still fails on windows:\n\n--- FAIL: TestUpdateAndDelete (0.00 seconds)\njar_test.go:266: \tTest \"Delete all.\" Content\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete all.\" #0\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:266: \tTest \"Refill #1.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=4 b=2\"\n\t\twant \"A=1 A=2 A=3 A=4\"\njar_test.go:276: \tTest \"Refill #1.\" #0\n\t\tgot  \"A=2 A=4 b=2 A=1 A=3\"\n\t\twant \"A=2 A=4 A=1 A=3\"\njar_test.go:266: \tTest \"Refill #2.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9\"\njar_test.go:276: \tTest \"Refill #2.\" #0\n\t\tgot  \"A=2 A=4 b=2 A=1 A=3\"\n\t\twant \"A=2 A=4 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A7.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=4 A=6 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=4 A=6 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A7.\" #0\n\t\tgot  \"A=2 A=4 b=2 A=1 A=3\"\n\t\twant \"A=2 A=4 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A4.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=6 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=6 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A4.\" #0\n\t\tgot  \"A=2 b=2 A=1 A=3\"\n\t\twant \"A=2 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A6.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A6.\" #0\n\t\tgot  \"A=2 b=2 A=1 A=3\"\n\t\twant \"A=2 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A3.\" Content\n\t\tgot  \"A=1 A=2 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A3.\" #0\n\t\tgot  \"A=2 b=2 A=1\"\n\t\twant \"A=2 A=1\"\njar_test.go:266: \tTest \"No cross-domain delete.\" Content\n\t\tgot  \"A=1 A=2 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=8 A=9\"\njar_test.go:276: \tTest \"No cross-domain delete.\" #0\n\t\tgot  \"A=2 b=2 A=1\"\n\t\twant \"A=2 A=1\"\njar_test.go:266: \tTest \"Delete A8 and A9.\" Content\n\t\tgot  \"A=1 A=2 b=2\"\n\t\twant \"A=1 A=2\"\njar_test.go:276: \tTest \"Delete A8 and A9.\" #0\n\t\tgot  \"A=2 b=2 A=1\"\n\t\twant \"A=2 A=1\"\n--- FAIL: TestExpiration (1.60 seconds)\njar_test.go:266: \tTest \"Check jar.\" Content\n\t\tgot  \"a=1 c=3 d=4\"\n\t\twant \"a=1 d=4\"\njar_test.go:276: \tTest \"Check jar.\" #0\n\t\tgot  \"a=1 c=3 d=4\"\n\t\twant \"a=1 d=4\"\n--- FAIL: TestChromiumDeletion (0.00 seconds)\njar_test.go:266: \tTest \"Delete sc b2 via Expires.\" Content\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete sc b2 via Expires.\" #0\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:266: \tTest \"Create persistent cookie c3.\" Content\n\t\tgot  \"b=2 c=3\"\n\t\twant \"c=3\"\njar_test.go:276: \tTest \"Create persistent cookie c3.\" #0\n\t\tgot  \"b=2 c=3\"\n\t\twant \"c=3\"\njar_test.go:266: \tTest \"Delete pc c3 via MaxAge.\" Content\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete pc c3 via MaxAge.\" #0\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:266: \tTest \"Create persistent cookie d4.\" Content\n\t\tgot  \"b=2 d=4\"\n\t\twant \"d=4\"\njar_test.go:276: \tTest \"Create persistent cookie d4.\" #0\n\t\tgot  \"b=2 d=4\"\n\t\twant \"d=4\"\njar_test.go:266: \tTest \"Delete pc d4 via Expires.\" Content\n\t\tgot  \"b=2 d=4\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete pc d4 via Expires.\" #0\n\t\tgot  \"b=2 d=4\"\n\t\twant \"\"\nFAIL\nFAIL\texp/cookiejar\t2.240s",
+			"disapproval": false,
+			"date": "2013-02-15 10:06:19.409050",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-02-14 09:51:32.976190",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for debugging this.\r\nI changed the tests to a) use UTC as timezone and\r\nb) to use a completely synthetic time. The tests thus\r\ndo no longer depend on the system time or the timezone.\r\nThis should make them reliable (and faster).\r\n\r\nIt seems worth fixing if time.Now returns AUSEDT but\r\ntime.Parse cannot handle it.  Did you file an issue?\r\n\r\nV.\r\n\r\n\r\nOn Sun, Feb 17, 2013 at 7:59 AM, <alex.brainman@gmail.com> wrote:\r\n\r\n> The problem seems to be my timezone. expiresIn in jar_test.go creates\r\n> \"expires= ... AUSEDT\". http.readSetCookies fails to convert that string\r\n> to time.Time, so it sets Expires to time.Time{}. So all expires are\r\n> effectively ignored.\r\n>\r\n> I think, we need to fix time.Parse, so it accepts timezones like AUSEDT.\r\n>\r\n> Alex\r\n>\r\n> https://codereview.appspot.**com/7323063/<https://codereview.appspot.com/7323063/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-17 12:47:49.087840",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Still fails on windows:\n\n=== RUN TestCanonicalHost\n--- PASS: TestCanonicalHost (0.00 seconds)\n=== RUN TestHasPort\n--- PASS: TestHasPort (0.00 seconds)\n=== RUN TestJarKey\n--- PASS: TestJarKey (0.00 seconds)\n=== RUN TestIsIP\n--- PASS: TestIsIP (0.00 seconds)\n=== RUN TestDefaultPath\n--- PASS: TestDefaultPath (0.00 seconds)\n=== RUN TestDomainAndType\n--- PASS: TestDomainAndType (0.00 seconds)\n=== RUN TestBasics\n--- PASS: TestBasics (0.00 seconds)\n=== RUN TestUpdateAndDelete\n--- FAIL: TestUpdateAndDelete (0.00 seconds)\njar_test.go:266: \tTest \"Delete all.\" Content\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete all.\" #0\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:266: \tTest \"Refill #1.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=4 b=2\"\n\t\twant \"A=1 A=2 A=3 A=4\"\njar_test.go:276: \tTest \"Refill #1.\" #0\n\t\tgot  \"A=2 A=4 b=2 A=1 A=3\"\n\t\twant \"A=2 A=4 A=1 A=3\"\njar_test.go:266: \tTest \"Refill #2.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9\"\njar_test.go:276: \tTest \"Refill #2.\" #0\n\t\tgot  \"A=2 A=4 b=2 A=1 A=3\"\n\t\twant \"A=2 A=4 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A7.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=4 A=6 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=4 A=6 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A7.\" #0\n\t\tgot  \"A=2 A=4 b=2 A=1 A=3\"\n\t\twant \"A=2 A=4 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A4.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=6 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=6 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A4.\" #0\n\t\tgot  \"A=2 b=2 A=1 A=3\"\n\t\twant \"A=2 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A6.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A6.\" #0\n\t\tgot  \"A=2 b=2 A=1 A=3\"\n\t\twant \"A=2 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A3.\" Content\n\t\tgot  \"A=1 A=2 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A3.\" #0\n\t\tgot  \"A=2 b=2 A=1\"\n\t\twant \"A=2 A=1\"\njar_test.go:266: \tTest \"No cross-domain delete.\" Content\n\t\tgot  \"A=1 A=2 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=8 A=9\"\njar_test.go:276: \tTest \"No cross-domain delete.\" #0\n\t\tgot  \"A=2 b=2 A=1\"\n\t\twant \"A=2 A=1\"\njar_test.go:266: \tTest \"Delete A8 and A9.\" Content\n\t\tgot  \"A=1 A=2 b=2\"\n\t\twant \"A=1 A=2\"\njar_test.go:276: \tTest \"Delete A8 and A9.\" #0\n\t\tgot  \"A=2 b=2 A=1\"\n\t\twant \"A=2 A=1\"\n=== RUN TestExpiration\n--- FAIL: TestExpiration (1.50 seconds)\njar_test.go:266: \tTest \"Check jar.\" Content\n\t\tgot  \"a=1 c=3 d=4\"\n\t\twant \"a=1 d=4\"\njar_test.go:276: \tTest \"Check jar.\" #0\n\t\tgot  \"a=1 c=3 d=4\"\n\t\twant \"a=1 d=4\"\n=== RUN TestChromiumBasics\n--- PASS: TestChromiumBasics (0.00 seconds)\n=== RUN TestChromiumDomain\n--- PASS: TestChromiumDomain (0.00 seconds)\n=== RUN TestChromiumDeletion\n--- FAIL: TestChromiumDeletion (0.00 seconds)\njar_test.go:266: \tTest \"Delete sc b2 via Expires.\" Content\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete sc b2 via Expires.\" #0\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:266: \tTest \"Create persistent cookie c3.\" Content\n\t\tgot  \"b=2 c=3\"\n\t\twant \"c=3\"\njar_test.go:276: \tTest \"Create persistent cookie c3.\" #0\n\t\tgot  \"b=2 c=3\"\n\t\twant \"c=3\"\njar_test.go:266: \tTest \"Delete pc c3 via MaxAge.\" Content\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete pc c3 via MaxAge.\" #0\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:266: \tTest \"Create persistent cookie d4.\" Content\n\t\tgot  \"b=2 d=4\"\n\t\twant \"d=4\"\njar_test.go:276: \tTest \"Create persistent cookie d4.\" #0\n\t\tgot  \"b=2 d=4\"\n\t\twant \"d=4\"\njar_test.go:266: \tTest \"Delete pc d4 via Expires.\" Content\n\t\tgot  \"b=2 d=4\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete pc d4 via Expires.\" #0\n\t\tgot  \"b=2 d=4\"\n\t\twant \"\"\nFAIL\n\nAlex",
+			"disapproval": false,
+			"date": "2013-02-14 23:41:44.350150",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go\nFile src/pkg/exp/cookiejar/jar.go (right):\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode68\nsrc/pkg/exp/cookiejar/jar.go:68: cnt uint64\nI'd call the field nextSeqNum.\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode84\nsrc/pkg/exp/cookiejar/jar.go:84: // The upper case fields are those of RFC 6265.\n// entry is the internal representation of a cookie.\n//\n// This struct type is not used outside of this package per se, but the exported\n// fields are those of RFC 6265.\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode97\nsrc/pkg/exp/cookiejar/jar.go:97: order      uint64 // sequence number of cookies set in one Set-Cookie header\nI'd write\nLastAccess time.Time\n\n// seqNum is a sequence number so that Cookies returns cookies in a \n// deterministic order, even for cookies that have equal Path length and\n// equal Creation time. This simplifies testing.\nseqNum uint64\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode142\nsrc/pkg/exp/cookiejar/jar.go:142: in, jn := len(s[i].Path), len(s[j].Path)\nHow about\n\nif len(s[i].Path) != len(s[j].Path) {\n  return len(s[i].Path) > len(s[j].Path)\n}\nif !s[i].Creation.Equal(s[j].Creation) {\n  return s[i].Creation.Before(s[j].Creation)\n}\nreturn s[i].seqNum < s[j].seqNum\n\nhttps://codereview.appspot.com/7323063/diff/12001/src/pkg/exp/cookiejar/jar.go#newcode270\nsrc/pkg/exp/cookiejar/jar.go:270: e.order = j.cnt\ne.seqNum = j.nextSeqNum\nj.nextSeqNum++",
+			"disapproval": false,
+			"date": "2013-02-15 04:43:00.965700",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "That is strange. I cannot reproduce the failure on\r\nWindows 64.\r\n\r\nCould you try it once more with 1600 replaced by 10000\r\nin jar_test.go:612 just to see if it is a timing issue or\r\nsomething fundamental.\r\n\r\nThanks in advance.\r\n\r\n\r\n\r\n\r\nOn Fri, Feb 15, 2013 at 11:06 AM, <alex.brainman@gmail.com> wrote:\r\n\r\n> Still fails on windows:\r\n>\r\n>\r\n> --- FAIL: TestUpdateAndDelete (0.00 seconds)\r\n> jar_test.go:266:        Test \"Delete all.\" Content\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:276:        Test \"Delete all.\" #0\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:266:        Test \"Refill #1.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=4 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=4\"\r\n> jar_test.go:276:        Test \"Refill #1.\" #0\r\n>                 got  \"A=2 A=4 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=4 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Refill #2.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Refill #2.\" #0\r\n>                 got  \"A=2 A=4 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=4 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Delete A7.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=4 A=6 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=4 A=6 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Delete A7.\" #0\r\n>                 got  \"A=2 A=4 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=4 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Delete A4.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=6 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=6 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Delete A4.\" #0\r\n>                 got  \"A=2 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Delete A6.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Delete A6.\" #0\r\n>                 got  \"A=2 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Delete A3.\" Content\r\n>                 got  \"A=1 A=2 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Delete A3.\" #0\r\n>                 got  \"A=2 b=2 A=1\"\r\n>                 want \"A=2 A=1\"\r\n> jar_test.go:266:        Test \"No cross-domain delete.\" Content\r\n>                 got  \"A=1 A=2 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=8 A=9\"\r\n> jar_test.go:276:        Test \"No cross-domain delete.\" #0\r\n>                 got  \"A=2 b=2 A=1\"\r\n>                 want \"A=2 A=1\"\r\n> jar_test.go:266:        Test \"Delete A8 and A9.\" Content\r\n>                 got  \"A=1 A=2 b=2\"\r\n>                 want \"A=1 A=2\"\r\n> jar_test.go:276:        Test \"Delete A8 and A9.\" #0\r\n>                 got  \"A=2 b=2 A=1\"\r\n>                 want \"A=2 A=1\"\r\n> --- FAIL: TestExpiration (1.60 seconds)\r\n>\r\n> jar_test.go:266:        Test \"Check jar.\" Content\r\n>                 got  \"a=1 c=3 d=4\"\r\n>                 want \"a=1 d=4\"\r\n> jar_test.go:276:        Test \"Check jar.\" #0\r\n>                 got  \"a=1 c=3 d=4\"\r\n>                 want \"a=1 d=4\"\r\n> --- FAIL: TestChromiumDeletion (0.00 seconds)\r\n> jar_test.go:266:        Test \"Delete sc b2 via Expires.\" Content\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:276:        Test \"Delete sc b2 via Expires.\" #0\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:266:        Test \"Create persistent cookie c3.\" Content\r\n>                 got  \"b=2 c=3\"\r\n>                 want \"c=3\"\r\n> jar_test.go:276:        Test \"Create persistent cookie c3.\" #0\r\n>                 got  \"b=2 c=3\"\r\n>                 want \"c=3\"\r\n> jar_test.go:266:        Test \"Delete pc c3 via MaxAge.\" Content\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:276:        Test \"Delete pc c3 via MaxAge.\" #0\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:266:        Test \"Create persistent cookie d4.\" Content\r\n>                 got  \"b=2 d=4\"\r\n>                 want \"d=4\"\r\n> jar_test.go:276:        Test \"Create persistent cookie d4.\" #0\r\n>                 got  \"b=2 d=4\"\r\n>                 want \"d=4\"\r\n> jar_test.go:266:        Test \"Delete pc d4 via Expires.\" Content\r\n>                 got  \"b=2 d=4\"\r\n>                 want \"\"\r\n> jar_test.go:276:        Test \"Delete pc d4 via Expires.\" #0\r\n>                 got  \"b=2 d=4\"\r\n>                 want \"\"\r\n> FAIL\r\n> FAIL    exp/cookiejar   2.240s\r\n>\r\n>\r\n> https://codereview.appspot.**com/7323063/<https://codereview.appspot.com/7323063/>\r\n>\r\n\r\n\r\n\r\n-- \r\nDr. Volker Dobler\r\n",
+			"disapproval": false,
+			"date": "2013-02-15 11:33:05.810010",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nStarted to remove expiration tests based on passing time\nby artificially creating expired cookies and checking\ninternal state.",
+			"disapproval": false,
+			"date": "2013-02-15 18:09:59.409290",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Time inside vm's is strange.\r\n\r\nOn Fri, Feb 15, 2013 at 10:33 PM, Volker Dobler\r\n<dr.volker.dobler@gmail.com> wrote:\r\n> That is strange. I cannot reproduce the failure on\r\n> Windows 64.\r\n>\r\n> Could you try it once more with 1600 replaced by 10000\r\n> in jar_test.go:612 just to see if it is a timing issue or\r\n> something fundamental.\r\n>\r\n> Thanks in advance.\r\n>\r\n>\r\n>\r\n>\r\n> On Fri, Feb 15, 2013 at 11:06 AM, <alex.brainman@gmail.com> wrote:\r\n>>\r\n>> Still fails on windows:\r\n>>\r\n>>\r\n>> --- FAIL: TestUpdateAndDelete (0.00 seconds)\r\n>> jar_test.go:266:        Test \"Delete all.\" Content\r\n>>                 got  \"b=2\"\r\n>>                 want \"\"\r\n>> jar_test.go:276:        Test \"Delete all.\" #0\r\n>>                 got  \"b=2\"\r\n>>                 want \"\"\r\n>> jar_test.go:266:        Test \"Refill #1.\" Content\r\n>>                 got  \"A=1 A=2 A=3 A=4 b=2\"\r\n>>                 want \"A=1 A=2 A=3 A=4\"\r\n>> jar_test.go:276:        Test \"Refill #1.\" #0\r\n>>                 got  \"A=2 A=4 b=2 A=1 A=3\"\r\n>>                 want \"A=2 A=4 A=1 A=3\"\r\n>> jar_test.go:266:        Test \"Refill #2.\" Content\r\n>>                 got  \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9 b=2\"\r\n>>                 want \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9\"\r\n>> jar_test.go:276:        Test \"Refill #2.\" #0\r\n>>                 got  \"A=2 A=4 b=2 A=1 A=3\"\r\n>>                 want \"A=2 A=4 A=1 A=3\"\r\n>> jar_test.go:266:        Test \"Delete A7.\" Content\r\n>>                 got  \"A=1 A=2 A=3 A=4 A=6 A=8 A=9 b=2\"\r\n>>                 want \"A=1 A=2 A=3 A=4 A=6 A=8 A=9\"\r\n>> jar_test.go:276:        Test \"Delete A7.\" #0\r\n>>                 got  \"A=2 A=4 b=2 A=1 A=3\"\r\n>>                 want \"A=2 A=4 A=1 A=3\"\r\n>> jar_test.go:266:        Test \"Delete A4.\" Content\r\n>>                 got  \"A=1 A=2 A=3 A=6 A=8 A=9 b=2\"\r\n>>                 want \"A=1 A=2 A=3 A=6 A=8 A=9\"\r\n>> jar_test.go:276:        Test \"Delete A4.\" #0\r\n>>                 got  \"A=2 b=2 A=1 A=3\"\r\n>>                 want \"A=2 A=1 A=3\"\r\n>> jar_test.go:266:        Test \"Delete A6.\" Content\r\n>>                 got  \"A=1 A=2 A=3 A=8 A=9 b=2\"\r\n>>                 want \"A=1 A=2 A=3 A=8 A=9\"\r\n>> jar_test.go:276:        Test \"Delete A6.\" #0\r\n>>                 got  \"A=2 b=2 A=1 A=3\"\r\n>>                 want \"A=2 A=1 A=3\"\r\n>> jar_test.go:266:        Test \"Delete A3.\" Content\r\n>>                 got  \"A=1 A=2 A=8 A=9 b=2\"\r\n>>                 want \"A=1 A=2 A=8 A=9\"\r\n>> jar_test.go:276:        Test \"Delete A3.\" #0\r\n>>                 got  \"A=2 b=2 A=1\"\r\n>>                 want \"A=2 A=1\"\r\n>> jar_test.go:266:        Test \"No cross-domain delete.\" Content\r\n>>                 got  \"A=1 A=2 A=8 A=9 b=2\"\r\n>>                 want \"A=1 A=2 A=8 A=9\"\r\n>> jar_test.go:276:        Test \"No cross-domain delete.\" #0\r\n>>                 got  \"A=2 b=2 A=1\"\r\n>>                 want \"A=2 A=1\"\r\n>> jar_test.go:266:        Test \"Delete A8 and A9.\" Content\r\n>>                 got  \"A=1 A=2 b=2\"\r\n>>                 want \"A=1 A=2\"\r\n>> jar_test.go:276:        Test \"Delete A8 and A9.\" #0\r\n>>                 got  \"A=2 b=2 A=1\"\r\n>>                 want \"A=2 A=1\"\r\n>> --- FAIL: TestExpiration (1.60 seconds)\r\n>>\r\n>> jar_test.go:266:        Test \"Check jar.\" Content\r\n>>                 got  \"a=1 c=3 d=4\"\r\n>>                 want \"a=1 d=4\"\r\n>> jar_test.go:276:        Test \"Check jar.\" #0\r\n>>                 got  \"a=1 c=3 d=4\"\r\n>>                 want \"a=1 d=4\"\r\n>> --- FAIL: TestChromiumDeletion (0.00 seconds)\r\n>> jar_test.go:266:        Test \"Delete sc b2 via Expires.\" Content\r\n>>                 got  \"b=2\"\r\n>>                 want \"\"\r\n>> jar_test.go:276:        Test \"Delete sc b2 via Expires.\" #0\r\n>>                 got  \"b=2\"\r\n>>                 want \"\"\r\n>> jar_test.go:266:        Test \"Create persistent cookie c3.\" Content\r\n>>                 got  \"b=2 c=3\"\r\n>>                 want \"c=3\"\r\n>> jar_test.go:276:        Test \"Create persistent cookie c3.\" #0\r\n>>                 got  \"b=2 c=3\"\r\n>>                 want \"c=3\"\r\n>> jar_test.go:266:        Test \"Delete pc c3 via MaxAge.\" Content\r\n>>                 got  \"b=2\"\r\n>>                 want \"\"\r\n>> jar_test.go:276:        Test \"Delete pc c3 via MaxAge.\" #0\r\n>>                 got  \"b=2\"\r\n>>                 want \"\"\r\n>> jar_test.go:266:        Test \"Create persistent cookie d4.\" Content\r\n>>                 got  \"b=2 d=4\"\r\n>>                 want \"d=4\"\r\n>> jar_test.go:276:        Test \"Create persistent cookie d4.\" #0\r\n>>                 got  \"b=2 d=4\"\r\n>>                 want \"d=4\"\r\n>> jar_test.go:266:        Test \"Delete pc d4 via Expires.\" Content\r\n>>                 got  \"b=2 d=4\"\r\n>>                 want \"\"\r\n>> jar_test.go:276:        Test \"Delete pc d4 via Expires.\" #0\r\n>>                 got  \"b=2 d=4\"\r\n>>                 want \"\"\r\n>> FAIL\r\n>> FAIL    exp/cookiejar   2.240s\r\n>>\r\n>>\r\n>> https://codereview.appspot.com/7323063/\r\n>\r\n>\r\n>\r\n>\r\n> --\r\n> Dr. Volker Dobler\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-15 11:33:49.047670",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks good in general, but let's see what brainman says.\n\nhttps://codereview.appspot.com/7323063/diff/23001/src/pkg/exp/cookiejar/jar.go\nFile src/pkg/exp/cookiejar/jar.go (right):\n\nhttps://codereview.appspot.com/7323063/diff/23001/src/pkg/exp/cookiejar/jar.go#newcode67\nsrc/pkg/exp/cookiejar/jar.go:67: // nextSeqNum is the next sequence number assigned to a new cookie\ns/cookie/entry/\n\nhttps://codereview.appspot.com/7323063/diff/23001/src/pkg/exp/cookiejar/jar.go#newcode68\nsrc/pkg/exp/cookiejar/jar.go:68: // created SetCookies.\ncreated by SetCookies.\n\nhttps://codereview.appspot.com/7323063/diff/23001/src/pkg/exp/cookiejar/jar_test.go\nFile src/pkg/exp/cookiejar/jar_test.go (right):\n\nhttps://codereview.appspot.com/7323063/diff/23001/src/pkg/exp/cookiejar/jar_test.go#newcode598\nsrc/pkg/exp/cookiejar/jar_test.go:598: t.Skip(\"test is broken on windows/386\") // issue 4823\nThis one stays??\n\nhttps://codereview.appspot.com/7323063/diff/23001/src/pkg/exp/cookiejar/jar_test.go#newcode632\nsrc/pkg/exp/cookiejar/jar_test.go:632: \"b=2; max-age=1000\",       // should expire in 1000 second\ns/second/seconds/ and similarly on the next line.",
+			"disapproval": false,
+			"date": "2013-02-16 01:05:15.357060",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/02/16 01:05:15, nigeltao wrote:\n> Looks good in general, but let's see what brainman says.\n> \n\nThis still fails on my windows 7 amd64 notebook: \n\n--- FAIL: TestUpdateAndDelete (0.00 seconds)\njar_test.go:266: \tTest \"Delete all.\" Content\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete all.\" #0\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:266: \tTest \"Refill #1.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=4 b=2\"\n\t\twant \"A=1 A=2 A=3 A=4\"\njar_test.go:276: \tTest \"Refill #1.\" #0\n\t\tgot  \"A=2 A=4 b=2 A=1 A=3\"\n\t\twant \"A=2 A=4 A=1 A=3\"\njar_test.go:266: \tTest \"Refill #2.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9\"\njar_test.go:276: \tTest \"Refill #2.\" #0\n\t\tgot  \"A=2 A=4 b=2 A=1 A=3\"\n\t\twant \"A=2 A=4 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A7.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=4 A=6 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=4 A=6 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A7.\" #0\n\t\tgot  \"A=2 A=4 b=2 A=1 A=3\"\n\t\twant \"A=2 A=4 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A4.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=6 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=6 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A4.\" #0\n\t\tgot  \"A=2 b=2 A=1 A=3\"\n\t\twant \"A=2 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A6.\" Content\n\t\tgot  \"A=1 A=2 A=3 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=3 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A6.\" #0\n\t\tgot  \"A=2 b=2 A=1 A=3\"\n\t\twant \"A=2 A=1 A=3\"\njar_test.go:266: \tTest \"Delete A3.\" Content\n\t\tgot  \"A=1 A=2 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=8 A=9\"\njar_test.go:276: \tTest \"Delete A3.\" #0\n\t\tgot  \"A=2 b=2 A=1\"\n\t\twant \"A=2 A=1\"\njar_test.go:266: \tTest \"No cross-domain delete.\" Content\n\t\tgot  \"A=1 A=2 A=8 A=9 b=2\"\n\t\twant \"A=1 A=2 A=8 A=9\"\njar_test.go:276: \tTest \"No cross-domain delete.\" #0\n\t\tgot  \"A=2 b=2 A=1\"\n\t\twant \"A=2 A=1\"\njar_test.go:266: \tTest \"Delete A8 and A9.\" Content\n\t\tgot  \"A=1 A=2 b=2\"\n\t\twant \"A=1 A=2\"\njar_test.go:276: \tTest \"Delete A8 and A9.\" #0\n\t\tgot  \"A=2 b=2 A=1\"\n\t\twant \"A=2 A=1\"\n--- FAIL: TestPersistentCookies (0.00 seconds)\njar_test.go:656: \tCookie \"www.host.test;/;c\": got session, want persistent\njar_test.go:660: \tCookie \"www.host.test;/;c\": bad ttl -6213099928106725324 ns\n--- FAIL: TestChromiumDeletion (0.00 seconds)\njar_test.go:266: \tTest \"Delete sc b2 via Expires.\" Content\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete sc b2 via Expires.\" #0\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:266: \tTest \"Create persistent cookie c3.\" Content\n\t\tgot  \"b=2 c=3\"\n\t\twant \"c=3\"\njar_test.go:276: \tTest \"Create persistent cookie c3.\" #0\n\t\tgot  \"b=2 c=3\"\n\t\twant \"c=3\"\njar_test.go:266: \tTest \"Delete pc c3 via MaxAge.\" Content\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete pc c3 via MaxAge.\" #0\n\t\tgot  \"b=2\"\n\t\twant \"\"\njar_test.go:266: \tTest \"Create persistent cookie d4.\" Content\n\t\tgot  \"b=2 d=4\"\n\t\twant \"d=4\"\njar_test.go:276: \tTest \"Create persistent cookie d4.\" #0\n\t\tgot  \"b=2 d=4\"\n\t\twant \"d=4\"\njar_test.go:266: \tTest \"Delete pc d4 via Expires.\" Content\n\t\tgot  \"b=2 d=4\"\n\t\twant \"\"\njar_test.go:276: \tTest \"Delete pc d4 via Expires.\" #0\n\t\tgot  \"b=2 d=4\"\n\t\twant \"\"\nFAIL\nFAIL\texp/cookiejar\t0.800s\n\nThis code is unfamiliar, and I don't have time to investigate it closer now. I will debug it properly when I have time. If you have a windows computer, you could try it yourself. This http://code.google.com/p/go-wiki/wiki/WindowsCrossCompiling is what I do. Just build you test executable \"GOOS=windows GOARCH=... go test -c\", copy it to windows, and run it with appropriate -test.... flags there.\n\nAlex\n\nPS: You still have TestExpiration disabled. I hope it is intentional.",
+			"disapproval": false,
+			"date": "2013-02-16 03:11:54.613760",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for running the test. I cross-compiled the test and on my\r\nWindows 7 Enterprise, 64-bit, Service Pack 1 laptop I get:\r\n\r\nD:\\tmp>cookiejar.test.exe -test.v\r\n=== RUN TestCanonicalHost\r\n--- PASS: TestCanonicalHost (0.00 seconds)\r\n=== RUN TestHasPort\r\n--- PASS: TestHasPort (0.00 seconds)\r\n=== RUN TestJarKey\r\n--- PASS: TestJarKey (0.00 seconds)\r\n=== RUN TestIsIP\r\n--- PASS: TestIsIP (0.00 seconds)\r\n=== RUN TestDefaultPath\r\n--- PASS: TestDefaultPath (0.00 seconds)\r\n=== RUN TestDomainAndType\r\n--- PASS: TestDomainAndType (0.00 seconds)\r\n=== RUN TestBasics\r\n--- PASS: TestBasics (0.00 seconds)\r\n=== RUN TestUpdateAndDelete\r\n--- PASS: TestUpdateAndDelete (0.00 seconds)\r\n=== RUN TestExpiration\r\n--- SKIP: TestExpiration (0.00 seconds)\r\njar_test.go:598:        test is broken on windows/386\r\n=== RUN TestPersistentCookies\r\n--- PASS: TestPersistentCookies (0.00 seconds)\r\n=== RUN TestExpired\r\n--- PASS: TestExpired (0.00 seconds)\r\n=== RUN TestChromiumBasics\r\n--- PASS: TestChromiumBasics (0.00 seconds)\r\n=== RUN TestChromiumDomain\r\n--- PASS: TestChromiumDomain (0.00 seconds)\r\n=== RUN TestChromiumDeletion\r\n--- PASS: TestChromiumDeletion (0.00 seconds)\r\nPASS\r\n\r\nMaybe the tests should not use time.Now() but fixed\r\ntimestamps. I'll update the CL.\r\n\r\nThe skipped test is intentional. I think getting the\r\nsequence Number into tip should be prio 1, followed\r\nby getting the tests properly.\r\n\r\nV.\r\n\r\n\r\n\r\nOn Sat, Feb 16, 2013 at 4:11 AM, <alex.brainman@gmail.com> wrote:\r\n\r\n> On 2013/02/16 01:05:15, nigeltao wrote:\r\n>\r\n>> Looks good in general, but let's see what brainman says.\r\n>>\r\n>\r\n>\r\n> This still fails on my windows 7 amd64 notebook:\r\n>\r\n>\r\n> --- FAIL: TestUpdateAndDelete (0.00 seconds)\r\n> jar_test.go:266:        Test \"Delete all.\" Content\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:276:        Test \"Delete all.\" #0\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:266:        Test \"Refill #1.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=4 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=4\"\r\n> jar_test.go:276:        Test \"Refill #1.\" #0\r\n>                 got  \"A=2 A=4 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=4 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Refill #2.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=4 A=6 A=7 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Refill #2.\" #0\r\n>                 got  \"A=2 A=4 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=4 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Delete A7.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=4 A=6 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=4 A=6 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Delete A7.\" #0\r\n>                 got  \"A=2 A=4 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=4 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Delete A4.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=6 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=6 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Delete A4.\" #0\r\n>                 got  \"A=2 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Delete A6.\" Content\r\n>                 got  \"A=1 A=2 A=3 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=3 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Delete A6.\" #0\r\n>                 got  \"A=2 b=2 A=1 A=3\"\r\n>                 want \"A=2 A=1 A=3\"\r\n> jar_test.go:266:        Test \"Delete A3.\" Content\r\n>                 got  \"A=1 A=2 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=8 A=9\"\r\n> jar_test.go:276:        Test \"Delete A3.\" #0\r\n>                 got  \"A=2 b=2 A=1\"\r\n>                 want \"A=2 A=1\"\r\n> jar_test.go:266:        Test \"No cross-domain delete.\" Content\r\n>                 got  \"A=1 A=2 A=8 A=9 b=2\"\r\n>                 want \"A=1 A=2 A=8 A=9\"\r\n> jar_test.go:276:        Test \"No cross-domain delete.\" #0\r\n>                 got  \"A=2 b=2 A=1\"\r\n>                 want \"A=2 A=1\"\r\n> jar_test.go:266:        Test \"Delete A8 and A9.\" Content\r\n>                 got  \"A=1 A=2 b=2\"\r\n>                 want \"A=1 A=2\"\r\n> jar_test.go:276:        Test \"Delete A8 and A9.\" #0\r\n>                 got  \"A=2 b=2 A=1\"\r\n>                 want \"A=2 A=1\"\r\n> --- FAIL: TestPersistentCookies (0.00 seconds)\r\n> jar_test.go:656:        Cookie \"www.host.test;/;c\": got session, want\r\n> persistent\r\n> jar_test.go:660:        Cookie \"www.host.test;/;c\": bad ttl\r\n> -6213099928106725324 ns\r\n>\r\n> --- FAIL: TestChromiumDeletion (0.00 seconds)\r\n> jar_test.go:266:        Test \"Delete sc b2 via Expires.\" Content\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:276:        Test \"Delete sc b2 via Expires.\" #0\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:266:        Test \"Create persistent cookie c3.\" Content\r\n>                 got  \"b=2 c=3\"\r\n>                 want \"c=3\"\r\n> jar_test.go:276:        Test \"Create persistent cookie c3.\" #0\r\n>                 got  \"b=2 c=3\"\r\n>                 want \"c=3\"\r\n> jar_test.go:266:        Test \"Delete pc c3 via MaxAge.\" Content\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:276:        Test \"Delete pc c3 via MaxAge.\" #0\r\n>                 got  \"b=2\"\r\n>                 want \"\"\r\n> jar_test.go:266:        Test \"Create persistent cookie d4.\" Content\r\n>                 got  \"b=2 d=4\"\r\n>                 want \"d=4\"\r\n> jar_test.go:276:        Test \"Create persistent cookie d4.\" #0\r\n>                 got  \"b=2 d=4\"\r\n>                 want \"d=4\"\r\n> jar_test.go:266:        Test \"Delete pc d4 via Expires.\" Content\r\n>                 got  \"b=2 d=4\"\r\n>                 want \"\"\r\n> jar_test.go:276:        Test \"Delete pc d4 via Expires.\" #0\r\n>                 got  \"b=2 d=4\"\r\n>                 want \"\"\r\n> FAIL\r\n> FAIL    exp/cookiejar   0.800s\r\n>\r\n> This code is unfamiliar, and I don't have time to investigate it closer\r\n> now. I will debug it properly when I have time. If you have a windows\r\n> computer, you could try it yourself. This\r\n> http://code.google.com/p/go-**wiki/wiki/**WindowsCrossCompiling<http://code.google.com/p/go-wiki/wiki/WindowsCrossCompiling>is what I\r\n> do. Just build you test executable \"GOOS=windows GOARCH=... go test -c\",\r\n> copy it to windows, and run it with appropriate -test.... flags there.\r\n>\r\n> Alex\r\n>\r\n> PS: You still have TestExpiration disabled. I hope it is intentional.\r\n>\r\n> https://codereview.appspot.**com/7323063/<https://codereview.appspot.com/7323063/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-16 08:46:56.564960",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=10534bf6553f ***\n\nexp/cookiejar: make cookie sorting deterministic.\n\nRe-enable TestUpdateAndDelete, TestExpiration, TestChromiumDomain and\nTestChromiumDeletion on Windows.\n\nSorting of cookies with same path length and same creation\ntime is done by an additional seqNum field.\nThis makes the order in which cookies are returned in Cookies\ndeterministic, even if the system clock is manipulated or on\nsystems with a low-resolution clock.\n\nThe tests now use a synthetic time: This makes cookie testing\nreliable in case of bogus system clocks and speeds up the\nexpiration tests.\n\nR=nigeltao, alex.brainman, dave\nCC=golang-dev\nhttps://codereview.appspot.com/7323063\n\nCommitter: Nigel Tao <nigeltao@golang.org>",
+			"disapproval": false,
+			"date": "2013-02-18 00:27:58.684050",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The problem seems to be my timezone. expiresIn in jar_test.go creates \"expires= ... AUSEDT\". http.readSetCookies fails to convert that string to time.Time, so it sets Expires to time.Time{}. So all expires are effectively ignored.\n\nI think, we need to fix time.Parse, so it accepts timezones like AUSEDT.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-02-17 06:59:14.755680",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"nigeltao@golang.org",
+				"alex.brainman@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nShould work reliable on any OS and under any strange\nsystem clock.",
+			"disapproval": false,
+			"date": "2013-02-17 12:48:50.125310",
+			"approval": false
+		}
+	],
+	"owner_email": "dr.volker.dobler@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "volker.dobler",
+	"subject": "code review 7323063: exp/cookiejar: replace fake creation time by order parameter",
+	"created": "2013-02-14 09:51:12.039340",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9001,
+		12001,
+		19001,
+		23001,
+		28001,
+		32001
+	],
+	"modified": "2013-02-18 05:47:10.984960",
+	"closed": true,
+	"issue": 7323063
+}

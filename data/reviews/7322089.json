@@ -1,0 +1,113 @@
+{
+	"description": "log/syslog: fix race in test between channel close and accept.\n\nFixes issue 4769.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"adg@golang.org",
+		"bradfitz@golang.org",
+		"fullung@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-02-27 07:06:36.759420",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for your proposal. I am annoyed at this test for having to grow even more lines for what is supposed to be simple. Maybe you can take some parts from this counter proposal.\n\nCounter proposal: https://codereview.appspot.com/7392052",
+			"disapproval": false,
+			"date": "2013-02-27 09:32:09.812810",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/02/27 09:32:09, dfc wrote:\n> Thank you for your proposal. I am annoyed at this test for having to grow even\n> more lines for what is supposed to be simple. Maybe you can take some parts from\n> this counter proposal.\n> \n> Counter proposal: https://codereview.appspot.com/7392052\n\nThe counter proposal seems more fiddly and less of a known quantity than the existing test. Remy's fixes seem to address the problem specifically. I don't particularly like these tests, and this CL doesn't make them appreciably worse to my eyes.\n\nIf you guys think it's worth the time to refine this a bit, then go ahead, but otherwise this change LGTM.",
+			"disapproval": false,
+			"date": "2013-02-27 21:47:44.418860",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Tue, Feb 26, 2013 at 11:06 PM, <remyoudompheng@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> log/syslog: fix race in test between channel close and accept.\r\n>\r\n> Fixes issue 4769.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7322089/<https://codereview.appspot.com/7322089/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/log/syslog/syslog_**test.go\r\n>\r\n>\r\n> Index: src/pkg/log/syslog/syslog_**test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/log/syslog/syslog_**test.go\r\n> +++ b/src/pkg/log/syslog/syslog_**test.go\r\n> @@ -51,7 +51,6 @@\r\n>                 var c net.Conn\r\n>                 var err error\r\n>                 if c, err = l.Accept(); err != nil {\r\n> -                       fmt.Print(err)\r\n>                         return\r\n>                 }\r\n>                 wg.Add(1)\r\n> @@ -71,7 +70,7 @@\r\n>         }\r\n>  }\r\n>\r\n> -func startServer(n, la string, done chan<- string) (addr string, wg\r\n> *sync.WaitGroup) {\r\n> +func startServer(n, la string, done chan<- string) (addr string, sock\r\n> io.Closer, wg *sync.WaitGroup) {\r\n>         if n == \"udp\" || n == \"tcp\" {\r\n>                 la = \"127.0.0.1:0\"\r\n>         } else {\r\n> @@ -95,6 +94,7 @@\r\n>                         log.Fatalf(\"startServer failed: %v\", e)\r\n>                 }\r\n>                 addr = l.LocalAddr().String()\r\n> +               sock = l\r\n>                 wg.Add(1)\r\n>                 go func() {\r\n>                         defer wg.Done()\r\n> @@ -106,7 +106,12 @@\r\n>                         log.Fatalf(\"startServer failed: %v\", e)\r\n>                 }\r\n>                 addr = l.Addr().String()\r\n> -               go runStreamSyslog(l, done, wg)\r\n> +               sock = l\r\n> +               wg.Add(1)\r\n> +               go func() {\r\n> +                       defer wg.Done()\r\n> +                       runStreamSyslog(l, done, wg)\r\n> +               }()\r\n>         }\r\n>         return\r\n>  }\r\n> @@ -117,7 +122,7 @@\r\n>\r\n>         for _, tr := range transport {\r\n>                 done := make(chan string)\r\n> -               addr, _ := startServer(tr, \"\", done)\r\n> +               addr, _, _ := startServer(tr, \"\", done)\r\n>                 if tr == \"unix\" || tr == \"unixgram\" {\r\n>                         defer os.Remove(addr)\r\n>                 }\r\n> @@ -137,8 +142,9 @@\r\n>  func TestFlap(t *testing.T) {\r\n>         net := \"unix\"\r\n>         done := make(chan string)\r\n> -       addr, _ := startServer(net, \"\", done)\r\n> +       addr, sock, _ := startServer(net, \"\", done)\r\n>         defer os.Remove(addr)\r\n> +       defer sock.Close()\r\n>\r\n>         s, err := Dial(net, addr, LOG_INFO|LOG_USER, \"syslog_test\")\r\n>         if err != nil {\r\n> @@ -152,7 +158,8 @@\r\n>         check(t, msg, <-done)\r\n>\r\n>         // restart the server\r\n> -       startServer(net, addr, done)\r\n> +       _, sock2, _ := startServer(net, addr, done)\r\n> +       defer sock2.Close()\r\n>\r\n>         // and try retransmitting\r\n>         msg = \"Moo 3\"\r\n> @@ -242,7 +249,8 @@\r\n>         } else {\r\n>                 for _, test := range tests {\r\n>                         done := make(chan string)\r\n> -                       addr, _ := startServer(\"udp\", \"\", done)\r\n> +                       addr, sock, _ := startServer(\"udp\", \"\", done)\r\n> +                       defer sock.Close()\r\n>                         l, err := Dial(\"udp\", addr, test.pri, test.pre)\r\n>                         if err != nil {\r\n>                                 t.Fatalf(\"syslog.Dial() failed: %v\", err)\r\n> @@ -263,7 +271,8 @@\r\n>  }\r\n>\r\n>  func TestConcurrentWrite(t *testing.T) {\r\n> -       addr, _ := startServer(\"udp\", \"\", make(chan string))\r\n> +       addr, sock, _ := startServer(\"udp\", \"\", make(chan string))\r\n> +       defer sock.Close()\r\n>         w, err := Dial(\"udp\", addr, LOG_USER|LOG_ERR, \"how's it going?\")\r\n>         if err != nil {\r\n>                 t.Fatalf(\"syslog.Dial() failed: %v\", err)\r\n> @@ -289,7 +298,7 @@\r\n>\r\n>         net := \"unix\"\r\n>         done := make(chan string)\r\n> -       addr, srvWG := startServer(net, \"\", done)\r\n> +       addr, sock, srvWG := startServer(net, \"\", done)\r\n>         defer os.Remove(addr)\r\n>\r\n>         // count all the messages arriving\r\n> @@ -327,6 +336,7 @@\r\n>                 }()\r\n>         }\r\n>         wg.Wait()\r\n> +       sock.Close()\r\n>         srvWG.Wait()\r\n>         close(done)\r\n>\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-27 21:55:42.363340",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM, passes stress testing for an hour.\n\n+ cc: fullung",
+			"disapproval": false,
+			"date": "2013-02-28 00:55:37.220100",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=38b1893be35d ***\n\nlog/syslog: fix race in test between channel close and accept.\n\nFixes issue 4769.\n\nR=golang-dev, dave, adg, bradfitz\nCC=fullung, golang-dev\nhttps://codereview.appspot.com/7322089",
+			"disapproval": false,
+			"date": "2013-02-28 06:48:42.586070",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 7322089: log/syslog: fix race in test between channel close and ...",
+	"created": "2013-02-17 09:58:08.942930",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		12001
+	],
+	"modified": "2013-02-28 06:48:43.916140",
+	"closed": true,
+	"issue": 7322089
+}

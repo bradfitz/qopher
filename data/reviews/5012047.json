@@ -1,0 +1,134 @@
+{
+	"description": "graphics: gaussian blur",
+	"cc": [
+		"nigeltao@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "If you haven't already done so, reading through the image/draw source code might help you understand the design of the image package.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go\nFile graphics/blur.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode1\ngraphics/blur.go:1: package graphics\nAdd a copyright header. Similarly for blur_test.go.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode27\ngraphics/blur.go:27: kernelSum *= 2\nFollowed by \"kernelSum += kernel[0]\"?\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode48\ngraphics/blur.go:48: off := (y-i-src.Rect.Min.Y)*src.Stride + (x-src.Rect.Min.X)*4\nI'd pull the \"off :=\" from line 72 up to line 37, and here have:\no := off - i*src.Stride\n\nSimilarly below.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode87\ngraphics/blur.go:87: dst := image.NewRGBA(dx, dy)\nOnce you sync your Go tree to tip, image.NewRGBA takes a\nrectangle instead of (int, int). This should then become\ndst := image.NewRGBA(src.Bounds())\nand be careful about a non-origin Bounds().Min below.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode152\ngraphics/blur.go:152: StandardDeviation float64\nI'd abbreviate this to StdDev.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode156\ngraphics/blur.go:156: func Blur(src image.Image, opt *BlurOptions) *image.RGBA {\nI'd make the return type an image.Image. Conceivably, a future CL would make the result of blurring an image.Gray be another image.Gray.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode169\ngraphics/blur.go:169: if rgba, is_rgba := src.(*image.RGBA); is_rgba {\ns/is_rgba/ok/.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode175\ngraphics/blur.go:175: w := src.Bounds().Dx()\nIf you import \"image/draw\", lines 175-187 can be:\n\n// Make a copy of src as an image.RGBA.\nb := src.Bounds()\nimg := image.NewRGBA(b)\ndraw.Draw(img, b, src, b.Min, draw.Src)\n\nYou will need to sync your Go tree to tip, so that image.NewRGBA takes a rectangle instead of (int, int).\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode178\ngraphics/blur.go:178: for x := 0; x < w; x++ {\nLooping y and then x leads to better memory access patterns. You do that earlier in this .go file but not here.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode181\ngraphics/blur.go:181: r,g,b,a := src.At(x, y).RGBA()\nAt(x, y) is not correct if the source image's bounds do not start at (0, 0). Use the draw code I mentioned above.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode182\ngraphics/blur.go:182: img.Pix[off+0] = uint8(r / a)\nThis is not correct, for two reasons. One is that a fully intense red has an r == 0xffff, not r = 0xff. Truncating to uint8 might give the right answer (e.g. it truncates 0xffff to 0xff) but isn't guaranteed to. See \"godoc image Color\" for more.\n\nTwo is that Color.RGBA returns premultiplied alpha, and image.RGBA is also premultiplied alpha. Dividing by the alpha here is not the right thing to do.\n\nAgain, just use the image/draw package to do blits.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go\nFile graphics/blur_test.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode3\ngraphics/blur_test.go:3: import (\nSort the imports, and separate the standard library from the other packages by a blank line:\n\nimport (\n    \"bytes\"\n    \"fmt\"\n    \"image\"\n    \"testing\"\n\n    \"graphics-go.googlecode.com/hg/graphics\"\n)\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode30\ngraphics/blur_test.go:30: res := \"\"\nStrings are immutable, so string addition is O(N^2), just like Java. Instead, use a bytes.Buffer, which is like a Java StringBuilder.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode60\ngraphics/blur_test.go:60: { \"3x3-blank\", 3, 3, &graphics.BlurOptions{ 0.83, 2 },\nRunning gofmt is mandatory if you want my LGTM, and gofmt won't let you use whitespace like this. Instead, format each test case like:\n\n{\n    \"3x3-blank\", 3, 3,\n    &graphics.BlurOptions{ 0.83, 2 },\n    []uint8{\n        255, 255, 255,\n        255, 255, 255,\n        255, 255, 255,\n    },\n    []uint8{\n        235, 235, 235,\n        235, 235, 235,\n        235, 235, 235,\n    },\n},\n\nAlso, I'd use 0xff instead of 255, and 0x00 instead of 0, so that each column of pixel data is of equal width.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode132\ngraphics/blur_test.go:132: off := (y-img.Rect.Min.Y)*img.Stride + (x-img.Rect.Min.X)*4\nSince this isn't performance-critical, I think that it would be clearer if these two lines were:\n\nimg.SetRGBA(x, y, image.RGBAColor{R:oc.src[i]})\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode154\ngraphics/blur_test.go:154: continue loop\nNo need for the name \"loop\".\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode160\ngraphics/blur_test.go:160: img := image.NewRGBA(400, 400)\nI'd add some non-zero pixels to the image. In my experience, computational benchmarks can run much differently when presented with all zeroes, and that's not representative of a useful blur.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode161\ngraphics/blur_test.go:161: graphics.Blur(img, &graphics.BlurOptions{ 0.84, 3 })\nA benchmark needs to loop b.N times. Run \"godoc testing\" from the command line to read the testing package documentation.",
+			"disapproval": false,
+			"date": "2011-09-16 03:54:46.925582",
+			"approval": true
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://crawshaw%40google.com@code.google.com/p/graphics-go/",
+			"disapproval": false,
+			"date": "2011-09-16 15:30:16.751857",
+			"approval": false
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5012047/diff/2001/graphics/blur.go\nFile graphics/blur.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode1\ngraphics/blur.go:1: package graphics\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> Add a copyright header. Similarly for blur_test.go.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode27\ngraphics/blur.go:27: kernelSum *= 2\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> Followed by \"kernelSum += kernel[0]\"?\n\nReason says yes, test image says no. I end up washing out Lenna doing this.  Any thoughts appreciated, I fear I am masking an error somewhere else in my calculations.\n\n(Testdata will follow in another CL.)\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode48\ngraphics/blur.go:48: off := (y-i-src.Rect.Min.Y)*src.Stride + (x-src.Rect.Min.X)*4\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> I'd pull the \"off :=\" from line 72 up to line 37, and here have:\n> o := off - i*src.Stride\n> \n> Similarly below.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode87\ngraphics/blur.go:87: dst := image.NewRGBA(dx, dy)\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> Once you sync your Go tree to tip, image.NewRGBA takes a\n> rectangle instead of (int, int). This should then become\n> dst := image.NewRGBA(src.Bounds())\n> and be careful about a non-origin Bounds().Min below.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode152\ngraphics/blur.go:152: StandardDeviation float64\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> I'd abbreviate this to StdDev.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode156\ngraphics/blur.go:156: func Blur(src image.Image, opt *BlurOptions) *image.RGBA {\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> I'd make the return type an image.Image. Conceivably, a future CL would make the\n> result of blurring an image.Gray be another image.Gray.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode169\ngraphics/blur.go:169: if rgba, is_rgba := src.(*image.RGBA); is_rgba {\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> s/is_rgba/ok/.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode175\ngraphics/blur.go:175: w := src.Bounds().Dx()\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> If you import \"image/draw\", lines 175-187 can be:\n> \n> // Make a copy of src as an image.RGBA.\n> b := src.Bounds()\n> img := image.NewRGBA(b)\n> draw.Draw(img, b, src, b.Min, draw.Src)\n> \n> You will need to sync your Go tree to tip, so that image.NewRGBA takes a\n> rectangle instead of (int, int).\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode178\ngraphics/blur.go:178: for x := 0; x < w; x++ {\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> Looping y and then x leads to better memory access patterns. You do that earlier\n> in this .go file but not here.\n\nRemoved.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode181\ngraphics/blur.go:181: r,g,b,a := src.At(x, y).RGBA()\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> At(x, y) is not correct if the source image's bounds do not start at (0, 0). Use\n> the draw code I mentioned above.\n\nRemoved.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur.go#newcode182\ngraphics/blur.go:182: img.Pix[off+0] = uint8(r / a)\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> This is not correct, for two reasons. One is that a fully intense red has an r\n> == 0xffff, not r = 0xff. Truncating to uint8 might give the right answer (e.g.\n> it truncates 0xffff to 0xff) but isn't guaranteed to. See \"godoc image Color\"\n> for more.\n> \n> Two is that Color.RGBA returns premultiplied alpha, and image.RGBA is also\n> premultiplied alpha. Dividing by the alpha here is not the right thing to do.\n> \n> Again, just use the image/draw package to do blits.\n\nDone. Thanks for the explanation.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go\nFile graphics/blur_test.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode3\ngraphics/blur_test.go:3: import (\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> Sort the imports, and separate the standard library from the other packages by a\n> blank line:\n> \n> import (\n>     \"bytes\"\n>     \"fmt\"\n>     \"image\"\n>     \"testing\"\n> \n>     \"graphics-go.googlecode.com/hg/graphics\"\n> )\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode30\ngraphics/blur_test.go:30: res := \"\"\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> Strings are immutable, so string addition is O(N^2), just like Java. Instead,\n> use a bytes.Buffer, which is like a Java StringBuilder.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode60\ngraphics/blur_test.go:60: { \"3x3-blank\", 3, 3, &graphics.BlurOptions{ 0.83, 2 },\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> Running gofmt is mandatory if you want my LGTM, and gofmt won't let you use\n> whitespace like this. Instead, format each test case like:\n> \n> {\n>     \"3x3-blank\", 3, 3,\n>     &graphics.BlurOptions{ 0.83, 2 },\n>     []uint8{\n>         255, 255, 255,\n>         255, 255, 255,\n>         255, 255, 255,\n>     },\n>     []uint8{\n>         235, 235, 235,\n>         235, 235, 235,\n>         235, 235, 235,\n>     },\n> },\n> \n> Also, I'd use 0xff instead of 255, and 0x00 instead of 0, so that each column of\n> pixel data is of equal width.\n\nDone. Hex is perfect here, thanks.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode132\ngraphics/blur_test.go:132: off := (y-img.Rect.Min.Y)*img.Stride + (x-img.Rect.Min.X)*4\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> Since this isn't performance-critical, I think that it would be clearer if these\n> two lines were:\n> \n> img.SetRGBA(x, y, image.RGBAColor{R:oc.src[i]})\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode154\ngraphics/blur_test.go:154: continue loop\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> No need for the name \"loop\".\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode160\ngraphics/blur_test.go:160: img := image.NewRGBA(400, 400)\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> I'd add some non-zero pixels to the image. In my experience, computational\n> benchmarks can run much differently when presented with all zeroes, and that's\n> not representative of a useful blur.\n\nDone.\n\nIs this generally useful for testing? Would you like a CL for image.Rand? (Infinite, ever changing image.)\n\nhttp://codereview.appspot.com/5012047/diff/2001/graphics/blur_test.go#newcode161\ngraphics/blur_test.go:161: graphics.Blur(img, &graphics.BlurOptions{ 0.84, 3 })\nOn 2011/09/16 03:54:47, nigeltao wrote:\n> A benchmark needs to loop b.N times. Run \"godoc testing\" from the command line\n> to read the testing package documentation.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-16 15:34:26.001588",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5012047/diff/12001/graphics/Makefile\nFile graphics/Makefile (right):\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/Makefile#newcode9\ngraphics/Makefile:9: blur.go\nAdd a '\\' at the end of this line.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur.go\nFile graphics/blur.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur.go#newcode175\ngraphics/blur.go:175: if rgba, ok := src.(*image.RGBA); ok {\nOn second thoughts, I'd write lines 175-184 as:\nrgba, ok := src.(*image.RGBA)\nif !ok {\n  // Make a copy of src as an image.RGBA.\n  b := src.Bounds()\n  rgba = image.NewRGBA(b)\n  draw.Draw(rgba, b, src, b.Min, draw.Src)\n}\nreturn blurRGBA(rgba, sd, size)\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go\nFile graphics/blur_test.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode41\ngraphics/blur_test.go:41: buf.WriteString(fmt.Sprintf(\" 0x%02x,\", box[i]))\nfmt.Fprintf(buf, \" 0x%02x,\", box[i])\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode49\ngraphics/blur_test.go:49: type blurOneColor struct {\nI'd s/blurOneColor/blurOneColorTest/.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode77\ngraphics/blur_test.go:77: 0xff, 0xff, 0xff},\nI'd add a comma and a newline just before the '}'. Similarly below.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode195\ngraphics/blur_test.go:195: func benchBlur(b *testing.B, img *image.RGBA) {\nI would pass an image.Rectangle, instead of an image.RGBA, and create the image inside benchBlur.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode198\ngraphics/blur_test.go:198: // Construct a fuzzy image.\nInstead of a randomized image, I would do something similar to image/draw/bench_test.go.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode204\ngraphics/blur_test.go:204: randX := int(rand.Int31n(int32(dx)))\nrandX := rand.Intn(dx)\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode206\ngraphics/blur_test.go:206: randColor := image.RGBAColor{\nIt won't matter in practice, in that the blurring code is per-channel, but what you have here can generate an invalid value. An RGBAColor is alpha-premultiplied, and must therefore have its R, G and B values <= its A value.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode216\ngraphics/blur_test.go:216: for i := 0; i < b.N; i++ {\nAdd a b.StartTimer call before this loop, and a b.StopTimer call at the start of this function.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode217\ngraphics/blur_test.go:217: draw.Draw(img, bounds, fuzzy, bounds.Min, draw.Src)\nHoist the draw.Draw code outside the loop, since graphics.Blur does not modify the image argument, and since you're really interested in benchmarking the Blur code, not the Draw code.",
+			"disapproval": false,
+			"date": "2011-09-18 01:01:32.310201",
+			"approval": false
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5012047/diff/12001/graphics/Makefile\nFile graphics/Makefile (right):\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/Makefile#newcode9\ngraphics/Makefile:9: blur.go\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> Add a '\\' at the end of this line.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur.go\nFile graphics/blur.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur.go#newcode175\ngraphics/blur.go:175: if rgba, ok := src.(*image.RGBA); ok {\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> On second thoughts, I'd write lines 175-184 as:\n> rgba, ok := src.(*image.RGBA)\n> if !ok {\n>   // Make a copy of src as an image.RGBA.\n>   b := src.Bounds()\n>   rgba = image.NewRGBA(b)\n>   draw.Draw(rgba, b, src, b.Min, draw.Src)\n> }\n> return blurRGBA(rgba, sd, size)\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go\nFile graphics/blur_test.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode41\ngraphics/blur_test.go:41: buf.WriteString(fmt.Sprintf(\" 0x%02x,\", box[i]))\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> fmt.Fprintf(buf, \" 0x%02x,\", box[i])\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode49\ngraphics/blur_test.go:49: type blurOneColor struct {\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> I'd s/blurOneColor/blurOneColorTest/.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode77\ngraphics/blur_test.go:77: 0xff, 0xff, 0xff},\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> I'd add a comma and a newline just before the '}'. Similarly below.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode195\ngraphics/blur_test.go:195: func benchBlur(b *testing.B, img *image.RGBA) {\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> I would pass an image.Rectangle, instead of an image.RGBA, and create the image\n> inside benchBlur.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode198\ngraphics/blur_test.go:198: // Construct a fuzzy image.\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> Instead of a randomized image, I would do something similar to\n> image/draw/bench_test.go.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode204\ngraphics/blur_test.go:204: randX := int(rand.Int31n(int32(dx)))\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> randX := rand.Intn(dx)\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode206\ngraphics/blur_test.go:206: randColor := image.RGBAColor{\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> It won't matter in practice, in that the blurring code is per-channel, but what\n> you have here can generate an invalid value. An RGBAColor is\n> alpha-premultiplied, and must therefore have its R, G and B values <= its A\n> value.\n\nGood point. Done.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode216\ngraphics/blur_test.go:216: for i := 0; i < b.N; i++ {\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> Add a b.StartTimer call before this loop, and a b.StopTimer call at the start of\n> this function.\n\nDone.\n\nhttp://codereview.appspot.com/5012047/diff/12001/graphics/blur_test.go#newcode217\ngraphics/blur_test.go:217: draw.Draw(img, bounds, fuzzy, bounds.Min, draw.Src)\nOn 2011/09/18 01:01:32, nigeltao wrote:\n> Hoist the draw.Draw code outside the loop, since graphics.Blur does not modify\n> the image argument, and since you're really interested in benchmarking the Blur\n> code, not the Draw code.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-18 16:53:30.065954",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM.\n\nYour code isn't 100% correct, but I'm happy to commit a checkpoint and iterate from there.\n\nAlso, it would be nice to have some doc comments for the package, and for all exported types and functions. See http://golang.org/doc/effective_go.html#commentary for more.\n\nhttp://codereview.appspot.com/5012047/diff/2002/graphics/blur.go\nFile graphics/blur.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/2002/graphics/blur.go#newcode43\ngraphics/blur.go:43: off := (y-src.Rect.Min.Y)*src.Stride + (x-src.Rect.Min.X)*4\nThis is not right. You're double-counting src.Rect.Min, and your code will panic with index-out-of-bounds if you pass in a source image with a non-zero src.Rect.Min.\n\nSuppose that the source image's bounds is {{6, 5}, {9, 9}}. The dx and dy are 3 and 4, and y starts at 0 (and not 5), so (y - src.Rect.Min.Y) is -5, and off will end up negative.\n\nThe correct way to iterate over an image m's pixels is:\nb := m.Bounds()\nfor y := b.Min.Y; y < b.Max.Y; y++ {\n        for x := b.Min.X; y < b.Max.X; x++ {\n                doStuffWith(m.At(x, y))\n        }\n}\n\nIt's also OK to iterate \"for y := 0; y < dy; y++\", but then be aware that (x, y) isn't necessarily in the image's bounds, and adjust where necessary.\n\nhttp://codereview.appspot.com/5012047/diff/2002/graphics/blur_test.go\nFile graphics/blur_test.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/2002/graphics/blur_test.go#newcode78\ngraphics/blur_test.go:78: 0xeb, 0xeb, 0xeb,\nCan you try adding the kernel[0] back? It looks really odd in your test code how blurring a fully saturated image results in something that's not fully saturated.\n\nIf you were previously looking at Lena, can you try again? Decoding a JPEG results in a YCbCr image, not an RGBA image, and previously your code to convert to an RGBA image was wrong.",
+			"disapproval": false,
+			"date": "2011-09-19 00:03:31.630599",
+			"approval": true
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thank you for the review!\n\nhttp://codereview.appspot.com/5012047/diff/2002/graphics/blur.go\nFile graphics/blur.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/2002/graphics/blur.go#newcode43\ngraphics/blur.go:43: off := (y-src.Rect.Min.Y)*src.Stride + (x-src.Rect.Min.X)*4\nOn 2011/09/19 00:03:31, nigeltao wrote:\n> This is not right. You're double-counting src.Rect.Min, and your code will panic\n> with index-out-of-bounds if you pass in a source image with a non-zero\n> src.Rect.Min.\n> \n> Suppose that the source image's bounds is {{6, 5}, {9, 9}}. The dx and dy are 3\n> and 4, and y starts at 0 (and not 5), so (y - src.Rect.Min.Y) is -5, and off\n> will end up negative.\n> \n> The correct way to iterate over an image m's pixels is:\n> b := m.Bounds()\n> for y := b.Min.Y; y < b.Max.Y; y++ {\n>         for x := b.Min.X; y < b.Max.X; x++ {\n>                 doStuffWith(m.At(x, y))\n>         }\n> }\n> \n> It's also OK to iterate \"for y := 0; y < dy; y++\", but then be aware that (x, y)\n> isn't necessarily in the image's bounds, and adjust where necessary.\n\nI had a go at fixing this, but I need to write some tests for this.\n\nhttp://codereview.appspot.com/5012047/diff/2002/graphics/blur_test.go\nFile graphics/blur_test.go (right):\n\nhttp://codereview.appspot.com/5012047/diff/2002/graphics/blur_test.go#newcode78\ngraphics/blur_test.go:78: 0xeb, 0xeb, 0xeb,\nOn 2011/09/19 00:03:31, nigeltao wrote:\n> Can you try adding the kernel[0] back? It looks really odd in your test code how\n> blurring a fully saturated image results in something that's not fully\n> saturated.\n> \n> If you were previously looking at Lena, can you try again? Decoding a JPEG\n> results in a YCbCr image, not an RGBA image, and previously your code to convert\n> to an RGBA image was wrong.\n\nTried, still having troubles. Will submit and revisit this.",
+			"disapproval": false,
+			"date": "2011-09-19 01:35:13.546210",
+			"approval": false
+		},
+		{
+			"sender": "crawshaw@google.com",
+			"recipients": [
+				"crawshaw@google.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as e394b7b33758 ***\n\ngraphics: gaussian blur\n\nR=nigeltao\nCC=golang-dev\nhttp://codereview.appspot.com/5012047",
+			"disapproval": false,
+			"date": "2011-09-19 03:52:00.620468",
+			"approval": false
+		}
+	],
+	"owner_email": "crawshaw@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "crawshaw1",
+	"subject": "code review 5012047: graphics: gaussian blur",
+	"created": "2011-09-16 01:13:06.577873",
+	"patchsets": [
+		1,
+		2001,
+		8001,
+		12001,
+		2002,
+		21001,
+		17012,
+		18003,
+		19002
+	],
+	"modified": "2011-09-19 03:52:02.009899",
+	"closed": true,
+	"issue": 5012047
+}

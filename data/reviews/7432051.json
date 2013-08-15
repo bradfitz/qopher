@@ -1,0 +1,120 @@
+{
+	"description": "go/types: update operand types early\n\nFor expressions where the result type is independent\nof the argument types (comparisons, conversions, rhs\nof shifts), set the final expression types for those\nsubtrees early.\n\nThis fixes several bugs where incorrect lhs shift\noperands where used (say in a comparison), but were\nnot reported.\n\nTogether with the changes listed below this CL fixes\nmany type-checker bugs.\n\nAlso:\n- better documented updateExprType\n- added larger comment to expr.go explaining\n  the basic expression checking algorithm\n- use latest definition for indices and make\n  arguments; use the same code to check both\n- use the same mechanism for cycle detection\n  in constant expressions as for variables\n  (new field Constant.visited)\n- more tests for complex and make builtins\n- many more and systematic tests for shifts;\n  moved them into separate testfile\n- in the testing code, don't compare the\n  expected error pattern against itself\n  (the actual message was always ignored...)\n- fix affected error patterns in the test files\n- various cleanups along the way",
+	"cc": [
+		"adonovan@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/builtins.go\nFile src/pkg/go/types/builtins.go (right):\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/builtins.go#newcode177\nsrc/pkg/go/types/builtins.go:177: check.updateExprType(args[0], x.typ, true)\nOn 2013/03/11 20:19:34, adonovan wrote:\n> This doesn't look right: are you assigning complex types to the two *operands*\n> of complex()?\n\ngood catch - should be typ, not x.typ ( I had this correct once, but then moved stuff around and redid this, obviously incorrectly ). thanx.\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/expr.go\nFile src/pkg/go/types/expr.go (right):\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/expr.go#newcode414\nsrc/pkg/go/types/expr.go:414: // If x is the lhs of a shift, it's final type must be integer.\nOn 2013/03/11 20:19:34, adonovan wrote:\n> \"its\"\n\nDone.\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/expr.go#newcode501\nsrc/pkg/go/types/expr.go:501: check.updateExprType(x.expr, target, true) // UntypedNil's are final\nOn 2013/03/11 20:19:34, adonovan wrote:\n> \"UntypedNils\"\n\nDone.\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/expr.go#newcode785\nsrc/pkg/go/types/expr.go:785: if ok {\nOn 2013/03/11 20:19:34, adonovan wrote:\n> Combine 'if' with previous statement?\n\nDone.\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/testdata/builtins.src\nFile src/pkg/go/types/testdata/builtins.src (right):\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/testdata/builtins.src#newcode226\nsrc/pkg/go/types/testdata/builtins.src:226: _ = make(chan bool, 10.0<<s)\nOn 2013/03/11 20:19:34, adonovan wrote:\n> Code such as this causes me to question whether I understand the spec as it\n> relates to untyped constants.  Consider:\n> \n> const k = 10.0\n> \n> Because of k's integral *value*, I can use it in a context where an int32 is\n> wanted, or where a float32 is wanted.  But because of k's *type*,\n> reflect.TypeOf(k) returns a floating point type.  So clearly both the (constant)\n> value and the type of the expression assigned to k are important during\n> type-checking, but the spec (and implementation) repeatedly talk about \"untyped\"\n> numeric constants.\n> \n> I think the de facto behaviour can only be understood by  introducing more types\n> (as indeed the implementation does) for the constant expressions where no\n> representation is specified, plus a limited form of subtyping over these types. \n> I think the spec should be updated to reflect this.  \n> \n> Otherwise sentences like this: \n> \n> > For instance, if the expression is a floating-point literal, the constant\n> identifier denotes a floating-point constant, even if the literal's fractional\n> part is zero.\n> \n> don't make sense: what distinguishes \"a floating-point constant [whose]\n> fractional part is zero\" from an integer constant?  Clearly not its value.\n> \n\nThe spec could be more precise. We talk about the constant \"kind\" in the spec (see e.g. section on Constant Expressions): We have integer, floating point, string constants, etc. but they are still untyped.\n\nHowever, your example using reflect.TypeOf is returning a floating point type (float64) not because of the constant's \"type\" but because the floating point value is assigned to an empty interface when passed, and the usual assignment rules apply. In this case an untyped floating point constant takes its default type which is float64.\n\nFwiw, there are several issues against the spec asking for clearer and less confusing language.",
+			"disapproval": false,
+			"date": "2013-03-11 20:31:49.028370",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think we agree. The spec calls this the \"constant kind\" to avoid weird\r\nphrases as the \"type of an untyped constant\". The fact that the kind of an\r\nuntyped constant is modelled as a type in go/types is an implementation\r\ndetail.\r\n\r\nBut I acknowledge that the spec is walking a narrow path here, and perhaps\r\nwe can find better nomenclature in the future.\r\n- gri\r\n\r\n\r\nOn Mon, Mar 11, 2013 at 1:44 PM, Alan Donovan <adonovan@google.com> wrote:\r\n\r\n> On 11 March 2013 16:31,  <gri@golang.org> wrote:\r\n> > However, your example using reflect.TypeOf is returning a floating point\r\n> > type (float64) not because of the constant's \"type\" but because the\r\n> > floating point value is assigned to an empty interface when passed, and\r\n> > the usual assignment rules apply. In this case an untyped floating point\r\n> > constant takes its default type which is float64.\r\n>\r\n> Right, I understand that there are two implicit conversions\r\n> (untypedfloat -> float64 -> interface{}), but the point remains that\r\n> there's something about k other than its value that causes these\r\n> particular conversions to occur, as opposed to 'int'. That thing is\r\n> its type, which is \"untypedfloat\".\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 20:47:51.528090",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-03-11 05:40:22.656840",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/builtins.go\nFile src/pkg/go/types/builtins.go (right):\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/builtins.go#newcode177\nsrc/pkg/go/types/builtins.go:177: check.updateExprType(args[0], x.typ, true)\nThis doesn't look right: are you assigning complex types to the two *operands* of complex()?\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/expr.go\nFile src/pkg/go/types/expr.go (right):\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/expr.go#newcode414\nsrc/pkg/go/types/expr.go:414: // If x is the lhs of a shift, it's final type must be integer.\n\"its\"\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/expr.go#newcode501\nsrc/pkg/go/types/expr.go:501: check.updateExprType(x.expr, target, true) // UntypedNil's are final\n\"UntypedNils\"\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/expr.go#newcode785\nsrc/pkg/go/types/expr.go:785: if ok {\nCombine 'if' with previous statement?\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/testdata/builtins.src\nFile src/pkg/go/types/testdata/builtins.src (right):\n\nhttps://codereview.appspot.com/7432051/diff/59001/src/pkg/go/types/testdata/builtins.src#newcode226\nsrc/pkg/go/types/testdata/builtins.src:226: _ = make(chan bool, 10.0<<s)\nCode such as this causes me to question whether I understand the spec as it relates to untyped constants.  Consider:\n\nconst k = 10.0\n\nBecause of k's integral *value*, I can use it in a context where an int32 is wanted, or where a float32 is wanted.  But because of k's *type*, reflect.TypeOf(k) returns a floating point type.  So clearly both the (constant) value and the type of the expression assigned to k are important during type-checking, but the spec (and implementation) repeatedly talk about \"untyped\" numeric constants.\n\nI think the de facto behaviour can only be understood by  introducing more types (as indeed the implementation does) for the constant expressions where no representation is specified, plus a limited form of subtyping over these types.  I think the spec should be updated to reflect this.  \n\nOtherwise sentences like this: \n\n> For instance, if the expression is a floating-point literal, the constant identifier denotes a floating-point constant, even if the literal's fractional part is zero.\n\ndon't make sense: what distinguishes \"a floating-point constant [whose] fractional part is zero\" from an integer constant?  Clearly not its value.",
+			"disapproval": false,
+			"date": "2013-03-11 20:19:33.969910",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=bfec9766ab39 ***\n\ngo/types: update operand types early\n\nFor expressions where the result type is independent\nof the argument types (comparisons, conversions, rhs\nof shifts), set the final expression types for those\nsubtrees early.\n\nThis fixes several bugs where incorrect lhs shift\noperands where used (say in a comparison), but were\nnot reported.\n\nTogether with the changes listed below this CL fixes\nmany type-checker bugs.\n\nAlso:\n- better documented updateExprType\n- added larger comment to expr.go explaining\n  the basic expression checking algorithm\n- use latest definition for indices and make\n  arguments; use the same code to check both\n- use the same mechanism for cycle detection\n  in constant expressions as for variables\n  (new field Constant.visited)\n- more tests for complex and make builtins\n- many more and systematic tests for shifts;\n  moved them into separate testfile\n- in the testing code, don't compare the\n  expected error pattern against itself\n  (the actual message was always ignored...)\n- fix affected error patterns in the test files\n- various cleanups along the way\n\nR=adonovan\nCC=golang-dev\nhttps://codereview.appspot.com/7432051",
+			"disapproval": false,
+			"date": "2013-03-11 20:38:49.431640",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 11 March 2013 16:31,  <gri@golang.org> wrote:\r\n> However, your example using reflect.TypeOf is returning a floating point\r\n> type (float64) not because of the constant's \"type\" but because the\r\n> floating point value is assigned to an empty interface when passed, and\r\n> the usual assignment rules apply. In this case an untyped floating point\r\n> constant takes its default type which is float64.\r\n\r\nRight, I understand that there are two implicit conversions\r\n(untypedfloat -> float64 -> interface{}), but the point remains that\r\nthere's something about k other than its value that causes these\r\nparticular conversions to occur, as opposed to 'int'. That thing is\r\nits type, which is \"untypedfloat\".\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 20:44:04.330480",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 7432051: go/types: update operand types early",
+	"created": "2013-03-04 07:43:15.931880",
+	"patchsets": [
+		1,
+		2001,
+		6001,
+		7001,
+		10001,
+		12003,
+		15001,
+		18001,
+		20001,
+		23001,
+		25001,
+		17008,
+		29001,
+		31001,
+		34001,
+		35001,
+		38001,
+		40001,
+		7002,
+		29002,
+		50001,
+		52001,
+		54001,
+		57001,
+		59001,
+		68002,
+		73001
+	],
+	"modified": "2013-03-11 20:38:50.362030",
+	"closed": true,
+	"issue": 7432051
+}

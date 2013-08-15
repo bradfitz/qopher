@@ -1,0 +1,346 @@
+{
+	"description": "net: add special netFD mutex\nThe mutex, fdMutex, handles locking and lifetime of sysfd,\nand serializes Read and Write methods.\nThis allows to strip 2 sync.Mutex.Lock calls,\n2 sync.Mutex.Unlock calls, 1 defer and some amount\nof misc overhead from every network operation.\n\nOn linux/amd64, Intel E5-2690:\nbenchmark                             old ns/op    new ns/op    delta\nBenchmarkTCP4Persistent                    9595         9454   -1.47%\nBenchmarkTCP4Persistent-2                  8978         8772   -2.29%\nBenchmarkTCP4ConcurrentReadWrite           4900         4625   -5.61%\nBenchmarkTCP4ConcurrentReadWrite-2         2603         2500   -3.96%\n\nIn general it strips 70-500 ns from every network operation depending\non processor model. On my relatively new E5-2690 it accounts to ~5%\nof network op cost.\n\nFixes issue 6074.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"alex.brainman@gmail.com",
+		"iant@golang.org",
+		"mikioh.mikioh@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-06 18:32:59.051690",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If we generally agree on this, then 2 refactorings can go separately (the first is to expose runtime_Semacquire to net package, and another is to remove bool parameter from incref). That will reduce number of changed files to ~4.",
+			"disapproval": false,
+			"date": "2013-08-06 18:35:53.571490",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Just in case, if you are not sure where to start :) start at fd_mutex.go (the mutex) and fd_unix.go/fd_windows.go (use of the mutex), everything else is noise.",
+			"disapproval": false,
+			"date": "2013-08-06 19:11:18.496010",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Is this worse on ARM, with the 64-bit atomics?\r\n\r\n\r\n\r\nOn Tue, Aug 6, 2013 at 12:11 PM, <dvyukov@google.com> wrote:\r\n\r\n> Just in case, if you are not sure where to start :) start at fd_mutex.go\r\n> (the mutex) and fd_unix.go/fd_windows.go (use of the mutex), everything\r\n> else is noise.\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/12418043/<https://codereview.appspot.com/12418043/>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-06 19:13:45.291230",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Aug 6, 2013 at 11:13 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> Is this worse on ARM, with the 64-bit atomics?\r\n\r\n\r\nI don't have ARM.\r\nOn the other hand it reduces number of atomic RMW operations per net\r\nop from 6 to 2. So I would still expect it to be faster.\r\nTheoretically it's possible to fit the state into 32 bits if necessary.\r\n",
+			"disapproval": false,
+			"date": "2013-08-06 20:11:53.728260",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sounds like a good idea to me. Makes all different OSes to behave the same.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-08-07 00:02:17.409110",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go\nFile src/pkg/net/fd_mutex.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode37\nsrc/pkg/net/fd_mutex.go:37: // Read operations must do ReadLock/ReadUnlock.\nWhy are these methods exported?  Will they ever be called by any other package?\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode38\nsrc/pkg/net/fd_mutex.go:38: // Write operations must do WriteLock/WriteUnlock.\nHere you talk about ReadLock and WriteLock but below you only have RWLock.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode39\nsrc/pkg/net/fd_mutex.go:39: // Misc operations (setsockopt) must do Lock/Unlock.\nI think it's a little confusing to have all of ReadLock and WriteLock and Lock, especially since if I'm reading this correctly Lock is the one called least often.  Should Lock be MiscLock?\n\nAlso it might be nice to expand on what misc operations are and why they need their own lock.  read/write is pretty obvious, misc is not, at least not to me.  And in fact it doesn't appear to be a lock at all, it appears to just manage a reference count.  And the ReadLock and WriteLock names are a bit misleading because they do not conflict with each other.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode42\nsrc/pkg/net/fd_mutex.go:42: // All lock operations return false if fd is closed.\nThese sentences are a little ambiguous.  Would it be correct to say:\n\n// All lock operations return whether fd is open.\n// All unlock operations return whether fd is closed and there are no remaining references.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode68\nsrc/pkg/net/fd_mutex.go:68: new := old | mutexClosed + mutexRef\nPlease use parentheses here, we can't expect everyone to know the precedence of | and +.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode124\nsrc/pkg/net/fd_mutex.go:124: // Read lock is free, acquire it.\ns/Read lock/Lock/\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode125\nsrc/pkg/net/fd_mutex.go:125: new = old | mutexBit + mutexRef\nParentheses.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode130\nsrc/pkg/net/fd_mutex.go:130: // Wait for read lock.\ns/read //\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode141\nsrc/pkg/net/fd_mutex.go:141: // The signaller has substracted mutexWait.\ns/substracted/subtracted/\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode165\nsrc/pkg/net/fd_mutex.go:165: // Drop read lock, drop reference and wake read waiter if present.\ns/read //g\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode166\nsrc/pkg/net/fd_mutex.go:166: new := old&^mutexBit - mutexRef\nUse parentheses.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex_test.go\nFile src/pkg/net/fd_mutex_test.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex_test.go#newcode82\nsrc/pkg/net/fd_mutex_test.go:82: case <-time.After(100 * time.Millisecond):\nIncrease this timeout so that we don't see pointless failures on slow machines.",
+			"disapproval": false,
+			"date": "2013-08-07 00:45:26.745090",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go\nFile src/pkg/net/fd_mutex.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode37\nsrc/pkg/net/fd_mutex.go:37: // Read operations must do ReadLock/ReadUnlock.\nOn 2013/08/07 00:45:27, iant wrote:\n> Why are these methods exported?  Will they ever be called by any other package?\n\nBut the type itself is not exported. How can a user call it?\nnetFD has lots of \"exported\" methods as well...\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode38\nsrc/pkg/net/fd_mutex.go:38: // Write operations must do WriteLock/WriteUnlock.\nOn 2013/08/07 00:45:27, iant wrote:\n> Here you talk about ReadLock and WriteLock but below you only have RWLock.\n\ncomments tend to be outdate... there is nothing we can do with it :)\nDone\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode39\nsrc/pkg/net/fd_mutex.go:39: // Misc operations (setsockopt) must do Lock/Unlock.\nOn 2013/08/07 00:45:27, iant wrote:\n> I think it's a little confusing to have all of ReadLock and WriteLock and Lock,\n> especially since if I'm reading this correctly Lock is the one called least\n> often.  Should Lock be MiscLock?\n> \n> Also it might be nice to expand on what misc operations are and why they need\n> their own lock.  read/write is pretty obvious, misc is not, at least not to me. \n> And in fact it doesn't appear to be a lock at all, it appears to just manage a\n> reference count.  And the ReadLock and WriteLock names are a bit misleading\n> because they do not conflict with each other.\n\nAgree\nI will call them Incref/Decref, that's what they essentially are.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode42\nsrc/pkg/net/fd_mutex.go:42: // All lock operations return false if fd is closed.\nOn 2013/08/07 00:45:27, iant wrote:\n> These sentences are a little ambiguous.  Would it be correct to say:\n> \n> // All lock operations return whether fd is open.\n> // All unlock operations return whether fd is closed and there are no remaining\n> references.\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode68\nsrc/pkg/net/fd_mutex.go:68: new := old | mutexClosed + mutexRef\nOn 2013/08/07 00:45:27, iant wrote:\n> Please use parentheses here, we can't expect everyone to know the precedence of\n> | and +.\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode124\nsrc/pkg/net/fd_mutex.go:124: // Read lock is free, acquire it.\nOn 2013/08/07 00:45:27, iant wrote:\n> s/Read lock/Lock/\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode125\nsrc/pkg/net/fd_mutex.go:125: new = old | mutexBit + mutexRef\nOn 2013/08/07 00:45:27, iant wrote:\n> Parentheses.\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode130\nsrc/pkg/net/fd_mutex.go:130: // Wait for read lock.\nOn 2013/08/07 00:45:27, iant wrote:\n> s/read //\n\nDone\nIt's survived several refactorings already...\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode141\nsrc/pkg/net/fd_mutex.go:141: // The signaller has substracted mutexWait.\nOn 2013/08/07 00:45:27, iant wrote:\n> s/substracted/subtracted/\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode165\nsrc/pkg/net/fd_mutex.go:165: // Drop read lock, drop reference and wake read waiter if present.\nOn 2013/08/07 00:45:27, iant wrote:\n> s/read //g\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex.go#newcode166\nsrc/pkg/net/fd_mutex.go:166: new := old&^mutexBit - mutexRef\nOn 2013/08/07 00:45:27, iant wrote:\n> Use parentheses.\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex_test.go\nFile src/pkg/net/fd_mutex_test.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/27001/src/pkg/net/fd_mutex_test.go#newcode82\nsrc/pkg/net/fd_mutex_test.go:82: case <-time.After(100 * time.Millisecond):\nOn 2013/08/07 00:45:27, iant wrote:\n> Increase this timeout so that we don't see pointless failures on slow machines.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-08-07 21:41:39.999480",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "pls don't make sendfile_freebsd.go a black sheep.",
+			"disapproval": false,
+			"date": "2013-08-09 04:35:26.390050",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_mutex.go\nFile src/pkg/net/fd_mutex.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_mutex.go#newcode45\nsrc/pkg/net/fd_mutex.go:45: // All lock operations return false if fd is closed.\nI think you can delete these two lines.\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_mutex.go#newcode79\nsrc/pkg/net/fd_mutex.go:79: new &= ^uint64(mutexRMask | mutexWMask)\nI think this can be\n    new &^= mutexRMask | mutexWMask\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (left):\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go#oldcode87\nsrc/pkg/net/fd_unix.go:87: fd.wio.Lock()\nWhy is it OK to just remove this lock?\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go#newcode108\nsrc/pkg/net/fd_unix.go:108: if fd == nil || !fd.fdmu.Incref() {\nWhy do you need to test fd == nil?\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go#newcode117\nsrc/pkg/net/fd_unix.go:117: if fd != nil && fd.fdmu.Decref() {\nWhy do you need to test fd != nil?\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go#newcode125\nsrc/pkg/net/fd_unix.go:125: if fd == nil || !fd.fdmu.RWLock(true) {\nDo you need check fd == nil here and below?\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (left):\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_windows.go#oldcode335\nsrc/pkg/net/fd_windows.go:335: o.mu.Lock()\nWhy is it OK to get rid of this lock?",
+			"disapproval": false,
+			"date": "2013-08-09 00:01:26.791670",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/09 04:35:26, mikio wrote:\n> pls don't make sendfile_freebsd.go a black sheep.\n\noops, it was unintentional, sorry\ndone",
+			"disapproval": false,
+			"date": "2013-08-09 09:44:49.489860",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_mutex.go\nFile src/pkg/net/fd_mutex.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_mutex.go#newcode45\nsrc/pkg/net/fd_mutex.go:45: // All lock operations return false if fd is closed.\nOn 2013/08/09 00:01:27, iant wrote:\n> I think you can delete these two lines.\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_mutex.go#newcode79\nsrc/pkg/net/fd_mutex.go:79: new &= ^uint64(mutexRMask | mutexWMask)\nOn 2013/08/09 00:01:27, iant wrote:\n> I think this can be\n>     new &^= mutexRMask | mutexWMask\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (left):\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go#oldcode87\nsrc/pkg/net/fd_unix.go:87: fd.wio.Lock()\nOn 2013/08/09 00:01:27, iant wrote:\n> Why is it OK to just remove this lock?\n\nthe same reason as in fd_windows.go\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go\nFile src/pkg/net/fd_unix.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_unix.go#newcode108\nsrc/pkg/net/fd_unix.go:108: if fd == nil || !fd.fdmu.Incref() {\nOn 2013/08/09 00:01:27, iant wrote:\n> Why do you need to test fd == nil?\n\nWindows does it, and I tried to unify them.\nOK, I've removed the nil checks from both unix and windows, all net/... tests pass on darwin and windows.\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (left):\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_windows.go#oldcode335\nsrc/pkg/net/fd_windows.go:335: o.mu.Lock()\nOn 2013/08/09 00:01:27, iant wrote:\n> Why is it OK to get rid of this lock?\n\nnetFD.connect is only called from netFD.dial, which is only called from socket function. And the socket function also creates the netFD. So during connect netFD is not yet accessible to user, and user can not do concurrent operations on it. We return either already connected netFD or error.",
+			"disapproval": false,
+			"date": "2013-08-09 09:44:03.886240",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (left):\n\nhttps://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_windows.go#oldcode335\nsrc/pkg/net/fd_windows.go:335: o.mu.Lock()\nOn 2013/08/09 09:44:04, dvyukov wrote:\n> On 2013/08/09 00:01:27, iant wrote:\n> > Why is it OK to get rid of this lock?\n> \n> netFD.connect is only called from netFD.dial, which is only called from socket\n> function. And the socket function also creates the netFD. So during connect\n> netFD is not yet accessible to user, and user can not do concurrent operations\n> on it. We return either already connected netFD or error.\n\nCan you add a comment for this in the two relevant places?  Thanks.",
+			"disapproval": false,
+			"date": "2013-08-09 13:20:42.878840",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "anybody else?",
+			"disapproval": false,
+			"date": "2013-08-09 16:10:51.105160",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Gotcha.\r\n\r\n\r\n\r\nOn Fri, Aug 9, 2013 at 10:09 AM, <dvyukov@google.com> wrote:\r\n\r\n> On 2013/08/09 16:26:53, bradfitz wrote:\r\n>\r\n>> LGTM\r\n>>\r\n>\r\n>  It's now cleaner overall.\r\n>>\r\n>\r\n>  I don't see why the semacquire(profile false)  stuff is necessarily in\r\n>>\r\n> this CL,\r\n>\r\n>> though. How is that related?\r\n>>\r\n>\r\n> Currently only runtime.semacquire(addr) is declared in runtime.h. And\r\n> it's intended for internal usage only, in particular they are not\r\n> profiled with blocking profiler. We want fdMutex in blocking profiler.\r\n> So I had to refactor it a bit and add runtime.semacquire(addr, profile)\r\n> to runtime.h.\r\n>\r\n>\r\n> https://codereview.appspot.**com/12418043/<https://codereview.appspot.com/12418043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 17:13:39.228840",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/09 13:20:42, iant wrote:\n> https://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_windows.go\n> File src/pkg/net/fd_windows.go (left):\n> \n> https://codereview.appspot.com/12418043/diff/53001/src/pkg/net/fd_windows.go#oldcode335\n> src/pkg/net/fd_windows.go:335: o.mu.Lock()\n> On 2013/08/09 09:44:04, dvyukov wrote:\n> > On 2013/08/09 00:01:27, iant wrote:\n> > > Why is it OK to get rid of this lock?\n> > \n> > netFD.connect is only called from netFD.dial, which is only called from socket\n> > function. And the socket function also creates the netFD. So during connect\n> > netFD is not yet accessible to user, and user can not do concurrent operations\n> > on it. We return either already connected netFD or error.\n> \n> Can you add a comment for this in the two relevant places?  Thanks.\n\n\nDone\nPTAL",
+			"disapproval": false,
+			"date": "2013-08-09 14:14:32.721320",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks.",
+			"disapproval": false,
+			"date": "2013-08-09 15:48:34.241930",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nIt's now cleaner overall.\n\nI don't see why the semacquire(profile false)  stuff is necessarily in this CL, though. How is that related?\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/net/fd_mutex.go\nFile src/pkg/net/fd_mutex.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/net/fd_mutex.go#newcode10\nsrc/pkg/net/fd_mutex.go:10: // that manages lifetime of fd and serializes access\nof a fd (so it doesn't sound like fd is a field)\n\nor \"of an fd\" (if you say it \"eff-dee\")\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/net/fd_mutex.go#newcode48\nsrc/pkg/net/fd_mutex.go:48: func (mu *fdMutex) Incref() bool {\ndocument return value\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/net/fd_mutex.go#newcode64\nsrc/pkg/net/fd_mutex.go:64: func (mu *fdMutex) IncrefAndClose() bool {\ndocument return value\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/net/fd_mutex.go#newcode93\nsrc/pkg/net/fd_mutex.go:93: func (mu *fdMutex) Decref() bool {\ndocument return value\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/runtime/runtime.h#newcode1024\nsrc/pkg/runtime/runtime.h:1024: void\truntime\u00b7semacquire(uint32*, bool);\ncan you name these? addr and profile?\n\nor is that too long?",
+			"disapproval": false,
+			"date": "2013-08-09 16:26:53.750930",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12418043/diff/77001/src/pkg/net/fd_mutex.go\nFile src/pkg/net/fd_mutex.go (right):\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/net/fd_mutex.go#newcode10\nsrc/pkg/net/fd_mutex.go:10: // that manages lifetime of fd and serializes access\nOn 2013/08/09 16:26:54, bradfitz wrote:\n> of a fd (so it doesn't sound like fd is a field)\n> \n> or \"of an fd\" (if you say it \"eff-dee\")\n\nDone.\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/net/fd_mutex.go#newcode48\nsrc/pkg/net/fd_mutex.go:48: func (mu *fdMutex) Incref() bool {\nOn 2013/08/09 16:26:54, bradfitz wrote:\n> document return value\n\nthe return values for all functions are documented on lines 45-46\ndo you think it's better to document it above each function?\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/12418043/diff/77001/src/pkg/runtime/runtime.h#newcode1024\nsrc/pkg/runtime/runtime.h:1024: void\truntime\u00b7semacquire(uint32*, bool);\nOn 2013/08/09 16:26:54, bradfitz wrote:\n> can you name these? addr and profile?\n> \n> or is that too long?\n\nmost of the functions declared in runtime.h does not name parameters",
+			"disapproval": false,
+			"date": "2013-08-09 17:05:58.425420",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/09 16:26:53, bradfitz wrote:\n> LGTM\n> \n> It's now cleaner overall.\n> \n> I don't see why the semacquire(profile false)  stuff is necessarily in this CL,\n> though. How is that related?\n\nCurrently only runtime.semacquire(addr) is declared in runtime.h. And it's intended for internal usage only, in particular they are not profiled with blocking profiler. We want fdMutex in blocking profiler. So I had to refactor it a bit and add runtime.semacquire(addr, profile) to runtime.h.",
+			"disapproval": false,
+			"date": "2013-08-09 17:09:40.150470",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"iant@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7afd81b7fe12 ***\n\nnet: add special netFD mutex\nThe mutex, fdMutex, handles locking and lifetime of sysfd,\nand serializes Read and Write methods.\nThis allows to strip 2 sync.Mutex.Lock calls,\n2 sync.Mutex.Unlock calls, 1 defer and some amount\nof misc overhead from every network operation.\n\nOn linux/amd64, Intel E5-2690:\nbenchmark                             old ns/op    new ns/op    delta\nBenchmarkTCP4Persistent                    9595         9454   -1.47%\nBenchmarkTCP4Persistent-2                  8978         8772   -2.29%\nBenchmarkTCP4ConcurrentReadWrite           4900         4625   -5.61%\nBenchmarkTCP4ConcurrentReadWrite-2         2603         2500   -3.96%\n\nIn general it strips 70-500 ns from every network operation depending\non processor model. On my relatively new E5-2690 it accounts to ~5%\nof network op cost.\n\nFixes issue 6074.\n\nR=golang-dev, bradfitz, alex.brainman, iant, mikioh.mikioh\nCC=golang-dev\nhttps://codereview.appspot.com/12418043",
+			"disapproval": false,
+			"date": "2013-08-09 17:43:08.354910",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 12418043: net: add special netFD mutex",
+	"created": "2013-08-03 19:20:35.727680",
+	"patchsets": [
+		1,
+		3001,
+		8,
+		7001,
+		10001,
+		13001,
+		14001,
+		17001,
+		20001,
+		22001,
+		24001,
+		27001,
+		39001,
+		49001,
+		51001,
+		53001,
+		56002,
+		65001,
+		77001,
+		86001,
+		89001
+	],
+	"modified": "2013-08-09 17:43:10.595050",
+	"closed": true,
+	"issue": 12418043
+}

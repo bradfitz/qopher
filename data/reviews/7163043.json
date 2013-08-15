@@ -1,0 +1,131 @@
+{
+	"description": "crypto/tls: allow the server to enforce its ciphersuite preferences.\n\nPreviously, Go TLS servers always took the client's preferences into\naccount when selecting a ciphersuite. This change adds the option of\nusing the server's preferences, which can be expressed by setting\ntls.Config.CipherSuites.\n\nThis mirrors Apache's SSLHonorCipherOrder directive.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"nightlyone@googlemail.com",
+		"bradfitz@golang.org",
+		"ality@pbrane.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-01-17 20:24:13.910000",
+			"approval": false
+		},
+		{
+			"sender": "nightlyone@googlemail.com",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"nightlyone@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Just a nit.\n\nhttps://codereview.appspot.com/7163043/diff/4001/src/pkg/crypto/tls/common.go\nFile src/pkg/crypto/tls/common.go (right):\n\nhttps://codereview.appspot.com/7163043/diff/4001/src/pkg/crypto/tls/common.go#newcode191\nsrc/pkg/crypto/tls/common.go:191: ServerCipherSuitePreference bool\ns/ServerCipherSuitePreference/UseServersPreferredCipherSuite/g makes more clear that this is a yes/no question instead of a variable containing a list of preferred cipher suites.",
+			"disapproval": false,
+			"date": "2013-01-17 21:03:35.519600",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "s/it's/its/\r\n\r\nOn Thu, Jan 17, 2013 at 12:24 PM, <agl@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> crypto/tls: allow the server to enforce it's ciphersuite preferences.\r\n>\r\n> Previously, Go TLS servers always took the client's preferences into\r\n> account when selecting a ciphersuite. This change adds the option of\r\n> using the server's preferences, which can be expressed by setting\r\n> tls.Config.CipherSuites.\r\n>\r\n> This mirrors Apache's SSLHonorCipherOrder directive.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7163043/<https://codereview.appspot.com/7163043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/crypto/tls/common.go\r\n>   M src/pkg/crypto/tls/handshake_**server.go\r\n>   M src/pkg/crypto/tls/handshake_**server_test.go\r\n>\r\n>\r\n> Index: src/pkg/crypto/tls/common.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/tls/common.go\r\n> +++ b/src/pkg/crypto/tls/common.go\r\n> @@ -184,6 +184,12 @@\r\n>         // is nil, TLS uses a list of suites supported by the\r\n> implementation.\r\n>         CipherSuites []uint16\r\n>\r\n> +       // ServerCipherSuitePreference controls whether the server selects\r\n> the\r\n> +       // client's most preferred ciphersuite, or the server's most\r\n> preferred\r\n> +       // ciphersuite. If true then the server's preference, as expressed\r\n> in\r\n> +       // the order of elements in CipherSuites, is used.\r\n> +       ServerCipherSuitePreference bool\r\n> +\r\n>         // SessionTicketsDisabled may be set to true to disable session\r\n> ticket\r\n>         // (resumption) support.\r\n>         SessionTicketsDisabled bool\r\n> Index: src/pkg/crypto/tls/handshake_**server.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/tls/**handshake_server.go\r\n> +++ b/src/pkg/crypto/tls/**handshake_server.go\r\n> @@ -180,8 +180,17 @@\r\n>                 return true, nil\r\n>         }\r\n>\r\n> -       for _, id := range hs.clientHello.cipherSuites {\r\n> -               if hs.suite = c.tryCipherSuite(id, hs.ellipticOk);\r\n> hs.suite != nil {\r\n> +       var preferenceList, supportedList []uint16\r\n> +       if c.config.**ServerCipherSuitePreference {\r\n> +               preferenceList = c.config.cipherSuites()\r\n> +               supportedList = hs.clientHello.cipherSuites\r\n> +       } else {\r\n> +               preferenceList = hs.clientHello.cipherSuites\r\n> +               supportedList = c.config.cipherSuites()\r\n> +       }\r\n> +\r\n> +       for _, id := range preferenceList {\r\n> +               if hs.suite = c.tryCipherSuite(id, supportedList,\r\n> hs.ellipticOk); hs.suite != nil {\r\n>                         break\r\n>                 }\r\n>         }\r\n> @@ -222,7 +231,7 @@\r\n>         }\r\n>\r\n>         // Check that we also support the ciphersuite from the session.\r\n> -       hs.suite = c.tryCipherSuite(hs.**sessionState.cipherSuite,\r\n> hs.ellipticOk)\r\n> +       hs.suite = c.tryCipherSuite(hs.**sessionState.cipherSuite,\r\n> c.config.cipherSuites(), hs.ellipticOk)\r\n>         if hs.suite == nil {\r\n>                 return false\r\n>         }\r\n> @@ -568,8 +577,8 @@\r\n>\r\n>  // tryCipherSuite returns a cipherSuite with the given id if that cipher\r\n> suite\r\n>  // is acceptable to use.\r\n> -func (c *Conn) tryCipherSuite(id uint16, ellipticOk bool) *cipherSuite {\r\n> -       for _, supported := range c.config.cipherSuites() {\r\n> +func (c *Conn) tryCipherSuite(id uint16, supportedCipherSuites []uint16,\r\n> ellipticOk bool) *cipherSuite {\r\n> +       for _, supported := range supportedCipherSuites {\r\n>                 if id == supported {\r\n>                         var candidate *cipherSuite\r\n>\r\n> Index: src/pkg/crypto/tls/handshake_**server_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/tls/**handshake_server_test.go\r\n> +++ b/src/pkg/crypto/tls/**handshake_server_test.go\r\n> @@ -125,6 +125,50 @@\r\n>         }\r\n>  }\r\n>\r\n> +func testHandshake(clientConfig, serverConfig *Config) (state\r\n> ConnectionState, err error) {\r\n> +       c, s := net.Pipe()\r\n> +       go func() {\r\n> +               cli := Client(c, clientConfig)\r\n> +               cli.Handshake()\r\n> +               c.Close()\r\n> +       }()\r\n> +       server := Server(s, serverConfig)\r\n> +       err = server.Handshake()\r\n> +       if err == nil {\r\n> +               state = server.ConnectionState()\r\n> +       }\r\n> +       s.Close()\r\n> +       return\r\n> +}\r\n> +\r\n> +func TestCipherSuitePreference(t *testing.T) {\r\n> +       serverConfig := &Config{\r\n> +               CipherSuites: []uint16{TLS_RSA_WITH_RC4_128_**SHA,\r\n> TLS_RSA_WITH_AES_128_CBC_SHA, TLS_ECDHE_RSA_WITH_RC4_128_**SHA},\r\n> +               Certificates: testConfig.Certificates,\r\n> +       }\r\n> +       clientConfig := &Config{\r\n> +               CipherSuites:       []uint16{TLS_RSA_WITH_AES_128_**CBC_SHA,\r\n> TLS_RSA_WITH_RC4_128_SHA},\r\n> +               InsecureSkipVerify: true,\r\n> +       }\r\n> +       state, err := testHandshake(clientConfig, serverConfig)\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"handshake failed: %s\", err)\r\n> +       }\r\n> +       if state.CipherSuite != TLS_RSA_WITH_AES_128_CBC_SHA {\r\n> +               // By default the server should use the client's\r\n> preference.\r\n> +               t.Fatalf(\"Client's preference was not used, got %x\",\r\n> state.CipherSuite)\r\n> +       }\r\n> +\r\n> +       serverConfig.**ServerCipherSuitePreference = true\r\n> +       state, err = testHandshake(clientConfig, serverConfig)\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"handshake failed: %s\", err)\r\n> +       }\r\n> +       if state.CipherSuite != TLS_RSA_WITH_RC4_128_SHA {\r\n> +               t.Fatalf(\"Server's preference was not used, got %x\",\r\n> state.CipherSuite)\r\n> +       }\r\n> +}\r\n> +\r\n>  func testServerScript(t *testing.T, name string, serverScript [][]byte,\r\n> config *Config, peers []*x509.Certificate) {\r\n>         c, s := net.Pipe()\r\n>         srv := Server(s, config)\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-17 21:34:46.199810",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"nightlyone@googlemail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7163043/diff/4001/src/pkg/crypto/tls/common.go\nFile src/pkg/crypto/tls/common.go (right):\n\nhttps://codereview.appspot.com/7163043/diff/4001/src/pkg/crypto/tls/common.go#newcode191\nsrc/pkg/crypto/tls/common.go:191: ServerCipherSuitePreference bool\nOn 2013/01/17 21:03:35, ioe wrote:\n> s/ServerCipherSuitePreference/UseServersPreferredCipherSuite/g makes more clear\n> that this is a yes/no question instead of a variable containing a list of\n> preferred cipher suites.\n> \n\nOr:\n\nPreferServerCipherSuites\n\n... which also ends in \"CipherSuites\", the name of the field, and begins with an imperative verb. And \"Prefer server\" is together, rather than splitting it with \"CipherSuite\" in the middle.",
+			"disapproval": false,
+			"date": "2013-01-19 16:55:42.891610",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "bradfitz@golang.org once said:\r\n> PreferServerCipherSuites\r\n\r\nI like this name.\r\n\r\n  Anthony\r\n",
+			"disapproval": false,
+			"date": "2013-01-20 02:23:03.752940",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"nightlyone@googlemail.com",
+				"bradfitz@golang.org",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks all. Have updated with Brad's suggested name.",
+			"disapproval": false,
+			"date": "2013-01-21 16:21:36.474740",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n On Jan 21, 2013 8:21 AM, <agl@golang.org> wrote:\r\n\r\n> Thanks all. Have updated with Brad's suggested name.\r\n>\r\n> https://codereview.appspot.**com/7163043/<https://codereview.appspot.com/7163043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-21 16:39:57.509990",
+			"approval": true
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"nightlyone@googlemail.com",
+				"bradfitz@golang.org",
+				"ality@pbrane.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=b68f084eaba7 ***\n\ncrypto/tls: allow the server to enforce its ciphersuite preferences.\n\nPreviously, Go TLS servers always took the client's preferences into\naccount when selecting a ciphersuite. This change adds the option of\nusing the server's preferences, which can be expressed by setting\ntls.Config.CipherSuites.\n\nThis mirrors Apache's SSLHonorCipherOrder directive.\n\nR=golang-dev, nightlyone, bradfitz, ality\nCC=golang-dev\nhttps://codereview.appspot.com/7163043",
+			"disapproval": false,
+			"date": "2013-01-22 15:10:52.906560",
+			"approval": false
+		}
+	],
+	"owner_email": "agl@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "agl1",
+	"subject": "code review 7163043: crypto/tls: allow the server to enforce it's ciphersuit...",
+	"created": "2013-01-17 20:15:49.629800",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		12001,
+		16001
+	],
+	"modified": "2013-01-22 15:10:55.284670",
+	"closed": true,
+	"issue": 7163043
+}

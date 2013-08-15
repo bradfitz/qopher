@@ -1,0 +1,430 @@
+{
+	"description": "runtime: faster & safer hash function\n\nUses AES hardware instructions on 386/amd64 to implement\na fast hash function.  Incorporates a random key to\nthwart hash collision DOS attacks.\nDepends on CL#7548043 for new assembly instructions.\n\nUpdate issue 3885\nHelps some by making hashing faster.  Go time drops from\n0.65s to 0.51s.",
+	"cc": [
+		"rsc@golang.org",
+		"r@golang.org",
+		"bradfitz@golang.org",
+		"remyoudompheng@gmail.com",
+		"khr@google.com",
+		"dsymonds@golang.org",
+		"minux.ma@gmail.com",
+		"elias.naur@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Here's some testing numbers:\r\n\r\nbenchmark             old ns/op    new ns/op    delta\r\nBenchmarkHashSpeed           63           49  -22.48%\r\n\r\nHere's the benchmark:\r\n\r\npackage main\r\n\r\nimport (\r\n        \"fmt\"\r\n        \"flag\"\r\n        \"testing\"\r\n)\r\n\r\nvar size int\r\nfunc init() {\r\n        flag.IntVar(&size, \"size\", 10, \"size of map\")\r\n        flag.Parse()\r\n}\r\n\r\nfunc BenchmarkHashSpeed(b *testing.B) {\r\n        strings := make([]string, size)\r\n        for i := 0; i < size; i++ {\r\n        strings[i] = fmt.Sprintf(\"string#%d\", i)\r\n        }\r\n        sum := 0\r\n        m := make(map[string]int, size)\r\n        for i := 0; i < size; i++ {\r\n                m[strings[i]] = 0\r\n        }\r\n        idx := 0\r\n        for i := 0; i < b.N; i++ {\r\n                sum += m[strings[idx]]\r\n                idx++\r\n                if (idx == size) { idx = 0 }\r\n        }\r\n}\r\n\r\n\r\n\r\nOn Wed, Mar 6, 2013 at 3:14 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> You might want to split off the assembler/linker changes into their own\r\n> CL.  That part is relatively simple and safe.\r\n>\r\n> On Wed, Mar 6, 2013 at 3:06 PM, <khr@golang.org> wrote:\r\n>\r\n>> Reviewers: rsc,\r\n>>\r\n>> Message:\r\n>> Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://code.google.com/p/go/\r\n>>\r\n>>\r\n>> Description:\r\n>> runtime: faster & safer hash function\r\n>>\r\n>> Uses AES hardware instructions on 386/amd64 to implement\r\n>> a fast hash function.  Incorporates a random key to\r\n>> thwart hash collision DOS attacks.\r\n>>\r\n>> Update issue 3885\r\n>> Helps some by making hashing faster.  Go time drops from\r\n>> 0.65s to 0.51s.\r\n>>\r\n>> Please review this at https://codereview.appspot.**com/7543043/<https://codereview.appspot.com/7543043/>\r\n>>\r\n>> Affected files:\r\n>>   M src/cmd/6a/lex.c\r\n>>   M src/cmd/6l/6.out.h\r\n>>   M src/cmd/6l/l.h\r\n>>   M src/cmd/6l/optab.c\r\n>>   M src/cmd/6l/span.c\r\n>>   M src/cmd/8a/a.y\r\n>>   M src/cmd/8a/lex.c\r\n>>   M src/cmd/8a/y.tab.c\r\n>>   M src/cmd/8a/y.tab.h\r\n>>   M src/cmd/8l/8.out.h\r\n>>   M src/cmd/8l/l.h\r\n>>   M src/cmd/8l/optab.c\r\n>>   M src/cmd/8l/span.c\r\n>>   M src/pkg/runtime/alg.c\r\n>>   M src/pkg/runtime/asm_386.s\r\n>>   M src/pkg/runtime/asm_amd64.s\r\n>>   M src/pkg/runtime/asm_arm.s\r\n>>   M src/pkg/runtime/runtime.c\r\n>>   M src/pkg/runtime/runtime.h\r\n>>   M src/pkg/runtime/thread_darwin.**c\r\n>>   M src/pkg/runtime/thread_**freebsd.c\r\n>>   M src/pkg/runtime/thread_linux.c\r\n>>   M src/pkg/runtime/thread_netbsd.**c\r\n>>   M src/pkg/runtime/thread_**openbsd.c\r\n>>   M src/pkg/runtime/thread_plan9.c\r\n>>   M src/pkg/runtime/thread_**windows.c\r\n>>\r\n>>\r\n>>\r\n>> --\r\n>>\r\n>> ---You received this message because you are subscribed to the Google\r\n>> Groups \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an\r\n>> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n>> .\r\n>> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n>> .\r\n>>\r\n>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-06 23:51:08.434620",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The low-hanging fruit is to speed up map[String]...  I agree that the more\r\ntypes we can apply this to, the better.\r\n\r\n\r\nOn Wed, Mar 6, 2013 at 3:36 PM, <remyoudompheng@gmail.com> wrote:\r\n\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**8l/8.out.h<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h>\r\n> File src/cmd/8l/8.out.h (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**\r\n> 8l/8.out.h#newcode156<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode156>\r\n> src/cmd/8l/8.out.h:156: AMOVQ,\r\n> MOVQ is SSE2, is it for consistency with 6a?\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**\r\n> 8l/8.out.h#newcode471<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode471>\r\n> src/cmd/8l/8.out.h:471: AAESENC,\r\n> the SSE2 comment above is misleading.\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/pkg/**runtime/alg.c<https://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c>\r\n> File src/pkg/runtime/alg.c (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/pkg/**\r\n> runtime/alg.c#newcode490<https://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c#newcode490>\r\n> src/pkg/runtime/alg.c:490: }\r\n> This approach may work for trivial cases but it doesn't change any\r\n> behaviour for very simple key types like [2]string and struct{ A, B\r\n> string }.\r\n>\r\n> What is the purpose?\r\n>\r\n> https://codereview.appspot.**com/7543043/<https://codereview.appspot.com/7543043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 00:01:07.000550",
+			"approval": false
+		},
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-06 23:06:42.004860",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you capture your timings in a benchmark, then use misc/benchcmp to report the numbers?",
+			"disapproval": false,
+			"date": "2013-03-06 23:09:40.612010",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You might want to split off the assembler/linker changes into their own CL.\r\n That part is relatively simple and safe.\r\n\r\nOn Wed, Mar 6, 2013 at 3:06 PM, <khr@golang.org> wrote:\r\n\r\n> Reviewers: rsc,\r\n>\r\n> Message:\r\n> Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: faster & safer hash function\r\n>\r\n> Uses AES hardware instructions on 386/amd64 to implement\r\n> a fast hash function.  Incorporates a random key to\r\n> thwart hash collision DOS attacks.\r\n>\r\n> Update issue 3885\r\n> Helps some by making hashing faster.  Go time drops from\r\n> 0.65s to 0.51s.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7543043/<https://codereview.appspot.com/7543043/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/6a/lex.c\r\n>   M src/cmd/6l/6.out.h\r\n>   M src/cmd/6l/l.h\r\n>   M src/cmd/6l/optab.c\r\n>   M src/cmd/6l/span.c\r\n>   M src/cmd/8a/a.y\r\n>   M src/cmd/8a/lex.c\r\n>   M src/cmd/8a/y.tab.c\r\n>   M src/cmd/8a/y.tab.h\r\n>   M src/cmd/8l/8.out.h\r\n>   M src/cmd/8l/l.h\r\n>   M src/cmd/8l/optab.c\r\n>   M src/cmd/8l/span.c\r\n>   M src/pkg/runtime/alg.c\r\n>   M src/pkg/runtime/asm_386.s\r\n>   M src/pkg/runtime/asm_amd64.s\r\n>   M src/pkg/runtime/asm_arm.s\r\n>   M src/pkg/runtime/runtime.c\r\n>   M src/pkg/runtime/runtime.h\r\n>   M src/pkg/runtime/thread_darwin.**c\r\n>   M src/pkg/runtime/thread_**freebsd.c\r\n>   M src/pkg/runtime/thread_linux.c\r\n>   M src/pkg/runtime/thread_netbsd.**c\r\n>   M src/pkg/runtime/thread_**openbsd.c\r\n>   M src/pkg/runtime/thread_plan9.c\r\n>   M src/pkg/runtime/thread_**windows.c\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-06 23:14:33.395570",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've split out the assembly part into\r\nhttps://codereview.appspot.com/7548043/\r\n\r\n\r\nOn Wed, Mar 6, 2013 at 3:36 PM, <remyoudompheng@gmail.com> wrote:\r\n\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**8l/8.out.h<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h>\r\n> File src/cmd/8l/8.out.h (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**\r\n> 8l/8.out.h#newcode156<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode156>\r\n> src/cmd/8l/8.out.h:156: AMOVQ,\r\n> MOVQ is SSE2, is it for consistency with 6a?\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**\r\n> 8l/8.out.h#newcode471<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode471>\r\n> src/cmd/8l/8.out.h:471: AAESENC,\r\n> the SSE2 comment above is misleading.\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/pkg/**runtime/alg.c<https://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c>\r\n> File src/pkg/runtime/alg.c (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/pkg/**\r\n> runtime/alg.c#newcode490<https://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c#newcode490>\r\n> src/pkg/runtime/alg.c:490: }\r\n> This approach may work for trivial cases but it doesn't change any\r\n> behaviour for very simple key types like [2]string and struct{ A, B\r\n> string }.\r\n>\r\n> What is the purpose?\r\n>\r\n> https://codereview.appspot.**com/7543043/<https://codereview.appspot.com/7543043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-06 23:58:22.760770",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h\nFile src/cmd/8l/8.out.h (right):\n\nhttps://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode156\nsrc/cmd/8l/8.out.h:156: AMOVQ,\nMOVQ is SSE2, is it for consistency with 6a?\n\nhttps://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode471\nsrc/cmd/8l/8.out.h:471: AAESENC,\nthe SSE2 comment above is misleading.\n\nhttps://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c\nFile src/pkg/runtime/alg.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c#newcode490\nsrc/pkg/runtime/alg.c:490: }\nThis approach may work for trivial cases but it doesn't change any behaviour for very simple key types like [2]string and struct{ A, B string }.\n\nWhat is the purpose?",
+			"disapproval": false,
+			"date": "2013-03-06 23:36:33.321340",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/3/7 Keith Randall <khr@google.com> wrote:\r\n> Here's some testing numbers:\r\n>\r\n> benchmark             old ns/op    new ns/op    delta\r\n> BenchmarkHashSpeed           63           49  -22.48%\r\n>\r\n> Here's the benchmark:\r\n>\r\n> package main\r\n>\r\n> import (\r\n>         \"fmt\"\r\n>         \"flag\"\r\n>         \"testing\"\r\n> )\r\n>\r\n> var size int\r\n> func init() {\r\n>         flag.IntVar(&size, \"size\", 10, \"size of map\")\r\n>         flag.Parse()\r\n> }\r\n>\r\n> func BenchmarkHashSpeed(b *testing.B) {\r\n>         strings := make([]string, size)\r\n>         for i := 0; i < size; i++ {\r\n>        strings[i] = fmt.Sprintf(\"string#%d\", i)\r\n>         }\r\n>         sum := 0\r\n>         m := make(map[string]int, size)\r\n>         for i := 0; i < size; i++ {\r\n>                 m[strings[i]] = 0\r\n>         }\r\n>         idx := 0\r\n>         for i := 0; i < b.N; i++ {\r\n>                 sum += m[strings[idx]]\r\n>                 idx++\r\n>                 if (idx == size) { idx = 0 }\r\n>         }\r\n> }\r\n\r\nCan you benchmark integer keys (32-bit and 64-bit) ?\r\n\r\nR\u00e9my.\r\n",
+			"disapproval": false,
+			"date": "2013-03-06 23:58:26.226550",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "benchmark                   old ns/op    new ns/op    delta\r\nBenchmarkHashStringSpeed           63           50  -20.22%\r\nBenchmarkHashInt32Speed            44           40   -7.26%\r\nBenchmarkHashInt64Speed            52           42  -19.08%\r\n\r\n\r\n\r\nOn Wed, Mar 6, 2013 at 4:01 PM, Keith Randall <khr@google.com> wrote:\r\n\r\n> The low-hanging fruit is to speed up map[String]...  I agree that the more\r\n> types we can apply this to, the better.\r\n>\r\n>\r\n> On Wed, Mar 6, 2013 at 3:36 PM, <remyoudompheng@gmail.com> wrote:\r\n>\r\n>>\r\n>> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**8l/8.out.h<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h>\r\n>> File src/cmd/8l/8.out.h (right):\r\n>>\r\n>> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**\r\n>> 8l/8.out.h#newcode156<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode156>\r\n>> src/cmd/8l/8.out.h:156: AMOVQ,\r\n>> MOVQ is SSE2, is it for consistency with 6a?\r\n>>\r\n>> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**\r\n>> 8l/8.out.h#newcode471<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode471>\r\n>> src/cmd/8l/8.out.h:471: AAESENC,\r\n>> the SSE2 comment above is misleading.\r\n>>\r\n>> https://codereview.appspot.**com/7543043/diff/5001/src/pkg/**\r\n>> runtime/alg.c<https://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c>\r\n>> File src/pkg/runtime/alg.c (right):\r\n>>\r\n>> https://codereview.appspot.**com/7543043/diff/5001/src/pkg/**\r\n>> runtime/alg.c#newcode490<https://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c#newcode490>\r\n>> src/pkg/runtime/alg.c:490: }\r\n>> This approach may work for trivial cases but it doesn't change any\r\n>> behaviour for very simple key types like [2]string and struct{ A, B\r\n>> string }.\r\n>>\r\n>> What is the purpose?\r\n>>\r\n>> https://codereview.appspot.**com/7543043/<https://codereview.appspot.com/7543043/>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 00:04:31.263030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The linker (dodata in src/cmd/ld) already aligns data objects based on\r\ntheir size. Bigger objects get bigger alignments. The entire data segment\r\nis sorted by size so even large alignments waste little space: it's not\r\nlike 16-byte objects are interleaved with 1-byte objects. Right now the\r\nmaximum alignment is PtrSize, but I think using alignment=16 when s->size\r\n>= 16 is perfectly fine.\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 03:56:23.028560",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Unless you mean to benchmark fmt and the map construction too, you'll\r\nwant to use b.StopTimer at the start of BenchmarkHashSpeed, and\r\nb.StartTimer immediately before the loop from 0..N.\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 02:10:23.962750",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"khr@google.com",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Or just call b.ResetTimer and don't worry about stop.\nI don't see the benchmark in the CL (I don't see any Go files), but it seems likely that N is large enough it doesn't matter.",
+			"disapproval": false,
+			"date": "2013-03-07 03:11:33.178000",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"khr@google.com",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks good but where are the benchmarks?\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/alg.c\nFile src/pkg/runtime/alg.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/alg.c#newcode470\nsrc/pkg/runtime/alg.c:470: // TODO: align somehow?  See asm_{386,amd64}.s\nHow aligned does it need to be?\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/alg.c#newcode474\nsrc/pkg/runtime/alg.c:474: runtime\u00b7hashinit(uint8* random_data) {\ns/* / */\ns/ {/\\n{/\nsorry\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/asm_386.s\nFile src/pkg/runtime/asm_386.s (right):\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/asm_386.s#newcode27\nsrc/pkg/runtime/asm_386.s:27: JE\tnocpuinfo\nFWIW we require at least Pentiums (I forget which one is the cutoff) for various of the atomics, so I think you can assume CPUID w/ AX=1 is there, since it was on the 486. But this is fine too.\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/asm_amd64.s\nFile src/pkg/runtime/asm_amd64.s (right):\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/asm_amd64.s#newcode27\nsrc/pkg/runtime/asm_amd64.s:27: JE\tnocpuinfo\nDo you know of 64-bit systems without CPUID support?\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/runtime.h#newcode561\nsrc/pkg/runtime/runtime.h:561: hash_random_bytes = 32\nplease make this HashRandomBytes so it's more clearly a constant where it gets used.\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/thread_darwin.c\nFile src/pkg/runtime/thread_darwin.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/thread_darwin.c#newcode74\nsrc/pkg/runtime/thread_darwin.c:74: fd = runtime\u00b7open((uint8*)\"/dev/urandom\", 0 /* O_RDONLY */, 0);\nIf there are ways to avoid every program reading from urandom, I'd like to try to use them. I don't know of one here.\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/thread_linux.c\nFile src/pkg/runtime/thread_linux.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/thread_linux.c#newcode170\nsrc/pkg/runtime/thread_linux.c:170: fd = runtime\u00b7open((uint8*)\"/dev/urandom\", 0 /* O_RDONLY */, 0);\nOn ELF systems I believe the auxv gives us in the AT_RANDOM entry the address of 16 random bytes. Perhaps that is sufficient and if present we can avoid reading /dev/urandom at startup?",
+			"disapproval": false,
+			"date": "2013-03-07 03:23:08.021540",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Mar 6, 2013 at 7:23 PM, <rsc@golang.org> wrote:\r\n\r\n> Looks good but where are the benchmarks?\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**runtime/alg.c<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/alg.c>\r\n> File src/pkg/runtime/alg.c (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/alg.c#newcode470<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/alg.c#newcode470>\r\n> src/pkg/runtime/alg.c:470: // TODO: align somehow?  See\r\n> asm_{386,amd64}.s\r\n> How aligned does it need to be?\r\n>\r\n\r\nit needs to be 16-byte aligned to help.  Text gets aligned to 16 bytes, but\r\nthere doesn't seem to be any way to get data aligned to 16 bytes.\r\n\r\n\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/alg.c#newcode474<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/alg.c#newcode474>\r\n> src/pkg/runtime/alg.c:474: runtime\u00b7hashinit(uint8* random_data) {\r\n> s/* / */\r\n> s/ {/\\n{/\r\n> sorry\r\n>\r\n\r\nDone.  Still adjusting my brain to the style...\r\n\r\n\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/asm_386.s<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/asm_386.s>\r\n> File src/pkg/runtime/asm_386.s (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/asm_386.s#newcode27<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/asm_386.s#newcode27>\r\n> src/pkg/runtime/asm_386.s:27: JE        nocpuinfo\r\n> FWIW we require at least Pentiums (I forget which one is the cutoff) for\r\n> various of the atomics, so I think you can assume CPUID w/ AX=1 is\r\n> there, since it was on the 486. But this is fine too.\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/asm_amd64.s<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/asm_amd64.s>\r\n> File src/pkg/runtime/asm_amd64.s (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/asm_amd64.s#newcode27<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/asm_amd64.s#newcode27>\r\n> src/pkg/runtime/asm_amd64.s:**27: JE      nocpuinfo\r\n> Do you know of 64-bit systems without CPUID support?\r\n>\r\n\r\nNope, just being careful.\r\n\r\n\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/runtime.h<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/runtime.h>\r\n> File src/pkg/runtime/runtime.h (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/runtime.h#newcode561<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/runtime.h#newcode561>\r\n> src/pkg/runtime/runtime.h:561: hash_random_bytes = 32\r\n> please make this HashRandomBytes so it's more clearly a constant where\r\n> it gets used.\r\n>\r\n\r\nDone.\r\n\r\n\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/thread_darwin.c<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/thread_darwin.c>\r\n> File src/pkg/runtime/thread_darwin.**c (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/thread_darwin.c#**newcode74<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/thread_darwin.c#newcode74>\r\n> src/pkg/runtime/thread_darwin.**c:74: fd =\r\n> runtime\u00b7open((uint8*)\"/dev/**urandom\", 0 /* O_RDONLY */, 0);\r\n> If there are ways to avoid every program reading from urandom, I'd like\r\n> to try to use them. I don't know of one here.\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/thread_linux.c<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/thread_linux.c>\r\n> File src/pkg/runtime/thread_linux.c (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/9002/src/pkg/**\r\n> runtime/thread_linux.c#**newcode170<https://codereview.appspot.com/7543043/diff/9002/src/pkg/runtime/thread_linux.c#newcode170>\r\n> src/pkg/runtime/thread_linux.**c:170: fd =\r\n> runtime\u00b7open((uint8*)\"/dev/**urandom\", 0 /* O_RDONLY */, 0);\r\n> On ELF systems I believe the auxv gives us in the AT_RANDOM entry the\r\n> address of 16 random bytes. Perhaps that is sufficient and if present we\r\n> can avoid reading /dev/urandom at startup?\r\n>\r\n\r\nThere doesn't seem to be any obviously good solution.  Reading /dev/urandom\r\nseems pretty heavyweight.  We could enable this with a flag or an\r\nenvironment variable, but that's a knob that people then need to know\r\nabout.  We could initialize on first use of a map, but I suspect all\r\nprograms create at least one map on startup (flags? environment\r\nvariables?).  I was pondering using RDTSC + PID, but that probably isn't\r\nenough randomness.  I haven't heard of AT_RANDOM before, might be a good\r\nsolution for targets that support it, 16 bytes is probably enough.\r\n\r\n\r\n> https://codereview.appspot.**com/7543043/<https://codereview.appspot.com/7543043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 03:50:01.779770",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Mar 6, 2013 at 3:36 PM, <remyoudompheng@gmail.com> wrote:\r\n\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**8l/8.out.h<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h>\r\n> File src/cmd/8l/8.out.h (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**\r\n> 8l/8.out.h#newcode156<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode156>\r\n> src/cmd/8l/8.out.h:156: AMOVQ,\r\n> MOVQ is SSE2, is it for consistency with 6a?\r\n>\r\n\r\nI can move it if you'd like.  I put it with the other MOVs as it isn't\r\nreally an SSE op in definition, just in implementation.\r\n\r\n\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/cmd/**\r\n> 8l/8.out.h#newcode471<https://codereview.appspot.com/7543043/diff/5001/src/cmd/8l/8.out.h#newcode471>\r\n> src/cmd/8l/8.out.h:471: AAESENC,\r\n> the SSE2 comment above is misleading.\r\n>\r\n\r\nI moved AESENC and PINSRD, and PSHUFB to their own SSE3+ section.\r\n\r\n\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/pkg/**runtime/alg.c<https://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c>\r\n> File src/pkg/runtime/alg.c (right):\r\n>\r\n> https://codereview.appspot.**com/7543043/diff/5001/src/pkg/**\r\n> runtime/alg.c#newcode490<https://codereview.appspot.com/7543043/diff/5001/src/pkg/runtime/alg.c#newcode490>\r\n> src/pkg/runtime/alg.c:490: }\r\n> This approach may work for trivial cases but it doesn't change any\r\n> behaviour for very simple key types like [2]string and struct{ A, B\r\n> string }.\r\n>\r\n> What is the purpose?\r\n>\r\n> https://codereview.appspot.**com/7543043/<https://codereview.appspot.com/7543043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 04:12:31.283730",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You mean something like this?  Seems to work...\r\n\r\n--- a/src/cmd/ld/data.c Thu Mar 07 12:54:00 2013 -0800\r\n+++ b/src/cmd/ld/data.c Thu Mar 07 13:17:48 2013 -0800\r\n@@ -877,7 +877,9 @@\r\n static int32\r\n alignsymsize(int32 s)\r\n {\r\n- if(s >= 8)\r\n+ if(s >= 16)\r\n+ s = rnd(s, 16);\r\n+ else if(s >= 8)\r\n  s = rnd(s, 8);\r\n  else if(s >= PtrSize)\r\n  s = rnd(s, PtrSize);\r\n@@ -901,8 +903,10 @@\r\n  datsize = rnd(datsize, 2);\r\n  else if(t & 4)\r\n  datsize = rnd(datsize, 4);\r\n+ else if(t & 8)\r\n+ datsize = rnd(datsize, 8);\r\n  else\r\n- datsize = rnd(datsize, 8);\r\n+ datsize = rnd(datsize, 16);\r\n  }\r\n  return datsize;\r\n }\r\n\r\n\r\n\r\nOn Wed, Mar 6, 2013 at 7:56 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> The linker (dodata in src/cmd/ld) already aligns data objects based on\r\n> their size. Bigger objects get bigger alignments. The entire data segment\r\n> is sorted by size so even large alignments waste little space: it's not\r\n> like 16-byte objects are interleaved with 1-byte objects. Right now the\r\n> maximum alignment is PtrSize, but I think using alignment=16 when s->size\r\n> >= 16 is perfectly fine.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 21:18:51.908230",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"khr@google.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7543043/diff/37001/src/pkg/runtime/thread_netbsd.c\nFile src/pkg/runtime/thread_netbsd.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/37001/src/pkg/runtime/thread_netbsd.c#newcode181\nsrc/pkg/runtime/thread_netbsd.c:181: runtime\u00b7hashinit(nil);\nall *BSD have /dev/urandom, so you can just copy the darwin code.",
+			"disapproval": false,
+			"date": "2013-03-07 21:33:45.887530",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Mar 7, 2013 at 4:18 PM, Keith Randall <khr@google.com> wrote:\r\n\r\n> You mean something like this?  Seems to work...\r\n>\r\n\r\nYes. Please hold off on changing that file though. I have a more\r\ncomprehensive change pending (there was lots wrong in alignment for\r\ngenerating ELF files). The effect should be the same.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 23:45:55.021090",
+			"approval": false
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"khr@google.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/07 03:50:01, khr1 wrote:\n> \n> There doesn't seem to be any obviously good solution.  Reading /dev/urandom\n> seems pretty heavyweight.  We could enable this with a flag or an\n> environment variable, but that's a knob that people then need to know\n> about.  We could initialize on first use of a map, but I suspect all\n> programs create at least one map on startup (flags? environment\n> variables?).  I was pondering using RDTSC + PID, but that probably isn't\n> enough randomness.  I haven't heard of AT_RANDOM before, might be a good\n> solution for targets that support it, 16 bytes is probably enough.\n> \n\nFYI: Go already uses AT_RANDOM from the auxillary vector. Look for AT_RANDOM in signal_linux_arm.c. And FWIW, if RDTSC is available, it is currently used to seed runtime\u00b7fastrand1.",
+			"disapproval": false,
+			"date": "2013-03-08 12:24:25.840550",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ok, this change is ready to go.  Anyone want to take a last look?  The only\r\nmajor change has been to futz with the seed initialization.\r\n\r\n\r\nOn Fri, Mar 8, 2013 at 4:24 AM, <elias.naur@gmail.com> wrote:\r\n\r\n> On 2013/03/07 03:50:01, khr1 wrote:\r\n>\r\n>  There doesn't seem to be any obviously good solution.  Reading\r\n>>\r\n> /dev/urandom\r\n>\r\n>> seems pretty heavyweight.  We could enable this with a flag or an\r\n>> environment variable, but that's a knob that people then need to know\r\n>> about.  We could initialize on first use of a map, but I suspect all\r\n>> programs create at least one map on startup (flags? environment\r\n>> variables?).  I was pondering using RDTSC + PID, but that probably\r\n>>\r\n> isn't\r\n>\r\n>> enough randomness.  I haven't heard of AT_RANDOM before, might be a\r\n>>\r\n> good\r\n>\r\n>> solution for targets that support it, 16 bytes is probably enough.\r\n>>\r\n>\r\n>\r\n> FYI: Go already uses AT_RANDOM from the auxillary vector. Look for\r\n> AT_RANDOM in signal_linux_arm.c. And FWIW, if RDTSC is available, it is\r\n> currently used to seed runtime\u00b7fastrand1.\r\n>\r\n> https://codereview.appspot.**com/7543043/<https://codereview.appspot.com/7543043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 18:37:43.684990",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"khr@google.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/alg.c\nFile src/pkg/runtime/alg.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/alg.c#newcode483\nsrc/pkg/runtime/alg.c:483: if ((runtime\u00b7cpuid_ecx & (1 << 25)) != 0 && // aes (aesenc)\nno space after if (etc.) here and elsewhere (sorry)\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/alg.c#newcode498\nsrc/pkg/runtime/alg.c:498: if (n > HashRandomBytes) n = HashRandomBytes;\ntwo lines please.\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/mapspeed_test.go\nFile src/pkg/runtime/mapspeed_test.go (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/mapspeed_test.go#newcode24\nsrc/pkg/runtime/mapspeed_test.go:24: for i := 0; i < b.N; i++ {\nyou want to reset the benchmark timer after the setup, in all benchmarks.\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_darwin.c\nFile src/pkg/runtime/thread_darwin.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_darwin.c#newcode71\nsrc/pkg/runtime/thread_darwin.c:71: static byte urandom_data[HashRandomBytes];\nthis isn't really about threading (see comment above). maybe put it in a separate function with a good name.\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_freebsd.c\nFile src/pkg/runtime/thread_freebsd.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_freebsd.c#newcode117\nsrc/pkg/runtime/thread_freebsd.c:117: if (runtime\u00b7startup_random_data == nil) {\nditto re: function\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_linux.c\nFile src/pkg/runtime/thread_linux.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_linux.c#newcode162\nsrc/pkg/runtime/thread_linux.c:162: if (runtime\u00b7startup_random_data == nil) {\nditto re: function.\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_netbsd.c\nFile src/pkg/runtime/thread_netbsd.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_netbsd.c#newcode182\nsrc/pkg/runtime/thread_netbsd.c:182: if (runtime\u00b7startup_random_data == nil) {\nditto re: function\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_openbsd.c\nFile src/pkg/runtime/thread_openbsd.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_openbsd.c#newcode161\nsrc/pkg/runtime/thread_openbsd.c:161: if (runtime\u00b7startup_random_data == nil) {\nditto re: function\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_windows.c\nFile src/pkg/runtime/thread_windows.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_windows.c#newcode89\nsrc/pkg/runtime/thread_windows.c:89: if (runtime\u00b7startup_random_data == nil) {\nditto re: function.\n\nif you do this uniformly, the hash initialization will all be under one function, clearly identified by name, but different across cpu/os.\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/vdso_linux_amd64.c\nFile src/pkg/runtime/vdso_linux_amd64.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/vdso_linux_amd64.c#newcode329\nsrc/pkg/runtime/vdso_linux_amd64.c:329: if (elf_auxv[i].a_type == AT_RANDOM) {\nditto i think but i'm not sure - this is beyond my ken.",
+			"disapproval": false,
+			"date": "2013-03-11 19:48:22.377570",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Mar 11, 2013 at 1:48 PM, Russ Cox <rsc@golang.org> wrote:\r\n> As long as the function is static and called\r\n> from osinit, sure.\r\n\r\nThat's my intention. The theory is that this is messy goo that each\r\nguy does differently and it would be nice to have a separate function\r\nfor it, for grouping and clarity. It would be a static function and\r\ncalled by osinit only.\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 20:54:27.767230",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "sgtm\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 20:57:47.351870",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"khr@google.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Despite the file name, osinit is about per-process os startup, not just a single thread.\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_darwin.c\nFile src/pkg/runtime/thread_darwin.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_darwin.c#newcode71\nsrc/pkg/runtime/thread_darwin.c:71: static byte urandom_data[HashRandomBytes];\nOn 2013/03/11 19:48:22, r wrote:\n> this isn't really about threading (see comment above). maybe put it in a\n> separate function with a good name.\n\nPlease keep it here. We can rename the file if we need to.",
+			"disapproval": false,
+			"date": "2013-03-11 20:19:25.553650",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"khr@google.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_darwin.c\nFile src/pkg/runtime/thread_darwin.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/58001/src/pkg/runtime/thread_darwin.c#newcode71\nsrc/pkg/runtime/thread_darwin.c:71: static byte urandom_data[HashRandomBytes];\nI said separate function, not separate file. i don't see the problem with separating it out so it's comparable across operating systems.",
+			"disapproval": false,
+			"date": "2013-03-11 20:40:30.664860",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry, I can't see the files anymore. Rietveld keeps giving me chunk\r\nmismatch errors.\r\n\r\nThe osinit function is the API exported by this file for operating\r\nsystem-specific initialization. As long as the function is static and\r\ncalled from osinit, sure.\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 20:48:41.628250",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've made a separate function and called it from hashinit, not osinit.\r\n That way we don't need to call it if we don't have the aes instructions.\r\n\r\n\r\nOn Mon, Mar 11, 2013 at 1:57 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> sgtm\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-12 16:21:09.699140",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"khr@google.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks very much. Looks great.\nApologies for the code formatting nits. They apply to all the copies.\n\nhttps://codereview.appspot.com/7543043/diff/87001/src/pkg/runtime/thread_darwin.c\nFile src/pkg/runtime/thread_darwin.c (right):\n\nhttps://codereview.appspot.com/7543043/diff/87001/src/pkg/runtime/thread_darwin.c#newcode72\nsrc/pkg/runtime/thread_darwin.c:72: runtime\u00b7get_random_data(byte **rnd, int32 *rnd_len) {\n{ on next line. sorry.\n\nhttps://codereview.appspot.com/7543043/diff/87001/src/pkg/runtime/thread_darwin.c#newcode74\nsrc/pkg/runtime/thread_darwin.c:74: int32 fd = runtime\u00b7open((uint8*)\"/dev/urandom\", 0 /* O_RDONLY */, 0);\nPlease initialize variables in separate statements, just to maintain the old C style of the code.\n\nAlso if you declare open to take an int8* you can avoid the cast.",
+			"disapproval": false,
+			"date": "2013-03-12 16:32:28.962230",
+			"approval": true
+		},
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"remyoudompheng@gmail.com",
+				"khr@google.com",
+				"dsymonds@golang.org",
+				"minux.ma@gmail.com",
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=e3a5e1e9db71 ***\n\nruntime: faster & safer hash function\n\nUses AES hardware instructions on 386/amd64 to implement\na fast hash function.  Incorporates a random key to\nthwart hash collision DOS attacks.\nDepends on CL#7548043 for new assembly instructions.\n\nUpdate issue 3885\nHelps some by making hashing faster.  Go time drops from\n0.65s to 0.51s.\n\nR=rsc, r, bradfitz, remyoudompheng, khr, dsymonds, minux.ma, elias.naur\nCC=golang-dev\nhttps://codereview.appspot.com/7543043",
+			"disapproval": false,
+			"date": "2013-03-12 17:47:48.618890",
+			"approval": false
+		}
+	],
+	"owner_email": "khr@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "khr",
+	"subject": "code review 7543043: runtime: faster & safer hash function",
+	"created": "2013-03-06 22:45:51.926600",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9002,
+		32001,
+		37001,
+		40001,
+		46001,
+		50001,
+		53001,
+		58001,
+		13002,
+		87001,
+		93001
+	],
+	"modified": "2013-03-12 17:47:51.630800",
+	"closed": true,
+	"issue": 7543043
+}

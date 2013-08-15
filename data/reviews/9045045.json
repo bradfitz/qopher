@@ -1,0 +1,171 @@
+{
+	"description": "net/http: add setCork function\n\nLargely stolen from the go.net repo.\n\nOnly on Linux for now. FreeBSD 4.5+ could come later.\n\nNot in package net, as to not further contribute API to that\ncesspool.\n\nFuture CL will use these.\n\nUpdate Issue 5352",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"pabuhr@google.com",
+		"r@golang.org",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "pabuhr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Russ, let me run some experiments to see if I can answer your question.\r\n\r\nI'll put Brad's CL into my version of Go, and do some local and borg runs.\r\nClearly, the proof is in the pudding.\r\n\r\nWith respect to corking and sendfile, the issue is that sendfile is sending\r\nthe file directly from the file-system cache\r\n(I know you know that), so there is no opportunity to concatenate the\r\nheader onto this data. As a result, there is often a\r\nseparate packet sent for the header before the data packets are sent. For\r\nsmallish files this can increase traffic.\r\nSendfile is usually a big win over user buffering for static content\r\nbecause of the lack of copying (again, you know this).\r\n\r\nSo think of this as a design document, and I'll try to get something back\r\nto you quickly to justify or refute the idea.\r\nBTW, that's why I'm here! ;-)\r\n\r\n\r\nOn Tue, May 14, 2013 at 12:59 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> I don't understand how far we are willing to go for how much performance\r\n> on what benchmark. We could start writing header parsing in assembly, or\r\n> JITing it somehow, and I am sure that would help performance too. But I\r\n> think those are pretty clearly off limits. Where is the boundary?\r\n>\r\n> TCP_CORK is a great example of bad performance hacks spawning more bad\r\n> performance hacks. The only reason TCP_CORK is ever useful compared to just\r\n> buffering your own writes is that someone introduced a different\r\n> performance hack that took away control over your own writes (sendfile). So\r\n> now to force buffering across the boundary between user-generated writes\r\n> and sendfile-generated writes, we have to introduce yet another clumsy\r\n> hack.\r\n>\r\n> At least we managed to add sendfile behind the scenes, without bothering\r\n> any public API, in a way that people just get it for free and don't need to\r\n> know or care (except when the implementation is buggy), and in a way that\r\n> applies to all network connections, not just http.\r\n>\r\n> As I said before, if we are going to do TCP_CORK, this CL is the right way\r\n> to do it, at least for now, because it avoids committing to any public API\r\n> and can be backed out without breaking any code. But should we do it? It\r\n> depends. Is it getting 1% on a microbenchmark we don't really care about?\r\n> Then no. Is it getting 50% on every possible benchmark scenario? Then yes.\r\n>\r\n> I assume it is somewhere in the middle. Where exactly is it?\r\n>\r\n> Russ\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 20:33:35.121740",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This was discussed in the meeting yesterday.\r\n\r\n\r\n\r\nOn Tue, May 14, 2013 at 9:23 AM, Rob Pike <r@golang.org> wrote:\r\n\r\n> What is TCP_CORK?\r\n>\r\n> Also as you note, net is already a cesspool. Should we let it\r\n> accumulate more fecal matter rather than spread the mess to other\r\n> packages?\r\n>\r\n> -rob\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 16:27:30.482130",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"pabuhr@google.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "i remain unhappy but will LGTM if rsc agrees.\n\nsockets are just foul\n\nhttps://codereview.appspot.com/9045045/diff/9001/src/pkg/net/http/cork_linux.go\nFile src/pkg/net/http/cork_linux.go (right):\n\nhttps://codereview.appspot.com/9045045/diff/9001/src/pkg/net/http/cork_linux.go#newcode14\nsrc/pkg/net/http/cork_linux.go:14: var errCorkReflect = errors.New(\"http: failed to reflect enough to cork\")\nthis message describes the process that failed instead of what went wrong\n\nmaybe:\n\nhttp: unable to get file descriptor for TCP_CORK\n\nthis is also the first use of reflect in this package. since http uses everything already, at least indirectly, i don't think that matters but it's worth noting.",
+			"disapproval": false,
+			"date": "2013-05-14 19:36:10.696410",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"pabuhr@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello pabuhr@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-05-14 15:10:40.575460",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What is TCP_CORK?\r\n\r\nAlso as you note, net is already a cesspool. Should we let it\r\naccumulate more fecal matter rather than spread the mess to other\r\npackages?\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 16:23:24.712620",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Russ: make the call.\r\n\r\n\r\n\r\nOn Tue, May 14, 2013 at 9:49 AM, Rob Pike <r@golang.org> wrote:\r\n\r\n> I didn't hear Russ say that. Personally, I'd rather keep the mess in\r\n> one place rather than splashing net/http, which is still pretty clean,\r\n> with overflow from that cesspool, to use your metaphor. For example,\r\n> why does HTTP want it but not raw TCP?\r\n>\r\n> -rob\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 16:50:38.279200",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I didn't hear Russ say that. Personally, I'd rather keep the mess in\r\none place rather than splashing net/http, which is still pretty clean,\r\nwith overflow from that cesspool, to use your metaphor. For example,\r\nwhy does HTTP want it but not raw TCP?\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 16:49:51.239760",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Background for this CL:\r\n\r\nPeter proposed https://codereview.appspot.com/9333044/ adding a package net\r\nTCPConn.SetCork function to the net package.  Rob and Russ expressed\r\ndisgust and sadness at how the net package has grown, hiding its true inner\r\nbeauty of net.Dial and net.Listen in a sea of sockopts.\r\n\r\nI asked whether https://codereview.appspot.com/9333044/ should be in\r\npackage net/http instead.  Russ said approximately: \"I'd rather not see it\r\nat all, but if we need it anyway, yes, hide it in http so it doesn't add\r\nmore crap to package net.\"\r\n\r\nHence this CL.\r\n\r\nTCP_CORK turns on buffering in the kernel, making sure only full packages\r\nget sent.\r\n\r\nIt lets you do:\r\n\r\nsetsockopt(fd, TCP_CORK, on)\r\nwrite(fd, \"some header\")\r\nsendfile(fd, some_file_fd)\r\nsetsockopt(fd, TCP_CORK, off)  // flush\r\n\r\n... and only send one packet, instead of two.\r\n\r\nIt differs from TCP_NOPUSH in that TCP_CORK on the 1->0 transition causes a\r\nflush.  FreeBSD 4.5+ has that behavior too.\r\n\r\nI don't care where this goes.\r\n\r\nI actually don't really even care about this CL.\r\n\r\n\r\n\r\n\r\nOn Tue, May 14, 2013 at 8:10 AM, <bradfitz@golang.org> wrote:\r\n\r\n> Reviewers: pabuhr,\r\n>\r\n> Message:\r\n> Hello pabuhr@google.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> net/http: add setCork function\r\n>\r\n> Largely stolen from the go.net repo.\r\n>\r\n> Only on Linux for now. FreeBSD 4.5+ could come later.\r\n>\r\n> Not in package net, as to not further contribute API to that\r\n> cesspool.\r\n>\r\n> Future CL will use these.\r\n>\r\n> Update Issue 5352\r\n>\r\n> Please review this at https://codereview.appspot.**com/9045045/<https://codereview.appspot.com/9045045/>\r\n>\r\n> Affected files:\r\n>   A src/pkg/net/http/cork_linux.go\r\n>   A src/pkg/net/http/cork_stub.go\r\n>\r\n>\r\n> Index: src/pkg/net/http/cork_linux.go\r\n> ==============================**==============================**=======\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/src/pkg/net/http/cork_linux.**go\r\n> @@ -0,0 +1,44 @@\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +package http\r\n> +\r\n> +import (\r\n> +       \"errors\"\r\n> +       \"net\"\r\n> +       \"reflect\"\r\n> +       \"syscall\"\r\n> +)\r\n> +\r\n> +var errCorkReflect = errors.New(\"http: failed to reflect enough to cork\")\r\n> +\r\n> +func setCork(c net.Conn, v bool) error {\r\n> +       _, ok := c.(*net.TCPConn)\r\n> +       if !ok {\r\n> +               return nil\r\n> +       }\r\n> +       fd, err := sysfd(c)\r\n> +       if err != nil {\r\n> +               return err\r\n> +       }\r\n> +       vint := 0\r\n> +       if v {\r\n> +               vint = 1\r\n> +       }\r\n> +       return syscall.SetsockoptInt(fd, syscall.SOL_TCP,\r\n> syscall.TCP_CORK, vint)\r\n> +}\r\n> +\r\n> +func sysfd(c net.Conn) (int, error) {\r\n> +       cv := reflect.ValueOf(c)\r\n> +       switch ce := cv.Elem(); ce.Kind() {\r\n> +       case reflect.Struct:\r\n> +               netfd := ce.FieldByName(\"conn\").**FieldByName(\"fd\")\r\n> +               switch fe := netfd.Elem(); fe.Kind() {\r\n> +               case reflect.Struct:\r\n> +                       fd := fe.FieldByName(\"sysfd\")\r\n> +                       return int(fd.Int()), nil\r\n> +               }\r\n> +       }\r\n> +       return 0, errCorkReflect\r\n> +}\r\n> Index: src/pkg/net/http/cork_stub.go\r\n> ==============================**==============================**=======\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/src/pkg/net/http/cork_stub.**go\r\n> @@ -0,0 +1,18 @@\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +// +build !linux\r\n> +\r\n> +package http\r\n> +\r\n> +import (\r\n> +       \"errors\"\r\n> +       \"net\"\r\n> +)\r\n> +\r\n> +var errNoCork = errors.New(\"http: cork support not available\")\r\n> +\r\n> +func setCork(c net.Conn, v bool) error {\r\n> +       return errNoCork\r\n> +}\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 16:39:42.385120",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "CL updated with a test.\r\n\r\n\r\n\r\nOn Tue, May 14, 2013 at 8:10 AM, <bradfitz@golang.org> wrote:\r\n\r\n> Reviewers: pabuhr,\r\n>\r\n> Message:\r\n> Hello pabuhr@google.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> net/http: add setCork function\r\n>\r\n> Largely stolen from the go.net repo.\r\n>\r\n> Only on Linux for now. FreeBSD 4.5+ could come later.\r\n>\r\n> Not in package net, as to not further contribute API to that\r\n> cesspool.\r\n>\r\n> Future CL will use these.\r\n>\r\n> Update Issue 5352\r\n>\r\n> Please review this at https://codereview.appspot.**com/9045045/<https://codereview.appspot.com/9045045/>\r\n>\r\n> Affected files:\r\n>   A src/pkg/net/http/cork_linux.go\r\n>   A src/pkg/net/http/cork_stub.go\r\n>\r\n>\r\n> Index: src/pkg/net/http/cork_linux.go\r\n> ==============================**==============================**=======\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/src/pkg/net/http/cork_linux.**go\r\n> @@ -0,0 +1,44 @@\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +package http\r\n> +\r\n> +import (\r\n> +       \"errors\"\r\n> +       \"net\"\r\n> +       \"reflect\"\r\n> +       \"syscall\"\r\n> +)\r\n> +\r\n> +var errCorkReflect = errors.New(\"http: failed to reflect enough to cork\")\r\n> +\r\n> +func setCork(c net.Conn, v bool) error {\r\n> +       _, ok := c.(*net.TCPConn)\r\n> +       if !ok {\r\n> +               return nil\r\n> +       }\r\n> +       fd, err := sysfd(c)\r\n> +       if err != nil {\r\n> +               return err\r\n> +       }\r\n> +       vint := 0\r\n> +       if v {\r\n> +               vint = 1\r\n> +       }\r\n> +       return syscall.SetsockoptInt(fd, syscall.SOL_TCP,\r\n> syscall.TCP_CORK, vint)\r\n> +}\r\n> +\r\n> +func sysfd(c net.Conn) (int, error) {\r\n> +       cv := reflect.ValueOf(c)\r\n> +       switch ce := cv.Elem(); ce.Kind() {\r\n> +       case reflect.Struct:\r\n> +               netfd := ce.FieldByName(\"conn\").**FieldByName(\"fd\")\r\n> +               switch fe := netfd.Elem(); fe.Kind() {\r\n> +               case reflect.Struct:\r\n> +                       fd := fe.FieldByName(\"sysfd\")\r\n> +                       return int(fd.Int()), nil\r\n> +               }\r\n> +       }\r\n> +       return 0, errCorkReflect\r\n> +}\r\n> Index: src/pkg/net/http/cork_stub.go\r\n> ==============================**==============================**=======\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/src/pkg/net/http/cork_stub.**go\r\n> @@ -0,0 +1,18 @@\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +// +build !linux\r\n> +\r\n> +package http\r\n> +\r\n> +import (\r\n> +       \"errors\"\r\n> +       \"net\"\r\n> +)\r\n> +\r\n> +var errNoCork = errors.New(\"http: cork support not available\")\r\n> +\r\n> +func setCork(c net.Conn, v bool) error {\r\n> +       return errNoCork\r\n> +}\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 15:18:35.672370",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't want this in the library at all. But if it's here, it should not\r\nresult in new API in net nor in net/http, so that some day we can remove it\r\nwithout breaking anyone. That means it should be done the way Brad's CL\r\ndoes it.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 19:21:06.639030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't understand how far we are willing to go for how much performance on\r\nwhat benchmark. We could start writing header parsing in assembly, or\r\nJITing it somehow, and I am sure that would help performance too. But I\r\nthink those are pretty clearly off limits. Where is the boundary?\r\n\r\nTCP_CORK is a great example of bad performance hacks spawning more bad\r\nperformance hacks. The only reason TCP_CORK is ever useful compared to just\r\nbuffering your own writes is that someone introduced a different\r\nperformance hack that took away control over your own writes (sendfile). So\r\nnow to force buffering across the boundary between user-generated writes\r\nand sendfile-generated writes, we have to introduce yet another clumsy\r\nhack.\r\n\r\nAt least we managed to add sendfile behind the scenes, without bothering\r\nany public API, in a way that people just get it for free and don't need to\r\nknow or care (except when the implementation is buggy), and in a way that\r\napplies to all network connections, not just http.\r\n\r\nAs I said before, if we are going to do TCP_CORK, this CL is the right way\r\nto do it, at least for now, because it avoids committing to any public API\r\nand can be backed out without breaking any code. But should we do it? It\r\ndepends. Is it getting 1% on a microbenchmark we don't really care about?\r\nThen no. Is it getting 50% on every possible benchmark scenario? Then yes.\r\n\r\nI assume it is somewhere in the middle. Where exactly is it?\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 19:59:55.582690",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Peter?\r\n\r\n\r\n\r\n\r\nOn Tue, May 14, 2013 at 12:59 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> I don't understand how far we are willing to go for how much performance\r\n> on what benchmark. We could start writing header parsing in assembly, or\r\n> JITing it somehow, and I am sure that would help performance too. But I\r\n> think those are pretty clearly off limits. Where is the boundary?\r\n>\r\n> TCP_CORK is a great example of bad performance hacks spawning more bad\r\n> performance hacks. The only reason TCP_CORK is ever useful compared to just\r\n> buffering your own writes is that someone introduced a different\r\n> performance hack that took away control over your own writes (sendfile). So\r\n> now to force buffering across the boundary between user-generated writes\r\n> and sendfile-generated writes, we have to introduce yet another clumsy\r\n> hack.\r\n>\r\n> At least we managed to add sendfile behind the scenes, without bothering\r\n> any public API, in a way that people just get it for free and don't need to\r\n> know or care (except when the implementation is buggy), and in a way that\r\n> applies to all network connections, not just http.\r\n>\r\n> As I said before, if we are going to do TCP_CORK, this CL is the right way\r\n> to do it, at least for now, because it avoids committing to any public API\r\n> and can be backed out without breaking any code. But should we do it? It\r\n> depends. Is it getting 1% on a microbenchmark we don't really care about?\r\n> Then no. Is it getting 50% on every possible benchmark scenario? Then yes.\r\n>\r\n> I assume it is somewhere in the middle. Where exactly is it?\r\n>\r\n> Russ\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 20:06:13.771690",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"pabuhr@google.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-05-17 22:17:00.185710",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 9045045: net/http: add setCork function",
+	"created": "2013-05-14 15:10:25.140170",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9001
+	],
+	"modified": "2013-05-17 22:17:01.741150",
+	"closed": true,
+	"issue": 9045045
+}

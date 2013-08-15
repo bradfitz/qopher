@@ -1,0 +1,686 @@
+{
+	"description": "exp/sql{,/driver}: new database packages",
+	"cc": [
+		"gustavo@niemeyer.net",
+		"rsc@golang.org",
+		"borman@google.com",
+		"dave@cheney.net",
+		"kevlar@google.com",
+		"nigeltao@golang.org",
+		"dvyukov@google.com",
+		"kardianos@gmail.com",
+		"fw@deneb.enyo.de",
+		"r@golang.org",
+		"r@google.com",
+		"david.crawshaw@zentus.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-02 17:04:13.950336",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Lost in the original CL description after a server error:\n\nThis was designed with Russ a couple months ago.\n\nA couple things changed slightly found during implementation, but it's very\nclose to the original design.\n\n\nOn Fri, Sep 2, 2011 at 10:05 AM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\n\n> Docs at:\n>\n>      http://p.danga.com:6060/pkg/exp/db/\n>      http://p.danga.com:6060/pkg/exp/db/dbimpl/\n>\n> Goals of the db and db/dbimpl packages:\n>\n> * Provide a generic database API for a variety of SQL or SQL-like\n>   databases.  There currently exist Go libraries for SQLite, MySQL,\n>   and Postgres, but all with a very different feel, and often\n>   a non-Go-like feel.\n>\n> * Feel like Go.\n>\n> * Care mostly about the common cases. Common SQL should be portable.\n>   SQL edge cases or db-specific extensions can be detected and\n>   conditionally used by the application.  It is a non-goal to care\n>   about every particular db's extension or quirk.\n>\n> * Separate out the basic implementation of a database driver\n>   (implementing the db/dbimpl interfaces) vs the implementation\n>   of all the user-level types and convenience methods.\n>   In a nutshell:\n>\n>   User Code ---> db package (concrete types) ---> db/dbimpl (interfaces)\n>   Database Driver -> db (to register) + dbimpl (implement interfaces)\n>\n> * To type casting/conversions consistently between all drivers. To\n>   achieve this, most of the type conversions are done in the db\n>   package, not in each driver.  The drivers then only have to deal\n>   with a smaller set of types.\n>\n> * Be flexible with type conversions, but be paranoid about silent\n>   truncation or other loss of precision.\n>\n> * Handle concurrency well.  Users shouldn't need to care about the\n>   database's per-connection thread safety issues (or lack thereof),\n>   and shouldn't have to maintain their own free pools of connections.\n>   The 'db' package should deal with that bookkeeping as needed.  Given\n>   a *db.DB, it should be possible to share that instance between\n>   multiple goroutines, without any extra synchronization.\n>\n> * Push complexity, where necessary, down into the db+dbimpl packages,\n>   rather than exposing it to users. Said otherwise, the db package\n>   should expose an ideal database that's not finnicky about how it's\n>   accessed, even if that's not true.\n>\n> * Provide optional interfaces in dbimpl for drivers to implement\n>   for special cases or fastpaths.  But the only party that knows about\n>   those is the 'db' package.  To user code, some stuff just might start\n>   working or start working slightly faster.\n>\n> On Fri, Sep 2, 2011 at 10:04 AM, <bradfitz@golang.org> wrote:\n>\n>> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>>\n>> Please take another look.\n>>\n>>\n>>\n>> http://codereview.appspot.com/**4973055/<http://codereview.appspot.com/4973055/>\n>>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-02 17:07:10.469171",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hey Brad,\n\n> * Provide a generic database API for a variety of SQL or SQL-like\n> \u00a0 databases. \u00a0There currently exist Go libraries for SQLite, MySQL,\n> \u00a0 and Postgres, but all with a very different feel, and often\n> \u00a0 a non-Go-like feel.\n\nJust one minor point from the previous conversation on the topic:\ngiven that there are so many databases out there that do not suit this\nAPI design, and given the examples you use above, should this be more\nproperly called as sqldb?\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I never filed a patent.\n",
+			"disapproval": false,
+			"date": "2011-09-02 17:23:23.859011",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 3 September 2011 11:49, Nigel Tao <nigeltao@golang.org> wrote:\n> // Yeah, it's actually a struct, but for argument's sake...\n> type Rows interface {\n> \u00a0Close() os.Error\n> \u00a0Error() os.Error\n> \u00a0Next() bool\n> \u00a0Scan(dest ...interface{}) os.Error\n> }\n\nOn a tangent, but... some iterators support backwards iteration, but\nthere are two semantic models for this: whether iterators are at a\nrow, or are between rows.\n\nSuppose my query returns three rows (A, B, C), and on my iterator (or\nwhat you've named Rows) I call Next, Next, Prev, Scan.\n\nWith the \"at\" model, Scan returns the data where the iterator is at:\nThe iterator starts to the left of A.\nNext moves it to A.\nNext moves it to B.\nPrev moves it to A.\nScan returns A.\n\nWith the \"between\" model, Scan returns the data most recently walked over:\nThe iterator starts at the \"$\" in \"$ABC\".\nNext moves it to \"A$BC\", having walked over A.\nNext moves it to \"AB$C\", having walked over B.\nPrev moves it to \"A$BC\", having walked over B.\nScan returns B.\n\nWhich model seems more intuitive to golang-dev? Sure, this question is\nhypothetical, since the proposed db or sql package doesn't provide\nbackwards iteration, but it would be nice if the iteration model was\nconsistent across other Go database packages.\n\n\n\nGetting back to the API design in the original CL, an alternative to a\n\nNext() bool\n\nmethod is to have two methods:\n\nDone() bool\nNext()\n\nand the typical loop changes from:\n\nfor rows.Next() {\n  // do stuff with rows.Scan.\n}\n\nto\n\nfor ; !rows.Done(); rows.Next() {\n  // do stuff with rows.Scan.\n}\n\nNote that the two differ in that the first Next call happens before\nthe first Scan call in the former but after in the latter.\n\nDoes the answer to the \"are iterators at or between\" question\ninfluence the answer to the \"do iterators loop for Next or for\n;!Done;Next\" question?\n",
+			"disapproval": false,
+			"date": "2011-09-07 01:47:33.036222",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-09-02 17:04:26.920947",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 2, 2011 at 7:37 PM, Nigel Tao <nigeltao@golang.org> wrote:\n\n> On 3 September 2011 12:12, Nigel Tao <nigeltao@golang.org> wrote:\n> > I know that it's deliberate. It still feels wrong to me. I feel like I\n> > should be able to make a fake DB type without needing to go through\n> > db/dbimpl.\n>\n> A stronger statement would be that, with this design, I can't\n> implement a DB without going through db/dbimpl. If I wanted to make\n> the App Engine datastore fit this model, I wouldn't be able to make a\n> type assertion that the db.Row that I get from the AppEngine driver\n> has a Key method as well as a Scan method.\n>\n\nThe point of making them structs was so we had a way to add convenience\nwrapper stuff like QueryRow:\n\nhttp://p.danga.com:6060/src/pkg/exp/db/db.go?s=5797:5859#L217\n\nYou wouldn't want QueryRow part of the interface, since it's redundant with\nQuery.  But we want stuff like that (and probably more over time) in package\ndb because it's super nice.\n\nIf you want to do driver-specific stuff, use the Driver() method and\ntype-assert on that.\n\nWould you be happy if the db package had an OpenDriver(impl driver.Driver)?\n Then you don't need to register a driver name at least?\n",
+			"disapproval": false,
+			"date": "2011-09-03 03:17:22.590739",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Docs at:\n\n     http://p.danga.com:6060/pkg/exp/db/\n     http://p.danga.com:6060/pkg/exp/db/dbimpl/\n\nGoals of the db and db/dbimpl packages:\n\n* Provide a generic database API for a variety of SQL or SQL-like\n  databases.  There currently exist Go libraries for SQLite, MySQL,\n  and Postgres, but all with a very different feel, and often\n  a non-Go-like feel.\n\n* Feel like Go.\n\n* Care mostly about the common cases. Common SQL should be portable.\n  SQL edge cases or db-specific extensions can be detected and\n  conditionally used by the application.  It is a non-goal to care\n  about every particular db's extension or quirk.\n\n* Separate out the basic implementation of a database driver\n  (implementing the db/dbimpl interfaces) vs the implementation\n  of all the user-level types and convenience methods.\n  In a nutshell:\n\n  User Code ---> db package (concrete types) ---> db/dbimpl (interfaces)\n  Database Driver -> db (to register) + dbimpl (implement interfaces)\n\n* To type casting/conversions consistently between all drivers. To\n  achieve this, most of the type conversions are done in the db\n  package, not in each driver.  The drivers then only have to deal\n  with a smaller set of types.\n\n* Be flexible with type conversions, but be paranoid about silent\n  truncation or other loss of precision.\n\n* Handle concurrency well.  Users shouldn't need to care about the\n  database's per-connection thread safety issues (or lack thereof),\n  and shouldn't have to maintain their own free pools of connections.\n  The 'db' package should deal with that bookkeeping as needed.  Given\n  a *db.DB, it should be possible to share that instance between\n  multiple goroutines, without any extra synchronization.\n\n* Push complexity, where necessary, down into the db+dbimpl packages,\n  rather than exposing it to users. Said otherwise, the db package\n  should expose an ideal database that's not finnicky about how it's\n  accessed, even if that's not true.\n\n* Provide optional interfaces in dbimpl for drivers to implement\n  for special cases or fastpaths.  But the only party that knows about\n  those is the 'db' package.  To user code, some stuff just might start\n  working or start working slightly faster.\n\nOn Fri, Sep 2, 2011 at 10:04 AM, <bradfitz@golang.org> wrote:\n\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> Please take another look.\n>\n>\n>\n> http://codereview.appspot.com/**4973055/<http://codereview.appspot.com/4973055/>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-02 17:05:39.681919",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 2, 2011 at 10:23 AM, Gustavo Niemeyer <gustavo@niemeyer.net>wrote:\n\n> Hey Brad,\n>\n> > * Provide a generic database API for a variety of SQL or SQL-like\n> >   databases.  There currently exist Go libraries for SQLite, MySQL,\n> >   and Postgres, but all with a very different feel, and often\n> >   a non-Go-like feel.\n>\n> Just one minor point from the previous conversation on the topic:\n> given that there are so many databases out there that do not suit this\n> API design, and given the examples you use above, should this be more\n> properly called as sqldb?\n>\n\nI'd rather not but I'm not going to fight either way.\n\nRenaming it is easy.  Note that it's in exp/ right now, too.  I'd rather\nfocus on the code first.\n",
+			"disapproval": false,
+			"date": "2011-09-02 17:29:44.200950",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> Is there any hope of a more general package called db?\n\nHaving nothing more general is not good reasoning for calling a\nwell-bounded concept generically.  I could argue about databases that\ndo not follow this API, but it's way easier to just point out that the\nAPI was clearly designed with SQL databases in mind, so why not naming\nit as such?\n\nBesides, \"db\" is a fantastic variable name in that space. It'd be a\nshame to kill it.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I never filed a patent.\n",
+			"disapproval": false,
+			"date": "2011-09-02 17:46:15.089054",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "(replies to some comments below; others later)\n\nOn Fri, Sep 2, 2011 at 6:49 PM, Nigel Tao <nigeltao@golang.org> wrote:\n\n> On 3 September 2011 03:04,  <bradfitz@golang.org> wrote:\n> > Description:\n> > exp/db{,/dbimpl}: new database packages\n> >\n> > Please review this at http://codereview.appspot.com/4973055/\n>\n> Here's a bunch of half-baked thoughts. Other than a comment on\n> licensing, I've based it more on the API docs than the actual\n> implementation (which I've only skimmed).\n>\n> The code should be BSD-style license, not Apache.\n>\n\nwhoops. I was prototyping this elsewhere.  will fix.\n\n\n> It seems odd that most of package db's types are structs (with no\n> exported fields) and not interfaces. Especially since DB, Stmt and Tx\n> all share Exec, Query and QueryRow methods.\n>\n\nby design.  pkg dbimpl is interfaces and pkg db is structs.\n\n\n> Transactions in the App Engine datastore are represented as a\n> retry-able func, instead of explicit Begin/Commit/Rollback calls. I'm\n> not 100% sure that the functional approach is best, but it is\n> something a little higher level that's not possible in C/C++ style\n> APIs\n>\n\nThat could be added on top, too.  I'm torn.  I love abusing functional\nstyle, but I'm also not a huge fan of that API in App Engine.  It leads to\npeople doing non-database things in their transaction functions.\n\n\n> SQL Noob question #0: if I understand your API, I can't run a Stmt in\n> a Tx, I have to parse it for every transaction by calling Tx.Prepare.\n> Should Exec and Query take a Stmt instead of a string as their first\n> arg?\n>\n\nTx stuff isn't implemented and is mostly from old notes.  it's probably\nbehind.\n\nbut you talking about db or dbimpl?\n\n\n> SQL Noob question #1: do we need to distinguish between Exec and\n> Query? Can we just run statements, some of which have zero results?\n>\n\nit lets drivers do different things if desired to not send results back over\nthe network if the caller's intentions is to discard them anyway.\n\n\n> Tx.Exec has a different return type than DB.Exec or Stmt.Exec.\n>\n\noriginally in the notes exec was just returning  os.Error, but then during\nimplementation I found a result was desired.  just didn't get around to\nimplementing Tx yet.\n",
+			"disapproval": false,
+			"date": "2011-09-03 02:02:00.712929",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Is there any hope of a more general package called db?\nIf not, then db is fine.  I think there's a strong argument\nto be made that those things are not databases.  For\nexample, people sometimes call bigtable a database,\nbut it's not.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-02 17:31:34.621936",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 2, 2011 at 10:45 AM, Gustavo Niemeyer <gustavo@niemeyer.net>wrote:\n\n> > Is there any hope of a more general package called db?\n>\n> Having nothing more general is not good reasoning for calling a\n> well-bounded concept generically.  I could argue about databases that\n> do not follow this API, but it's way easier to just point out that the\n> API was clearly designed with SQL databases in mind, so why not naming\n> it as such?\n>\n> Besides, \"db\" is a fantastic variable name in that space. It'd be a\n> shame to kill it.\n>\n\nIf anything I'd buy that argument most strongly.\n",
+			"disapproval": false,
+			"date": "2011-09-02 17:52:24.837135",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 3 September 2011 13:17, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> The point of making them structs was so we had a way to add convenience\n> wrapper stuff like QueryRow:\n> http://p.danga.com:6060/src/pkg/exp/db/db.go?s=5797:5859#L217\n\nThe counterpoint is that if db.Row is a struct, then even if foo.Row\nembeds a db.Row, I can't convert from the latter to the former (even\nif I have a Driver instance). You could if both were interfaces.\n\nI still think that you can have structs and interfaces in the\nsql/driver package that handles the subtleties for driver\nimplementations, but end-users of the sql package can program to\ninterfaces.\n\nBut this isn't my package. I'll get out of the kitchen; there's more\nthan enough cooks already.\n",
+			"disapproval": false,
+			"date": "2011-09-05 11:32:17.399759",
+			"approval": false
+		},
+		{
+			"sender": "borman@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I agree.  I think something like sql, sqldb, or dbsql.\n\nThis CL makes me long for a go package for Berkeley DB (sleepycat)...\n Fortunately I don't need it for my project since cgo is not (yet?) an\noption for me.\n\nOn Fri, Sep 2, 2011 at 10:45 AM, Gustavo Niemeyer <gustavo@niemeyer.net>wrote:\n\n> > Is there any hope of a more general package called db?\n>\n> Having nothing more general is not good reasoning for calling a\n> well-bounded concept generically.  I could argue about databases that\n> do not follow this API, but it's way easier to just point out that the\n> API was clearly designed with SQL databases in mind, so why not naming\n> it as such?\n>\n> Besides, \"db\" is a fantastic variable name in that space. It'd be a\n> shame to kill it.\n>\n> --\n> Gustavo Niemeyer\n> http://niemeyer.net\n> http://niemeyer.net/plus\n> http://niemeyer.net/twitter\n> http://niemeyer.net/blog\n>\n> -- I never filed a patent.\n>\n",
+			"disapproval": false,
+			"date": "2011-09-02 17:52:35.307584",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I like the idea of this.  While I don't think it's necessarily incompatible with some other interfaces to allow it to do document-oriented and object-oriented databases, it's definitely SQL-driven now.\n\nFor this, I like the sql and sql/driver names, so I use those in my comments as if that's what they were named (because I can't seem to type dbimpl the first time without a typo).\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go\nFile src/pkg/exp/db/db.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode18\nsrc/pkg/exp/db/db.go:18: // databases.\nI would put an example of how this might be used given a fictitions \"foosql\" package, given that the underscore-imports can take some getting-used-to:\n\nimport (\n  \"exp/sql\"\n  _ \"somewhere.online.com/foosql\"\n)\n\n...\netc\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode34\nsrc/pkg/exp/db/db.go:34: // a duplicate name.\nI would mention that this should be called in the init() method of a particular SQL driver's package.\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode61\nsrc/pkg/exp/db/db.go:61: Ok     bool // Ok is true if the String is not NULL\nI would call this NotNull?\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode276\nsrc/pkg/exp/db/db.go:276: type connStmt struct {\nThis name (and its associated function) read awkwardly for me.  I don't know if calling it \"prepared\" or something would make matters better or worse.\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode297\nsrc/pkg/exp/db/db.go:297: func (s *Stmt) Exec(args ...interface{}) (Result, os.Error) {\nExec is envious of Query's comment.\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode346\nsrc/pkg/exp/db/db.go:346: if _, match = s.db.connIfFree(cs.ci); match {\nIs there no clean way to do this without locks?  Without connIfFree, you could probably make do with a buffered channel from which you popped free connections and to which you pushed ones with which you are done.  connIfFree would have to pop all of them and push them back, which might be prohibitive.\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode399\nsrc/pkg/exp/db/db.go:399: // always non-nil.\nProvide or refer to the example of chaining this with Scan?\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode497\nsrc/pkg/exp/db/db.go:497: }\nThe functional programmer in me wants:\n\nfunc (rs *Rows) Each(func(...interface{})) os.Error {}\n\nwhich should be possible by reflecting over the arguments and making new Values for each one?  Overkill?  Part of me thinks that the overhead of the initial reflection wouldn't be too bad when compared with a large dataset... unless I'm overestimating how much of the reflection would be precomputed and how much would happen every iteration.\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode535\nsrc/pkg/exp/db/db.go:535: AutoIncrementId() (int64, os.Error)\nLastInsertId?\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode536\nsrc/pkg/exp/db/db.go:536: RowsAffected() (int64, os.Error)\nAffectedRows?\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/fakedb_test.go\nFile src/pkg/exp/db/fakedb_test.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/fakedb_test.go#newcode32\nsrc/pkg/exp/db/fakedb_test.go:32: // fakeDriver is a fake database that implements Go's dbimpl.Driver\nlol.  most. elaborate. test. case. ever. love it.  with a bit of a parser, you could almost extend this to be a basic SQL engine and include it in the stdlib.\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/fakedb_test.go#newcode510\nsrc/pkg/exp/db/fakedb_test.go:510: }\nThis file embodies lots of the reasons that I love Go.",
+			"disapproval": false,
+			"date": "2011-09-03 01:26:10.822318",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I think you are reasoning backwards.\nThe goal is to have a nice, easy-to-use API, hence\n\nfor rows.Next() {\n    rows.Scan...\n}\n\nWe can assign whatever semantics to Next\nthat we like as long as it produces that pattern.\n\nIf you need backward iteration, I would say that\nit should be asked for explicitly as part of the\nsetup rather than by calling different methods\nduring the traversal itself (like SQL's 'DESC').\nIf the rows come out backwards, that's fine;\nthe loop shouldn't change.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-07 02:05:03.560066",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 2, 2011 at 10:23 AM, Gustavo Niemeyer <gustavo@niemeyer.net>wrote:\n\n> Hey Brad,\n>\n> > * Provide a generic database API for a variety of SQL or SQL-like\n> >   databases.  There currently exist Go libraries for SQLite, MySQL,\n> >   and Postgres, but all with a very different feel, and often\n> >   a non-Go-like feel.\n>\n> Just one minor point from the previous conversation on the topic:\n> given that there are so many databases out there that do not suit this\n> API design, and given the examples you use above, should this be more\n> properly called as sqldb?\n\n\nLatest thinking:\n\nsql\nsql/driver (maybe; better than sql/sqlimpl)\n\nThen it's *sql.DB and driver.Conn, etc.\n",
+			"disapproval": false,
+			"date": "2011-09-02 20:00:24.149748",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Sep 2, 2011 at 22:37, Nigel Tao <nigeltao@golang.org> wrote:\n> A stronger statement would be that, with this design, I can't\n> implement a DB without going through db/dbimpl.\n\nThat is by design.  There's a lot about data marshaling and\ngeneral API consistency that is subtle and that we want\nimplemented in exactly one place.  sql/driver defines what\nthe database has to supply as basic operations, and then sql\nbuilds the nicer API on top of that.  In this way sql/driver is\nkind of like io.Reader and sql is more like io.ReadFull.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-04 16:45:46.154968",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> Latest thinking:\n> sql\n> sql/driver (maybe; better than sql/sqlimpl)\n> Then it's *sql.DB and driver.Conn, etc.\n\n+1\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I never filed a patent.\n",
+			"disapproval": false,
+			"date": "2011-09-03 00:08:10.149201",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "+1\n\nSent from my iPad\n\nOn 03/09/2011, at 6:00, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n\n> On Fri, Sep 2, 2011 at 10:23 AM, Gustavo Niemeyer <gustavo@niemeyer.net> wrote:\n> Hey Brad,\n> \n> > * Provide a generic database API for a variety of SQL or SQL-like\n> >   databases.  There currently exist Go libraries for SQLite, MySQL,\n> >   and Postgres, but all with a very different feel, and often\n> >   a non-Go-like feel.\n> \n> Just one minor point from the previous conversation on the topic:\n> given that there are so many databases out there that do not suit this\n> API design, and given the examples you use above, should this be more\n> properly called as sqldb?\n> \n> Latest thinking:\n> \n> sql\n> sql/driver (maybe; better than sql/sqlimpl)\n> \n> Then it's *sql.DB and driver.Conn, etc.\n",
+			"disapproval": false,
+			"date": "2011-09-03 00:15:43.104114",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 3 September 2011 12:01, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n>> It seems odd that most of package db's types are structs (with no\n>> exported fields) and not interfaces. Especially since DB, Stmt and Tx\n>> all share Exec, Query and QueryRow methods.\n>\n> by design. \u00a0pkg dbimpl is interfaces and pkg db is structs.\n\nI know that it's deliberate. It still feels wrong to me. I feel like I\nshould be able to make a fake DB type without needing to go through\ndb/dbimpl.\n\n\n> Tx stuff isn't implemented and is mostly from old notes. \u00a0it's probably\n> behind.\n> but you talking about db or dbimpl?\n\nI've looked mostly at db, since that's the consumer-facing API.\n\n\n>> SQL Noob question #1: do we need to distinguish between Exec and\n>> Query? Can we just run statements, some of which have zero results?\n>\n> it lets drivers do different things if desired to not send results back over\n> the network if the caller's intentions is to discard them anyway.\n\nAnd that's not representable by the query language? Like I said, I'm a\nSQL Noob...\n",
+			"disapproval": false,
+			"date": "2011-09-03 02:12:52.802389",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 3 September 2011 03:04,  <bradfitz@golang.org> wrote:\n> Description:\n> exp/db{,/dbimpl}: new database packages\n>\n> Please review this at http://codereview.appspot.com/4973055/\n\nHere's a bunch of half-baked thoughts. Other than a comment on\nlicensing, I've based it more on the API docs than the actual\nimplementation (which I've only skimmed).\n\nThe code should be BSD-style license, not Apache.\n\nIt seems odd that most of package db's types are structs (with no\nexported fields) and not interfaces. Especially since DB, Stmt and Tx\nall share Exec, Query and QueryRow methods.\n\nI would rename Rows to Iter or Iterator. Also, I'd paint the bike shed\nTxn instead of Tx, and s/dest/dst/g.\n\nIf I squint, it might be possible for the App Engine datastore to fit\nthese interfaces (it would be a GQL database instead of an SQL\ndatabase). AE \"row\" keys are a structured type and not a string or\nint, but maybe it will still work if a datastore.Key implements\nScannerInto. It's not as if Row has a Name() string method.\n\nTransactions in the App Engine datastore are represented as a\nretry-able func, instead of explicit Begin/Commit/Rollback calls. I'm\nnot 100% sure that the functional approach is best, but it is\nsomething a little higher level that's not possible in C/C++ style\nAPIs\n\nSQL Noob question #0: if I understand your API, I can't run a Stmt in\na Tx, I have to parse it for every transaction by calling Tx.Prepare.\nShould Exec and Query take a Stmt instead of a string as their first\narg?\n\nSQL Noob question #1: do we need to distinguish between Exec and\nQuery? Can we just run statements, some of which have zero results?\n\nTx.Exec has a different return type than DB.Exec or Stmt.Exec.\n\nFinally, the Rows interface and usage are:\n----\n// Yeah, it's actually a struct, but for argument's sake...\ntype Rows interface {\n  Close() os.Error\n  Error() os.Error\n  Next() bool\n  Scan(dest ...interface{}) os.Error\n}\n----\nrows, err := db.Query(\"SELECT ...\")\n...\nfor rows.Next() {\n    var id int\n    var name string\n    err = rows.Scan(&id, &name)\n    ...\n}\nerr = rows.Error()\n----\nFirst, is there a need for Rows to have a separate Error and Close methods?\n\nFinally, I'll compare these with iterating over the AE datastore, and\niterating over a LevelDB Go port that I'm working on (LevelDB is a\nkey/value store). I'm not saying that these other designs are\nnecessarily better, and neither of them are set in stone. Still, their\nexperience may be instructive in exploring the design space.\n\nThe App Engine iterator interface and usage currently are:\n----\ntype Iterator interface {\n  Next(dst interface{}) (*Key, os.Error)\n}\n----\niter := query.Run(context)\nfor {\n  var x Widget\n  key, err := iter.Next(&x)\n  if err == datastore.Done {\n    return nil\n  }\n  if err != nil {\n    return err\n  }\n  doSomethingWith(key, &x)\n}\n----\n\nThe LevelDB iterator interface and usage currently are:\n----\ntype Iterator interface {\n  Next() bool\n  Key() []byte\n  Value() []byte\n  Close() os.Error\n}\n----\niter := db.Seek(key)\nfor iter.Next() {\n  doSomethingWith(iter.Key(), iter.Value())\n}\nreturn iter.Close()\n----\n\nFor AppEngine, I didn't think of having separate Next and Scan\nmethods. That design is growing on me.\n\nFor LevelDB, those that create Iterators (via calling DB.Seek) are\nrequired to Close them, to avoid resource leaks.\n\nFor both, neither Query.Run and DB.Seek returns an error. If something\nbad occurs, they returns an errorIterator instead: an implementation\nof the Iterator interface that has no results but that error.\n",
+			"disapproval": false,
+			"date": "2011-09-03 01:49:16.882875",
+			"approval": false
+		},
+		{
+			"sender": "fw@deneb.enyo.de",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "* Brad Fitzpatrick:\n\n> * To type casting/conversions consistently between all drivers. To\n>   achieve this, most of the type conversions are done in the db\n>   package, not in each driver.  The drivers then only have to deal\n>   with a smaller set of types.\n\nBoth PostgreSQL and SQLite need to distinguish between strings\n(encoded in UTF-8) and blobs.\n\n> * Be flexible with type conversions, but be paranoid about silent\n>   truncation or other loss of precision.\n\nThere's no good match in Go for the NUMERIC type right now.\n\n> * Handle concurrency well.  Users shouldn't need to care about the\n>   database's per-connection thread safety issues (or lack thereof),\n>   and shouldn't have to maintain their own free pools of connections.\n>   The 'db' package should deal with that bookkeeping as needed.  Given\n>   a *db.DB, it should be possible to share that instance between\n>   multiple goroutines, without any extra synchronization.\n\nI think there's still a need to obtain a specific connection, without\nstarting a transaction: temporary tables are tied to a specific\nconnection, and some database statements cannot run in a transaction.\n\n> * Push complexity, where necessary, down into the db+dbimpl packages,\n>   rather than exposing it to users. Said otherwise, the db package\n>   should expose an ideal database that's not finnicky about how it's\n>   accessed, even if that's not true.\n\nSome things are impossible to hide, like serialization failures.\n\nThere's currently no way to check if an error will likely go away when\na transaction is retried.\n",
+			"disapproval": false,
+			"date": "2011-09-05 04:58:12.713223",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 3 September 2011 12:12, Nigel Tao <nigeltao@golang.org> wrote:\n> I know that it's deliberate. It still feels wrong to me. I feel like I\n> should be able to make a fake DB type without needing to go through\n> db/dbimpl.\n\nA stronger statement would be that, with this design, I can't\nimplement a DB without going through db/dbimpl. If I wanted to make\nthe App Engine datastore fit this model, I wouldn't be able to make a\ntype assertion that the db.Row that I get from the AppEngine driver\nhas a Key method as well as a Scan method.\n\nOversimplifying the argument: it's weird that the 'implementation'\npackage has the interfaces but the public-facing Application\nProgramming Interface package has the structs. Although that's\nprobably a better argument for renaming s/dbimpl/driver/.\n",
+			"disapproval": false,
+			"date": "2011-09-03 02:37:43.363366",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 7 September 2011 12:04, Russ Cox <rsc@golang.org> wrote:\n> The goal is to have a nice, easy-to-use API, hence\n>\n> for rows.Next() {\n> \u00a0 \u00a0rows.Scan...\n> }\n>\n> We can assign whatever semantics to Next\n> that we like as long as it produces that pattern.\n\nI agree that this is a nice API. Either \"at\" or \"between\" iterators\nwill work with this API.\n\nI would like leveldb-go to provide a similarly nice API, but leveldb\nsupports backwards iteration (because it's needed by e.g. Chromium's\nIndexedDB support), and it was unclear to me how Prev should work.\n\nHowever, I had not thought of specifying the iteration direction at\nsetup instead of traversal. That might simply be the nicest solution.\n",
+			"disapproval": false,
+			"date": "2011-09-07 02:48:23.415469",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go\nFile src/pkg/exp/db/db.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode35\nsrc/pkg/exp/db/db.go:35: func Register(name string, driver dbimpl.Driver) {\nIf it's not intended for end user use, shouldn't it go to dbimpl (with the associated driver query function)?\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode83\nsrc/pkg/exp/db/db.go:83: var ErrNoRows = os.NewError(\"db: no rows in result set\")\nDon't we want to prevent users from assigning to it (like they do with os.Stdout)?\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode346\nsrc/pkg/exp/db/db.go:346: if _, match = s.db.connIfFree(cs.ci); match {\nWhat is the expected number of s.css and db.freeConn?",
+			"disapproval": false,
+			"date": "2011-09-03 10:17:53.884372",
+			"approval": false
+		},
+		{
+			"sender": "kardianos@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Your Rows type is more of a Cursor or Iter then a Rows struct.\n\nFor most SQL applications, I tend to buffer my result set rather then \niterating it directly with an open connection.  Thus, Stmt.Fill() returns \nTable with all data in it.  I can then return and close the connection and \nput my logic elsewhere.\n\nI like the driver register design.\n\nbikeshed: the api is full of abbreviations.  I can type Statement faster \nthen Stmt.  I'd prefer if they were full words.\n",
+			"disapproval": false,
+			"date": "2011-09-03 20:19:41.610196",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "\nOn Sep 15, 2011, at 5:14 PM, Brad Fitzpatrick wrote:\n\n> On Thu, Sep 15, 2011 at 5:12 PM, <r@golang.org> wrote:\n> \n> http://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode61\n> src/pkg/exp/sql/sql.go:61: NotNull bool // NotNull is true if String is\n> not NULL\n> i dislike negative names. you always end up negating them again in\n> expressions.\n> \n> agree.  I already did that in the test code and it looks gross.\n>  \n> it's negative so the zero type is an empty string? how about Valid?\n> \n> Isn't Valid just a long way of spelling Ok?  (which is how I had it in v0, and seems like the Go word....)\n\nI prefer Valid. We use it in reflect for essentially the same idea.  OK is the word (not Ok) and anyway we use it as a variable name for various things. This is asking if the string is valid, which is a narrower meaning.\n\nWow, today really is all about how to bikeshed. We should start a discussion group about the best way to bikeshed.\n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2011-09-16 00:16:07.569992",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Thu, Sep 15, 2011 at 5:12 PM, <r@golang.org> wrote:\n\n>\n> http://codereview.appspot.com/**4973055/diff/28001/src/pkg/**\n> exp/sql/sql.go#newcode61<http://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode61>\n> src/pkg/exp/sql/sql.go:61: NotNull bool // NotNull is true if String is\n> not NULL\n> i dislike negative names. you always end up negating them again in\n> expressions.\n>\n\nagree.  I already did that in the test code and it looks gross.\n\n\n> it's negative so the zero type is an empty string? how about Valid?\n\n\nIsn't Valid just a long way of spelling Ok?  (which is how I had it in v0,\nand seems like the Go word....)\n",
+			"disapproval": false,
+			"date": "2011-09-16 00:14:11.609584",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I don't know SQL worth a damn but I'll look it over for second-order stuff.\n",
+			"disapproval": false,
+			"date": "2011-09-16 01:45:43.660347",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go\nFile src/pkg/exp/db/db.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode61\nsrc/pkg/exp/db/db.go:61: Ok     bool // Ok is true if the String is not NULL\nOn 2011/09/03 01:26:10, kevlar wrote:\n> I would call this NotNull?\n\nDone, but it feels a bit funny in expressions like:\n\nif !s.NotNull {\n\n(double negative)\n\nWe might want to name it \"Null\".\n\nI'm happy with Ok, Null, or NotNull.\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode83\nsrc/pkg/exp/db/db.go:83: var ErrNoRows = os.NewError(\"db: no rows in result set\")\nOn 2011/09/03 10:17:54, dvyukov wrote:\n> Don't we want to prevent users from assigning to it (like they do with\n> os.Stdout)?\n\nI'm not going to fight the language in this CL.\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode297\nsrc/pkg/exp/db/db.go:297: func (s *Stmt) Exec(args ...interface{}) (Result, os.Error) {\nOn 2011/09/03 01:26:10, kevlar wrote:\n> Exec is envious of Query's comment.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/7001/src/pkg/exp/db/db.go#newcode399\nsrc/pkg/exp/db/db.go:399: // always non-nil.\nOn 2011/09/03 01:26:10, kevlar wrote:\n> Provide or refer to the example of chaining this with Scan?\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-16 00:04:42.157594",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, gustavo@niemeyer.net, rsc@golang.org, borman@google.com, dave@cheney.net, kevlar@google.com, nigeltao@golang.org, dvyukov@google.com, kardianos@gmail.com, fw@deneb.enyo.de (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-09-16 00:04:44.822931",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go\nFile src/pkg/exp/sql/sql.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode45\nsrc/pkg/exp/sql/sql.go:45: // NullableString is type representing a string which may be\ns/which/that/\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode61\nsrc/pkg/exp/sql/sql.go:61: NotNull bool // NotNull is true if String is not NULL\ni dislike negative names. you always end up negating them again in expressions.\n\nit's negative so the zero type is an empty string? how about Valid?",
+			"disapproval": false,
+			"date": "2011-09-16 00:12:07.841320",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Valid it is.\n\nThere are a few thousand other lines to review too.\n\n\nOn Thu, Sep 15, 2011 at 5:15 PM, Rob 'Commander' Pike <r@google.com> wrote:\n\n>\n> On Sep 15, 2011, at 5:14 PM, Brad Fitzpatrick wrote:\n>\n> > On Thu, Sep 15, 2011 at 5:12 PM, <r@golang.org> wrote:\n> >\n> >\n> http://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode61\n> > src/pkg/exp/sql/sql.go:61: NotNull bool // NotNull is true if String is\n> > not NULL\n> > i dislike negative names. you always end up negating them again in\n> > expressions.\n> >\n> > agree.  I already did that in the test code and it looks gross.\n> >\n> > it's negative so the zero type is an empty string? how about Valid?\n> >\n> > Isn't Valid just a long way of spelling Ok?  (which is how I had it in\n> v0, and seems like the Go word....)\n>\n> I prefer Valid. We use it in reflect for essentially the same idea.  OK is\n> the word (not Ok) and anyway we use it as a variable name for various\n> things. This is asking if the string is valid, which is a narrower meaning.\n>\n> Wow, today really is all about how to bikeshed. We should start a\n> discussion group about the best way to bikeshed.\n>\n> -rob\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-16 00:23:43.066751",
+			"approval": false
+		},
+		{
+			"sender": "david.crawshaw@zentus.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go\nFile src/pkg/exp/sql/sql.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode92\nsrc/pkg/exp/sql/sql.go:92: freeConn []driver.Conn\nSo you are maintaining an underlying connection pool and not exposing the individual connections to the client. How does this work with transactions, which are only valid on a single connection?\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode235\nsrc/pkg/exp/sql/sql.go:235: func (db *DB) Begin() (*Tx, os.Error) {\nThere are different types of transactions (e.g. deferred, immediate, exclusive). How about Begin(arg string)?\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode255\nsrc/pkg/exp/sql/sql.go:255: func (tx *Tx) Rollback() os.Error {\nWhen a DB supports nested transactions, you can do partial rollbacks to named savepoints:\n\nhttp://www.sqlite.org/lang_savepoint.html\n\n(This is common with PostgreSQL, Oracle, MSSQL, etc.)\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode462\nsrc/pkg/exp/sql/sql.go:462: func (rs *Rows) Next() bool {\nProbably best left for some later version of the API, but fancy DBs have different kinds of cursors.\n\nThe classic also has Prev, First, Last, which you'll find in the original JDBC API. Another common cursor power is Count.",
+			"disapproval": false,
+			"date": "2011-09-16 04:16:57.849174",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Only looking at public API.\nMore comments in driver would help.\n\nMy main concern right now is that the value \nconversion code seems to be scattered, possibly\ntoo general.  I'd like to make sure we end up\nwith something where you don't have different\ndrivers supporting different kinds of values.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/convert.go\nFile src/pkg/exp/sql/convert.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/convert.go#newcode4\nsrc/pkg/exp/sql/convert.go:4: Licensed under the Apache License, Version 2.0 (the \"License\");\nCopyright notices are still wrong.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go\nFile src/pkg/exp/sql/driver/driver.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode38\nsrc/pkg/exp/sql/driver/driver.go:38: // The dsn parameter, the Data Source Name, contains a\n// The name is a string in a driver-specific format.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode44\nsrc/pkg/exp/sql/driver/driver.go:44: Open(dsn string) (Conn, os.Error)\ns/dsn/name/\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode50\nsrc/pkg/exp/sql/driver/driver.go:50: // If not implemented by a Driver, the sql package's DB.Exec method\nthe implicit noun here sounds like it is 'the sql package's DB.Exec method'.\n\n// If a Driver does not implement Execer, the sql package's DB.Exec method\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode55\nsrc/pkg/exp/sql/driver/driver.go:55: // If not implemented by a Conn, the db package's DB.Exec will first\n// If a Conn does not implement Execer, the db package's DB.Exec will ...\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode62\nsrc/pkg/exp/sql/driver/driver.go:62: type Conn interface {\nmore comments...\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode90\nsrc/pkg/exp/sql/driver/driver.go:90: // ColumnConverter may be optionally implemented by Stmt to signal\n// If a Stmt implements ColumnConverter, the sql package calls\n// its ColumnConverter method to perform type conversions.\n\nor whatever, but is this really necessary?\nPart of the rationale for having a central sql package\nis so that the conversions are in one place.\nI might not be as worried if you define what ValueConverter\nmust be able to do.\n\nAlso, is it necessary to have two different methods?\nYou could instead have\n\ntype Converter interface {\n    Convert(index int, v interface{}) (interface{}, os.Error)\n}\n\nMaybe leave this out for round 1.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode93\nsrc/pkg/exp/sql/driver/driver.go:93: ColumnCoverter(idx int) ValueConverter\nConverter is spelled wrong\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode125\nsrc/pkg/exp/sql/driver/driver.go:125: var DDLSuccess Result = ddlSuccess{}\n?\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go\nFile src/pkg/exp/sql/sql.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode32\nsrc/pkg/exp/sql/sql.go:32: // Register makes a database driver available by the provided name.\nRegisterDriver please.\nIt's not supposed to be called from user code\nso a more precise name is fine (and makes it less\nlikely that people will think they need to use it).\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode39\nsrc/pkg/exp/sql/sql.go:39: if _, dup := drivers[name]; dup {\nor if drivers[name] != nil\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode80\nsrc/pkg/exp/sql/sql.go:80: // ErrNoRows is returned by Scan when QueryRow doesn't return a\nThis is kind of awkward.  I think it's okay to break the \nleading name rule here to be less awkward.  (Using complete\nsentences makes this possible.)\n\n// When QueryRow finds no rows, it returns a placeholder *Row;\n// that row's Scan method returns ErrNoRows.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode89\nsrc/pkg/exp/sql/sql.go:89: dsn    string\ns/dsn/name/\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode99\nsrc/pkg/exp/sql/sql.go:99: // Most users will open a database via a driver-specific connection\nWhy?\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode101\nsrc/pkg/exp/sql/sql.go:101: func Open(driverName, dataSourceName string) (*DB, os.Error) {\nfunc Open(driver, name string) (*DB, os.Error) {\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode103\nsrc/pkg/exp/sql/sql.go:103: if !ok {\nor driver == nil\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode156\nsrc/pkg/exp/sql/sql.go:156: func (db *DB) Prepare(query string) (*Stmt, os.Error) {\nComments on public API functions?\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode240\nsrc/pkg/exp/sql/sql.go:240: // This is non-portable and should only be used when\nDelete this sentence?  It's not clear what non-portable means\nand \"when needed\" is of course a matter of judgment.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode297\nsrc/pkg/exp/sql/sql.go:297: // Exec executes a prepared statement with the provided placeholder arguments\n// Exec executes a prepared statement with the given arguments and\n// returns a Result summarizing the effect of the statement.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode375\nsrc/pkg/exp/sql/sql.go:375: // Query executes a prepared statement with the provided placeholder arguments\n// Query executes a prepared query statement with the given arguments\n// and returns the query results as a *Rows.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode399\nsrc/pkg/exp/sql/sql.go:399: // QueryRow wraps Query, for use in selecting a single row. Any errors\n// QueryRow executes a prepared query statement with the given arguments.\n// If an error occurs during the execution of the statement, that error will\n// be returned by a call to Scan on the returned *Row, which is always non-nil.\n// If the query selects no rows, the *Row's Scan will return ErrNoRows.\n// Otherwise, the *Row's Scan scans the first selected row and discards\n// the rest.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode459\nsrc/pkg/exp/sql/sql.go:459: // Next advances the Rows' cursor (which starts before the first\n' without s is only for plurals.  Rows is a singular here.\nbut we can avoid the term cursor entirely, to avoid\npeople thinking this is a JDBC cursor.\n\n// Next prepares the next result row for reading with the Scan method. \n// It returns true on success, false if there is no next result row.\n// Every call to Scan, even the first one, must be preceded by a call to Next.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode484\nsrc/pkg/exp/sql/sql.go:484: // Scan copies the columns in the current row into variables referened in dest.\ninto the values pointed at by dest.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode520\nsrc/pkg/exp/sql/sql.go:520: // Row is the result of calling QueryRow to select a single row. If no\nI think you can drop the second sentence, leaving it for QueryRow\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode529\nsrc/pkg/exp/sql/sql.go:529: // Scan copies the columns from the matched row into the variables\n// Scan copies the columns from the matched row into the values\n// pointed at by dest.  If more than one row matches the query,\n// Scan uses the first row and discards the rest.  If no row matches\n// the query, Scan returns ErrNoRows.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode542\nsrc/pkg/exp/sql/sql.go:542: type Result interface {\n// A Result summarizes an executed SQL command.",
+			"disapproval": false,
+			"date": "2011-09-16 15:17:57.961603",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go\nFile src/pkg/exp/sql/driver/driver.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode38\nsrc/pkg/exp/sql/driver/driver.go:38: // The dsn parameter, the Data Source Name, contains a\nOn 2011/09/16 15:17:58, rsc wrote:\n> // The name is a string in a driver-specific format.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode44\nsrc/pkg/exp/sql/driver/driver.go:44: Open(dsn string) (Conn, os.Error)\nOn 2011/09/16 15:17:58, rsc wrote:\n> s/dsn/name/\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode50\nsrc/pkg/exp/sql/driver/driver.go:50: // If not implemented by a Driver, the sql package's DB.Exec method\nOn 2011/09/16 15:17:58, rsc wrote:\n> the implicit noun here sounds like it is 'the sql package's DB.Exec method'.\n> \n> // If a Driver does not implement Execer, the sql package's DB.Exec method\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode55\nsrc/pkg/exp/sql/driver/driver.go:55: // If not implemented by a Conn, the db package's DB.Exec will first\nOn 2011/09/16 15:17:58, rsc wrote:\n> // If a Conn does not implement Execer, the db package's DB.Exec will ...\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode62\nsrc/pkg/exp/sql/driver/driver.go:62: type Conn interface {\nOn 2011/09/16 15:17:58, rsc wrote:\n> more comments...\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode90\nsrc/pkg/exp/sql/driver/driver.go:90: // ColumnConverter may be optionally implemented by Stmt to signal\nOn 2011/09/16 15:17:58, rsc wrote:\n> // If a Stmt implements ColumnConverter, the sql package calls\n> // its ColumnConverter method to perform type conversions.\n> \n> or whatever, but is this really necessary?\n> Part of the rationale for having a central sql package\n> is so that the conversions are in one place.\n> I might not be as worried if you define what ValueConverter\n> must be able to do.\n> \n> Also, is it necessary to have two different methods?\n> You could instead have\n> \n> type Converter interface {\n>     Convert(index int, v interface{}) (interface{}, os.Error)\n> }\n> \n> Maybe leave this out for round 1.\n\nCleaned this up.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode93\nsrc/pkg/exp/sql/driver/driver.go:93: ColumnCoverter(idx int) ValueConverter\nOn 2011/09/16 15:17:58, rsc wrote:\n> Converter is spelled wrong\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/driver/driver.go#newcode125\nsrc/pkg/exp/sql/driver/driver.go:125: var DDLSuccess Result = ddlSuccess{}\nOn 2011/09/16 15:17:58, rsc wrote:\n> ?\n\ndocumented.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go\nFile src/pkg/exp/sql/sql.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode156\nsrc/pkg/exp/sql/sql.go:156: func (db *DB) Prepare(query string) (*Stmt, os.Error) {\nOn 2011/09/16 15:17:58, rsc wrote:\n> Comments on public API functions?\n\nDone x 15 or so.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode235\nsrc/pkg/exp/sql/sql.go:235: func (db *DB) Begin() (*Tx, os.Error) {\nOn 2011/09/16 04:16:58, crawshaw wrote:\n> There are different types of transactions (e.g. deferred, immediate, exclusive).\n> How about Begin(arg string)?\n\nWe'll keep Begin() for the common case (driver-preferred default) but we can add a BeginXxx(someType) method in the future.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode240\nsrc/pkg/exp/sql/sql.go:240: // This is non-portable and should only be used when\nOn 2011/09/16 15:17:58, rsc wrote:\n> Delete this sentence?  It's not clear what non-portable means\n> and \"when needed\" is of course a matter of judgment.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode255\nsrc/pkg/exp/sql/sql.go:255: func (tx *Tx) Rollback() os.Error {\nOn 2011/09/16 04:16:58, crawshaw wrote:\n> When a DB supports nested transactions, you can do partial rollbacks to named\n> savepoints:\n> \n> http://www.sqlite.org/lang_savepoint.html\n> \n> (This is common with PostgreSQL, Oracle, MSSQL, etc.)\n\nLet's do this also in round 2.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode297\nsrc/pkg/exp/sql/sql.go:297: // Exec executes a prepared statement with the provided placeholder arguments\nOn 2011/09/16 15:17:58, rsc wrote:\n> // Exec executes a prepared statement with the given arguments and\n> // returns a Result summarizing the effect of the statement.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode375\nsrc/pkg/exp/sql/sql.go:375: // Query executes a prepared statement with the provided placeholder arguments\nOn 2011/09/16 15:17:58, rsc wrote:\n> // Query executes a prepared query statement with the given arguments\n> // and returns the query results as a *Rows.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode399\nsrc/pkg/exp/sql/sql.go:399: // QueryRow wraps Query, for use in selecting a single row. Any errors\nOn 2011/09/16 15:17:58, rsc wrote:\n> // QueryRow executes a prepared query statement with the given arguments.\n> // If an error occurs during the execution of the statement, that error will\n> // be returned by a call to Scan on the returned *Row, which is always non-nil.\n> // If the query selects no rows, the *Row's Scan will return ErrNoRows.\n> // Otherwise, the *Row's Scan scans the first selected row and discards\n> // the rest.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode459\nsrc/pkg/exp/sql/sql.go:459: // Next advances the Rows' cursor (which starts before the first\nOn 2011/09/16 15:17:58, rsc wrote:\n> ' without s is only for plurals.  Rows is a singular here.\n\nMy memory and the Internet seem to imply it's either way with singular possessive ending in es.  But the preferred way seems to be /'s$/.\n\n> but we can avoid the term cursor entirely, to avoid\n> people thinking this is a JDBC cursor.\n\nSGTM\n\n\n> \n> // Next prepares the next result row for reading with the Scan method. \n> // It returns true on success, false if there is no next result row.\n> // Every call to Scan, even the first one, must be preceded by a call to Next.\n> \n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode484\nsrc/pkg/exp/sql/sql.go:484: // Scan copies the columns in the current row into variables referened in dest.\nOn 2011/09/16 15:17:58, rsc wrote:\n> into the values pointed at by dest.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode520\nsrc/pkg/exp/sql/sql.go:520: // Row is the result of calling QueryRow to select a single row. If no\nOn 2011/09/16 15:17:58, rsc wrote:\n> I think you can drop the second sentence, leaving it for QueryRow\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode529\nsrc/pkg/exp/sql/sql.go:529: // Scan copies the columns from the matched row into the variables\nOn 2011/09/16 15:17:58, rsc wrote:\n> // Scan copies the columns from the matched row into the values\n> // pointed at by dest.  If more than one row matches the query,\n> // Scan uses the first row and discards the rest.  If no row matches\n> // the query, Scan returns ErrNoRows.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/28001/src/pkg/exp/sql/sql.go#newcode542\nsrc/pkg/exp/sql/sql.go:542: type Result interface {\nOn 2011/09/16 15:17:58, rsc wrote:\n> // A Result summarizes an executed SQL command.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-29 01:08:55.939894",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello gustavo@niemeyer.net, rsc@golang.org, borman@google.com, dave@cheney.net, kevlar@google.com, nigeltao@golang.org, dvyukov@google.com, kardianos@gmail.com, fw@deneb.enyo.de, r@golang.org, r@google.com, david.crawshaw@zentus.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-09-29 01:09:09.816947",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello gustavo@niemeyer.net, rsc@golang.org, borman@google.com, dave@cheney.net, kevlar@google.com, nigeltao@golang.org, dvyukov@google.com, kardianos@gmail.com, fw@deneb.enyo.de, r@golang.org, r@google.com, david.crawshaw@zentus.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-09-29 18:43:38.663937",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM within my limited understanding.\nthere's some nice stuff in here.\nthe interfaces are somewhat inconsistently described. the type should be presented quickly, then each method described thoroughly.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/convert.go\nFile src/pkg/exp/sql/convert.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/convert.go#newcode28\nsrc/pkg/exp/sql/convert.go:28: // copyConvert copies to dest the value in src, converting it if possible\ns/$/./\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/convert.go#newcode46\nsrc/pkg/exp/sql/convert.go:46: *d = s\nthis isn't a copy.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/doc.txt\nFile src/pkg/exp/sql/doc.txt (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/doc.txt#newcode23\nsrc/pkg/exp/sql/doc.txt:23: * To type casting/conversions consistently between all drivers. To\ni can't parse the first sentence. (maybe just s/To t/T/ so it's not an infinitive, in parallel with the other entries.)\nmaybe\nMake type casting and conversion consistent between all drivers.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/doc.txt#newcode24\nsrc/pkg/exp/sql/doc.txt:24: achieve this, most of the type conversions are done in the db\ns/type //\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go\nFile src/pkg/exp/sql/driver/driver.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode38\nsrc/pkg/exp/sql/driver/driver.go:38: // Driver is the interface that must be implemented by database\ns/by/by a/\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode55\nsrc/pkg/exp/sql/driver/driver.go:55: // drivers which can provide a more effcient implementation.\ns/which/that/\ns/effcient/efficient/\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode86\nsrc/pkg/exp/sql/driver/driver.go:86: LastInsertId() (int64, os.Error)\ndocument these. the off-by-oneness should be documented too\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode101\nsrc/pkg/exp/sql/driver/driver.go:101: // type as defined above.\nsecond sentence doesnt' parse.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode104\nsrc/pkg/exp/sql/driver/driver.go:104: // Exec executes a query that may rows, such as a SELECT.  The\n\"that may rows\"?  \"may return rows\"?\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode122\nsrc/pkg/exp/sql/driver/driver.go:122: // Columns returns the name of the columns. The number of\ns/name/names/\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode125\nsrc/pkg/exp/sql/driver/driver.go:125: // string should be returned.\ns/.$/ for that entry./\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/types.go\nFile src/pkg/exp/sql/driver/types.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/types.go#newcode76\nsrc/pkg/exp/sql/driver/types.go:76: return nil, fmt.Errorf(\"unsupported value %v (type %T) converting to int32\", v, v)\nhere and throughout the errors could start with \"sql: \" (or other name as appropriate)\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/types.go#newcode117\nsrc/pkg/exp/sql/driver/types.go:117: // IsScanSubsetType returns if v is of a valid type for a\ns/returns if/reports whether/\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go\nFile src/pkg/exp/sql/sql.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode34\nsrc/pkg/exp/sql/sql.go:34: // a duplicate name.\ninstead of the second sentence:\n// If Register is called twice with the same name or if driver is nil, it panics.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode45\nsrc/pkg/exp/sql/sql.go:45: // NullableString is type representing a string which may be\ns/type/a type/\nor jsut\nNullableString represents\n\ns/which/that/\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode46\nsrc/pkg/exp/sql/sql.go:46: // null. NullableString implements the ScannerInto inteface so can be\ns/can/it can/\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode74\nsrc/pkg/exp/sql/sql.go:74: // ScannerInto is an interface used by Scan.\nthis seems to be the crux, so i suggest a better doc here and a proper description of ScanInto within this type declaration\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode181\nsrc/pkg/exp/sql/sql.go:181: // Exec executes a query without returning any rows.\ni don't know what this means, but i'm not a db expert. does it mean that the query cannot return rows, or that we don't care if it does?\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode298\nsrc/pkg/exp/sql/sql.go:298: type Stmt struct {\nsome of these names are short, like Exec and Stmt. that jangles a bit, but it's probably ok. is this nomenclature what people expect?\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode308\nsrc/pkg/exp/sql/sql.go:308: func todo() string {\nlovely\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode529\nsrc/pkg/exp/sql/sql.go:529: // if encountered normally the Rows are closed automatically. Calling\ns/if/is/ ?\ns/normally/&, /\ns/Calling//",
+			"disapproval": false,
+			"date": "2011-09-29 01:28:37.459899",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "All done.\n\nRuss, thoughts on this as a checkpoint?\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/convert.go\nFile src/pkg/exp/sql/convert.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/convert.go#newcode28\nsrc/pkg/exp/sql/convert.go:28: // copyConvert copies to dest the value in src, converting it if possible\nOn 2011/09/29 01:28:37, r wrote:\n> s/$/./\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/convert.go#newcode46\nsrc/pkg/exp/sql/convert.go:46: *d = s\nOn 2011/09/29 01:28:37, r wrote:\n> this isn't a copy.\n\nIt shouldn't.  I've renamed the function to \"convertAssign\" This part (scanning lots of rows quickly from a table) should be able to work purely in []byte end-to-end, without copies.  Added some docs, too.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/doc.txt\nFile src/pkg/exp/sql/doc.txt (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/doc.txt#newcode1\nsrc/pkg/exp/sql/doc.txt:1: Goals of the db and db/dbimpl packages:\nupdated all the db & dbimpl to sql & driver, too\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/doc.txt#newcode23\nsrc/pkg/exp/sql/doc.txt:23: * To type casting/conversions consistently between all drivers. To\nOn 2011/09/29 01:28:37, r wrote:\n> i can't parse the first sentence. (maybe just s/To t/T/ so it's not an\n> infinitive, in parallel with the other entries.)\n> maybe\n> Make type casting and conversion consistent between all drivers.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/doc.txt#newcode23\nsrc/pkg/exp/sql/doc.txt:23: * To type casting/conversions consistently between all drivers. To\nOn 2011/09/29 01:28:37, r wrote:\n> i can't parse the first sentence. (maybe just s/To t/T/ so it's not an\n> infinitive, in parallel with the other entries.)\n> maybe\n> Make type casting and conversion consistent between all drivers.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/doc.txt#newcode24\nsrc/pkg/exp/sql/doc.txt:24: achieve this, most of the type conversions are done in the db\nOn 2011/09/29 01:28:37, r wrote:\n> s/type //\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go\nFile src/pkg/exp/sql/driver/driver.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode38\nsrc/pkg/exp/sql/driver/driver.go:38: // Driver is the interface that must be implemented by database\nOn 2011/09/29 01:28:37, r wrote:\n> s/by/by a/\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode55\nsrc/pkg/exp/sql/driver/driver.go:55: // drivers which can provide a more effcient implementation.\nOn 2011/09/29 01:28:37, r wrote:\n> s/which/that/\n> s/effcient/efficient/\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode86\nsrc/pkg/exp/sql/driver/driver.go:86: LastInsertId() (int64, os.Error)\nOn 2011/09/29 01:28:37, r wrote:\n> document these. the off-by-oneness should be documented too\n\nDone.  But... what off-by-oneness?\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode101\nsrc/pkg/exp/sql/driver/driver.go:101: // type as defined above.\nOn 2011/09/29 01:28:37, r wrote:\n> second sentence doesnt' parse.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode104\nsrc/pkg/exp/sql/driver/driver.go:104: // Exec executes a query that may rows, such as a SELECT.  The\nOn 2011/09/29 01:28:37, r wrote:\n> \"that may rows\"?  \"may return rows\"?\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode122\nsrc/pkg/exp/sql/driver/driver.go:122: // Columns returns the name of the columns. The number of\nOn 2011/09/29 01:28:37, r wrote:\n> s/name/names/\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode125\nsrc/pkg/exp/sql/driver/driver.go:125: // string should be returned.\nOn 2011/09/29 01:28:37, r wrote:\n> s/.$/ for that entry./\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/types.go\nFile src/pkg/exp/sql/driver/types.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/types.go#newcode76\nsrc/pkg/exp/sql/driver/types.go:76: return nil, fmt.Errorf(\"unsupported value %v (type %T) converting to int32\", v, v)\nOn 2011/09/29 01:28:37, r wrote:\n> here and throughout the errors could start with \"sql: \" (or other name as\n> appropriate)\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/types.go#newcode117\nsrc/pkg/exp/sql/driver/types.go:117: // IsScanSubsetType returns if v is of a valid type for a\nOn 2011/09/29 01:28:37, r wrote:\n> s/returns if/reports whether/\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go\nFile src/pkg/exp/sql/sql.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode34\nsrc/pkg/exp/sql/sql.go:34: // a duplicate name.\nOn 2011/09/29 01:28:37, r wrote:\n> instead of the second sentence:\n> // If Register is called twice with the same name or if driver is nil, it\n> panics.\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode45\nsrc/pkg/exp/sql/sql.go:45: // NullableString is type representing a string which may be\nOn 2011/09/29 01:28:37, r wrote:\n> s/type/a type/\n> or jsut\n> NullableString represents\n> \n> s/which/that/\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode46\nsrc/pkg/exp/sql/sql.go:46: // null. NullableString implements the ScannerInto inteface so can be\nOn 2011/09/29 01:28:37, r wrote:\n> s/can/it can/\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode74\nsrc/pkg/exp/sql/sql.go:74: // ScannerInto is an interface used by Scan.\nOn 2011/09/29 01:28:37, r wrote:\n> this seems to be the crux, so i suggest a better doc here and a proper\n> description of ScanInto within this type declaration\n\nDone.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode181\nsrc/pkg/exp/sql/sql.go:181: // Exec executes a query without returning any rows.\nOn 2011/09/29 01:28:37, r wrote:\n> i don't know what this means, but i'm not a db expert. does it mean that the\n> query cannot return rows, or that we don't care if it does?\n\nExpanded the comment.  INSERT, UPDATE etc.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode298\nsrc/pkg/exp/sql/sql.go:298: type Stmt struct {\nOn 2011/09/29 01:28:37, r wrote:\n> some of these names are short, like Exec and Stmt. that jangles a bit, but it's\n> probably ok. is this nomenclature what people expect?\n\nI don't know what people expect, nor have a preference.  I think rsc proposed these names originally, but maybe whiteboard brevity was the cause.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode308\nsrc/pkg/exp/sql/sql.go:308: func todo() string {\nOn 2011/09/29 01:28:37, r wrote:\n> lovely\n\nthis was critical when I started with dozens of TODOs.  it got hard to figure out.\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/sql.go#newcode529\nsrc/pkg/exp/sql/sql.go:529: // if encountered normally the Rows are closed automatically. Calling\nOn 2011/09/29 01:28:37, r wrote:\n> s/if/is/ ?\n> s/normally/&, /\n> s/Calling//\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-29 18:43:25.532106",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go\nFile src/pkg/exp/sql/driver/driver.go (right):\n\nhttp://codereview.appspot.com/4973055/diff/43001/src/pkg/exp/sql/driver/driver.go#newcode86\nsrc/pkg/exp/sql/driver/driver.go:86: LastInsertId() (int64, os.Error)\ninsertion goes into the gaps. is LastInsertId the one we inserted, the one after, the one before, the one we'll do next, ....? is RowsAffected a count?",
+			"disapproval": false,
+			"date": "2011-09-29 23:01:46.775664",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nFix copyright notices.",
+			"disapproval": false,
+			"date": "2011-09-29 23:02:15.901749",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"gustavo@niemeyer.net",
+				"rsc@golang.org",
+				"borman@google.com",
+				"dave@cheney.net",
+				"kevlar@google.com",
+				"nigeltao@golang.org",
+				"dvyukov@google.com",
+				"kardianos@gmail.com",
+				"fw@deneb.enyo.de",
+				"r@golang.org",
+				"r@google.com",
+				"david.crawshaw@zentus.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d21caa7909f2 ***\n\nexp/sql{,/driver}: new database packages\n\nR=gustavo, rsc, borman, dave, kevlar, nigeltao, dvyukov, kardianos, fw, r, r, david.crawshaw\nCC=golang-dev\nhttp://codereview.appspot.com/4973055",
+			"disapproval": false,
+			"date": "2011-09-29 23:12:31.271239",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 4973055: exp/sql{,/driver}: new database packages",
+	"created": "2011-09-02 17:02:51.004277",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		7001,
+		23001,
+		25001,
+		28001,
+		40001,
+		43001,
+		44012,
+		56001,
+		58001
+	],
+	"modified": "2011-09-29 23:12:33.029583",
+	"closed": true,
+	"issue": 4973055
+}

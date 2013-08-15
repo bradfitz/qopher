@@ -1,0 +1,59 @@
+{
+	"description": "cmd/vet: provide flags to control which tests to run\nBy default, all are still run, but a particular test can be\nselected with the new flags.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-07-16 20:56:50.909750",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Mon, Jul 16, 2012 at 1:56 PM, <r@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> cmd/vet: provide flags to control which tests to run\r\n> By default, all are still run, but a particular test can be\r\n> selected with the new flags.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6395053/<http://codereview.appspot.com/6395053/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/vet/doc.go\r\n>   M src/cmd/vet/main.go\r\n>   M src/cmd/vet/method.go\r\n>   M src/cmd/vet/print.go\r\n>   M src/cmd/vet/structtag.go\r\n>   M src/cmd/vet/taglit.go\r\n>\r\n>\r\n> Index: src/cmd/vet/doc.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/vet/doc.go\r\n> +++ b/src/cmd/vet/doc.go\r\n> @@ -9,9 +9,12 @@\r\n>  that do not guarantee all reports are genuine problems, but it can find\r\n> errors\r\n>  not caught by the compilers.\r\n>\r\n> +By default all checks are performed, but if explicit flags are provided,\r\n> only\r\n> +those identified by the flags are performed.\r\n> +\r\n>  Available checks:\r\n>\r\n> -1. Printf family\r\n> +1. Printf family, flag -printf\r\n>\r\n>  Suspicious calls to functions in the Printf family, including any\r\n> functions\r\n>  with these names:\r\n> @@ -28,7 +31,7 @@\r\n>  It also checks for errors such as using a Writer as the first argument of\r\n>  Printf.\r\n>\r\n> -2. Methods\r\n> +2. Methods, flag -methods\r\n>\r\n>  Non-standard signatures for methods with familiar names, including:\r\n>         Format GobEncode GobDecode MarshalJSON MarshalXML\r\n> @@ -36,16 +39,21 @@\r\n>         UnmarshalJSON UnreadByte UnreadRune WriteByte\r\n>         WriteTo\r\n>\r\n> -3. Struct tags\r\n> +3. Struct tags, flag -structtags\r\n>\r\n>  Struct tags that do not follow the format understood by\r\n> reflect.StructTag.Get.\r\n>\r\n> +3. Untagged composite literals, flag -composites\r\n> +\r\n> +Composite struct literals that do not used the type-tagged syntax.\r\n> +\r\n> +\r\n>  Usage:\r\n>\r\n>         go tool vet [flag] [file.go ...]\r\n>         go tool vet [flag] [directory ...] # Scan all .go files under\r\n> directory, recursively\r\n>\r\n> -The flags are:\r\n> +The other flags are:\r\n>         -v\r\n>                 Verbose mode\r\n>         -printfuncs\r\n> Index: src/cmd/vet/main.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/vet/main.go\r\n> +++ b/src/cmd/vet/main.go\r\n> @@ -23,6 +23,15 @@\r\n>  var verbose = flag.Bool(\"v\", false, \"verbose\")\r\n>  var exitCode = 0\r\n>\r\n> +// Flags to control which checks to perform\r\n> +var (\r\n> +       vetAll             = flag.Bool(\"all\", true, \"check everything;\r\n> disabled if any explicit check is requested\")\r\n> +       vetMethods         = flag.Bool(\"methods\", false, \"check that\r\n> canonically named methods are canonically defined\")\r\n> +       vetPrintf          = flag.Bool(\"printf\", false, \"check printf-like\r\n> invocations\")\r\n> +       vetStructTags      = flag.Bool(\"structtags\", false, \"check that\r\n> struct field tags have canonical format\")\r\n> +       vetUntaggedLiteral = flag.Bool(\"composites\", false, \"check that\r\n> composite literals used type-tagged elements\")\r\n> +)\r\n> +\r\n>  // setExit sets the value for os.Exit when it is called, later.  It\r\n>  // remembers the highest value.\r\n>  func setExit(err int) {\r\n> @@ -50,6 +59,11 @@\r\n>         flag.Usage = Usage\r\n>         flag.Parse()\r\n>\r\n> +       // If a check is named explicitly, turn off the 'all' flag.\r\n> +       if *vetMethods || *vetPrintf || *vetStructTags ||\r\n> *vetUntaggedLiteral {\r\n> +               *vetAll = false\r\n> +       }\r\n> +\r\n>         if *printfuncs != \"\" {\r\n>                 for _, name := range strings.Split(*printfuncs, \",\") {\r\n>                         if len(name) == 0 {\r\n> Index: src/cmd/vet/method.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/vet/method.go\r\n> +++ b/src/cmd/vet/method.go\r\n> @@ -55,6 +55,9 @@\r\n>  }\r\n>\r\n>  func (f *File) checkCanonicalMethod(id *ast.Ident, t *ast.FuncType) {\r\n> +       if !*vetMethods && !*vetAll {\r\n> +               return\r\n> +       }\r\n>         // Expected input/output.\r\n>         expect, ok := canonicalMethods[id.Name]\r\n>         if !ok {\r\n> @@ -159,3 +162,10 @@\r\n>         printer.Fprint(&f.b, f.fset, actual)\r\n>         return f.b.String() == expect\r\n>  }\r\n> +\r\n> +func (t *BadTypeUsedInTests) Scan(x fmt.ScanState, c byte) { // ERROR\r\n> \"method Scan[(]x fmt.ScanState, c byte[)] should have signature\r\n> Scan[(]fmt.ScanState, rune[)] error\"\r\n> +}\r\n> +\r\n> +type BadInterfaceUsedInTests interface {\r\n> +       ReadByte() byte // ERROR \"method ReadByte[(][)] byte should have\r\n> signature ReadByte[(][)] [(]byte, error[)]\"\r\n> +}\r\n> Index: src/cmd/vet/print.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/vet/print.go\r\n> +++ b/src/cmd/vet/print.go\r\n> @@ -43,6 +43,9 @@\r\n>\r\n>  // checkCall triggers the print-specific checks if the call invokes a\r\n> print function.\r\n>  func (f *File) checkFmtPrintfCall(call *ast.CallExpr, Name string) {\r\n> +       if !*vetPrintf && !*vetAll {\r\n> +               return\r\n> +       }\r\n>         name := strings.ToLower(Name)\r\n>         if skip, ok := printfList[name]; ok {\r\n>                 f.checkPrintf(call, Name, skip)\r\n> @@ -290,17 +293,6 @@\r\n>         f.Warnf(0, \"%#s\", \"hello\")   // ERROR \"unrecognized printf flag\"\r\n>  }\r\n>\r\n> -type BadTypeUsedInTests struct {\r\n> -       X int \"hello\" // ERROR \"struct field tag\"\r\n> -}\r\n> -\r\n> -func (t *BadTypeUsedInTests) Scan(x fmt.ScanState, c byte) { // ERROR\r\n> \"method Scan[(]x fmt.ScanState, c byte[)] should have signature\r\n> Scan[(]fmt.ScanState, rune[)] error\"\r\n> -}\r\n> -\r\n> -type BadInterfaceUsedInTests interface {\r\n> -       ReadByte() byte // ERROR \"method ReadByte[(][)] byte should have\r\n> signature ReadByte[(][)] [(]byte, error[)]\"\r\n> -}\r\n> -\r\n>  // printf is used by the test.\r\n>  func printf(format string, args ...interface{}) {\r\n>         panic(\"don't call - testing only\")\r\n> Index: src/cmd/vet/structtag.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/vet/structtag.go\r\n> +++ b/src/cmd/vet/structtag.go\r\n> @@ -14,6 +14,9 @@\r\n>\r\n>  // checkField checks a struct field tag.\r\n>  func (f *File) checkCanonicalFieldTag(field *ast.Field) {\r\n> +       if !*vetStructTags && !*vetAll {\r\n> +               return\r\n> +       }\r\n>         if field.Tag == nil {\r\n>                 return\r\n>         }\r\n> @@ -32,3 +35,7 @@\r\n>                 return\r\n>         }\r\n>  }\r\n> +\r\n> +type BadTypeUsedInTests struct {\r\n> +       X int \"hello\" // ERROR \"struct field tag\"\r\n> +}\r\n> Index: src/cmd/vet/taglit.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/vet/taglit.go\r\n> +++ b/src/cmd/vet/taglit.go\r\n> @@ -14,6 +14,9 @@\r\n>  // checkUntaggedLiteral checks if a composite literal is an struct\r\n> literal with\r\n>  // untagged fields.\r\n>  func (f *File) checkUntaggedLiteral(c *ast.CompositeLit) {\r\n> +       if !*vetUntaggedLiteral && !*vetAll {\r\n> +               return\r\n> +       }\r\n>         // Check if the CompositeLit contains an untagged field.\r\n>         allKeyValue := true\r\n>         for _, e := range c.Elts {\r\n> @@ -119,3 +122,7 @@\r\n>         \"image.Point\":         true,\r\n>         \"image.Rectangle\":     true,\r\n>  }\r\n> +\r\n> +type BadTag struct {\r\n> +       S string `this is a bad tag`\r\n> +}\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-07-16 20:58:56.184480",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=6c441dee919c ***\n\ncmd/vet: provide flags to control which tests to run\nBy default, all are still run, but a particular test can be\nselected with the new flags.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6395053",
+			"disapproval": false,
+			"date": "2012-07-16 21:03:12.880840",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 6395053: cmd/vet: provide flags to control which tests to run",
+	"created": "2012-07-16 20:56:46.805140",
+	"patchsets": [
+		1,
+		3001,
+		3002
+	],
+	"modified": "2012-07-16 21:03:13.991550",
+	"closed": true,
+	"issue": 6395053
+}

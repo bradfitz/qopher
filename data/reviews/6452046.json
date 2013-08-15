@@ -1,0 +1,354 @@
+{
+	"description": "runtime: round return value address in runtime.equal\n     Fixes issue 3866.",
+	"cc": [
+		"r@golang.org",
+		"nigeltao@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"dave@cheney.net",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/07/26 06:00:37, nigeltao wrote:\n> For backquote strings, I was imagining something more like the program below.\n> WDYT?\nThis is much better, thank you very much!",
+			"disapproval": false,
+			"date": "2012-07-26 06:20:00.953950",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM, but give rsc an opportunity to look at this before you submit.\n\nhttp://codereview.appspot.com/6452046/diff/17002/src/pkg/runtime/alg.c\nFile src/pkg/runtime/alg.c (right):\n\nhttp://codereview.appspot.com/6452046/diff/17002/src/pkg/runtime/alg.c#newcode472\nsrc/pkg/runtime/alg.c:472: uintptr ret;\nWould it be better to keep ret as a bool*, so that pointer arithmetic is always byte-sized? You can still ROUND a bool*, right?\n\n{\n        byte *x, *y;\n        bool *ret;\n        \n        x = (byte*)(&t+1);\n        y = x + t->size;\n        ret = (bool*)(y + t->size);\n        ret = ROUND(ret, sizeof(uintptr));\n        t->alg->equal(ret, t->size, x, y);\n}\n\nhttp://codereview.appspot.com/6452046/diff/17002/src/pkg/runtime/alg.c#newcode476\nsrc/pkg/runtime/alg.c:476: ret = (uintptr)y + t->size;\nEven if you keep ret as a uintptr instead of bool*, I'd add more parens.\n(uintptr)(y + t->size)",
+			"disapproval": false,
+			"date": "2012-07-26 07:39:58.352150",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "thank you very much for helping me improving my writing!\n\nOn 2012/07/27 00:16:28, r wrote:\n> http://codereview.appspot.com/6452046/diff/7/test/fixedbugs/bug447.go\n> File test/fixedbugs/bug447.go (right):\nall done.",
+			"disapproval": false,
+			"date": "2012-07-27 00:44:25.593520",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "For backquote strings, I was imagining something more like the program below. WDYT?\n\n\npackage main\n\nimport (\n    \"bytes\"\n    \"fmt\"\n    \"os\"\n    \"strconv\"\n    \"strings\"\n)\n\nconst ntest = 1024\n\nfunc main() {\n    var decls, calls bytes.Buffer\n\n    for i := 1; i <= ntest; i++ {\n        s := strconv.Itoa(i)\n        decls.WriteString(strings.Replace(decl, \"$\", s, -1))\n        calls.WriteString(strings.Replace(call, \"$\", s, -1))\n    }\n\n    program = strings.Replace(program, \"$DECLS\", decls.String(), 1)\n    program = strings.Replace(program, \"$CALLS\", calls.String(), 1)\n    fmt.Fprint(os.Stdout, program)\n}\n\nvar program = `package main\n\nvar count int\n\nfunc call(f func() bool) {\n    if f() {\n        count++\n    }\n}\n\n$DECLS\n\nfunc main() {\n    $CALLS\n    if count != 0 {\n        println(\"failed\", count, \"case(s)\")\n    }\n}\n`\n\nconst decl = `\ntype T$ [$]uint8\n\nfunc test$() bool {\n    v := T${1}\n    return v != [$]uint8{1} || v == [$]uint8{2}\n}\n`\n\nconst call = `\n    call(test$)\n`",
+			"disapproval": false,
+			"date": "2012-07-26 06:00:37.589760",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Minux: will you address this final comment by rsc ?\r\n\r\nOn Thu, Aug 2, 2012 at 7:26 AM,  <rsc@golang.org> wrote:\r\n>\r\n> http://codereview.appspot.com/6452046/diff/17009/src/pkg/runtime/alg.c\r\n> File src/pkg/runtime/alg.c (right):\r\n>\r\n> http://codereview.appspot.com/6452046/diff/17009/src/pkg/runtime/alg.c#newcode475\r\n> src/pkg/runtime/alg.c:475: y = x + ROUND(t->size, t->align);\r\n> This is fine but also unnecessary. t->size must necessarily be a\r\n> multiple of t->align. Otherwise the second element in an array of two\r\n> elements would be misaligned.\r\n>\r\n> http://codereview.appspot.com/6452046/\r\n",
+			"disapproval": false,
+			"date": "2012-08-06 01:56:47.943240",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks very much.",
+			"disapproval": false,
+			"date": "2012-07-29 23:45:43.207810",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"r@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/06 19:48:09, rsc wrote:\n> no. a type T's size is always a multiple of its alignment.\n> the array was only an example of why this must be true (so that every\n> element of [10]T is properly aligned). arrays don't have to be\n> involved for it to be true. it's always true.\nok, i was confused by some ROUND code in hashmap.c,\nand i understand now. will remove this unneeded ROUND.",
+			"disapproval": false,
+			"date": "2012-08-07 01:41:38.452310",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Should the test file be called arrayequal.go instead of equal.go??\n\nhttp://codereview.appspot.com/6452046/diff/1002/test/equal.go\nFile test/equal.go (right):\n\nhttp://codereview.appspot.com/6452046/diff/1002/test/equal.go#newcode22\ntest/equal.go:22: fmt.Fprintf(bout, \"package main\\n\")\nWould `` strings make some of this easier?\n\nhttp://codereview.appspot.com/6452046/diff/1002/test/equal.go#newcode35\ntest/equal.go:35: fmt.Fprintf(bout, \"\\treturn v == [%d]uint8{2}\\n}\\n\", i)\nCan we test for false negatives as well as false positives?",
+			"disapproval": false,
+			"date": "2012-07-26 04:40:58.757810",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6452046/diff/17003/test/fixedbugs/bug447.go\nFile test/fixedbugs/bug447.go (right):\n\nhttp://codereview.appspot.com/6452046/diff/17003/test/fixedbugs/bug447.go#newcode7\ntest/fixedbugs/bug447.go:7: package main\nplease put a comment here that explains what this program tests.",
+			"disapproval": false,
+			"date": "2012-07-26 15:53:10.895850",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/07/26 15:53:10, r wrote:\nhttp://codereview.appspot.com/6452046/diff/17003/test/fixedbugs/bug447.go#newcode7\n> test/fixedbugs/bug447.go:7: package main\n> please put a comment here that explains what this program tests.\nDone.",
+			"disapproval": false,
+			"date": "2012-07-27 00:11:20.513330",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 31 July 2012 08:32,  <minux.ma@gmail.com> wrote:\r\n> i'm wondering if we need to round y according to t->align also.\r\n> (see patch set 14)\r\n\r\nLGTM.\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 05:27:10.342570",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I found a new problem: this test is not future-proof.\r\n\r\nthis test depends on gc generating call to runtime.equal for comparing\r\ninstance of\r\nT and T's underlying type, but this need not to be the case in the future.\r\n\r\nDo I need to find a new way to test this?\r\n",
+			"disapproval": false,
+			"date": "2012-07-26 18:18:36.850730",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "i'm wondering if we need to round y according to t->align also.\n(see patch set 14)\n\ni think for our current usage of runtime.align, y doesn't need\nto be aligned by t->align, but adding alignment there would\nmake us safer if we extend usage of runtime.equal in the future.\nwhat do you think?",
+			"disapproval": false,
+			"date": "2012-07-30 22:32:19.892120",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-07-26 04:27:47.289830",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 27 July 2012 09:30, minux <minux.ma@gmail.com> wrote:\r\n> so i suppose i should enhance the test to cover more equality test case?\r\n\r\nI think what you have now is fine. It tests that a particular bug is fixed.\r\n\r\nA hypothetical future change may make this test no longer test a\r\nparticular code path in the compiler and runtime, but it is still a\r\ncorrect program with respect to the language.\r\n",
+			"disapproval": false,
+			"date": "2012-07-26 23:34:35.307720",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/07/26 04:40:58, nigeltao wrote:\n> Should the test file be called arrayequal.go instead of equal.go??\ni moved the test file to fixedbugs/bug447.go in Patch Set 5. \nin fact, the bug is in runtime.equal, and i suspect \"struct {uint8}\" could also\nfail, so equal.go is a better name (i only test the array case, because the\nlength of arguments is what matters)\n\n> http://codereview.appspot.com/6452046/diff/1002/test/equal.go#newcode22\n> test/equal.go:22: fmt.Fprintf(bout, \"package main\\n\")\n> Would `` strings make some of this easier?\nprobable, i thought backquote make the left margin ragged if used inline.\nanyway, i changed to use backquote string.\n\n> http://codereview.appspot.com/6452046/diff/1002/test/equal.go#newcode35\n> test/equal.go:35: fmt.Fprintf(bout, \"\\treturn v == [%d]uint8{2}\\n}\\n\", i)\n> Can we test for false negatives as well as false positives?\nsure. i should have tested false negatives, because it will catch more\nsituations in theory.",
+			"disapproval": false,
+			"date": "2012-07-26 05:29:13.437120",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 27 July 2012 04:18, minux <minux.ma@gmail.com> wrote:\r\n> I found a new problem: this test is not future-proof.\r\n>\r\n> this test depends on gc generating call to runtime.equal for comparing\r\n> instance of\r\n> T and T's underlying type, but this need not to be the case in the future.\r\n>\r\n> Do I need to find a new way to test this?\r\n\r\nMy opinion is that you should test the language, not the\r\nimplementation. So if a future version of gc doesn't use\r\nruntime\u00b7equal, this test is still valid, and should still pass.\r\n",
+			"disapproval": false,
+			"date": "2012-07-26 23:22:52.591440",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"r@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6452046/diff/17009/src/pkg/runtime/alg.c\nFile src/pkg/runtime/alg.c (right):\n\nhttp://codereview.appspot.com/6452046/diff/17009/src/pkg/runtime/alg.c#newcode475\nsrc/pkg/runtime/alg.c:475: y = x + ROUND(t->size, t->align);\nThis is fine but also unnecessary. t->size must necessarily be a multiple of t->align. Otherwise the second element in an array of two elements would be misaligned.",
+			"disapproval": false,
+			"date": "2012-08-01 21:26:27.883880",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> what i am think is this:\r\n> runtime.align is not designed for comparing array only, is it?\r\n> if we ever pass non-array type T to it, then the extra round is\r\n> necessary, right?\r\n\r\nno. a type T's size is always a multiple of its alignment.\r\nthe array was only an example of why this must be true (so that every\r\nelement of [10]T is properly aligned). arrays don't have to be\r\ninvolved for it to be true. it's always true.\r\n\r\nruss\r\n",
+			"disapproval": false,
+			"date": "2012-08-06 19:48:09.431180",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6452046/diff/17002/src/pkg/runtime/alg.c\nFile src/pkg/runtime/alg.c (right):\n\nhttp://codereview.appspot.com/6452046/diff/17002/src/pkg/runtime/alg.c#newcode472\nsrc/pkg/runtime/alg.c:472: uintptr ret;\nOn 2012/07/26 07:39:58, nigeltao wrote:\n> byte-sized? You can still ROUND a bool*, right?\nROUND(x, y) involves x & ~(y - 1), so we can't ROUND a bool*.",
+			"disapproval": false,
+			"date": "2012-07-26 19:20:12.818090",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jul 26, 2012 at 4:22 PM, Nigel Tao <nigeltao@golang.org> wrote:\r\n\r\n> My opinion is that you should test the language, not the\r\n> implementation. So if a future version of gc doesn't use\r\n> runtime\u00b7equal, this test is still valid, and should still pass.\r\n>\r\nso i suppose i should enhance the test to cover more equality test case?\r\n",
+			"disapproval": false,
+			"date": "2012-07-26 23:30:56.006700",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6452046/diff/7/test/fixedbugs/bug447.go\nFile test/fixedbugs/bug447.go (right):\n\nhttp://codereview.appspot.com/6452046/diff/7/test/fixedbugs/bug447.go#newcode9\ntest/fixedbugs/bug447.go:9: // return values into account; so in certain cases, gc generated\ns/,//\ns/;/,/\ns/gc generated/gc-generated/\n\nhttp://codereview.appspot.com/6452046/diff/7/test/fixedbugs/bug447.go#newcode10\ntest/fixedbugs/bug447.go:10: // code will read a random bool from stack as the result of the\ns/stack/the stack/\n\nhttp://codereview.appspot.com/6452046/diff/7/test/fixedbugs/bug447.go#newcode15\ntest/fixedbugs/bug447.go:15: // underlying []byte will make gc emit call to runtime.equal,\ns/call/calls/\n\nhttp://codereview.appspot.com/6452046/diff/7/test/fixedbugs/bug447.go#newcode17\ntest/fixedbugs/bug447.go:17: // be correct (in a sense that it no longer test runtime.equal).\ns/a/the/\ns/test/tests/",
+			"disapproval": false,
+			"date": "2012-07-27 00:16:28.818460",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=a7752d169d2e ***\n\nruntime: round return value address in runtime.equal\n     Fixes issue 3866.\n\nR=rsc, r, nigeltao\nCC=golang-dev\nhttp://codereview.appspot.com/6452046",
+			"disapproval": false,
+			"date": "2012-08-01 03:02:52.622520",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"r@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/01 21:26:27, rsc wrote:\nhttp://codereview.appspot.com/6452046/diff/17009/src/pkg/runtime/alg.c#newcode475\n> src/pkg/runtime/alg.c:475: y = x + ROUND(t->size, t->align);\n> This is fine but also unnecessary. t->size must necessarily be a multiple of\n> t->align. Otherwise the second element in an array of two elements would be\n> misaligned.\nwhat i am think is this:\nruntime.align is not designed for comparing array only, is it?\nif we ever pass non-array type T to it, then the extra round is necessary, right?",
+			"disapproval": false,
+			"date": "2012-08-06 02:05:05.050880",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 6452046: runtime: round return value address in runtime.equal",
+	"created": "2012-07-26 02:59:19.372220",
+	"patchsets": [
+		1,
+		2001,
+		1002,
+		10001,
+		3,
+		13001,
+		8003,
+		4,
+		17002,
+		17003,
+		18001,
+		7,
+		5008,
+		9,
+		11007,
+		17009
+	],
+	"modified": "2012-08-07 01:41:38.612060",
+	"closed": true,
+	"issue": 6452046
+}

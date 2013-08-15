@@ -1,0 +1,96 @@
+{
+	"description": "go.tools/go/types: resolve objects in type checker\n\nBy setting resolve = true in check.go, the type checker\nwill do all identifier resolution during type checking\ntime and ignore (and not depend on) parser objects. This\npermits the type checker to run easily on ASTs that are\nnot generated with invariants guaranteed by the parser.\n\nThere is a lot of new code; much of it slightly modified\ncopies of old code. There is also a lot of duplication.\nAfter removing the dead code resulting from resolve = true\npermanently (and removing the flag as well), it will be\neasier to perform a thorough cleanup. As is, there are\ntoo many intertwined code paths.\n\nFor now resolve = false. To be enabled in a successor CL.",
+	"cc": [
+		"adonovan@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello adonovan@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.tools",
+			"disapproval": false,
+			"date": "2013-05-25 20:28:22.041560",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nObviously there's a lot of clean-up and simplification work to do, but the basic shape of it looks good.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/check.go\nFile go/types/check.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/check.go#newcode67\ngo/types/check.go:67: // TODO(gri) do we care if an ident is registered multiple times?\nNo, so long as this is specified near Ident.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/check.go#newcode197\ngo/types/check.go:197: if l == nil {\nThis statement is unreachable.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/expr.go\nFile go/types/expr.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/expr.go#newcode152\ngo/types/expr.go:152: check.errorf(obj.Pos(), fmt.Sprintf(\"%s redeclared in this block%s\", obj.Name(), prevDecl))\nerrorf(...Sprintf...) ?\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go\nFile go/types/objects.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode33\ngo/types/objects.go:33: pos      token.Pos\nCare to specify what this is the position of?  (e.g. package's first file's package decl ident)\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode57\ngo/types/objects.go:57: if obj.spec == nil {\nNitpick: reads better as:  if obj.spec != nil { return obj.spec.Pos() }\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode65\ngo/types/objects.go:65: func (obj *Package) setOuter(*Scope) {            /* don't do anything - this is the package's scope */\nuse //-comment, preceded by \\n\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode70\ngo/types/objects.go:70: pos   token.Pos\n\"// Position of ...\"\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode104\ngo/types/objects.go:104: pos   token.Pos\n\"// Position of ident in declaring TypeSpec; may be zero if [???]\"\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode134\ngo/types/objects.go:134: pos   token.Pos\n\"// Position of declaring Field/ValueSpec/AssignStmt ident; may be NoPos if [???]\"\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/resolver.go\nFile go/types/resolver.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/resolver.go#newcode24\ngo/types/resolver.go:24: prevDecl = fmt.Sprintf(\"\\n\\tprevious declaration at %s\", check.fset.Position(pos))\nCan you issue a second error containing this message?  That way the \"filename:line:\" info appears at line start, and editors will do a better job of marking it up. e.g.\n\nfoo.go:2: x redeclared in this block\nfoo.go:1: previously declared here\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/resolver.go#newcode26\ngo/types/resolver.go:26: check.errorf(obj.Pos(), fmt.Sprintf(\"%s redeclared in this block%s\", obj.Name(), prevDecl))\nerrorf(...Sprintf...)?\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/types_test.go\nFile go/types/types_test.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/types_test.go#newcode163\ngo/types/types_test.go:163: mode |= parser.DeclarationErrors\nIs AllErrors|DeclarationErrors really what you intend when !resolve?\n\nhttps://codereview.appspot.com/9606045/diff/60001/go/types/stmt.go\nFile go/types/stmt.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/60001/go/types/stmt.go#newcode337\ngo/types/stmt.go:337: // TODO(gri) anything to do with label itself?\nYes, labels inhabit the same namespace so to report errors correctly you have to do an Insert here.\n\nAlso, if the typechecker is going to be the canonical resolver, for consistency it should treat Labels as first-class Objects too (albeit with Pos but no Type).  I've already encountered a need for this in my current work.\n\nhttps://codereview.appspot.com/9606045/diff/60001/go/types/types.go\nFile go/types/types.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/60001/go/types/types.go#newcode234\ngo/types/types.go:234: scope      *Scope // function scope\nPerhaps put the \"transient state of resolver\" fields separate from the intrinsic parts of the type.  Ditto elsewhere.  See ssa for examples.",
+			"disapproval": false,
+			"date": "2013-05-28 16:37:52.001940",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=e53bf215e337&repo=tools ***\n\ngo.tools/go/types: resolve objects in type checker\n\nBy setting resolve = true in check.go, the type checker\nwill do all identifier resolution during type checking\ntime and ignore (and not depend on) parser objects. This\npermits the type checker to run easily on ASTs that are\nnot generated with invariants guaranteed by the parser.\n\nThere is a lot of new code; much of it slightly modified\ncopies of old code. There is also a lot of duplication.\nAfter removing the dead code resulting from resolve = true\npermanently (and removing the flag as well), it will be\neasier to perform a thorough cleanup. As is, there are\ntoo many intertwined code paths.\n\nFor now resolve = false. To be enabled in a successor CL.\n\nR=adonovan\nCC=golang-dev\nhttps://codereview.appspot.com/9606045",
+			"disapproval": false,
+			"date": "2013-05-28 17:06:41.299110",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"adonovan@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/check.go\nFile go/types/check.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/check.go#newcode67\ngo/types/check.go:67: // TODO(gri) do we care if an ident is registered multiple times?\nOn 2013/05/28 16:37:52, adonovan wrote:\n> No, so long as this is specified near Ident.\n\nACK\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/check.go#newcode197\ngo/types/check.go:197: if l == nil {\nOn 2013/05/28 16:37:52, adonovan wrote:\n> This statement is unreachable.\n\nremoved\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/expr.go\nFile go/types/expr.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/expr.go#newcode152\ngo/types/expr.go:152: check.errorf(obj.Pos(), fmt.Sprintf(\"%s redeclared in this block%s\", obj.Name(), prevDecl))\nOn 2013/05/28 16:37:52, adonovan wrote:\n> errorf(...Sprintf...) ?\n\nDone.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go\nFile go/types/objects.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode33\ngo/types/objects.go:33: pos      token.Pos\nOn 2013/05/28 16:37:52, adonovan wrote:\n> Care to specify what this is the position of?  (e.g. package's first file's\n> package decl ident)\n\nDone.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode57\ngo/types/objects.go:57: if obj.spec == nil {\nOn 2013/05/28 16:37:52, adonovan wrote:\n> Nitpick: reads better as:  if obj.spec != nil { return obj.spec.Pos() }\n\nagreed. done.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode65\ngo/types/objects.go:65: func (obj *Package) setOuter(*Scope) {            /* don't do anything - this is the package's scope */\nOn 2013/05/28 16:37:52, adonovan wrote:\n> use //-comment, preceded by \\n\n> \n\nThis should be a one-line function, hence the /* ... */ - gofmt screws this up. I already filed an issue.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode70\ngo/types/objects.go:70: pos   token.Pos\nOn 2013/05/28 16:37:52, adonovan wrote:\n> \"// Position of ...\"\n\nDone.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode104\ngo/types/objects.go:104: pos   token.Pos\nOn 2013/05/28 16:37:52, adonovan wrote:\n> \"// Position of ident in declaring TypeSpec; may be zero if [???]\"\n\nDone.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/objects.go#newcode134\ngo/types/objects.go:134: pos   token.Pos\nOn 2013/05/28 16:37:52, adonovan wrote:\n> \"// Position of declaring Field/ValueSpec/AssignStmt ident; may be NoPos if\n> [???]\"\n\nDone.\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/resolver.go\nFile go/types/resolver.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/resolver.go#newcode24\ngo/types/resolver.go:24: prevDecl = fmt.Sprintf(\"\\n\\tprevious declaration at %s\", check.fset.Position(pos))\nOn 2013/05/28 16:37:52, adonovan wrote:\n> Can you issue a second error containing this message?  That way the\n> \"filename:line:\" info appears at line start, and editors will do a better job of\n> marking it up. e.g.\n> \n> foo.go:2: x redeclared in this block\n> foo.go:1: previously declared here\n\nadded a TODO for now (this code exists in multiple places and needs to be consolidated)\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/resolver.go#newcode26\ngo/types/resolver.go:26: check.errorf(obj.Pos(), fmt.Sprintf(\"%s redeclared in this block%s\", obj.Name(), prevDecl))\nOn 2013/05/28 16:37:52, adonovan wrote:\n> errorf(...Sprintf...)?\n\nDone.\n\ncopy-paste laziness\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/types_test.go\nFile go/types/types_test.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/58001/go/types/types_test.go#newcode163\ngo/types/types_test.go:163: mode |= parser.DeclarationErrors\nOn 2013/05/28 16:37:52, adonovan wrote:\n> Is AllErrors|DeclarationErrors really what you intend when !resolve?\n\nYes - I want all syntax errors.\n\nhttps://codereview.appspot.com/9606045/diff/60001/go/types/stmt.go\nFile go/types/stmt.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/60001/go/types/stmt.go#newcode337\ngo/types/stmt.go:337: // TODO(gri) anything to do with label itself?\nOn 2013/05/28 16:37:52, adonovan wrote:\n> Yes, labels inhabit the same namespace so to report errors correctly you have to\n> do an Insert here.\n> \n> Also, if the typechecker is going to be the canonical resolver, for consistency\n> it should treat Labels as first-class Objects too (albeit with Pos but no Type).\n>  I've already encountered a need for this in my current work.\n\nYes, they will be. Changed TODO.\n\nhttps://codereview.appspot.com/9606045/diff/60001/go/types/types.go\nFile go/types/types.go (right):\n\nhttps://codereview.appspot.com/9606045/diff/60001/go/types/types.go#newcode234\ngo/types/types.go:234: scope      *Scope // function scope\nOn 2013/05/28 16:37:52, adonovan wrote:\n> Perhaps put the \"transient state of resolver\" fields separate from the intrinsic\n> parts of the type.  Ditto elsewhere.  See ssa for examples.\n\nWill do. added TODO at the beginning of this file.",
+			"disapproval": false,
+			"date": "2013-05-28 17:02:40.237180",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 9606045: go.tools/go/types: resolve objects in type checker",
+	"created": "2013-05-21 01:51:45.776460",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		11001,
+		14001,
+		16001,
+		19001,
+		26001,
+		29001,
+		32001,
+		35001,
+		38001,
+		41001,
+		44001,
+		47001,
+		48021,
+		50001,
+		52001,
+		55001,
+		58001,
+		60001,
+		72001
+	],
+	"modified": "2013-05-28 17:06:42.396570",
+	"closed": true,
+	"issue": 9606045
+}

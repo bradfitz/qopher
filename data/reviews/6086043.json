@@ -1,0 +1,182 @@
+{
+	"description": "cmd/cgo, cmd/cc, cmd/ld: detect dynamic linker automatically\nSome newer Linux distributions (Ubuntu ARM at least) use a new multiarch\ndirectory organization, where dynamic linker is no longer in the hardcoded\npath in our linker.\nFor example, Ubuntu 12.04 ARM hardfloat places its dynamic linker at\n/lib/arm-linux-gnueabihf/ld-linux.so.3\n\nRef: http://lackof.org/taggart/hacking/multiarch/\n\nAlso, to support Debian GNU/kFreeBSD as a FreeBSD variant, we need this capability, so it's part of issue 3533.\n\nThis CL add a new pragma (#pragma dynlinker \"path\") to cc.",
+	"cc": [
+		"iant@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Apr 21, 2012 at 12:46 AM, Russ Cox <rsc@golang.org> wrote:\n\n> This seems okay but how do we get from here to 6l using the right\n> dynamic linker path? I do not want to have to invoke cgo during the\n> link phase of every program.\n>\nOh, I overlooked this scenario.\n\n>\n> For example, go build cmd/godoc links a cgo-enabled program (because\n> godoc uses package net) but assuming package net is already compiled,\n> I do not want the link of godoc to have to invoke gcc+cgo to determine\n> the interp path.  What is the big picture here?\n\nIt seems we have to do it the hard way, a new #pragma and change both\ncc and ld.\n",
+			"disapproval": false,
+			"date": "2012-04-20 16:52:40.557776",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-04-20 11:56:49.063992",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/04/20 16:52:40, minux wrote:\n> On Sat, Apr 21, 2012 at 12:46 AM, Russ Cox <mailto:rsc@golang.org> wrote:\n> > For example, go build cmd/godoc links a cgo-enabled program (because\n> > godoc uses package net) but assuming package net is already compiled,\n> > I do not want the link of godoc to have to invoke gcc+cgo to determine\n> > the interp path.  What is the big picture here?\n> It seems we have to do it the hard way, a new #pragma and change both\n> cc and ld.\nWait a minute, this change is too big for this small enhancement.\nHow abou this:\nwhen linking programs like godoc who uses cgo *indirectly* we look for dynamic\nlinker used by the running cmd/go itself?\n\nThat is, we move the dynamic linker detection code from cmd/cgo to cmd/go,\nand always pass '-I /path/to/dynld.so' to our ld if the program uses cgo?\n(during bootstrapping, pkg/net and cmd/go are compiled in one run, and the\ncurrent approach will automagically set correct dynamic linker for cmd/go)",
+			"disapproval": false,
+			"date": "2012-04-20 17:27:01.776473",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This seems okay but how do we get from here to 6l using the right\ndynamic linker path? I do not want to have to invoke cgo during the\nlink phase of every program.\n\nFor example, go build cmd/godoc links a cgo-enabled program (because\ngodoc uses package net) but assuming package net is already compiled,\nI do not want the link of godoc to have to invoke gcc+cgo to determine\nthe interp path.  What is the big picture here?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-04-20 16:46:27.129786",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Apr 21, 2012 at 1:27 AM, <minux.ma@gmail.com> wrote:\n>\n> when linking programs like godoc who uses cgo *indirectly* we look for\n> dynamic linker used by the running cmd/go itself?\n>\nIf we assume dynamic linker is fixed after cmd/go is bootstrapped, we can\nsimplify this further: we use 'ld -X' to embed the correct dynamic linker\ninto\ncmd/go during bootstrap.\n\nThis assumption is fair, except when cross compiling. What do you think?\n",
+			"disapproval": false,
+			"date": "2012-04-20 17:34:40.781191",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM but wait for rsc.",
+			"disapproval": false,
+			"date": "2012-04-20 15:49:36.235846",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Apr 20, 2012 at 13:27,  <minux.ma@gmail.com> wrote:\n> That is, we move the dynamic linker detection code from cmd/cgo to\n> cmd/go,\n> and always pass '-I /path/to/dynld.so' to our ld if the program uses\n> cgo?\n> (during bootstrapping, pkg/net and cmd/go are compiled in one run, and\n> the\n> current approach will automagically set correct dynamic linker for\n> cmd/go)\n\nI strongly prefer not to do that.  Right now it is the case that as long\nas you build package net's net.a on a Linux machine, you can copy\nthe package tree elsewhere and still cross-compile.  If you make the\nlink phase invoke gcc or inspect its own go binary, that's the end of\nany hope of cross-compiling.\n\nAdding a new #pragma here seems like the right choice.\n",
+			"disapproval": false,
+			"date": "2012-04-25 03:16:40.800010",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Apr 25, 2012 at 11:16 AM, Russ Cox <rsc@golang.org> wrote:\n\n> On Fri, Apr 20, 2012 at 13:27,  <minux.ma@gmail.com> wrote:\n> > That is, we move the dynamic linker detection code from cmd/cgo to\n> > cmd/go,\n> > and always pass '-I /path/to/dynld.so' to our ld if the program uses\n> > cgo?\n> > (during bootstrapping, pkg/net and cmd/go are compiled in one run, and\n> > the\n> > current approach will automagically set correct dynamic linker for\n> > cmd/go)\n>\n> I strongly prefer not to do that.  Right now it is the case that as long\n> as you build package net's net.a on a Linux machine, you can copy\n> the package tree elsewhere and still cross-compile.  If you make the\n> link phase invoke gcc or inspect its own go binary, that's the end of\n> any hope of cross-compiling.\n>\n> Adding a new #pragma here seems like the right choice.\n>\nOK, this will be a big change.\n\nBTW, do you have plan to support cross compiling with cgo?\n(for example, 'go build -gcc \"arm-none-gnueabi-gcc\" cgo.go'; and if this\napproach\nis acceptable, I will submit a CL for it.)\n",
+			"disapproval": false,
+			"date": "2012-04-25 08:48:07.103057",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Apr 25, 2012 at 4:47 AM, minux <minux.ma@gmail.com> wrote:\r\n> BTW, do you have plan to support cross compiling with cgo?\r\n> (for example, 'go build -gcc \"arm-none-gnueabi-gcc\" cgo.go'; and if this\r\n> approach\r\n> is acceptable, I will submit a CL for it.)\r\n\r\nI believe that you can use\r\n    CC=\"arm-none-gnueabi-gcc\" go build\r\nalready.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-02 01:46:39.520700",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 2, 2012 at 9:46 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> On Wed, Apr 25, 2012 at 4:47 AM, minux <minux.ma@gmail.com> wrote:\r\n> > BTW, do you have plan to support cross compiling with cgo?\r\n> > (for example, 'go build -gcc \"arm-none-gnueabi-gcc\" cgo.go'; and if this\r\n> > approach\r\n> > is acceptable, I will submit a CL for it.)\r\n>\r\n> I believe that you can use\r\n>    CC=\"arm-none-gnueabi-gcc\" go build\r\n> already.\r\n\r\nhttp://tip.golang.org/src/cmd/go/build.go#L1380\r\n\r\nDo you want to add $CC to address that TODO?\r\n(we don't need to constrain cgo to native builds after this change)\r\n",
+			"disapproval": false,
+			"date": "2012-05-03 09:07:06.038822",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks!\nThe $$ note applies to all three compilers.\n\nhttp://codereview.appspot.com/6086043/diff/14001/src/cmd/8c/swt.c\nFile src/cmd/8c/swt.c (right):\n\nhttp://codereview.appspot.com/6086043/diff/14001/src/cmd/8c/swt.c#newcode267\nsrc/cmd/8c/swt.c:267: Bprint(&outbuf, \"\\n$$  // dynlinker\\n\");\nPlease move this statement above the if, so that the format of the file does not vary depending on whether this directive is present.  I realize that the linker looks for the comments but I do intend them as just comments, so that the $$ are the truly important part.\n\nhttp://codereview.appspot.com/6086043/diff/14001/src/cmd/ld/go.c\nFile src/cmd/ld/go.c (right):\n\nhttp://codereview.appspot.com/6086043/diff/14001/src/cmd/ld/go.c#newcode603\nsrc/cmd/ld/go.c:603: interpreter = strdup(dynlinker);\nfree(interpreter);\ninterpreter = strdup(dynlinker);\n?",
+			"disapproval": false,
+			"date": "2012-05-03 21:30:38.066200",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/04/25 03:16:40, rsc wrote:\n> Adding a new #pragma here seems like the right choice.\nDone. PTAL.",
+			"disapproval": false,
+			"date": "2012-05-03 10:57:18.467892",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d744d86bd5ea ***\n\ncmd/cgo, cmd/cc, cmd/ld: detect dynamic linker automatically\nSome newer Linux distributions (Ubuntu ARM at least) use a new multiarch\ndirectory organization, where dynamic linker is no longer in the hardcoded\npath in our linker.\nFor example, Ubuntu 12.04 ARM hardfloat places its dynamic linker at\n/lib/arm-linux-gnueabihf/ld-linux.so.3\n\nRef: http://lackof.org/taggart/hacking/multiarch/\n\nAlso, to support Debian GNU/kFreeBSD as a FreeBSD variant, we need this capability, so it's part of issue 3533.\n\nThis CL add a new pragma (#pragma dynlinker \"path\") to cc.\n\nR=iant, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6086043",
+			"disapproval": false,
+			"date": "2012-05-04 17:54:38.248240",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 6086043: cmd/cgo, cmd/go: detect dynamic linker automatically",
+	"created": "2012-04-20 11:50:05.929170",
+	"patchsets": [
+		1,
+		1002,
+		8001,
+		14001,
+		18001,
+		21001,
+		25013
+	],
+	"modified": "2012-05-04 17:54:43.584936",
+	"closed": true,
+	"issue": 6086043
+}

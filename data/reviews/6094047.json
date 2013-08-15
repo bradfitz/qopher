@@ -1,0 +1,195 @@
+{
+	"description": "math: ARM assembly implementation for Abs\n\nObtained on 700MHz OMAP4460:\nbenchmark       old ns/op    new ns/op    delta\nBenchmarkAbs           61           23  -61.63%\n",
+	"cc": [
+		"dave@cheney.net",
+		"remyoudompheng@gmail.com",
+		"mtj@google.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "How does this compare to the following Go code?\n\nfunc abs(x float64) (y float64) {\n      *(*uint64)(unsafe.Pointer(&y)) = *(*uint64)(unsafe.Pointer(&x)) &^ uint64(1<<63)\n      return\n}",
+			"disapproval": false,
+			"date": "2012-04-21 17:28:10.493160",
+			"approval": false
+		},
+		{
+			"sender": "mtj@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Which is the key to all of this tuning -- it is \"non floating point\"\r\noperations on \"floating point\" values -- and that's why you can't so easily\r\nget to the optimum in any language that has opinions about the meaning of\r\nstorage. This is a job for assembler or BCPL or PL/360 or ...\r\n\r\nOn Sat, Apr 21, 2012 at 7:45 PM, minux <minux.ma@gmail.com> wrote:\r\n\r\n>\r\n> On Sun, Apr 22, 2012 at 1:28 AM, <remyoudompheng@gmail.com> wrote:\r\n>\r\n>> How does this compare to the following Go code?\r\n>>\r\n>> func abs(x float64) (y float64) {\r\n>>      *(*uint64)(unsafe.Pointer(&y)) = *(*uint64)(unsafe.Pointer(&x)) &^\r\n>> uint64(1<<63)\r\n>>      return\r\n>> }\r\n>>\r\n> 5g generates this for this function:\r\n> 0000 (flt.go:3) TEXT   abs+0(SB),$0-16\r\n> 0001 (flt.go:3) MOVD   $(0.00000000000000000e+00),F0\r\n> 0002 (flt.go:3) MOVD   F0,y+8(FP)\r\n> 0003 (flt.go:5) MOVW   $y+8(FP),R5\r\n> 0004 (flt.go:5) MOVW   $x+0(FP),R0\r\n> 0005 (flt.go:5) MOVW   0(R0),R4\r\n> 0006 (flt.go:5) MOVW   4(R0),R1\r\n> 0007 (flt.go:5) MOVW   $-1,R2\r\n> 0008 (flt.go:5) AND     R2,R4,R0\r\n> 0009 (flt.go:5) MOVW   $2147483647,R2\r\n> 0010 (flt.go:5) AND     R2,R1,R3\r\n> 0011 (flt.go:5) MOVW   R0,R1\r\n> 0012 (flt.go:5) MOVW   R5,R0\r\n> 0013 (flt.go:5) MOVW   R3,R2\r\n> 0014 (flt.go:5) MOVW   R1,0(R5)\r\n> 0015 (flt.go:5) MOVW   R3,4(R5)\r\n> 0016 (flt.go:6) RET     ,\r\n>\r\n> it will be much slower than the assembly version, and what's worse, it\r\n> unnecessarily\r\n> load and store 0.0 into y, which will trigger a much more expensive soft\r\n> float emulation\r\n> on systems without FPU.\r\n>\r\n\r\n\r\n\r\n-- \r\nMichael T. Jones | Chief Technology Advocate  | mtj@google.com |  +1\r\n650-335-5765\r\n",
+			"disapproval": false,
+			"date": "2012-04-21 17:52:03.088735",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I can squeeze one more ns out if we use ldrd and strd.\n\nTEXT \u00b7Abs(SB),7,$0\n\tWORD\t$0xe1cd00d4 //\tldrd\tr0, [sp, #4]\n\tMOVW\t$((1<<31)-1), R2\n\tAND \tR2, R1\n\tWORD\t$0xe1cd00fc //\tstrd\tr0, [sp, #12]\n\tRET\n\nbenchmark       old ns/op    new ns/op    delta\nBenchmarkAbs           24           23   -4.53%\nbenchmark       old ns/op    new ns/op    delta\nBenchmarkAbs           61           23  -62.34%\n\nBut, to make it acceptable, I must first add LDRD and STRD to 5a and 5l.\n@dfc, could you please benchmark this new version on ARMv5 hardware?",
+			"disapproval": false,
+			"date": "2012-04-21 14:34:11.637249",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"mtj@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=5a1d471de6d2 ***\n\nmath: ARM assembly implementation for Abs\n\nObtained on 700MHz OMAP4460:\nbenchmark       old ns/op    new ns/op    delta\nBenchmarkAbs           61           23  -61.63%\n\nR=dave, remyoudompheng, mtj, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6094047",
+			"disapproval": false,
+			"date": "2012-04-23 15:47:50.203425",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"mtj@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> But, to make it acceptable, I must first add LDRD and STRD to 5a and 5l.\n> @dfc, could you please benchmark this new version on ARMv5 hardware?\n\nstora(~/go/src/pkg/math) % ~/go/misc/benchcmp {old,new}.txt\nbenchmark       old ns/op    new ns/op    delta\nBenchmarkAbs        29069         6386  -78.03%\n\nThis form is slightly slower on a Feroceon 88FR131 rev 1 (v5l), but I don't think the difference is worth worrying about. It's still a significant improvement.",
+			"disapproval": false,
+			"date": "2012-04-21 23:55:56.690163",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Apr 22, 2012 at 1:45 AM, minux <minux.ma@gmail.com> wrote:\n\n>\n> On Sun, Apr 22, 2012 at 1:28 AM, <remyoudompheng@gmail.com> wrote:\n>\n>> How does this compare to the following Go code?\n>>\n>> func abs(x float64) (y float64) {\n>>      *(*uint64)(unsafe.Pointer(&y)) = *(*uint64)(unsafe.Pointer(&x)) &^\n>> uint64(1<<63)\n>>      return\n>> }\n>>\n> 5g generates this for this function:\n> 0000 (flt.go:3) TEXT   abs+0(SB),$0-16\n> 0001 (flt.go:3) MOVD   $(0.00000000000000000e+00),F0\n> 0002 (flt.go:3) MOVD   F0,y+8(FP)\n> 0003 (flt.go:5) MOVW   $y+8(FP),R5\n> 0004 (flt.go:5) MOVW   $x+0(FP),R0\n> 0005 (flt.go:5) MOVW   0(R0),R4\n> 0006 (flt.go:5) MOVW   4(R0),R1\n> 0007 (flt.go:5) MOVW   $-1,R2\n> 0008 (flt.go:5) AND     R2,R4,R0\n> 0009 (flt.go:5) MOVW   $2147483647,R2\n> 0010 (flt.go:5) AND     R2,R1,R3\n> 0011 (flt.go:5) MOVW   R0,R1\n> 0012 (flt.go:5) MOVW   R5,R0\n> 0013 (flt.go:5) MOVW   R3,R2\n> 0014 (flt.go:5) MOVW   R1,0(R5)\n> 0015 (flt.go:5) MOVW   R3,4(R5)\n> 0016 (flt.go:6) RET     ,\n>\n> it will be much slower than the assembly version, and what's worse, it\n> unnecessarily\n> load and store 0.0 into y, which will trigger a much more expensive soft\n> float emulation\n> on systems without FPU.\n>\nI also tried a C version:\nvoid abs(long long in, long long out) {\nout = in & ~(1ULL<<63);\nUSED(out);\n}\n5c generates:\nTEXT abs+0(SB),0,$20-16\nMOVW $out+8(FP),R1\n MOVW R1,4(R13)\nMOVW R13,R1\n MOVW $in+0(FP),R2\nMOVM.U 0(R2),[R3,R4]\n MOVW R3,8(R1)\nMOVW R4,12(R1)\n MOVW R13,R1\nMOVW $-1,R2\n MOVW R2,16(R1)\nMOVW $2147483647,R2\n MOVW R2,20(R1)\nBL ,_andv+0(SB)\n NOP out+8(FP),\nNOP ,R0\n NOP ,F0\nRET ,\n END ,\nIt calls _andv, when it should have done it in line.\n\nFor comparison, 8c generate this for the same function:\n(flt.c:1) TEXT abs+0(SB),(gok(71))\n(flt.c:2) MOVL in+0(FP),AX\n(flt.c:2) ANDL $-1,AX\n(flt.c:2) MOVL in+4(FP),CX\n(flt.c:2) ANDL $2147483647,CX\n(flt.c:2) MOVL AX,out+8(FP)\n(flt.c:2) MOVL CX,out+12(FP)\n(flt.c:3) RET ,\n(flt.c:3) END ,\nThis is much better, and approaches the quality hand written assembly.\n\nFor the record, 8g generate this for the Go version:\n0000 (flt.go:3) TEXT    abs+0(SB),$0-16\n0001 (flt.go:3) FMOVD   $(0.00000000000000000e+00),F0\n0002 (flt.go:3) FMOVDP  F0,y+8(FP)\n0003 (flt.go:5) LEAL    y+8(FP),BX\n0004 (flt.go:5) MOVL    BX,BP\n0005 (flt.go:5) LEAL    x+0(FP),BX\n0006 (flt.go:5) MOVL    (BX),AX\n0007 (flt.go:5) MOVL    4(BX),CX\n0008 (flt.go:5) ANDL    $2147483647,CX\n0009 (flt.go:5) MOVL    AX,(BP)\n0010 (flt.go:5) MOVL    CX,4(BP)\n0011 (flt.go:6) RET     ,\nAgain, a much better job than 5g.\n",
+			"disapproval": false,
+			"date": "2012-04-21 18:01:54.871497",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"mtj@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6094047/diff/5001/src/pkg/math/abs_arm.s\nFile src/pkg/math/abs_arm.s (right):\n\nhttp://codereview.appspot.com/6094047/diff/5001/src/pkg/math/abs_arm.s#newcode7\nsrc/pkg/math/abs_arm.s:7: MOVW\t0(FP), R0\nplease use variable names and try to do\nall the loads/stores in blocks (easier to see they're\nall handled).  \n\nMOVW lo+0(FP), R0\nMOVW hi+4(FP), R1\nMOVW $((1<<31)-1), R2\nAND R2, R1\nMOVW R0, resultlo+8(FP)\nMOVW R1, resulthi+12(FP)\n\nseparately, the arm will do the MOVW for you\nif you use an immediate argument, so you can\nthe center two instructions just one:\n\nAND $((1<<31)-1), R1",
+			"disapproval": false,
+			"date": "2012-04-23 14:54:09.213394",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-04-21 11:13:21.164301",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I can't speak to the accuracy of this change, but the results are\nequally impressive for those of us without and FPU.\n\nstora(~/go/src/pkg/math) % ~/go/misc/benchcmp {old,new}.txt\nbenchmark       old ns/op    new ns/op    delta\nBenchmarkAbs        29069         5556  -80.89%\n\nOn Sat, Apr 21, 2012 at 9:13 PM,  <minux.ma@gmail.com> wrote:\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://code.google.com/p/go/\n>\n>\n> Description:\n> math: ARM assembly implementation for Abs\n>\n> Obtained on 700MHz OMAP4460:\n> benchmark \u00a0 \u00a0 \u00a0 old ns/op \u00a0 \u00a0new ns/op \u00a0 \u00a0delta\n> BenchmarkAbs \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 61 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 24 \u00a0-60.39%\n>\n>\n> Please review this at http://codereview.appspot.com/6094047/\n>\n> Affected files:\n> \u00a0M src/pkg/math/abs_arm.s\n>\n>\n> Index: src/pkg/math/abs_arm.s\n> ===================================================================\n> --- a/src/pkg/math/abs_arm.s\n> +++ b/src/pkg/math/abs_arm.s\n> @@ -2,5 +2,12 @@\n> \u00a0// Use of this source code is governed by a BSD-style\n> \u00a0// license that can be found in the LICENSE file.\n>\n> +// func Abs(x float64) float64\n> \u00a0TEXT \u00b7Abs(SB),7,$0\n> - \u00a0 \u00a0 \u00a0 B \u00b7abs(SB)\n> + \u00a0 \u00a0 \u00a0 MOVW \u00a0 \u00a00(FP), R0\n> + \u00a0 \u00a0 \u00a0 MOVW \u00a0 \u00a0R0, 8(FP)\n> + \u00a0 \u00a0 \u00a0 MOVW \u00a0 \u00a0$((1<<31)-1), R2\n> + \u00a0 \u00a0 \u00a0 MOVW \u00a0 \u00a04(FP), R1\n> + \u00a0 \u00a0 \u00a0 AND \u00a0 \u00a0 R2, R1\n> + \u00a0 \u00a0 \u00a0 MOVW \u00a0 \u00a0R1, 12(FP)\n> + \u00a0 \u00a0 \u00a0 RET\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-04-21 11:22:35.607128",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Apr 22, 2012 at 1:28 AM, <remyoudompheng@gmail.com> wrote:\n\n> How does this compare to the following Go code?\n>\n> func abs(x float64) (y float64) {\n>      *(*uint64)(unsafe.Pointer(&y)) = *(*uint64)(unsafe.Pointer(&x)) &^\n> uint64(1<<63)\n>      return\n> }\n>\n5g generates this for this function:\n0000 (flt.go:3) TEXT   abs+0(SB),$0-16\n0001 (flt.go:3) MOVD   $(0.00000000000000000e+00),F0\n0002 (flt.go:3) MOVD   F0,y+8(FP)\n0003 (flt.go:5) MOVW   $y+8(FP),R5\n0004 (flt.go:5) MOVW   $x+0(FP),R0\n0005 (flt.go:5) MOVW   0(R0),R4\n0006 (flt.go:5) MOVW   4(R0),R1\n0007 (flt.go:5) MOVW   $-1,R2\n0008 (flt.go:5) AND     R2,R4,R0\n0009 (flt.go:5) MOVW   $2147483647,R2\n0010 (flt.go:5) AND     R2,R1,R3\n0011 (flt.go:5) MOVW   R0,R1\n0012 (flt.go:5) MOVW   R5,R0\n0013 (flt.go:5) MOVW   R3,R2\n0014 (flt.go:5) MOVW   R1,0(R5)\n0015 (flt.go:5) MOVW   R3,4(R5)\n0016 (flt.go:6) RET     ,\n\nit will be much slower than the assembly version, and what's worse, it\nunnecessarily\nload and store 0.0 into y, which will trigger a much more expensive soft\nfloat emulation\non systems without FPU.\n",
+			"disapproval": false,
+			"date": "2012-04-21 17:46:11.854726",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2012-04-23 15:42:39.277447",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Le 21 avril 2012 19:51, Michael Jones <mtj@google.com> a \u00e9crit :\n> Which is the key to all of this tuning -- it is \"non floating point\"\n> operations on \"floating point\" values -- and that's why you can't so easily\n> get to the optimum in any language that has opinions about the meaning of\n> storage. This is a job for assembler or BCPL or PL/360 or ...\n\nI'd say the use of unsafe and a more mature compiler (that eliminate\ndead stores and doesn't move a value through all registers) should\nalready give good results. It's just a bitwise operation and there\nisn't any assembly tricks to perform here. Or, the assembly could jump\nto this function instead:\n\nfunc unsafeabs(x uint64) uint64 { return x &^ (1<<63) }\n\nBut I agree that in the current state of 5g, the proposal is acceptable.\n\nR\u00e9my.\n",
+			"disapproval": false,
+			"date": "2012-04-21 18:02:19.470077",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"mtj@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dave@cheney.net, remyoudompheng@gmail.com, mtj@google.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-04-23 15:40:49.478429",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 6094047: math: ARM assembly implementation for Abs",
+	"created": "2012-04-21 10:47:47.088715",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9002,
+		11003
+	],
+	"modified": "2012-04-23 15:47:59.119283",
+	"closed": true,
+	"issue": 6094047
+}

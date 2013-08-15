@@ -1,0 +1,118 @@
+{
+	"description": "exp/html: more comprehensive tests\n\nCurrently, the html package only runs a limited subset of the tests\nin the testdata directory. This tends to limit development of the\nparser to fixing the bug that causes the first failing test.\n\nThis CL gives it the ability to run all the tests and produce a\nlog showing the status of each test. (It does it when tests are run with\n'go test --update-logs') The status is listed as PASS, FAIL, or PARSE\n(PARSE means that parsing produced the correct tree, but rendering and\nre-parsing does not produce the same tree).\n\nWhen 'go test' is run without --update-logs, it runs the tests marked\n'PASS' in the logs (and the parsing portion of the tests marked 'PARSE').\nThus it will fail if there has been a regression since the last\ntime the logs were updated.\n\nMy goal for this CL is to allow develoment of the html package to\nbe less test-driven, while still having the advantages of regression\ntests. In other words, one can work on any portion of the parser\nand quickly see whether he is breaking things or improving them.\n\nCurrent statistics of the tests:\n$ grep ^PASS *.log|wc -l\n        1017\n$ grep ^PARSE *.log|wc -l\n          46\n$ grep ^FAIL *.log|wc -l\n         181",
+	"cc": [
+		"nigeltao@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse.go\nFile src/pkg/exp/html/parse.go (right):\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse.go#newcode1803\nsrc/pkg/exp/html/parse.go:1803: defer func() {\nI extracted just enough of the loop body in TestParser into a separate function to make recover() work well there.\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go\nFile src/pkg/exp/html/parse_test.go (right):\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go#newcode244\nsrc/pkg/exp/html/parse_test.go:244: if *updateLogs {\nI extracted the parts of the loop body that don't need to know whether the log is being updated into a separate function.\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go#newcode290\nsrc/pkg/exp/html/parse_test.go:290: fmt.Fprintf(lf, \"pass %q\\n\", text)\nOn 2012/04/16 05:23:01, nigeltao wrote:\n> s/pass/PASS/, and similarly below.\n\nDone.\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go#newcode294\nsrc/pkg/exp/html/parse_test.go:294: if expectedResult == \"parse\" {\nOn 2012/04/16 05:23:01, nigeltao wrote:\n> s/parse/PARSE/, but what does PARSE mean, exactly?\n\nDone.\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go#newcode294\nsrc/pkg/exp/html/parse_test.go:294: if expectedResult == \"parse\" {\nOn 2012/04/16 05:25:17, nigeltao wrote:\n> On 2012/04/16 05:23:01, nigeltao wrote:\n> > s/parse/PARSE/, but what does PARSE mean, exactly?\n> \n> Specifically, it needs to be commented in the code, not just the change\n> description.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-04-16 16:46:20.651454",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, nigeltao@golang.org),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-04-14 17:20:27.891682",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse.go\nFile src/pkg/exp/html/parse.go (right):\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse.go#newcode1803\nsrc/pkg/exp/html/parse.go:1803: defer func() {\nI don't think that this is the right place to do defer/recover; you're working around a bug in Parse, instead of fixing Parse. If you need to know that calling Parse won't panic, I would rather put a wrapper func in parse_test.\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go\nFile src/pkg/exp/html/parse_test.go (right):\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go#newcode244\nsrc/pkg/exp/html/parse_test.go:244: if *updateLogs {\nAll these copy/paste \"if *updateLogs\" lines annoy me. Instead, how about making a closure earlier:\n\nfail := func(text, format string, args ...interface{}) {\n  if *updateLogs {\n    fmt.Fprintf(lf, \"FAIL %q\\n\", text)\n  } else {\n    t.Errorf(format, args...)\n  }\n}\n\nAnd replace\nt.Fatalf(s, x, y)\nwith\nfail(text, s, x, y)\ncontinue\n\nIt might also be worth trying to extract everything inside the \"for i := 0; ; i++\" loop into its own function.\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go#newcode290\nsrc/pkg/exp/html/parse_test.go:290: fmt.Fprintf(lf, \"pass %q\\n\", text)\ns/pass/PASS/, and similarly below.\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go#newcode294\nsrc/pkg/exp/html/parse_test.go:294: if expectedResult == \"parse\" {\ns/parse/PARSE/, but what does PARSE mean, exactly?",
+			"disapproval": false,
+			"date": "2012-04-16 05:23:01.022821",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go\nFile src/pkg/exp/html/parse_test.go (right):\n\nhttp://codereview.appspot.com/6031049/diff/1047/src/pkg/exp/html/parse_test.go#newcode294\nsrc/pkg/exp/html/parse_test.go:294: if expectedResult == \"parse\" {\nOn 2012/04/16 05:23:01, nigeltao wrote:\n> s/parse/PARSE/, but what does PARSE mean, exactly?\n\nSpecifically, it needs to be commented in the code, not just the change description.",
+			"disapproval": false,
+			"date": "2012-04-16 05:25:17.095034",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-04-16 16:44:39.679940",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=316890203045 ***\n\nexp/html: more comprehensive tests\n\nCurrently, the html package only runs a limited subset of the tests\nin the testdata directory. This tends to limit development of the\nparser to fixing the bug that causes the first failing test.\n\nThis CL gives it the ability to run all the tests and produce a\nlog showing the status of each test. (It does it when tests are run with\n'go test --update-logs') The status is listed as PASS, FAIL, or PARSE\n(PARSE means that parsing produced the correct tree, but rendering and\nre-parsing does not produce the same tree).\n\nWhen 'go test' is run without --update-logs, it runs the tests marked\n'PASS' in the logs (and the parsing portion of the tests marked 'PARSE').\nThus it will fail if there has been a regression since the last\ntime the logs were updated.\n\nMy goal for this CL is to allow develoment of the html package to\nbe less test-driven, while still having the advantages of regression\ntests. In other words, one can work on any portion of the parser\nand quickly see whether he is breaking things or improving them.\n\nCurrent statistics of the tests:\n$ grep ^PASS *.log|wc -l\n        1017\n$ grep ^PARSE *.log|wc -l\n          46\n$ grep ^FAIL *.log|wc -l\n         181\n\nR=nigeltao\nCC=golang-dev\nhttp://codereview.appspot.com/6031049\n\nCommitter: Nigel Tao <nigeltao@golang.org>",
+			"disapproval": false,
+			"date": "2012-04-17 07:17:30.369436",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\nThanks for doing this.",
+			"disapproval": false,
+			"date": "2012-04-17 07:14:17.603423",
+			"approval": true
+		}
+	],
+	"owner_email": "andybalholm@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "andybalholm",
+	"subject": "code review 6031049: exp/html: more comprehensive tests",
+	"created": "2012-04-14 17:18:24.796394",
+	"patchsets": [
+		1,
+		2001,
+		1047,
+		9002,
+		11001
+	],
+	"modified": "2012-04-17 15:38:26.187769",
+	"closed": true,
+	"issue": 6031049
+}

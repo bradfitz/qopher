@@ -1,0 +1,275 @@
+{
+	"description": "runtime: store asmcgocall return PC where the ARM unwind expects it\n\nThe ARM implementation of runtime.cgocallback_gofunc diverged\nfrom the calling convention by leaving a word of garbage at\nthe top of the stack and storing the return PC above the\nlocals.  This change stores the return PC at the top of the\nstack and removes the save area above the locals.\n\nUpdate Issue 5124\nThis CL fixes first part of the ARM issues and added the unwind test.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"minux.ma@gmail.com"
+	],
+	"reviewers": [
+		"rsc@golang.org",
+		"cshapiro@google.com",
+		"lucio.dere@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "All the tests already pass, though!  :-)\r\n\r\nOn Thu, Mar 21, 2013 at 7:38 PM, <cshapiro@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: store asmcgocall return PC where the ARM unwind expects it\r\n>\r\n> The ARM implementation of runtime.cgocallback_gofunc diverged\r\n> from the calling convention by leaving a word of garbage at\r\n> the top of the stack and storing the return PC above the\r\n> locals.  This change stores the return PC at the top of the\r\n> stack and removes the save area above the locals.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7728045/<https://codereview.appspot.com/7728045/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/asm_arm.s\r\n>\r\n>\r\n> Index: src/pkg/runtime/asm_arm.s\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/asm_arm.s\r\n> +++ b/src/pkg/runtime/asm_arm.s\r\n> @@ -326,7 +326,7 @@\r\n>\r\n>  // cgocallback_gofunc(void (*fn)(void*), void *frame, uintptr framesize)\r\n>  // See cgocall.c for more details.\r\n> -TEXT   runtime\u00b7cgocallback_gofunc(SB)**,7,$16\r\n> +TEXT   runtime\u00b7cgocallback_gofunc(SB)**,7,$12\r\n>         // Load m and g from thread-local storage.\r\n>         MOVW    _cgo_load_gm(SB), R0\r\n>         CMP     $0, R0\r\n> @@ -337,21 +337,21 @@\r\n>         // In this case, we're running on the thread stack, so there's\r\n>         // lots of space, but the linker doesn't know. Hide the call from\r\n>         // the linker analysis by using an indirect call.\r\n> -       MOVW    m, savedm-16(SP)\r\n> +       MOVW    m, savedm-12(SP)\r\n>         CMP     $0, m\r\n>         B.NE havem\r\n>         MOVW    $runtime\u00b7needm(SB), R0\r\n>         BL      (R0)\r\n>\r\n>  havem:\r\n> +       MOVW    fn+0(FP), R0\r\n> +       MOVW    frame+4(FP), R1\r\n> +       MOVW    framesize+8(FP), R2\r\n> +\r\n>         // Now there's a valid m, and we're running on its m->g0.\r\n>         // Save current m->g0->sched.sp on stack and then set it to SP.\r\n>         // Save current sp in m->g0->sched.sp in preparation for\r\n>         // switch back to m->curg stack.\r\n> -       MOVW    fn+0(FP), R0\r\n> -       MOVW    frame+4(FP), R1\r\n> -       MOVW    framesize+8(FP), R2\r\n> -\r\n>         MOVW    m_g0(m), R3\r\n>         MOVW    (g_sched+gobuf_sp)(R3), R4\r\n>         MOVW.W  R4, -4(R13)\r\n> @@ -368,23 +368,20 @@\r\n>         // This has the added benefit that it looks to the traceback\r\n>         // routine like cgocallbackg is going to return to that\r\n>         // PC (because we defined cgocallbackg to have\r\n> -       // a frame size of 16, the same amount that we use below),\r\n> +       // a frame size of 12, the same amount that we use below),\r\n>         // so that the traceback will seamlessly trace back into\r\n>         // the earlier calls.\r\n>\r\n> -       // Save current m->g0->sched.sp on stack and then set it to SP.\r\n>         MOVW    m_curg(m), g\r\n>         MOVW    (g_sched+gobuf_sp)(g), R4 // prepare stack as R4\r\n>\r\n>         // Push gobuf.pc\r\n>         MOVW    (g_sched+gobuf_pc)(g), R5\r\n> -       SUB     $4, R4\r\n> -       MOVW    R5, 0(R4)\r\n> +       MOVW.W  R5, -16(R4)\r\n>\r\n>         // Push arguments to cgocallbackg.\r\n>         // Frame size here must match the frame size above\r\n>         // to trick traceback routines into doing the right thing.\r\n> -       SUB     $16, R4\r\n>         MOVW    R0, 4(R4)\r\n>         MOVW    R1, 8(R4)\r\n>         MOVW    R2, 12(R4)\r\n> @@ -394,9 +391,9 @@\r\n>         BL      runtime\u00b7cgocallbackg(SB)\r\n>\r\n>         // Restore g->gobuf (== m->curg->gobuf) from saved values.\r\n> -       MOVW    16(R13), R5\r\n> +       MOVW    0(R13), R5\r\n>         MOVW    R5, (g_sched+gobuf_pc)(g)\r\n> -       ADD     $(16+4), R13 // SP clobbered! It is ok!\r\n> +       ADD     $(12+4), R13 // SP clobbered! It is ok!\r\n>         MOVW    R13, (g_sched+gobuf_sp)(g)\r\n>\r\n>         // Switch back to m->g0's stack and restore m->g0->sched.sp.\r\n> @@ -411,7 +408,7 @@\r\n>\r\n>         // If the m on entry was nil, we called needm above to borrow an m\r\n>         // for the duration of the call. Since the call is over, return it\r\n> with dropm.\r\n> -       MOVW    savedm-16(SP), R6\r\n> +       MOVW    savedm-12(SP), R6\r\n>         CMP     $0, R6\r\n>         B.NE    3(PC)\r\n>         MOVW    $runtime\u00b7dropm(SB), R0\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 02:46:14.311710",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@golang.org",
+			"recipients": [
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-22 02:38:54.467630",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Mar 21, 2013 at 7:46 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> All the tests already pass, though!  :-)\r\n\r\n\r\nTrue.  However, once the GC unwinds the stack they will not.  Specifically,\r\nthe cgo TestCallbackGC will fail.\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 03:01:33.685860",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Even without the GC, can't you test Go -> C -> Go -> runtime.Callers ?\r\n\r\nOn Thu, Mar 21, 2013 at 8:01 PM, Carl Shapiro <cshapiro@golang.org> wrote:\r\n\r\n> On Thu, Mar 21, 2013 at 7:46 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n>\r\n>> All the tests already pass, though!  :-)\r\n>\r\n>\r\n> True.  However, once the GC unwinds the stack they will not.\r\n>  Specifically, the cgo TestCallbackGC will fail.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 03:04:43.313950",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Mar 21, 2013 at 8:04 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> Even without the GC, can't you test Go -> C -> Go -> runtime.Callers ?\r\n\r\n\r\nThere may be some miscommunication.  This change alone is not sufficient to\r\nmake the stack unwind work.  See my latest message on the \"unwinding arm\r\nstacks through call-outs and call-backs\" thread.\r\n\r\nIt will be possible to write a test that does not require the GC.  More\r\nwork is required before such a test can be made to pass.\r\n",
+			"disapproval": false,
+			"date": "2013-03-22 18:54:28.324850",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "looks mostly fine to me.\n\nhttps://codereview.appspot.com/7728045/diff/5001/src/pkg/runtime/asm_arm.s\nFile src/pkg/runtime/asm_arm.s (right):\n\nhttps://codereview.appspot.com/7728045/diff/5001/src/pkg/runtime/asm_arm.s#newcode347\nsrc/pkg/runtime/asm_arm.s:347: MOVW\tfn+0(FP), R0\nwhy move this code block?\n\nhttps://codereview.appspot.com/7728045/diff/5001/src/pkg/runtime/asm_arm.s#newcode396\nsrc/pkg/runtime/asm_arm.s:396: ADD\t$(12+4), R13 // SP clobbered! It is ok!\nif you want, you could use another register in place of R13\nand remove the comment.",
+			"disapproval": false,
+			"date": "2013-03-22 19:25:05.888930",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7728045/diff/5001/src/pkg/runtime/asm_arm.s\nFile src/pkg/runtime/asm_arm.s (right):\n\nhttps://codereview.appspot.com/7728045/diff/5001/src/pkg/runtime/asm_arm.s#newcode347\nsrc/pkg/runtime/asm_arm.s:347: MOVW\tfn+0(FP), R0\nOn 2013/03/22 19:25:06, minux wrote:\n> why move this code block?\n\nMy intention was to move the comment down to the code it makes reference to.\n\nOn the x86 the argument moves would be on line 374.  I tried moving this code down there but got distracted by other issues before I could make it work.  I can leave a TODO here or give that change another try.\n\nWhat do you think?\n\nhttps://codereview.appspot.com/7728045/diff/5001/src/pkg/runtime/asm_arm.s#newcode396\nsrc/pkg/runtime/asm_arm.s:396: ADD\t$(12+4), R13 // SP clobbered! It is ok!\nSounds good.  I will make that change and re-upload.",
+			"disapproval": false,
+			"date": "2013-03-22 20:20:05.010670",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "All review comments should be addressed.",
+			"disapproval": false,
+			"date": "2013-03-22 22:53:44.937300",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you please add a test for this? Otherwise it will just break again.\r\nIt should be possible to write a test using runtime.Caller and/or\r\nruntime.Stack.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-03-23 20:13:04.949990",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Mar 23, 2013 at 1:13 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Can you please add a test for this? Otherwise it will just break again.\r\n> It should be possible to write a test using runtime.Caller and/or\r\n> runtime.Stack.\r\n>\r\n\r\nNo, I cannot.  The unwind does not work with this change alone.\r\n",
+			"disapproval": false,
+			"date": "2013-03-25 17:47:31.677640",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Do you want to add:\r\n\r\nUpdate Issue 5124\r\nThis CL fixes first part of the ARM issues and added the unwind test.\r\n",
+			"disapproval": false,
+			"date": "2013-03-25 20:45:18.505740",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL",
+			"disapproval": false,
+			"date": "2013-03-25 20:28:38.611480",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nMore for the test code than the assembly, but I'll trust you, especially now that there's a test.",
+			"disapproval": false,
+			"date": "2013-03-25 20:36:08.392960",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.",
+			"disapproval": false,
+			"date": "2013-03-25 20:43:55.494080",
+			"approval": true
+		},
+		{
+			"sender": "cshapiro@golang.org",
+			"recipients": [
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"cshapiro@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=17b2bed9d136 ***\n\nruntime: store asmcgocall return PC where the ARM unwind expects it\n\nThe ARM implementation of runtime.cgocallback_gofunc diverged\nfrom the calling convention by leaving a word of garbage at\nthe top of the stack and storing the return PC above the\nlocals.  This change stores the return PC at the top of the\nstack and removes the save area above the locals.\n\nUpdate Issue 5124\nThis CL fixes first part of the ARM issues and added the unwind test.\n\nR=golang-dev, bradfitz, minux.ma, cshapiro, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/7728045",
+			"disapproval": false,
+			"date": "2013-03-25 21:11:24.950640",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"cshapiro@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"cshapiro@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The changes look good otherwise.\n\nhttps://codereview.appspot.com/7728045/diff/32001/src/pkg/runtime/asm_arm.s\nFile src/pkg/runtime/asm_arm.s (right):\n\nhttps://codereview.appspot.com/7728045/diff/32001/src/pkg/runtime/asm_arm.s#newcode370\nsrc/pkg/runtime/asm_arm.s:370: MOVW\tfn+4(FP), R0\nThis is very confusing. Can you please move the instructions back up above so they can use the correct offsets? Here you're writing fn+4(FP), even though fn is really at 0(FP), because you need to adjust for the -4 of the MOVW.W above. Unless there's a very good reason - and if so it should be commented - the fix is to do these loads above, before changing R13 behind the assembler's back.",
+			"disapproval": false,
+			"date": "2013-03-25 22:12:01.322890",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@golang.org",
+				"rsc@golang.org",
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7728045/diff/32001/src/pkg/runtime/asm_arm.s\nFile src/pkg/runtime/asm_arm.s (right):\n\nhttps://codereview.appspot.com/7728045/diff/32001/src/pkg/runtime/asm_arm.s#newcode370\nsrc/pkg/runtime/asm_arm.s:370: MOVW\tfn+4(FP), R0\nThe motivation here is to make the code read like the x86 code.  Where this code was before, the preceeding comment was separated from its referent.\n\nI don't find this so confusing so I will defer to you on what might be more perspicuous.  The 2 options I see are 1) leave this where it is and add a note about the FP being adjusted 2) move this code below line 346\n\nEither way is fine with me.  Let me know what you like.",
+			"disapproval": false,
+			"date": "2013-03-25 22:21:04.586350",
+			"approval": false
+		},
+		{
+			"sender": "lucio.dere@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can I vote in favour of exploiting the \"_arm\" suffix and making the\r\ncode differ from _386?  It is the only place where previous art can be\r\ntreated as irrelevant and whereas I don't know whether the 386 code is\r\nintentionally obfuscating or merely clever, I don't see why the arm\r\ncode should follow that example.\r\n\r\nTo be a bit facitious, would a comment like\r\n\r\n  // let's do things like for the 386\r\n\r\nnot look silly in an arm module?\r\n\r\nLucio.\r\n\r\nPS: The reason I'm speaking up is that I'm about to submit a CL to\r\nport Go to plan9/386 and in helping prepare the CL I became convinced\r\nthat it is poor judgement to follow the 386 examples too far.\r\n\r\n\r\nOn 3/26/13, cshapiro@google.com <cshapiro@google.com> wrote:\r\n>\r\n> https://codereview.appspot.com/7728045/diff/32001/src/pkg/runtime/asm_arm.s\r\n> File src/pkg/runtime/asm_arm.s (right):\r\n>\r\n> https://codereview.appspot.com/7728045/diff/32001/src/pkg/runtime/asm_arm.s#newcode370\r\n> src/pkg/runtime/asm_arm.s:370: MOVW\tfn+4(FP), R0\r\n> The motivation here is to make the code read like the x86 code.  Where\r\n> this code was before, the preceeding comment was separated from its\r\n> referent.\r\n>\r\n> I don't find this so confusing so I will defer to you on what might be\r\n> more perspicuous.  The 2 options I see are 1) leave this where it is and\r\n> add a note about the FP being adjusted 2) move this code below line 346\r\n>\r\n> Either way is fine with me.  Let me know what you like.\r\n>\r\n> https://codereview.appspot.com/7728045/\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-26 07:45:45.422230",
+			"approval": false
+		}
+	],
+	"owner_email": "cshapiro@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "cshapiro",
+	"subject": "code review 7728045: runtime: store asmcgocall return PC where the ARM unwin...",
+	"created": "2013-03-22 02:35:54.449350",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		15001,
+		18001,
+		24001,
+		19002,
+		4002,
+		24002,
+		32001
+	],
+	"modified": "2013-03-26 07:45:45.535010",
+	"closed": true,
+	"issue": 7728045
+}

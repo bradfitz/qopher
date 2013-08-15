@@ -1,0 +1,109 @@
+{
+	"description": "runtime: account stop-the-world time in the \"other\" GOGCTRACE section\nCurrently it's summed to mark phase.\nThe change makes it easier to diagnose long stop-the-world phases.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"dave@cheney.net"
+	],
+	"reviewers": [
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=2da48f86d386 ***\n\nruntime: account stop-the-world time in the \"other\" GOGCTRACE section\nCurrently it's summed to mark phase.\nThe change makes it easier to diagnose long stop-the-world phases.\n\nR=golang-dev, bradfitz, dave\nCC=golang-dev\nhttps://codereview.appspot.com/7182043",
+			"disapproval": false,
+			"date": "2013-01-22 09:45:23.321030",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-01-21 16:17:01.620840",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks Dmitry, this will show some useful data. Consider the following\r\n\r\nodessa:~ dfc$ GOGCTRACE=1 go list\r\ngc1(1): 34+0+0 ms, 0 -> 0 MB 11 -> 13 (14-1) objects, 0(0) handoff,\r\n0(0) steal, 0/0/0 yields\r\ngc2(1): 20+0+0 ms, 1 -> 1 MB 4879 -> 2094 (4968-2874) objects, 0(0)\r\nhandoff, 0(0) steal, 0/0/0 yields\r\n_/Users/dfc\r\nodessa:~ dfc$ GOGCTRACE=1 go list\r\ngc1(1): 0+0+0 ms, 0 -> 0 MB 11 -> 13 (14-1) objects, 0(0) handoff,\r\n0(0) steal, 0/0/0 yields\r\ngc2(1): 0+0+0 ms, 1 -> 1 MB 4971 -> 2059 (5062-3003) objects, 0(0)\r\nhandoff, 0(0) steal, 0/0/0 yields\r\n_/Users/dfc\r\n\r\nWhy does the same program, run twice, report different t0's, yet have\r\nalmost the same memory footprint ? Something is extending the t0's,\r\nand I think this was syscall blocking as the first run was done with a\r\ncold disk cache.\r\n",
+			"disapproval": false,
+			"date": "2013-01-21 20:08:19.798110",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n On Jan 21, 2013 8:17 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: account stop-the-world time in the \"other\" GOGCTRACE section\r\n> Currently it's summed to sweep phase.\r\n> The change makes it easier to diagnose long stop-the-world phases.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7182043/<https://codereview.appspot.com/7182043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/mgc0.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/mgc0.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mgc0.c\r\n> +++ b/src/pkg/runtime/mgc0.c\r\n> @@ -1474,7 +1474,7 @@\r\n>  static void\r\n>  gc(struct gc_args *args)\r\n>  {\r\n> -       int64 t0, t1, t2, t3;\r\n> +       int64 t0, t1, t2, t3, t4;\r\n>         uint64 heap0, heap1, obj0, obj1;\r\n>         GCStats stats;\r\n>         M *mp;\r\n> @@ -1528,6 +1528,8 @@\r\n>                 runtime\u00b7helpgc(work.nproc);\r\n>         }\r\n>\r\n> +       t1 = runtime\u00b7nanotime();\r\n> +\r\n>         runtime\u00b7parfordo(work.markfor)**;\r\n>         scanblock(nil, nil, 0, true);\r\n>\r\n> @@ -1536,10 +1538,10 @@\r\n>                         debug_scanblock(work.roots[i].**p,\r\n> work.roots[i].n);\r\n>                 runtime\u00b7atomicstore(&work.**debugmarkdone, 1);\r\n>         }\r\n> -       t1 = runtime\u00b7nanotime();\r\n> +       t2 = runtime\u00b7nanotime();\r\n>\r\n>         runtime\u00b7parfordo(work.**sweepfor);\r\n> -       t2 = runtime\u00b7nanotime();\r\n> +       t3 = runtime\u00b7nanotime();\r\n>\r\n>         stealcache();\r\n>         cachestats(&stats);\r\n> @@ -1569,18 +1571,18 @@\r\n>         heap1 = mstats.heap_alloc;\r\n>         obj1 = mstats.nmalloc - mstats.nfree;\r\n>\r\n> -       t3 = runtime\u00b7nanotime();\r\n> -       mstats.last_gc = t3;\r\n> -       mstats.pause_ns[mstats.numgc%**nelem(mstats.pause_ns)] = t3 - t0;\r\n> -       mstats.pause_total_ns += t3 - t0;\r\n> +       t4 = runtime\u00b7nanotime();\r\n> +       mstats.last_gc = t4;\r\n> +       mstats.pause_ns[mstats.numgc%**nelem(mstats.pause_ns)] = t4 - t0;\r\n> +       mstats.pause_total_ns += t4 - t0;\r\n>         mstats.numgc++;\r\n>         if(mstats.debuggc)\r\n> -               runtime\u00b7printf(\"pause %D\\n\", t3-t0);\r\n> +               runtime\u00b7printf(\"pause %D\\n\", t4-t0);\r\n>\r\n>         if(gctrace) {\r\n>                 runtime\u00b7printf(\"gc%d(%d): %D+%D+%D ms, %D -> %D MB %D ->\r\n> %D (%D-%D) objects,\"\r\n>                                 \" %D(%D) handoff, %D(%D) steal, %D/%D/%D\r\n> yields\\n\",\r\n> -                       mstats.numgc, work.nproc, (t1-t0)/1000000,\r\n> (t2-t1)/1000000, (t3-t2)/1000000,\r\n> +                       mstats.numgc, work.nproc, (t2-t1)/1000000,\r\n> (t3-t2)/1000000, (t1-t0+t4-t3)/1000000,\r\n>                         heap0>>20, heap1>>20, obj0, obj1,\r\n>                         mstats.nmalloc, mstats.nfree,\r\n>                         stats.nhandoff, stats.nhandoffcnt,\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-21 16:47:05.409210",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Let me do some measurements \r\n\r\nOn 22/01/2013, at 20:46, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> On Tue, Jan 22, 2013 at 12:08 AM, Dave Cheney <dave@cheney.net> wrote:\r\n>> Thanks Dmitry, this will show some useful data. Consider the following\r\n>> \r\n>> odessa:~ dfc$ GOGCTRACE=1 go list\r\n>> gc1(1): 34+0+0 ms, 0 -> 0 MB 11 -> 13 (14-1) objects, 0(0) handoff,\r\n>> 0(0) steal, 0/0/0 yields\r\n>> gc2(1): 20+0+0 ms, 1 -> 1 MB 4879 -> 2094 (4968-2874) objects, 0(0)\r\n>> handoff, 0(0) steal, 0/0/0 yields\r\n>> _/Users/dfc\r\n>> odessa:~ dfc$ GOGCTRACE=1 go list\r\n>> gc1(1): 0+0+0 ms, 0 -> 0 MB 11 -> 13 (14-1) objects, 0(0) handoff,\r\n>> 0(0) steal, 0/0/0 yields\r\n>> gc2(1): 0+0+0 ms, 1 -> 1 MB 4971 -> 2059 (5062-3003) objects, 0(0)\r\n>> handoff, 0(0) steal, 0/0/0 yields\r\n>> _/Users/dfc\r\n>> \r\n>> Why does the same program, run twice, report different t0's, yet have\r\n>> almost the same memory footprint ? Something is extending the t0's,\r\n>> and I think this was syscall blocking as the first run was done with a\r\n>> cold disk cache.\r\n> \r\n> Does it look different with this change? Is it actually stop-the-world time?\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 09:50:06.419550",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jan 22, 2013 at 12:08 AM, Dave Cheney <dave@cheney.net> wrote:\r\n> Thanks Dmitry, this will show some useful data. Consider the following\r\n>\r\n> odessa:~ dfc$ GOGCTRACE=1 go list\r\n> gc1(1): 34+0+0 ms, 0 -> 0 MB 11 -> 13 (14-1) objects, 0(0) handoff,\r\n> 0(0) steal, 0/0/0 yields\r\n> gc2(1): 20+0+0 ms, 1 -> 1 MB 4879 -> 2094 (4968-2874) objects, 0(0)\r\n> handoff, 0(0) steal, 0/0/0 yields\r\n> _/Users/dfc\r\n> odessa:~ dfc$ GOGCTRACE=1 go list\r\n> gc1(1): 0+0+0 ms, 0 -> 0 MB 11 -> 13 (14-1) objects, 0(0) handoff,\r\n> 0(0) steal, 0/0/0 yields\r\n> gc2(1): 0+0+0 ms, 1 -> 1 MB 4971 -> 2059 (5062-3003) objects, 0(0)\r\n> handoff, 0(0) steal, 0/0/0 yields\r\n> _/Users/dfc\r\n>\r\n> Why does the same program, run twice, report different t0's, yet have\r\n> almost the same memory footprint ? Something is extending the t0's,\r\n> and I think this was syscall blocking as the first run was done with a\r\n> cold disk cache.\r\n\r\nDoes it look different with this change? Is it actually stop-the-world time?\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 09:46:21.636370",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-01-30 16:58:43.612400",
+			"approval": true
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 7182043: runtime: account stop-the-world time in the \"other\" GOG...",
+	"created": "2013-01-21 16:15:44.984450",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		2004
+	],
+	"modified": "2013-01-30 16:58:43.783500",
+	"closed": true,
+	"issue": 7182043
+}

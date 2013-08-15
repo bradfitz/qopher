@@ -1,0 +1,108 @@
+{
+	"description": "cmd/5g: avoid temporary during constant binary op\n\nThis CL is an attempt to backport the abop code generation from 6g. This improves the generation of the range offset if the increment can be encoded directly via Operand2 shift encoding.\n\n0023 (/home/dfc/src/range.go:7) BGE     ,29(APC)\n0024 (/home/dfc/src/range.go:7) MOVW    0(R3),R5\n0025 (/home/dfc/src/range.go:7) MOVW    $4,R1\n0026 (/home/dfc/src/range.go:7) ADD     R1,R3,R3\n0027 (/home/dfc/src/range.go:8) ADD     R5,R4,R4\n0028 (/home/dfc/src/range.go:7) B       ,17(APC)\n\nbecomes\n\n0023 (/home/dfc/src/range.go:7) BGE     ,28(APC)\n0024 (/home/dfc/src/range.go:7) MOVW    0(R3),R0\n0025 (/home/dfc/src/range.go:7) ADD     $4,R3,R3\n0026 (/home/dfc/src/range.go:8) ADD     R0,R4,R4\n0027 (/home/dfc/src/range.go:7) B       ,17(APC)\n\nBenchmarks are unimpressive\n\ndfc@qnap:~/go/test/bench/go1$ ~/go/misc/benchcmp {old,new}.txt\nbenchmark                 old ns/op    new ns/op    delta\nBenchmarkBinaryTree17    2147483647   2147483647   +0.93%\nBenchmarkFannkuch11      2147483647   2147483647   -2.52%\nBenchmarkGobDecode        196135200    195842000   -0.15%\nBenchmarkGobEncode         78581650     76734450   -2.35%\nBenchmarkGzip            2147483647   2147483647   -0.47%\nBenchmarkGunzip          1087243000   1070254000   -1.56%\nBenchmarkJSONEncode      1107558000   1146077000   +3.48%\nBenchmarkJSONDecode      2147483647   2147483647   -0.07%\nBenchmarkMandelbrot200   2147483647   2147483647   -0.77%\nBenchmarkParse             74328550     71653400   -3.60%\nBenchmarkRevcomp          111123900    109325950   -1.62%\nBenchmarkTemplate        2147483647   2147483647   -0.82%\n\nbenchmark                  old MB/s     new MB/s  speedup\nBenchmarkGobDecode             3.91         3.92    1.00x\nBenchmarkGobEncode             9.77        10.00    1.02x\nBenchmarkGzip                  3.65         3.66    1.00x\nBenchmarkGunzip               17.85        18.13    1.02x\nBenchmarkJSONEncode            1.75         1.69    0.97x\nBenchmarkJSONDecode            0.83         0.83    1.00x\nBenchmarkParse                 0.78         0.81    1.04x\nBenchmarkRevcomp              22.87        23.25    1.02x\nBenchmarkTemplate              0.84         0.85    1.01x",
+	"cc": [
+		"remyoudompheng@gmail.com",
+		"minux.ma@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Code LGTM. Thanks.\n\nI think the description is a bit too narrow,\nthis improves general constant addition and subtraction,\nand not only range offset code.\n\nhttps://codereview.appspot.com/6564067/diff/11001/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (left):\n\nhttps://codereview.appspot.com/6564067/diff/11001/src/cmd/5g/cgen.c#oldcode438\nsrc/cmd/5g/cgen.c:438: // TODO(kaib): use fewer registers here.\nI suggest we keep this comment for now, because we haven't\noptimized all binary operators here.",
+			"disapproval": false,
+			"date": "2012-09-28 13:40:22.522350",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've added support for the other operations, PTAL. This was able to squeeze a little bit more out on the benchmarks (Gunzip has improved).\n\nbenchmark                 old ns/op    new ns/op    delta\nBenchmarkBinaryTree17    2147483647   2147483647   +0.28%\nBenchmarkFannkuch11      2147483647   2147483647   -2.52%\nBenchmarkGobDecode        196135200    199605800   +1.77%\nBenchmarkGobEncode         78581650     75762450   -3.59%\nBenchmarkGzip            2147483647   2147483647   -1.27%\nBenchmarkGunzip          1087243000   1063350000   -2.20%\nBenchmarkJSONEncode      1107558000   1139766000   +2.91%\nBenchmarkJSONDecode      2147483647   2147483647   +0.60%\nBenchmarkMandelbrot200   2147483647   2147483647   -0.36%\nBenchmarkParse             74328550     73245100   -1.46%\nBenchmarkRevcomp          111123900    102247150   -7.99%\nBenchmarkTemplate        2147483647   2147483647   +0.29%\n\nbenchmark                  old MB/s     new MB/s  speedup\nBenchmarkGobDecode             3.91         3.85    0.98x\nBenchmarkGobEncode             9.77        10.13    1.04x\nBenchmarkGzip                  3.65         3.69    1.01x\nBenchmarkGunzip               17.85        18.25    1.02x\nBenchmarkJSONEncode            1.75         1.70    0.97x\nBenchmarkJSONDecode            0.83         0.83    1.00x\nBenchmarkParse                 0.78         0.79    1.01x\nBenchmarkRevcomp              22.87        24.86    1.09x\nBenchmarkTemplate              0.84         0.84    1.00x\n\nhttps://codereview.appspot.com/6564067/diff/11001/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (left):\n\nhttps://codereview.appspot.com/6564067/diff/11001/src/cmd/5g/cgen.c#oldcode438\nsrc/cmd/5g/cgen.c:438: // TODO(kaib): use fewer registers here.\nOn 2012/09/28 13:40:22, minux wrote:\n> I suggest we keep this comment for now, because we haven't\n> optimized all binary operators here.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-09-28 14:02:08.015450",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, minux.ma@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-09-28 13:15:43.414030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-10-01 20:04:47.045950",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=be1af56822d4 ***\n\ncmd/5g: avoid temporary during constant binary op\n\nThis CL is an attempt to backport the abop code generation from 6g. This improves the generation of the range offset if the increment can be encoded directly via Operand2 shift encoding.\n\n0023 (/home/dfc/src/range.go:7) BGE     ,29(APC)\n0024 (/home/dfc/src/range.go:7) MOVW    0(R3),R5\n0025 (/home/dfc/src/range.go:7) MOVW    $4,R1\n0026 (/home/dfc/src/range.go:7) ADD     R1,R3,R3\n0027 (/home/dfc/src/range.go:8) ADD     R5,R4,R4\n0028 (/home/dfc/src/range.go:7) B       ,17(APC)\n\nbecomes\n\n0023 (/home/dfc/src/range.go:7) BGE     ,28(APC)\n0024 (/home/dfc/src/range.go:7) MOVW    0(R3),R0\n0025 (/home/dfc/src/range.go:7) ADD     $4,R3,R3\n0026 (/home/dfc/src/range.go:8) ADD     R0,R4,R4\n0027 (/home/dfc/src/range.go:7) B       ,17(APC)\n\nBenchmarks are unimpressive\n\ndfc@qnap:~/go/test/bench/go1$ ~/go/misc/benchcmp {old,new}.txt\nbenchmark                 old ns/op    new ns/op    delta\nBenchmarkBinaryTree17    2147483647   2147483647   +0.93%\nBenchmarkFannkuch11      2147483647   2147483647   -2.52%\nBenchmarkGobDecode        196135200    195842000   -0.15%\nBenchmarkGobEncode         78581650     76734450   -2.35%\nBenchmarkGzip            2147483647   2147483647   -0.47%\nBenchmarkGunzip          1087243000   1070254000   -1.56%\nBenchmarkJSONEncode      1107558000   1146077000   +3.48%\nBenchmarkJSONDecode      2147483647   2147483647   -0.07%\nBenchmarkMandelbrot200   2147483647   2147483647   -0.77%\nBenchmarkParse             74328550     71653400   -3.60%\nBenchmarkRevcomp          111123900    109325950   -1.62%\nBenchmarkTemplate        2147483647   2147483647   -0.82%\n\nbenchmark                  old MB/s     new MB/s  speedup\nBenchmarkGobDecode             3.91         3.92    1.00x\nBenchmarkGobEncode             9.77        10.00    1.02x\nBenchmarkGzip                  3.65         3.66    1.00x\nBenchmarkGunzip               17.85        18.13    1.02x\nBenchmarkJSONEncode            1.75         1.69    0.97x\nBenchmarkJSONDecode            0.83         0.83    1.00x\nBenchmarkParse                 0.78         0.81    1.04x\nBenchmarkRevcomp              22.87        23.25    1.02x\nBenchmarkTemplate              0.84         0.85    1.01x\n\nR=remyoudompheng, minux.ma, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6564067",
+			"disapproval": false,
+			"date": "2012-10-01 22:12:52.948080",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 6564067: cmd/5g: avoid temporary during constant binary op",
+	"created": "2012-09-28 12:05:29.802290",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		5002,
+		8001,
+		11001,
+		12003,
+		3004,
+		5,
+		16001,
+		19001
+	],
+	"modified": "2012-10-03 23:44:11.413010",
+	"closed": true,
+	"issue": 6564067
+}

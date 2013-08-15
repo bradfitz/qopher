@@ -1,0 +1,60 @@
+{
+	"description": "net: allow LookupSRV on non-standard DNS names",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-18 17:48:16.229068",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn Tue, Oct 18, 2011 at 10:48 AM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> net: allow LookupSRV on non-standard DNS names\n>\n> Please review this at http://codereview.appspot.com/**5313043/<http://codereview.appspot.com/5313043/>\n>\n> Affected files:\n>  M src/pkg/net/lookup_plan9.go\n>  M src/pkg/net/lookup_test.go\n>  M src/pkg/net/lookup_unix.go\n>  M src/pkg/net/lookup_windows.go\n>\n>\n> Index: src/pkg/net/lookup_plan9.go\n> ==============================**==============================**=======\n> --- a/src/pkg/net/lookup_plan9.go\n> +++ b/src/pkg/net/lookup_plan9.go\n> @@ -157,12 +157,21 @@\n>  }\n>\n>  // LookupSRV tries to resolve an SRV query of the given service,\n> -// protocol, and domain name, as specified in RFC 2782. In most cases\n> -// the proto argument can be the same as the corresponding\n> -// Addr.Network(). The returned records are sorted by priority\n> -// and randomized by weight within a priority.\n> +// protocol, and domain name.  The proto is \"tcp\" or \"udp\".\n> +// The returned records are sorted by priority and randomized\n> +// by weight within a priority.\n> +//\n> +// LookupSRV constructs the DNS name to look up following RFC 2782.\n> +// That is, it looks up _service._proto.name.  To accommodate services\n> +// publishing SRV records under non-standard names, if both service\n> +// and proto are empty strings, LookupSRV looks up name directly.\n>  func LookupSRV(service, proto, name string) (cname string, addrs []*SRV,\n> err os.Error) {\n> -       target := \"_\" + service + \"._\" + proto + \".\" + name\n> +       var target string\n> +       if service == \"\" && proto == \"\" {\n> +               target = name\n> +       } else {\n> +               target = \"_\" + service + \"._\" + proto + \".\" + name\n> +       }\n>        lines, err := queryDNS(target, \"srv\")\n>        if err != nil {\n>                return\n> Index: src/pkg/net/lookup_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/net/lookup_test.go\n> +++ b/src/pkg/net/lookup_test.go\n> @@ -26,6 +26,15 @@\n>        if len(addrs) == 0 {\n>                t.Errorf(\"no results\")\n>        }\n> +\n> +       // Non-standard back door.\n> +       _, addrs, err = LookupSRV(\"\", \"\", \"_xmpp-server._tcp.google.com\"**\n> )\n> +       if err != nil {\n> +               t.Errorf(\"back door failed: %s\", err)\n> +       }\n> +       if len(addrs) == 0 {\n> +               t.Errorf(\"back door no results\")\n> +       }\n>  }\n>\n>  func TestGmailMX(t *testing.T) {\n> Index: src/pkg/net/lookup_unix.go\n> ==============================**==============================**=======\n> --- a/src/pkg/net/lookup_unix.go\n> +++ b/src/pkg/net/lookup_unix.go\n> @@ -94,12 +94,21 @@\n>  }\n>\n>  // LookupSRV tries to resolve an SRV query of the given service,\n> -// protocol, and domain name, as specified in RFC 2782. In most cases\n> -// the proto argument can be the same as the corresponding\n> -// Addr.Network(). The returned records are sorted by priority\n> -// and randomized by weight within a priority.\n> +// protocol, and domain name.  The proto is \"tcp\" or \"udp\".\n> +// The returned records are sorted by priority and randomized\n> +// by weight within a priority.\n> +//\n> +// LookupSRV constructs the DNS name to look up following RFC 2782.\n> +// That is, it looks up _service._proto.name.  To accommodate services\n> +// publishing SRV records under non-standard names, if both service\n> +// and proto are empty strings, LookupSRV looks up name directly.\n>  func LookupSRV(service, proto, name string) (cname string, addrs []*SRV,\n> err os.Error) {\n> -       target := \"_\" + service + \"._\" + proto + \".\" + name\n> +       var target string\n> +       if service == \"\" && proto == \"\" {\n> +               target = name\n> +       } else {\n> +               target = \"_\" + service + \"._\" + proto + \".\" + name\n> +       }\n>        var records []dnsRR\n>        cname, records, err = lookup(target, dnsTypeSRV)\n>        if err != nil {\n> Index: src/pkg/net/lookup_windows.go\n> ==============================**==============================**=======\n> --- a/src/pkg/net/lookup_windows.**go\n> +++ b/src/pkg/net/lookup_windows.**go\n> @@ -91,9 +91,23 @@\n>        return\n>  }\n>\n> +// LookupSRV tries to resolve an SRV query of the given service,\n> +// protocol, and domain name.  The proto is \"tcp\" or \"udp\".\n> +// The returned records are sorted by priority and randomized\n> +// by weight within a priority.\n> +//\n> +// LookupSRV constructs the DNS name to look up following RFC 2782.\n> +// That is, it looks up _service._proto.name.  To accommodate services\n> +// publishing SRV records under non-standard names, if both service\n> +// and proto are empty strings, LookupSRV looks up name directly.\n>  func LookupSRV(service, proto, name string) (cname string, addrs []*SRV,\n> err os.Error) {\n> +       var target string\n> +       if service == \"\" && proto == \"\" {\n> +               target = name\n> +       } else {\n> +               target = \"_\" + service + \"._\" + proto + \".\" + name\n> +       }\n>        var r *syscall.DNSRecord\n> -       target := \"_\" + service + \"._\" + proto + \".\" + name\n>        e := syscall.DnsQuery(target, syscall.DNS_TYPE_SRV, 0, nil, &r, nil)\n>        if int(e) != 0 {\n>                return \"\", nil, os.NewSyscallError(\"LookupSRV\"**, int(e))\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-18 17:53:10.304160",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=3198ce30ea39 ***\n\nnet: allow LookupSRV on non-standard DNS names\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5313043",
+			"disapproval": false,
+			"date": "2011-10-18 17:57:07.203398",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5313043: net: allow LookupSRV on non-standard DNS names",
+	"created": "2011-10-18 17:47:51.653702",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		7001
+	],
+	"modified": "2011-10-18 17:57:08.283737",
+	"closed": true,
+	"issue": 5313043
+}

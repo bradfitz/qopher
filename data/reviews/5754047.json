@@ -1,0 +1,72 @@
+{
+	"description": "build: use run.go for running tests\n\nAlso, tweak run.go to use no more than 2x the\nnumber of CPUs, and only one on ARM.\n\n53.85u 13.33s 53.69r \t ./run\n50.68u 12.13s 18.85r \t go run run.go\n\nFixes issue 2833.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [
+		"minux.ma@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Mar 6, 2012 at 11:47 AM, <rsc@golang.org> wrote:\n>\n>  build: use run.go for running tests\n>\n> Also, tweak run.go to use no more than 2x the\n> number of CPUs, and only one on ARM.\n>\nThe Linux/ARM builder has two CPU cores, and currently this part of test\ntakes most of the\ntime. I believe it will receive some speedup if we set it to runtime.NumCPU()\ninstead of 1\n(it certainly won't hurt ARM machines with only 1 core, but it will speed\nup the multicore\nmachines.)\n\nSome statistics on idle builder with tmpfs holding ~/work2:\nminux@omap4460:~/work2/go/test$ /usr/bin/time go run run.go -n=4\n290.89user 37.23system 2:53.16elapsed 189%CPU (0avgtext+0avgdata\n304368maxresident)k\n0inputs+0outputs (0major+3202559minor)pagefaults 0swaps\n\nminux@omap4460:~/work2/go/test$ /usr/bin/time go run run.go -n=3\n289.71user 36.03system 2:51.91elapsed 189%CPU (0avgtext+0avgdata\n304448maxresident)k\n0inputs+0outputs (0major+3195588minor)pagefaults 0swaps\n\nminux@omap4460:~/work2/go/test$ /usr/bin/time go run run.go -n=2\n288.66user 35.11system 2:52.45elapsed 187%CPU (0avgtext+0avgdata\n304368maxresident)k\n0inputs+0outputs (0major+3192096minor)pagefaults 0swaps\n\nminux@omap4460:~/work2/go/test$ /usr/bin/time go run run.go -n=1\n290.06user 35.67system 5:31.61elapsed 98%CPU (0avgtext+0avgdata\n304368maxresident)k\n0inputs+0outputs (0major+3179289minor)pagefaults 0swaps\n\nminux@omap4460:~/work2/go/test$ /usr/bin/time ./run &>/dev/null\n263.31user 36.98system 5:28.20elapsed 91%CPU (0avgtext+0avgdata\n1165424maxresident)k\n0inputs+0outputs (0major+3948024minor)pagefaults 0swaps\n\nI've made a CL for this: http://codereview.appspot.com/5753054.\n",
+			"disapproval": false,
+			"date": "2012-03-06 14:22:05.576717",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\n\"Fixes issue 2833\"\n\n\nOn Mon, Mar 5, 2012 at 7:26 PM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://code.google.com/p/go/\n>\n>\n> Description:\n> build: use run.go for running tests\n>\n> Also, tweak run.go to use no more than 2x the\n> number of CPUs, and only one on ARM.\n>\n> 53.85u 13.33s 53.69r     ./run\n> 50.68u 12.13s 18.85r     go run run.go\n>\n> Please review this at http://codereview.appspot.com/**5754047/<http://codereview.appspot.com/5754047/>\n>\n> Affected files:\n>  M src/run.bash\n>  M src/run.bat\n>  M test/run.go\n>\n>\n> Index: src/run.bash\n> ==============================**==============================**=======\n> --- a/src/run.bash\n> +++ b/src/run.bash\n> @@ -105,7 +105,7 @@\n>  ) || exit $?\n>\n>  (xcd ../test\n> -./run\n> +time go run run.go\n>  ) || exit $?\n>\n>  echo\n> Index: src/run.bat\n> ==============================**==============================**=======\n> --- a/src/run.bat\n> +++ b/src/run.bat\n> @@ -36,7 +36,14 @@\n>  if errorlevel 1 goto fail\n>  echo.\n>\n> -:: TODO: The other tests in run.bash, especially $GOROOT/test/run.\n> +:: TODO: The other tests in run.bash.\n> +\n> +echo # test\n> +cd test\n> +go run run.go\n> +cd ..\n> +if errorlevel 1 goto fail\n> +echo.\n>\n>  echo ALL TESTS PASSED\n>  goto end\n> Index: test/run.go\n> ==============================**==============================**=======\n> --- a/test/run.go\n> +++ b/test/run.go\n> @@ -30,7 +30,7 @@\n>\n>  var (\n>        verbose     = flag.Bool(\"v\", false, \"verbose. if set, parallelism\n> is set to 1.\")\n> -       numParallel = flag.Int(\"n\", 8, \"number of parallel tests to run\")\n> +       numParallel = flag.Int(\"n\", 2*runtime.NumCPU(), \"number of\n> parallel tests to run\")\n>        summary     = flag.Bool(\"summary\", false, \"show summary of results\")\n>        showSkips   = flag.Bool(\"show_skips\", false, \"show skipped tests\")\n>  )\n> @@ -60,7 +60,10 @@\n>\n>  func main() {\n>        flag.Parse()\n> -       if *verbose {\n> +\n> +       // Disable parallelism if printing, or if running on\n> +       // (presumably underpowered) arm systems.\n> +       if *verbose || runtime.GOARCH == \"arm\" {\n>                *numParallel = 1\n>        }\n>\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-03-06 03:38:50.716585",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-03-06 03:26:02.994297",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as 603ac92ed3a7 ***\n\nbuild: use run.go for running tests\n\nAlso, tweak run.go to use no more than 2x the\nnumber of CPUs, and only one on ARM.\n\n53.85u 13.33s 53.69r \t ./run\n50.68u 12.13s 18.85r \t go run run.go\n\nFixes issue 2833.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5754047",
+			"disapproval": false,
+			"date": "2012-03-06 03:47:26.485070",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5754047: build: use run.go for running tests",
+	"created": "2012-03-06 03:23:02.668926",
+	"patchsets": [
+		1,
+		1001,
+		4001,
+		2005
+	],
+	"modified": "2012-03-06 14:22:05.717921",
+	"closed": true,
+	"issue": 5754047
+}

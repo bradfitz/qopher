@@ -1,0 +1,59 @@
+{
+	"description": "sql: adds test for fix in issue 4433.\nTests that here should be automatic retries if a database driver's connection returns ErrBadConn on Begin. See \"TestTxErrBadConn\" in sql_test.go",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"bradfitz@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"james.chalfant@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=de94dfa4fa4a ***\n\ndatabase/sql: adds test for fix in issue 4433.\n\nTests that here should be automatic retries if a database\ndriver's connection returns ErrBadConn on Begin. See\n\"TestTxErrBadConn\" in sql_test.go\n\nR=golang-dev\nCC=golang-dev\nhttps://codereview.appspot.com/6942050\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2012-12-14 17:00:38.208880",
+			"approval": false
+		},
+		{
+			"sender": "james.chalfant@gmail.com",
+			"recipients": [
+				"james.chalfant@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-12-14 08:17:29.427610",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nThanks!\r\n\r\nI changed the commit message before submitting (\"database/sql: ...\"), blank\r\nline after, and wrapped body.\r\n\r\n\r\nOn Fri, Dec 14, 2012 at 12:17 AM, <james.chalfant@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> sql: adds test for fix in issue 4433.\r\n> Tests that here should be automatic retries if a database driver's\r\n> connection returns ErrBadConn on Begin. See \"TestTxErrBadConn\" in\r\n> sql_test.go\r\n>\r\n> Please review this at https://codereview.appspot.**com/6942050/<https://codereview.appspot.com/6942050/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/database/sql/fakedb_**test.go\r\n>   M src/pkg/database/sql/sql_test.**go\r\n>\r\n>\r\n> Index: src/pkg/database/sql/fakedb_**test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/database/sql/fakedb_**test.go\r\n> +++ b/src/pkg/database/sql/fakedb_**test.go\r\n> @@ -42,9 +42,10 @@\r\n>  type fakeDB struct {\r\n>         name string\r\n>\r\n> -       mu     sync.Mutex\r\n> -       free   []*fakeConn\r\n> -       tables map[string]*table\r\n> +       mu      sync.Mutex\r\n> +       free    []*fakeConn\r\n> +       tables  map[string]*table\r\n> +       badConn bool\r\n>  }\r\n>\r\n>  type table struct {\r\n> @@ -83,6 +84,7 @@\r\n>         stmtsMade   int\r\n>         stmtsClosed int\r\n>         numPrepare  int\r\n> +       bad         bool\r\n>  }\r\n>\r\n>  func (c *fakeConn) incrStat(v *int) {\r\n> @@ -122,7 +124,9 @@\r\n>\r\n>  // Supports dsn forms:\r\n>  //    <dbname>\r\n> -//    <dbname>;<opts>  (no currently supported options)\r\n> +//    <dbname>;<opts>  (only currently supported option is `badConn`,\r\n> +//                      which causes driver.ErrBadConn to be returned on\r\n> +//                      every other conn.Begin())\r\n>  func (d *fakeDriver) Open(dsn string) (driver.Conn, error) {\r\n>         parts := strings.Split(dsn, \";\")\r\n>         if len(parts) < 1 {\r\n> @@ -135,7 +139,12 @@\r\n>         d.mu.Lock()\r\n>         d.openCount++\r\n>         d.mu.Unlock()\r\n> -       return &fakeConn{db: db}, nil\r\n> +       conn := &fakeConn{db: db}\r\n> +\r\n> +       if len(parts) >= 2 && parts[1] == \"badConn\" {\r\n> +               conn.bad = true\r\n> +       }\r\n> +       return conn, nil\r\n>  }\r\n>\r\n>  func (d *fakeDriver) getDB(name string) *fakeDB {\r\n> @@ -199,7 +208,20 @@\r\n>         return \"\", false\r\n>  }\r\n>\r\n> +func (c *fakeConn) isBad() bool {\r\n> +       // if not simulating bad conn, do nothing\r\n> +       if !c.bad {\r\n> +               return false\r\n> +       }\r\n> +       // alternate between bad conn and not bad conn\r\n> +       c.db.badConn = !c.db.badConn\r\n> +       return c.db.badConn\r\n> +}\r\n> +\r\n>  func (c *fakeConn) Begin() (driver.Tx, error) {\r\n> +       if c.isBad() {\r\n> +               return nil, driver.ErrBadConn\r\n> +       }\r\n>         if c.currTx != nil {\r\n>                 return nil, errors.New(\"already in a transaction\")\r\n>         }\r\n> Index: src/pkg/database/sql/sql_test.**go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/database/sql/sql_**test.go\r\n> +++ b/src/pkg/database/sql/sql_**test.go\r\n> @@ -402,6 +402,39 @@\r\n>         }\r\n>  }\r\n>\r\n> +// Tests fix for issue 4433, that retries in Begin happen when\r\n> +// conn.Begin() returns ErrBadConn\r\n> +func TestTxErrBadConn(t *testing.T) {\r\n> +       db, err := Open(\"test\", fakeDBName+\";badConn\")\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Open: %v\", err)\r\n> +       }\r\n> +       if _, err := db.Exec(\"WIPE\"); err != nil {\r\n> +               t.Fatalf(\"exec wipe: %v\", err)\r\n> +       }\r\n> +       defer closeDB(t, db)\r\n> +       exec(t, db, \"CREATE|t1|name=string,age=**int32,dead=bool\")\r\n> +       stmt, err := db.Prepare(\"INSERT|t1|name=?,**age=?\")\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Stmt, err = %v, %v\", stmt, err)\r\n> +       }\r\n> +       defer stmt.Close()\r\n> +       tx, err := db.Begin()\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Begin = %v\", err)\r\n> +       }\r\n> +       txs := tx.Stmt(stmt)\r\n> +       defer txs.Close()\r\n> +       _, err = txs.Exec(\"Bobby\", 7)\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Exec = %v\", err)\r\n> +       }\r\n> +       err = tx.Commit()\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Commit = %v\", err)\r\n> +       }\r\n> +}\r\n> +\r\n>  // Tests fix for issue 2542, that we release a lock when querying on\r\n>  // a closed connection.\r\n>  func TestIssue2542Deadlock(t *testing.T) {\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-14 17:01:28.694150",
+			"approval": true
+		}
+	],
+	"owner_email": "james.chalfant@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "chalfant",
+	"subject": "code review 6942050: sql: adds test for fix in issue 4433.",
+	"created": "2012-12-14 08:02:33.362180",
+	"patchsets": [
+		1,
+		3,
+		3003
+	],
+	"modified": "2012-12-26 16:46:16.782450",
+	"closed": true,
+	"issue": 6942050
+}

@@ -1,0 +1,168 @@
+{
+	"description": "html: rewrite the tokenizer to be more consistent.\n\nPreviously, the tokenizer made two passes per token. The first pass\nestablished the token boundary. The second pass picked out the tag name\nand attributes inside that boundary. This was problematic when the two\npasses disagreed. For example, \"<p id=can't><p id=won't>\" caused an\ninfinite loop because the first pass skipped everything inside the\nsingle quotes, and recognized only one token, but the second pass never\ngot past the first '>'.\n\nThis change rewrites the tokenizer to use one pass, accumulating the\nboundary points of token text, tag names, attribute keys and attribute\nvalues as it looks for the token endpoint.\n\nIt should still be reasonably efficient: text, names, keys and values\nare not lower-cased or unescaped (and converted from []byte to string)\nuntil asked for.\n\nOne of the token_test test cases was fixed to be consistent with\nhtml5lib. Three more test cases were temporarily disabled, and will be\nre-enabled in a follow-up CL. All the parse_test test cases pass.",
+	"cc": [
+		"andybalholm@gmail.com",
+		"gri@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "FYI\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go\nFile src/pkg/html/token.go (right):\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode140\nsrc/pkg/html/token.go:140: pendingAttr   [4]int\nsame here: wouldn't it be better to use a struct?\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode180\nsrc/pkg/html/token.go:180: z.data[0] -= z.p0\nthis code could use a comment",
+			"disapproval": false,
+			"date": "2011-10-12 23:04:35.602288",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello andybalholm@gmail.com, gri@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-12 09:36:15.576865",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go\nFile src/pkg/html/token.go (right):\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode134\nsrc/pkg/html/token.go:134: data [2]int\nIt might produce clearer code to use a struct for some of these values, something like:\n\ntype range struct {\n    start, end int\n}\n\nEven p0 and p1 could be replaced by one of these range structs.",
+			"disapproval": false,
+			"date": "2011-10-12 20:09:25.072635",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "It looks like a really good design. It'll need a little fine-tuning to bring it into compliance with the spec, but that can be done later. I think the design will support it easily.\n\nI ran a benchmark comparing it to the old version. It's slightly slower, but about twice as fast as the single-pass tokenizer that I wrote. (The benchmark is tokenizing a HTML page output by godoc.)\n\nBefore:\nhtml.BenchmarkLowLevel\t   10000\t    107259 ns/op\nhtml.BenchmarkHighLevel\t    5000\t    354051 ns/op\n\nAfter:\nhtml.BenchmarkLowLevel\t   10000\t    140221 ns/op\nhtml.BenchmarkHighLevel\t    5000\t    423839 ns/op\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go\nFile src/pkg/html/token.go (right):\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode221\nsrc/pkg/html/token.go:221: case ' ', '\\n', '\\t', '\\f':\nIt might be a good idea to include '\\r' here too. The HTML5 spec assumes that \\r and \\r\\n have already been converted to \\n by a preprocessing stage, which we don't have.\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode341\nsrc/pkg/html/token.go:341: // If we didn't get a final \">\", it's a text token.\nNot according to html5lib:\n\nprint html5lib.parse(StringIO.StringIO('<p x=1')).printTree()\n#document\n|  <html html>\n|    <html head>\n|    <html body>\n|      <html p>\n|        x=\"1\"\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode364\nsrc/pkg/html/token.go:364: case ' ', '\\n', '\\t', '\\f', '/':\nInclude '\\r'?\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token_test.go\nFile src/pkg/html/token_test.go (right):\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token_test.go#newcode56\nsrc/pkg/html/token_test.go:56: // TODO: check what html5lib does in these two cases.\nprint html5lib.parse(StringIO.StringIO(\"<p id=0</p>\")).printTree()\n#document\n|  <html html>\n|    <html head>\n|    <html body>\n|      <html p>\n|        id=\"0</p\"\n\nprint html5lib.parse(StringIO.StringIO('<p id=\"0</p>')).printTree()\n#document\n|  <html html>\n|    <html head>\n|    <html body>\n|      <html p>\n|        id=\"0</p>\"",
+			"disapproval": false,
+			"date": "2011-10-12 16:19:42.184098",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5244061/diff/12001/src/pkg/html/token.go\nFile src/pkg/html/token.go (right):\n\nhttp://codereview.appspot.com/5244061/diff/12001/src/pkg/html/token.go#newcode112\nsrc/pkg/html/token.go:112: start, end int\nOn 2011/10/13 22:07:40, gri wrote:\n> I tend to call such fields \"beg\" and \"end\" (same length -> more nicely aligned\n> code), but some people hate \"beg\". Just FYI.\n\nI like to call such fields i0 and i1, or p0 and p1, and going down that path lead to why I just used [0] and [1] in a [2]int. But I'll submit start and end.\n\nhttp://codereview.appspot.com/5244061/diff/12001/src/pkg/html/token.go#newcode112\nsrc/pkg/html/token.go:112: start, end int\nOn 2011/10/13 22:07:40, gri wrote:\n> should add a comment that says this is [start:end[ as opposed to [start:end] (I\n> guess) (i.e., excluding vs including end)\n\nDone.",
+			"disapproval": false,
+			"date": "2011-10-13 22:56:55.941090",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Yeah, the tokenizer isn't 100% correct, but I think it's good enough to check in and iterate.\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go\nFile src/pkg/html/token.go (right):\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode134\nsrc/pkg/html/token.go:134: data [2]int\nOn 2011/10/12 20:09:25, andybalholm wrote:\n> It might produce clearer code to use a struct for some of these values,\n> something like:\n> \n> type range struct {\n>     start, end int\n> }\n> \n> Even p0 and p1 could be replaced by one of these range structs.\n\nDone.\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode140\nsrc/pkg/html/token.go:140: pendingAttr   [4]int\nOn 2011/10/12 23:04:35, gri wrote:\n> same here: wouldn't it be better to use a struct?\n\nDone.\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode180\nsrc/pkg/html/token.go:180: z.data[0] -= z.p0\nOn 2011/10/12 23:04:35, gri wrote:\n> this code could use a comment\n\nDone.\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode221\nsrc/pkg/html/token.go:221: case ' ', '\\n', '\\t', '\\f':\nOn 2011/10/12 16:19:42, andybalholm wrote:\n> It might be a good idea to include '\\r' here too. The HTML5 spec assumes that \\r\n> and \\r\\n have already been converted to \\n by a preprocessing stage, which we\n> don't have.\n\nDone.\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode341\nsrc/pkg/html/token.go:341: // If we didn't get a final \">\", it's a text token.\nOn 2011/10/12 16:19:42, andybalholm wrote:\n> Not according to html5lib:\n> \n> print html5lib.parse(StringIO.StringIO('<p x=1')).printTree()\n> #document\n> |  <html html>\n> |    <html head>\n> |    <html body>\n> |      <html p>\n> |        x=\"1\"\n\nUgh, I was sure that this is what html5lib did. I've left it as a TODO.\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token.go#newcode364\nsrc/pkg/html/token.go:364: case ' ', '\\n', '\\t', '\\f', '/':\nOn 2011/10/12 16:19:42, andybalholm wrote:\n> Include '\\r'?\n\nDone.\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token_test.go\nFile src/pkg/html/token_test.go (right):\n\nhttp://codereview.appspot.com/5244061/diff/6001/src/pkg/html/token_test.go#newcode56\nsrc/pkg/html/token_test.go:56: // TODO: check what html5lib does in these two cases.\nOn 2011/10/12 16:19:42, andybalholm wrote:\n> print html5lib.parse(StringIO.StringIO(\"<p id=0</p>\")).printTree()\n> #document\n> |  <html html>\n> |    <html head>\n> |    <html body>\n> |      <html p>\n> |        id=\"0</p\"\n> \n> print html5lib.parse(StringIO.StringIO('<p id=\"0</p>')).printTree()\n> #document\n> |  <html html>\n> |    <html head>\n> |    <html body>\n> |      <html p>\n> |        id=\"0</p>\"\n\nComment updated.",
+			"disapproval": false,
+			"date": "2011-10-13 00:51:06.189611",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2011-10-13 14:32:31.047602",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "gri, does it LGTY?",
+			"disapproval": false,
+			"date": "2011-10-13 21:54:29.737736",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nPlease add a comment to the span indicating if it is inclusive or exclusive.\n\nhttp://codereview.appspot.com/5244061/diff/12001/src/pkg/html/token.go\nFile src/pkg/html/token.go (right):\n\nhttp://codereview.appspot.com/5244061/diff/12001/src/pkg/html/token.go#newcode112\nsrc/pkg/html/token.go:112: start, end int\nshould add a comment that says this is [start:end[ as opposed to [start:end] (I guess) (i.e., excluding vs including end)\n\nhttp://codereview.appspot.com/5244061/diff/12001/src/pkg/html/token.go#newcode112\nsrc/pkg/html/token.go:112: start, end int\nI tend to call such fields \"beg\" and \"end\" (same length -> more nicely aligned code), but some people hate \"beg\". Just FYI.",
+			"disapproval": false,
+			"date": "2011-10-13 22:07:40.805237",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"andybalholm@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=b116c220cb2c ***\n\nhtml: rewrite the tokenizer to be more consistent.\n\nPreviously, the tokenizer made two passes per token. The first pass\nestablished the token boundary. The second pass picked out the tag name\nand attributes inside that boundary. This was problematic when the two\npasses disagreed. For example, \"<p id=can't><p id=won't>\" caused an\ninfinite loop because the first pass skipped everything inside the\nsingle quotes, and recognized only one token, but the second pass never\ngot past the first '>'.\n\nThis change rewrites the tokenizer to use one pass, accumulating the\nboundary points of token text, tag names, attribute keys and attribute\nvalues as it looks for the token endpoint.\n\nIt should still be reasonably efficient: text, names, keys and values\nare not lower-cased or unescaped (and converted from []byte to string)\nuntil asked for.\n\nOne of the token_test test cases was fixed to be consistent with\nhtml5lib. Three more test cases were temporarily disabled, and will be\nre-enabled in a follow-up CL. All the parse_test test cases pass.\n\nR=andybalholm, gri\nCC=golang-dev\nhttp://codereview.appspot.com/5244061",
+			"disapproval": false,
+			"date": "2011-10-13 22:58:46.889647",
+			"approval": false
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 5244061: html: rewrite the tokenizer to be more consistent.",
+	"created": "2011-10-12 09:33:50.165958",
+	"patchsets": [
+		1,
+		1001,
+		3001,
+		6001,
+		12001,
+		21001
+	],
+	"modified": "2011-10-13 22:58:49.211374",
+	"closed": true,
+	"issue": 5244061
+}

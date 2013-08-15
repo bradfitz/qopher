@@ -1,0 +1,165 @@
+{
+	"description": "bytes.Buffer: restore panic on out-of-memory\nMake the panic detectable, and use that in ioutil.ReadFile to\ngive an error if the file is too big.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"minux.ma@gmail.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [
+		"gri@golang.org",
+		"rsc@golang.org",
+		"fw@deneb.enyo.de",
+		"r@google.com"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n On Jan 21, 2012 11:38 AM, <r@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://code.google.com/p/go/\n>\n>\n> Description:\n> bytes.Buffer: restore panic on out-of-memory\n> Make the panic detectable, and use that in ioutil.ReadFile to\n> give an error if the file is too big.\n>\n> Please review this at http://codereview.appspot.com/**5563045/<http://codereview.appspot.com/5563045/>\n>\n> Affected files:\n>  M src/pkg/bytes/buffer.go\n>  M src/pkg/bytes/buffer_test.go\n>  M src/pkg/io/ioutil/ioutil.go\n>\n>\n> Index: src/pkg/bytes/buffer.go\n> ==============================**==============================**=======\n> --- a/src/pkg/bytes/buffer.go\n> +++ b/src/pkg/bytes/buffer.go\n> @@ -33,7 +33,7 @@\n>        opRead                   // Any other read operation.\n>  )\n>\n> -// ErrTooLarge is returned if there is too much data to fit in a buffer.\n> +// ErrTooLarge is passed to panic if memory cannot be allocated to store\n> data in a buffer.\n>  var ErrTooLarge = errors.New(\"bytes.Buffer: too large\")\n>\n>  // Bytes returns a slice of the contents of the unread portion of the\n> buffer;\n> @@ -73,8 +73,7 @@\n>\n>  // grow grows the buffer to guarantee space for n more bytes.\n>  // It returns the index where bytes should be written.\n> -// If the buffer can't grow, it returns -1, which will\n> -// become ErrTooLarge in the caller.\n> +// If the buffer can't grow it will panic with ErrTooLarge.\n>  func (b *Buffer) grow(n int) int {\n>        m := b.Len()\n>        // If buffer is empty, reset to recover space.\n> @@ -88,9 +87,6 @@\n>                } else {\n>                        // not enough space anywhere\n>                        buf = makeSlice(2*cap(b.buf) + n)\n> -                       if buf == nil {\n> -                               return -1\n> -                       }\n>                        copy(buf, b.buf[b.off:])\n>                }\n>                b.buf = buf\n> @@ -102,6 +98,8 @@\n>\n>  // Write appends the contents of p to the buffer.  The return\n>  // value n is the length of p; err is always nil.\n> +// If the buffer becomes too large, Write will panic with\n> +// ErrTooLarge.\n>  func (b *Buffer) Write(p []byte) (n int, err error) {\n>        b.lastRead = opInvalid\n>        m := b.grow(len(p))\n> @@ -146,9 +144,6 @@\n>                                // not enough space using beginning of\n> buffer;\n>                                // double buffer capacity\n>                                newBuf = makeSlice(2*cap(b.buf) + MinRead)\n> -                               if newBuf == nil {\n> -                                       return n, ErrTooLarge\n> -                               }\n>                        }\n>                        copy(newBuf, b.buf[b.off:])\n>                        b.buf = newBuf[:len(b.buf)-b.off]\n> @@ -167,14 +162,14 @@\n>        return n, nil // err is EOF, so return nil explicitly\n>  }\n>\n> -// makeSlice allocates a slice of size n, returning nil if the slice\n> cannot be allocated.\n> +// makeSlice allocates a slice of size n. If the allocation fails, it\n> panics\n> +// with ErrTooLarge.\n>  func makeSlice(n int) []byte {\n> -       if n < 0 {\n> -               return nil\n> -       }\n> -       // Catch out of memory panics.\n> +       // If the make fails, give a known error.\n>        defer func() {\n> -               recover()\n> +               if recover() != nil {\n> +                       panic(ErrTooLarge)\n> +               }\n>        }()\n>        return make([]byte, n)\n>  }\n> Index: src/pkg/bytes/buffer_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/bytes/buffer_test.go\n> +++ b/src/pkg/bytes/buffer_test.go\n> @@ -392,13 +392,18 @@\n>        if testing.Short() {\n>                return\n>        }\n> +       // We expect a panic.\n> +       defer func() {\n> +               if err, ok := recover().(error); ok && err == ErrTooLarge {\n> +                       return\n> +               } else {\n> +                       t.Error(`expected \"too large\" error; got`, err)\n> +               }\n> +       }()\n>        b := new(Buffer)\n>        big := make([]byte, 500e6)\n>        for i := 0; i < 1000; i++ {\n> -               if _, err := b.Write(big); err != nil {\n> -                       // Got error as expected. Stop\n> -                       return\n> -               }\n> +               b.Write(big)\n>        }\n>        t.Error(\"error expected\")\n>  }\n> Index: src/pkg/io/ioutil/ioutil.go\n> ==============================**==============================**=======\n> --- a/src/pkg/io/ioutil/ioutil.go\n> +++ b/src/pkg/io/ioutil/ioutil.go\n> @@ -14,9 +14,22 @@\n>\n>  // readAll reads from r until an error or EOF and returns the data it read\n>  // from the internal buffer allocated with a specified capacity.\n> -func readAll(r io.Reader, capacity int64) ([]byte, error) {\n> +func readAll(r io.Reader, capacity int64) (b []byte, err error) {\n>        buf := bytes.NewBuffer(make([]byte, 0, capacity))\n> -       _, err := buf.ReadFrom(r)\n> +       // If the buffer overflows, we will get bytes.ErrTooLarge.\n> +       // Return that as an error. Any other panic remains.\n> +       defer func() {\n> +               e := recover()\n> +               if e == nil {\n> +                       return\n> +               }\n> +               if panicErr, ok := recover().(error); ok && panicErr ==\n> bytes.ErrTooLarge {\n> +                       err = panicErr\n> +               } else {\n> +                       panic(e)\n> +               }\n> +       }()\n> +       _, err = buf.ReadFrom(r)\n>        return buf.Bytes(), err\n>  }\n>\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-21 17:45:29.383648",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-01-21 17:38:35.114026",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5563045/diff/5/src/pkg/bytes/buffer_test.go\nFile src/pkg/bytes/buffer_test.go (right):\n\nhttp://codereview.appspot.com/5563045/diff/5/src/pkg/bytes/buffer_test.go#newcode408\nsrc/pkg/bytes/buffer_test.go:408: t.Error(\"error expected\")\ns/error/panic/ ?",
+			"disapproval": false,
+			"date": "2012-01-21 17:43:28.379865",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I am not convinced by this CL.\n\nIt seems to me that Write was the only issue; and so only Write would have to throw the error. Everything else could have remained the same.\n\nAm I missing something?\n- gri\n\nhttp://codereview.appspot.com/5563045/diff/5/src/pkg/bytes/buffer.go\nFile src/pkg/bytes/buffer.go (right):\n\nhttp://codereview.appspot.com/5563045/diff/5/src/pkg/bytes/buffer.go#newcode146\nsrc/pkg/bytes/buffer.go:146: newBuf = makeSlice(2*cap(b.buf) + MinRead)\nshouldn't the makeSlice panic be caught in here instead of the ioutil function?\n\nhttp://codereview.appspot.com/5563045/diff/5/src/pkg/io/ioutil/ioutil.go\nFile src/pkg/io/ioutil/ioutil.go (right):\n\nhttp://codereview.appspot.com/5563045/diff/5/src/pkg/io/ioutil/ioutil.go#newcode19\nsrc/pkg/io/ioutil/ioutil.go:19: // If the buffer overflows, we will get bytes.ErrTooLarge.\nshouldn't this panic be handled in ReadFrom?",
+			"disapproval": false,
+			"date": "2012-01-21 17:50:49.026481",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as b372a927701e ***\n\nbytes.Buffer: restore panic on out-of-memory\nMake the panic detectable, and use that in ioutil.ReadFile to\ngive an error if the file is too big.\n\nR=golang-dev, minux.ma, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5563045",
+			"disapproval": false,
+			"date": "2012-01-21 17:47:03.524114",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "b.ReadFrom(r) is essentially defined as a shortcut for\nr.Read(tmp)+b.Write(tmp).  It should behave the same as Write.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-21 17:59:26.924042",
+			"approval": false
+		},
+		{
+			"sender": "fw@deneb.enyo.de",
+			"recipients": [
+				"r@golang.org",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5563045/diff/7/src/pkg/bytes/buffer.go\nFile src/pkg/bytes/buffer.go (right):\n\nhttp://codereview.appspot.com/5563045/diff/7/src/pkg/bytes/buffer.go#newcode171\nsrc/pkg/bytes/buffer.go:171: panic(ErrTooLarge)\nI don't think this is thread-safe.  (The old code had this problem, too.)\n\nUnfortunately, it is really hard to attribute memory allocation failures to the guilty party.",
+			"disapproval": false,
+			"date": "2012-01-22 21:48:58.358028",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5563045/diff/7/src/pkg/bytes/buffer.go\nFile src/pkg/bytes/buffer.go (right):\n\nhttp://codereview.appspot.com/5563045/diff/7/src/pkg/bytes/buffer.go#newcode171\nsrc/pkg/bytes/buffer.go:171: panic(ErrTooLarge)\nIn what sense is it not thread safe? The allocation failed, so this thread is unhappy anyway.",
+			"disapproval": false,
+			"date": "2012-01-22 21:59:02.209650",
+			"approval": false
+		},
+		{
+			"sender": "fw@deneb.enyo.de",
+			"recipients": [
+				"r@golang.org",
+				"gri@golang.org",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5563045/diff/7/src/pkg/bytes/buffer.go\nFile src/pkg/bytes/buffer.go (right):\n\nhttp://codereview.appspot.com/5563045/diff/7/src/pkg/bytes/buffer.go#newcode171\nsrc/pkg/bytes/buffer.go:171: panic(ErrTooLarge)\nOn 2012/01/22 21:59:02, r wrote:\n> In what sense is it not thread safe? The allocation failed, so this thread is\n> unhappy anyway.\n\nReturning the error attributes the cause to the buffer operation.  But that's not necessarily the case if another thread uses up the heap in parallel.  True, the allocation has failed, but does this really convey any information to the caller in such a case?",
+			"disapproval": false,
+			"date": "2012-01-23 07:17:28.451513",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\nOn Jan 22, 2012, at 11:17 PM, fw@deneb.enyo.de wrote:\n\n> \n> http://codereview.appspot.com/5563045/diff/7/src/pkg/bytes/buffer.go\n> File src/pkg/bytes/buffer.go (right):\n> \n> http://codereview.appspot.com/5563045/diff/7/src/pkg/bytes/buffer.go#newcode171\n> src/pkg/bytes/buffer.go:171: panic(ErrTooLarge)\n> On 2012/01/22 21:59:02, r wrote:\n>> In what sense is it not thread safe? The allocation failed, so this\n> thread is\n>> unhappy anyway.\n> \n> Returning the error attributes the cause to the buffer operation.  But\n> that's not necessarily the case if another thread uses up the heap in\n> parallel.  True, the allocation has failed, but does this really convey\n> any information to the caller in such a case?\n\nErrors aren't about cause, they're about facts. The fact is the allocation failed. There's little else to do in any case.\n\n-rob\n\n\n",
+			"disapproval": false,
+			"date": "2012-01-23 07:32:07.819479",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 5563045: bytes.Buffer: restore panic on out-of-memory",
+	"created": "2012-01-21 17:38:27.490980",
+	"patchsets": [
+		1,
+		5,
+		7
+	],
+	"modified": "2012-01-23 07:32:08.015805",
+	"closed": true,
+	"issue": 5563045
+}

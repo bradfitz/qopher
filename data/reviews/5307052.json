@@ -1,0 +1,182 @@
+{
+	"description": "runtime: include bootstrap m in mcpu accounting",
+	"cc": [
+		"rsc@golang.org",
+		"dvyukov@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Fixes the issue here:\nhttp://groups.google.com/group/golang-nuts/browse_thread/thread/172eba23fb81f5ef/\n",
+			"disapproval": false,
+			"date": "2011-10-23 17:28:04.625661",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 25 October 2011 07:35,  <dvyukov@google.com> wrote:\n> LGTM\n> Just to make sure all.bash does not crash, right? :)\n\nTests run fine on Windows.  As for the rest that's what the buildbots\nare for <ducks>\n",
+			"disapproval": false,
+			"date": "2011-10-25 07:34:11.495580",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-23 17:23:30.305398",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/24 08:45:05, hector wrote:\n> On 2011/10/24 08:23:38, dvyukov wrote:\n> > On 2011/10/24 08:12:33, hector wrote:\n> > > On 24 October 2011 07:47,  <mailto:dvyukov@google.com> wrote:\n> > > > If you agree, please make mcpu-- and grunning-- unconditional in\n> > > > schedule().\n> > > \n> > > Do we want to do this even if mcpu++ happens before mnextg (as happens\n> > > in matchmg)?  Probably ok for an M waiting on global queue, but what\n> > > about new M started by startm?\n> > \n> > What do you mean by \"new M started by startm\"? startm is called either from\n> > matchmg (where we must do mcpu++/grunning++) of starttheworld (where we now do\n> > mcpu++/grunning++). There is also bootstrap M, where we now do\n> mcpu++/grunning++\n> > as well. Are there any other Ms (other callers of startm)?\n> > If there is a case when schedule does not do mcpu--/grunning--, it is most\n> > likely a bug (like it is with bootstrap M).\n> \n> Sorry, I meant that the new M will enter scheduler with mcpu already incremented\n> and m->nextg set, so I'm not sure if it's ok to decrement mcpu unconditionally. \n> Because in some places the mcpu check happens without schedlock.\n\n\nI see. Then we will have to canaddmcpu() in nextgandunlock() if m->nextg is set. Yeah, it's better to not touch that :)\nThe problem is that the logic is quite fragile and implicit now. It's basically impossible to understand all that ++ and --. Can't we then structure schedule() as follows:\n\nif(gp) {\n  mpcu--;\n  grunning--;\n  // as before\n} else if(m->gchelp) {\n  mpcu--;\n  grunning--;\n} else if(m->nextg) {\n  // no-op\n} else {\n  throw(\"can't happen\");\n}\n\nIt makes it clear that M can arrive to schedule() in only 3 states.",
+			"disapproval": false,
+			"date": "2011-10-24 09:57:53.340816",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "An M can't run w/o incrementing mcpu, otherwise GC starts w/o waiting for it (now even bootstrap M can't do that). mcpu can't be incremented w/o incrementing grunning (otherwise spurious deadlock report). It is the second issue with the logic. I think we must reflect the logic in schedule().\nIf you agree, please make mcpu-- and grunning-- unconditional in schedule(), do not set helpgc for bootstrap M and gchelp M's. That will eliminate \"if(m->helpgc)\" branch. I think it will make the logic clearer. I would also add underflow check for grunning--.",
+			"disapproval": false,
+			"date": "2011-10-24 06:47:37.807662",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 24 October 2011 07:47,  <dvyukov@google.com> wrote:\n> If you agree, please make mcpu-- and grunning-- unconditional in\n> schedule().\n\nDo we want to do this even if mcpu++ happens before mnextg (as happens\nin matchmg)?  Probably ok for an M waiting on global queue, but what\nabout new M started by startm?\n",
+			"disapproval": false,
+			"date": "2011-10-24 08:12:33.069736",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/24 08:12:33, hector wrote:\n> On 24 October 2011 07:47,  <mailto:dvyukov@google.com> wrote:\n> > If you agree, please make mcpu-- and grunning-- unconditional in\n> > schedule().\n> \n> Do we want to do this even if mcpu++ happens before mnextg (as happens\n> in matchmg)?  Probably ok for an M waiting on global queue, but what\n> about new M started by startm?\n\nWhat do you mean by \"new M started by startm\"? startm is called either from matchmg (where we must do mcpu++/grunning++) of starttheworld (where we now do mcpu++/grunning++). There is also bootstrap M, where we now do mcpu++/grunning++ as well. Are there any other Ms (other callers of startm)?\nIf there is a case when schedule does not do mcpu--/grunning--, it is most likely a bug (like it is with bootstrap M).",
+			"disapproval": false,
+			"date": "2011-10-24 08:23:38.947048",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/24 08:23:38, dvyukov wrote:\n> On 2011/10/24 08:12:33, hector wrote:\n> > On 24 October 2011 07:47,  <mailto:dvyukov@google.com> wrote:\n> > > If you agree, please make mcpu-- and grunning-- unconditional in\n> > > schedule().\n> > \n> > Do we want to do this even if mcpu++ happens before mnextg (as happens\n> > in matchmg)?  Probably ok for an M waiting on global queue, but what\n> > about new M started by startm?\n> \n> What do you mean by \"new M started by startm\"? startm is called either from\n> matchmg (where we must do mcpu++/grunning++) of starttheworld (where we now do\n> mcpu++/grunning++). There is also bootstrap M, where we now do mcpu++/grunning++\n> as well. Are there any other Ms (other callers of startm)?\n> If there is a case when schedule does not do mcpu--/grunning--, it is most\n> likely a bug (like it is with bootstrap M).\n\nSorry, I meant that the new M will enter scheduler with mcpu already incremented and m->nextg set, so I'm not sure if it's ok to decrement mcpu unconditionally.  Because in some places the mcpu check happens without schedlock.",
+			"disapproval": false,
+			"date": "2011-10-24 08:45:05.884253",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/24 18:52:20, hector wrote:\n> PTAL\n\nLGTM\nJust to make sure all.bash does not crash, right? :)",
+			"disapproval": false,
+			"date": "2011-10-25 06:35:16.348948",
+			"approval": true
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Works ok for me.  I'll add it to the CL later today then.",
+			"disapproval": false,
+			"date": "2011-10-24 11:03:52.402174",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL",
+			"disapproval": false,
+			"date": "2011-10-24 18:52:20.565524",
+			"approval": false
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=e7977be1ca45 ***\n\nruntime: include bootstrap m in mcpu accounting\n\nR=rsc, dvyukov\nCC=golang-dev\nhttp://codereview.appspot.com/5307052",
+			"disapproval": false,
+			"date": "2011-10-25 07:35:36.931152",
+			"approval": false
+		}
+	],
+	"owner_email": "hectorchu@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "hector",
+	"subject": "code review 5307052: runtime: include bootstrap m in mcpu accounting",
+	"created": "2011-10-23 17:19:23.105363",
+	"patchsets": [
+		1,
+		3001,
+		10002,
+		13001
+	],
+	"modified": "2011-10-25 07:35:38.075353",
+	"closed": true,
+	"issue": 5307052
+}

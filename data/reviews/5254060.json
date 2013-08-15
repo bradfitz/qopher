@@ -1,0 +1,187 @@
+{
+	"description": "html: insert implied <p> and </p> tags\n\n(test # 25 in tests1.dat)\n#data\n<p><b><div></p></b></div>X\n#document\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       <b>\n|     <div>\n|       <b>\n|\n|           <p>\n|           \"X\"",
+	"cc": [
+		"nigeltao@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Not much in the way of new tests for this.  *shrug*\n\nOn Tue, Oct 11, 2011 at 4:19 PM, <andybalholm@gmail.com> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com,\n> nigeltao@golang.org),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> html: insert implied <p> and </p> tags\n>\n> (test # 25 in tests1.dat)\n>\n> Please review this at http://codereview.appspot.com/**5254060/<http://codereview.appspot.com/5254060/>\n>\n> Affected files:\n>  M src/pkg/html/parse.go\n>  M src/pkg/html/parse_test.go\n>\n>\n> Index: src/pkg/html/parse.go\n> ==============================**==============================**=======\n> --- a/src/pkg/html/parse.go\n> +++ b/src/pkg/html/parse.go\n> @@ -64,21 +64,36 @@\n>  // popUntil([]string{\"html, \"table\"}, \"table\") would return true and\n> leave:\n>  // [\"html\", \"body\", \"font\"]\n>  func (p *parser) popUntil(stopTags []string, matchTags ...string) bool {\n> +       i, ok := p.indexOfElementInScope(**stopTags, matchTags...)\n> +       if ok {\n> +               p.oe = p.oe[:i]\n> +       }\n> +       return ok\n> +}\n> +\n> +// indexOfElementInScope returns the index in p.oe of the highest element\n> whose tag is in matchTags\n> +// that is in scope according to stopTags.\n> +func (p *parser) indexOfElementInScope(stopTags []string, matchTags\n> ...string) (index int, ok bool) {\n>        for i := len(p.oe) - 1; i >= 0; i-- {\n>                tag := p.oe[i].Data\n>                for _, t := range matchTags {\n>                        if t == tag {\n> -                               p.oe = p.oe[:i]\n> -                               return true\n> +                               return i, true\n>                        }\n>                }\n>                for _, t := range stopTags {\n>                        if t == tag {\n> -                               return false\n> +                               return -1, false\n>                        }\n>                }\n>        }\n> -       return false\n> +       return -1, false\n> +}\n> +\n> +// elementInScope is like popUntil, except that it doesn't modify the\n> stack of open elements.\n> +func (p *parser) elementInScope(stopTags []string, matchTags ...string)\n> bool {\n> +       _, ok := p.indexOfElementInScope(**stopTags, matchTags...)\n> +       return ok\n>  }\n>\n>  // addChild adds a child node n to the top element, and pushes n onto the\n> stack\n> @@ -365,7 +380,6 @@\n>\n>  // Section 11.2.5.4.7.\n>  func inBodyIM(p *parser) (insertionMode, bool) {\n> -       var endP bool\n>        switch p.tok.Type {\n>        case TextToken:\n>                p.**reconstructActiveFormattingEle**ments()\n> @@ -374,15 +388,10 @@\n>        case StartTagToken:\n>                switch p.tok.Data {\n>                case \"address\", \"article\", \"aside\", \"blockquote\", \"center\",\n> \"details\", \"dir\", \"div\", \"dl\", \"fieldset\", \"figcaption\", \"figure\", \"footer\",\n> \"header\", \"hgroup\", \"menu\", \"nav\", \"ol\", \"p\", \"section\", \"summary\", \"ul\":\n> -                       // TODO: Do the proper \"does the stack of open\n> elements has a p element in button scope\" algorithm in section 11.2.3.2.\n> -                       n := p.top()\n> -                       if n.Type == ElementNode && n.Data == \"p\" {\n> -                               endP = true\n> -                       } else {\n> -                               p.addElement(p.tok.Data, p.tok.Attr)\n> -                       }\n> +                       p.popUntil(**buttonScopeStopTags, \"p\")\n> +                       p.addElement(p.tok.Data, p.tok.Attr)\n>                case \"h1\", \"h2\", \"h3\", \"h4\", \"h5\", \"h6\":\n> -                       // TODO: auto-insert </p> if necessary.\n> +                       p.popUntil(**buttonScopeStopTags, \"p\")\n>                        switch n := p.top(); n.Data {\n>                        case \"h1\", \"h2\", \"h3\", \"h4\", \"h5\", \"h6\":\n>                                p.oe.pop()\n> @@ -399,6 +408,11 @@\n>                case \"b\", \"big\", \"code\", \"em\", \"font\", \"i\", \"s\", \"small\",\n> \"strike\", \"strong\", \"tt\", \"u\":\n>                        p.**reconstructActiveFormattingEle**ments()\n>                        p.addFormattingElement(p.tok.**Data, p.tok.Attr)\n> +               case \"applet\", \"marquee\", \"object\":\n> +                       p.**reconstructActiveFormattingEle**ments()\n> +                       p.addElement(p.tok.Data, p.tok.Attr)\n> +                       p.afe = append(p.afe, &scopeMarker)\n> +                       p.framesetOK = false\n>                case \"area\", \"br\", \"embed\", \"img\", \"input\", \"keygen\", \"wbr\":\n>                        p.**reconstructActiveFormattingEle**ments()\n>                        p.addElement(p.tok.Data, p.tok.Attr)\n> @@ -406,12 +420,12 @@\n>                        p.acknowledgeSelfClosingTag()\n>                        p.framesetOK = false\n>                case \"table\":\n> -                       // TODO: auto-insert </p> if necessary, depending\n> on quirks mode.\n> +                       p.popUntil(**buttonScopeStopTags, \"p\") // TODO:\n> skip this step in quirks mode.\n>                        p.addElement(p.tok.Data, p.tok.Attr)\n>                        p.framesetOK = false\n>                        return inTableIM, true\n>                case \"hr\":\n> -                       // TODO: auto-insert </p> if necessary.\n> +                       p.popUntil(**buttonScopeStopTags, \"p\")\n>                        p.addElement(p.tok.Data, p.tok.Attr)\n>                        p.oe.pop()\n>                        p.acknowledgeSelfClosingTag()\n> @@ -425,6 +439,11 @@\n>                case \"body\":\n>                        // TODO: autoclose the stack of open elements.\n>                        return afterBodyIM, true\n> +               case \"p\":\n> +                       if !p.elementInScope(**buttonScopeStopTags, \"p\") {\n> +                               p.addElement(\"p\", nil)\n> +                       }\n> +                       p.popUntil(**buttonScopeStopTags, \"p\")\n>                case \"a\", \"b\", \"big\", \"code\", \"em\", \"font\", \"i\", \"nobr\",\n> \"s\", \"small\", \"strike\", \"strong\", \"tt\", \"u\":\n>                        p.inBodyEndTagFormatting(p.**tok.Data)\n>                default:\n> @@ -434,14 +453,8 @@\n>                        }\n>                }\n>        }\n> -       if endP {\n> -               // TODO: do the proper algorithm.\n> -               n := p.oe.pop()\n> -               if n.Type != ElementNode || n.Data != \"p\" {\n> -                       panic(\"unreachable\")\n> -               }\n> -       }\n> -       return inBodyIM, !endP\n> +\n> +       return inBodyIM, true\n>  }\n>\n>  func (p *parser) inBodyEndTagFormatting(tag string) {\n> Index: src/pkg/html/parse_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/html/parse_test.go\n> +++ b/src/pkg/html/parse_test.go\n> @@ -123,7 +123,7 @@\n>                rc := make(chan io.Reader)\n>                go readDat(filename, rc)\n>                // TODO(nigeltao): Process all test cases, not just a\n> subset.\n> -               for i := 0; i < 25; i++ {\n> +               for i := 0; i < 26; i++ {\n>                        // Parse the #data section.\n>                        b, err := ioutil.ReadAll(<-rc)\n>                        if err != nil {\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-11 23:24:13.267333",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/11 23:59:04, nigeltao wrote:\n> Andy, please add the contents of that test to the change description.\n\nDone",
+			"disapproval": false,
+			"date": "2011-10-12 00:07:11.211794",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-10-12 15:30:54.483552",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5254060/diff/4001/src/pkg/html/parse.go\nFile src/pkg/html/parse.go (right):\n\nhttp://codereview.appspot.com/5254060/diff/4001/src/pkg/html/parse.go#newcode74\nsrc/pkg/html/parse.go:74: // indexOfElementInScope returns the index in p.oe of the highest element whose tag is in matchTags\nOn 2011/10/12 02:20:58, nigeltao wrote:\n> Doc comments (which are all at top level, so not indented) are restricted to 80\n> columns so that they don't wrap in a terminal window when printed by godoc.\n> (That is the exception, not the rule; other Go code is not limited in this way.)\n\nDone.\n\nhttp://codereview.appspot.com/5254060/diff/4001/src/pkg/html/parse.go#newcode76\nsrc/pkg/html/parse.go:76: func (p *parser) indexOfElementInScope(stopTags []string, matchTags ...string) (index int, ok bool) {\nOn 2011/10/12 02:39:51, nigeltao wrote:\n> I'd make the return type (int) instead of (int, bool). This would match\n> nodeStack.index in node.go.\n\nDone.\n\nhttp://codereview.appspot.com/5254060/diff/4001/src/pkg/html/parse.go#newcode93\nsrc/pkg/html/parse.go:93: // elementInScope is like popUntil, except that it doesn't modify the stack of open elements.\nOn 2011/10/12 02:20:58, nigeltao wrote:\n> Again, 80 chars.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-10-12 15:31:33.453237",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, nigeltao@golang.org),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-11 23:19:40.356384",
+			"approval": false
+		},
+		{
+			"sender": "andybalholm@gmail.com",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/10/11 23:24:13, bradfitz wrote:\n> Not much in the way of new tests for this.  *shrug*\n\nI'm not quite sure what you mean there.",
+			"disapproval": false,
+			"date": "2011-10-11 23:28:20.677302",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 12 October 2011 10:24, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> Not much in the way of new tests for this. \u00a0*shrug*\n\nBrad, the new test is implied in the parse_test.go change.\n",
+			"disapproval": false,
+			"date": "2011-10-11 23:47:52.623439",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 12 October 2011 10:19,  <andybalholm@gmail.com> wrote:\n> Description:\n> html: insert implied <p> and </p> tags\n>\n> (test # 25 in tests1.dat)\n\nAndy, please add the contents of that test to the change description.\n",
+			"disapproval": false,
+			"date": "2011-10-11 23:59:04.814367",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Tue, Oct 11, 2011 at 4:47 PM, Nigel Tao <nigeltao@golang.org> wrote:\n\n> On 12 October 2011 10:24, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> > Not much in the way of new tests for this.  *shrug*\n>\n> Brad, the new test is implied in the parse_test.go change.\n>\n\nAh, I see.  I just looked at the diff in the email and assumed the 25 to 26\nwas another test needing a tweak for the nodes being different.\n",
+			"disapproval": false,
+			"date": "2011-10-12 00:38:15.699052",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5254060/diff/4001/src/pkg/html/parse.go\nFile src/pkg/html/parse.go (right):\n\nhttp://codereview.appspot.com/5254060/diff/4001/src/pkg/html/parse.go#newcode74\nsrc/pkg/html/parse.go:74: // indexOfElementInScope returns the index in p.oe of the highest element whose tag is in matchTags\nDoc comments (which are all at top level, so not indented) are restricted to 80 columns so that they don't wrap in a terminal window when printed by godoc. (That is the exception, not the rule; other Go code is not limited in this way.)\n\nhttp://codereview.appspot.com/5254060/diff/4001/src/pkg/html/parse.go#newcode93\nsrc/pkg/html/parse.go:93: // elementInScope is like popUntil, except that it doesn't modify the stack of open elements.\nAgain, 80 chars.",
+			"disapproval": false,
+			"date": "2011-10-12 02:20:58.261613",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5254060/diff/4001/src/pkg/html/parse.go\nFile src/pkg/html/parse.go (right):\n\nhttp://codereview.appspot.com/5254060/diff/4001/src/pkg/html/parse.go#newcode76\nsrc/pkg/html/parse.go:76: func (p *parser) indexOfElementInScope(stopTags []string, matchTags ...string) (index int, ok bool) {\nI'd make the return type (int) instead of (int, bool). This would match nodeStack.index in node.go.",
+			"disapproval": false,
+			"date": "2011-10-12 02:39:51.284149",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM.",
+			"disapproval": false,
+			"date": "2011-10-13 01:38:19.180955",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"andybalholm@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=7aaaa0671406 ***\n\nhtml: insert implied <p> and </p> tags\n\n(test # 25 in tests1.dat)\n#data\n<p><b><div></p></b></div>X\n#document\n| <html>\n|   <head>\n|   <body>\n|     <p>\n|       <b>\n|     <div>\n|       <b>\n|\n|           <p>\n|           \"X\"\n\nR=nigeltao\nCC=golang-dev\nhttp://codereview.appspot.com/5254060\n\nCommitter: Nigel Tao <nigeltao@golang.org>",
+			"disapproval": false,
+			"date": "2011-10-13 01:40:56.114658",
+			"approval": false
+		}
+	],
+	"owner_email": "andybalholm@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "andybalholm",
+	"subject": "code review 5254060: html: insert implied <p> and </p> tags",
+	"created": "2011-10-11 23:19:10.919346",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		3003
+	],
+	"modified": "2011-10-13 23:35:08.658367",
+	"closed": true,
+	"issue": 5254060
+}

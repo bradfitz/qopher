@@ -1,0 +1,119 @@
+{
+	"description": "text/template: add 'nil' as a keyword in the language\nThe keyword reprents an untyped nil and is useful for\npassing nil values to methods and functions. The\nnil will be promoted to the appropriate type when\nused; if a type cannot be assigned, an error results.",
+	"cc": [
+		"rsc@golang.org",
+		"dsymonds@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-08-07 22:51:50.284850",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2012-08-08 00:23:12.393530",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6459056/diff/1/src/pkg/text/template/exec.go\nFile src/pkg/text/template/exec.go (right):\n\nhttp://codereview.appspot.com/6459056/diff/1/src/pkg/text/template/exec.go#newcode331\nsrc/pkg/text/template/exec.go:331: s.errorf(\"cannot assign type to untyped nil\")\nOn 2012/08/08 15:08:00, rsc wrote:\n> It looks like evalCommand is called to evaluate one command in a pipeline, and\n> only for that, in which case the error might be better as\n> \n> s.errorf(\"nil is not a command\")\n> \n\nDone.\n\nhttp://codereview.appspot.com/6459056/diff/1/src/pkg/text/template/exec.go#newcode524\nsrc/pkg/text/template/exec.go:524: if canBeNil(typ) {\nI tried this and it broke a bunch of tests involving things like map lookups that fail, since they produce zero reflect.Values that look like nils:\n\n\nexec_test.go:569: \t.Method3(nil value): unexpected execute error: template: .Method3(nil value):1: invalid value; expected interface {}\nexec_test.go:569: \tif map not unset: unexpected execute error: template: if map not unset:1: invalid value; expected interface {}\n\nhttp://codereview.appspot.com/6459056/diff/1/src/pkg/text/template/exec.go#newcode651\nsrc/pkg/text/template/exec.go:651: switch n := n.(type) {\nOn 2012/08/08 15:08:00, rsc wrote:\n> Do you need a NilNode case here?\n\nno, but i added one anyway and explained why it's unnecessary.",
+			"disapproval": false,
+			"date": "2012-08-08 16:56:32.742230",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6459056/diff/1/src/pkg/text/template/exec.go\nFile src/pkg/text/template/exec.go (right):\n\nhttp://codereview.appspot.com/6459056/diff/1/src/pkg/text/template/exec.go#newcode331\nsrc/pkg/text/template/exec.go:331: s.errorf(\"cannot assign type to untyped nil\")\nIt looks like evalCommand is called to evaluate one command in a pipeline, and only for that, in which case the error might be better as\n\ns.errorf(\"nil is not a command\")\n\nhttp://codereview.appspot.com/6459056/diff/1/src/pkg/text/template/exec.go#newcode524\nsrc/pkg/text/template/exec.go:524: if canBeNil(typ) {\nOne question is whether it should ever be possible to end up with the zero (invalid) reflect.Value in the midst of execution.\n\nThere are two ways that can happen (that I can see). First, the original argument to the template's Execute method might be a nil interface value, which comes down as (interface{})(nil), and then reflect.ValueOf(that) returns the zero reflect.Value. Second, there is a line above that pulls an element out of an interface unconditionally, even if it is nil. If a function returns (interface{})(nil), then the code above, marked '// lovely!', is holding a non-zero reflect.Value with value.Type() == the type for interface{} and value.IsNil(), but then the value = reflect.ValueOf(value.Interface()) turns it into the zero reflect.Value.\n\nThis means that if you have these functions:\n// func table\n\"f1\": func() interface{} { return nil }\n\"f2\": func(x *int) string { return \"f2 ran\" }\n\nRight now you can have a template {{f2 .}} and invoke it as t.Execute(w, nil) and f2 gets passed a (*int)(nil) even though that's not what got passed in. Similarly, you can have a template {{f1 | f2}} even though the equivalent in Go would not be allowed.\n\nThe code here is enabling those two cases.\n\nI think it would be reasonable to disallow them, by using\n\nif value.Kind() == reflect.Interface && value.Type().NumMethod() == 0 && !value.IsNil() {\n    value = value.Elem() // more lovely!\n}\n\nabove, and then calling s.errorf unconditionally here. \n\nThe typed nil node then becomes the only way to generate an 'ideal nil', and that's handled in only one place, evalArg.\n\nhttp://codereview.appspot.com/6459056/diff/1/src/pkg/text/template/exec.go#newcode651\nsrc/pkg/text/template/exec.go:651: switch n := n.(type) {\nDo you need a NilNode case here?",
+			"disapproval": false,
+			"date": "2012-08-08 15:08:00.066480",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-08-08 18:48:47.183110",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, dsymonds@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-08 16:53:45.337870",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=0158b489366c ***\n\ntext/template: add 'nil' as a keyword in the language\nThe keyword reprents an untyped nil and is useful for\npassing nil values to methods and functions. The\nnil will be promoted to the appropriate type when\nused; if a type cannot be assigned, an error results.\n\nR=rsc, dsymonds\nCC=golang-dev\nhttp://codereview.appspot.com/6459056",
+			"disapproval": false,
+			"date": "2012-08-09 03:02:31.052090",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 6459056: text/template: add 'nil' as a keyword in the language",
+	"created": "2012-08-07 22:51:45.484400",
+	"patchsets": [
+		1,
+		1010,
+		6010,
+		11002
+	],
+	"modified": "2012-08-09 03:02:32.446030",
+	"closed": true,
+	"issue": 6459056
+}

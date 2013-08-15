@@ -1,0 +1,60 @@
+{
+	"description": "runtime: darwin signal masking\n\nFixes issue 3101 (darwin).",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn Thu, Feb 23, 2012 at 11:26 AM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> runtime: darwin signal masking\n>\n> Fixes issue 3101 (darwin).\n>\n> Please review this at http://codereview.appspot.com/**5693044/<http://codereview.appspot.com/5693044/>\n>\n> Affected files:\n>  M src/pkg/runtime/os_darwin.h\n>  M src/pkg/runtime/sys_darwin_**386.s\n>  M src/pkg/runtime/sys_darwin_**amd64.s\n>  M src/pkg/runtime/thread_darwin.**c\n>\n>\n> Index: src/pkg/runtime/os_darwin.h\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/os_darwin.h\n> +++ b/src/pkg/runtime/os_darwin.h\n> @@ -20,6 +20,9 @@\n>  uint32 runtime\u00b7mach_thread_self(void)**;\n>  int32  runtime\u00b7sysctl(uint32*, uint32, byte*, uintptr*, byte*, uintptr);\n>\n> +typedef uint32 Sigset;\n> +void   runtime\u00b7sigprocmask(int32, Sigset*, Sigset*);\n> +\n>  struct Sigaction;\n>  void   runtime\u00b7sigaction(uintptr, struct Sigaction*, struct Sigaction*);\n>  void   runtime\u00b7setsig(int32, void(*)(int32, Siginfo*, void*, G*), bool);\n> @@ -35,3 +38,4 @@\n>\n>  #define        NSIG 32\n>  #define        SI_USER 0  /* empirically true, but not what headers say */\n> +#define        SIG_SETMASK 3\n> Index: src/pkg/runtime/sys_darwin_**386.s\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/sys_darwin_**386.s\n> +++ b/src/pkg/runtime/sys_darwin_**386.s\n> @@ -106,6 +106,13 @@\n>        MOVL    DX, 4(DI)\n>        RET\n>\n> +TEXT runtime\u00b7sigprocmask(SB),7,$0\n> +       MOVL    $48, AX\n> +       INT     $0x80\n> +       JAE     2(PC)\n> +       CALL    runtime\u00b7notok(SB)\n> +       RET\n> +\n>  TEXT runtime\u00b7sigaction(SB),7,$0\n>        MOVL    $46, AX\n>        INT     $0x80\n> Index: src/pkg/runtime/sys_darwin_**amd64.s\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/sys_darwin_**amd64.s\n> +++ b/src/pkg/runtime/sys_darwin_**amd64.s\n> @@ -92,6 +92,16 @@\n>        ADDQ    DX, AX\n>        RET\n>\n> +TEXT runtime\u00b7sigprocmask(SB),7,$0\n> +       MOVL    8(SP), DI\n> +       MOVQ    16(SP), SI\n> +       MOVQ    24(SP), DX\n> +       MOVL    $(0x2000000+48), AX     // syscall entry\n> +       SYSCALL\n> +       JCC     2(PC)\n> +       CALL    runtime\u00b7notok(SB)\n> +       RET\n> +\n>  TEXT runtime\u00b7sigaction(SB),7,$0\n>        MOVL    8(SP), DI               // arg 1 sig\n>        MOVQ    16(SP), SI              // arg 2 act\n> Index: src/pkg/runtime/thread_darwin.**c\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/thread_**darwin.c\n> +++ b/src/pkg/runtime/thread_**darwin.c\n> @@ -9,6 +9,9 @@\n>\n>  extern SigTab runtime\u00b7sigtab[];\n>\n> +static Sigset sigset_all = ~(Sigset)0;\n> +static Sigset sigset_none;\n> +\n>  static void\n>  unimplemented(int8 *name)\n>  {\n> @@ -70,13 +73,19 @@\n>  runtime\u00b7newosproc(M *m, G *g, void *stk, void (*fn)(void))\n>  {\n>        int32 errno;\n> +       Sigset oset;\n>\n>        m->tls[0] = m->id;      // so 386 asm can find it\n>        if(0){\n>                runtime\u00b7printf(\"newosproc stk=%p m=%p g=%p fn=%p id=%d/%d\n> ostk=%p\\n\",\n>                        stk, m, g, fn, m->id, m->tls[0], &m);\n>        }\n> -       if((errno = runtime\u00b7bsdthread_create(stk, m, g, fn)) < 0) {\n> +\n> +       runtime\u00b7sigprocmask(SIG_**SETMASK, &sigset_all, &oset);\n> +       errno = runtime\u00b7bsdthread_create(stk, m, g, fn);\n> +       runtime\u00b7sigprocmask(SIG_**SETMASK, &oset, nil);\n> +\n> +       if(errno < 0) {\n>                runtime\u00b7printf(\"runtime: failed to create new OS thread\n> (have %d already; errno=%d)\\n\", runtime\u00b7mcount(), -errno);\n>                runtime\u00b7throw(\"runtime.**newosproc\");\n>        }\n> @@ -89,6 +98,7 @@\n>        // Initialize signal handling.\n>        m->gsignal = runtime\u00b7malg(32*1024);     // OS X wants >=8K, Linux\n> >=2K\n>        runtime\u00b7signalstack(m->**gsignal->stackguard - StackGuard,\n> 32*1024);\n> +       runtime\u00b7sigprocmask(SIG_**SETMASK, &sigset_none, nil);\n>  }\n>\n>  // Mach IPC, to get at semaphores\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-23 19:41:56.622708",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-23 19:26:47.805349",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=58a1337b697e ***\n\nruntime: darwin signal masking\n\nFixes issue 3101 (darwin).\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5693044",
+			"disapproval": false,
+			"date": "2012-02-23 19:44:08.952809",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5693044: runtime: darwin signal masking",
+	"created": "2012-02-23 04:52:25.798598",
+	"patchsets": [
+		1,
+		1001,
+		4001,
+		1006
+	],
+	"modified": "2012-02-23 19:44:09.741641",
+	"closed": true,
+	"issue": 5693044
+}

@@ -1,0 +1,97 @@
+{
+	"description": "ssh: cosmetic cleanups\n\nThese are the cosmetic cleanups from the bits of code that I\nrereviewed.\n\n1) stringLength now takes a int; the length of the string. Too many\n   callers were allocating with stringLength([]byte(s)) and\n   stringLength only needs to call len().\n\n2) agent.go now has sendAndReceive to remove logic that was\n   duplicated.\n\n3) We now reject negative DH values\n\n4) We now reject empty packets rather than crashing.",
+	"cc": [
+		"jonathan.mark.pittman@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://agl%40golang.org@code.google.com/p/go.crypto/",
+			"disapproval": false,
+			"date": "2012-04-19 17:04:58.854527",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"agl@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for this CL, especially taking a pass through the error messages.\n\nI only have one comment regarding the change to stringLength, please see my comment in messages.go\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/agent.go\nFile ssh/agent.go (right):\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/agent.go#newcode47\nssh/agent.go:47: const maxAgentResponseBytes = 16 << 20\nIs this an RFC constant, or a sane default?\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/channel.go\nFile ssh/channel.go (left):\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/channel.go#oldcode388\nssh/channel.go:388: panic(\"unreachable\")\nThank you for removing the panic.\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/messages.go\nFile ssh/messages.go (right):\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/messages.go#newcode546\nssh/messages.go:546: func stringLength(n int) int {\nIf stringLength() is being called almost exclusively with strings, not []byte's, why not change it to accept a string, and add bytesLength() for the rare cases?\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/server.go\nFile ssh/server.go (right):\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/server.go#newcode146\nssh/server.go:146: }\nThis code is in two places, both wrong (not surpassing, client.go spawned from the server implementation), is it possible to consolidate this function?\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/transport.go\nFile ssh/transport.go (right):\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/transport.go#newcode140\nssh/transport.go:140: return nil, errors.New(\"ssh: zero length packet\")\nI couldn't find anything in the RFC about a minimum packet length, but this check sounds reasonable.",
+			"disapproval": false,
+			"date": "2012-04-20 10:01:10.484563",
+			"approval": false
+		},
+		{
+			"sender": "jonathan.mark.pittman@gmail.com",
+			"recipients": [
+				"agl@golang.org",
+				"dave@cheney.net",
+				"jonathan.mark.pittman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Just chiming in!\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/agent.go\nFile ssh/agent.go (right):\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/agent.go#newcode47\nssh/agent.go:47: const maxAgentResponseBytes = 16 << 20\nOn 2012/04/20 10:01:10, dfc wrote:\n> Is this an RFC constant, or a sane default?\n\nAFAIK, there is no RFC for SSH agent.  And PROTOCOL.agent does not mention this.  However, every implementation (even by the author of PROTOCOL.agent) I have seen establishes a constant like this for the purposes illustrated below.  So, it is definitely a sane default.\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/agent.go#newcode131\nssh/agent.go:131: io.ReadWriter\nIn addition to the locking mechanism in my comment below, I changed this from embedded to assigning a private variable name...\n\ntype AgentClient struct {\n        conn io.ReadWriter\n        mu sync.Mutex\n}\n\n...in order to prevent direct access to the Read and Write methods.\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/agent.go#newcode137\nssh/agent.go:137: func (ac *AgentClient) sendAndReceive(req []byte) (reply interface{}, replyType uint8, err error) {\nThanks for doing this.  I had been meaning to consolidate the two functions.  BTW, in my testing, this is also going to need a locking mechanism of some sort to prevent concurrent uses of this function with the same AgentClient.  Since the AgentClient has only a single connection to the ssh-agent, concurrent reads and writes will trip over each other (causing parse errors) as the ssh-agent will not distinguish between them.  It will only distinguish if there are separate connections for each concurrent request.\n\nI was using a sync.Mutex to lock before the Write and then defer the unlock, but there may be a better way.",
+			"disapproval": false,
+			"date": "2012-04-20 12:44:24.477057",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"dave@cheney.net",
+				"jonathan.mark.pittman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=06ef434db227&repo=crypto ***\n\nssh: cosmetic cleanups\n\nThese are the cosmetic cleanups from the bits of code that I\nrereviewed.\n\n1) stringLength now takes a int; the length of the string. Too many\n   callers were allocating with stringLength([]byte(s)) and\n   stringLength only needs to call len().\n\n2) agent.go now has sendAndReceive to remove logic that was\n   duplicated.\n\n3) We now reject negative DH values\n\n4) We now reject empty packets rather than crashing.\n\nR=dave, jonathan.mark.pittman\nCC=golang-dev\nhttp://codereview.appspot.com/6061052\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/agent.go\nFile ssh/agent.go (right):\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/agent.go#newcode47\nssh/agent.go:47: const maxAgentResponseBytes = 16 << 20\nOn 2012/04/20 10:01:10, dfc wrote:\n> Is this an RFC constant, or a sane default?\n\nI made it up. Have amended the comment to make that clear.\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/agent.go#newcode137\nssh/agent.go:137: func (ac *AgentClient) sendAndReceive(req []byte) (reply interface{}, replyType uint8, err error) {\nOn 2012/04/20 12:44:24, jmp wrote:\n> I was using a sync.Mutex to lock before the Write and then defer the unlock, but\n> there may be a better way.\n\nI think that adding locking is out of scope for this CL. But thanks for the heads up.\n\nWhat's the situation where you're using it concurrently? I guess you have a client process that is making many SSH connections?\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/messages.go\nFile ssh/messages.go (right):\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/messages.go#newcode546\nssh/messages.go:546: func stringLength(n int) int {\nOn 2012/04/20 10:01:10, dfc wrote:\n> If stringLength() is being called almost exclusively with strings, not []byte's,\n> why not change it to accept a string, and add bytesLength() for the rare cases?\n\nI thought about it. But everything else here is named based on the data type from the RFC. i.e. it's the length of the SSH `string'. So bytesLength seemed like a greater anomaly than taking the length.\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/server.go\nFile ssh/server.go (right):\n\nhttp://codereview.appspot.com/6061052/diff/5001/ssh/server.go#newcode146\nssh/server.go:146: }\nOn 2012/04/20 10:01:10, dfc wrote:\n> This code is in two places, both wrong (not surpassing, client.go spawned from\n> the server implementation), is it possible to consolidate this function?\n\nDone.",
+			"disapproval": false,
+			"date": "2012-04-20 19:19:29.459620",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"agl@golang.org",
+				"dave@cheney.net",
+				"jonathan.mark.pittman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I thought about it. But everything else here is named based on the data type\n> from the RFC. i.e. it's the length of the SSH `string'. So bytesLength seemed\n> like a greater anomaly than taking the length.\n\nAs sound a reason as any.",
+			"disapproval": false,
+			"date": "2012-04-20 23:43:22.211540",
+			"approval": false
+		}
+	],
+	"owner_email": "agl@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "agl1",
+	"subject": "code review 6061052: ssh: cosmetic cleanups",
+	"created": "2012-04-19 16:55:44.070471",
+	"patchsets": [
+		1,
+		2001,
+		1002,
+		5001,
+		14001,
+		17001
+	],
+	"modified": "2012-04-20 23:43:22.369128",
+	"closed": true,
+	"issue": 6061052
+}

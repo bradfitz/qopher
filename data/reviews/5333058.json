@@ -1,0 +1,61 @@
+{
+	"description": "leveldb: replace snappy's varint package with the standard\nencoding/binary package.",
+	"cc": [
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/leveldb-go/",
+			"disapproval": false,
+			"date": "2011-11-03 23:11:02.643785",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn Thu, Nov 3, 2011 at 4:11 PM, <nigeltao@golang.org> wrote:\n\n> Reviewers: bradfitz,\n>\n> Message:\n> Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://code.google.com/p/**leveldb-go/<https://code.google.com/p/leveldb-go/>\n>\n>\n> Description:\n> leveldb: replace snappy's varint package with the standard\n> encoding/binary package.\n>\n> Please review this at http://codereview.appspot.com/**5333058/<http://codereview.appspot.com/5333058/>\n>\n> Affected files:\n>  M leveldb/memdb/memdb.go\n>  M leveldb/table/reader.go\n>  M leveldb/table/writer.go\n>\n>\n> Index: leveldb/memdb/memdb.go\n> ==============================**==============================**=======\n> --- a/leveldb/memdb/memdb.go\n> +++ b/leveldb/memdb/memdb.go\n> @@ -12,11 +12,11 @@\n>  package memdb\n>\n>  import (\n> +       \"encoding/binary\"\n>        \"rand\"\n>        \"sync\"\n>\n>        \"leveldb-go.googlecode.com/hg/**leveldb/db<http://leveldb-go.googlecode.com/hg/leveldb/db>\n> \"\n> -       \"snappy-go.googlecode.com/hg/**varint<http://snappy-go.googlecode.com/hg/varint>\n> \"\n>  )\n>\n>  // maxHeight is the maximum height of a MemDB's skiplist.\n> @@ -85,7 +85,7 @@\n>        if kvOffset < 0 {\n>                return nil\n>        }\n> -       bLen, n := varint.Decode(m.kvData[**kvOffset:])\n> +       bLen, n := binary.Uvarint(m.kvData[**kvOffset:])\n>        return m.kvData[kvOffset+n : kvOffset+n+int(bLen)]\n>  }\n>\n> @@ -95,8 +95,8 @@\n>                return kvOffsetEmptySlice\n>        }\n>        kvOffset = len(m.kvData)\n> -       var buf [varint.MaxLen]byte\n> -       length := varint.Encode(buf[:], uint64(len(b)))\n> +       var buf [binary.MaxVarintLen64]byte\n> +       length := binary.PutUvarint(buf[:], uint64(len(b)))\n>        m.kvData = append(m.kvData, buf[:length]...)\n>        m.kvData = append(m.kvData, b...)\n>        return kvOffset\n> Index: leveldb/table/reader.go\n> ==============================**==============================**=======\n> --- a/leveldb/table/reader.go\n> +++ b/leveldb/table/reader.go\n> @@ -16,7 +16,6 @@\n>        \"leveldb-go.googlecode.com/hg/**leveldb/crc<http://leveldb-go.googlecode.com/hg/leveldb/crc>\n> \"\n>        \"leveldb-go.googlecode.com/hg/**leveldb/db<http://leveldb-go.googlecode.com/hg/leveldb/db>\n> \"\n>        \"snappy-go.googlecode.com/hg/**snappy<http://snappy-go.googlecode.com/hg/snappy>\n> \"\n> -       \"snappy-go.googlecode.com/hg/**varint<http://snappy-go.googlecode.com/hg/varint>\n> \"\n>  )\n>\n>  // blockHandle is the file offset and length of a block.\n> @@ -28,8 +27,8 @@\n>  // well as the number of bytes it occupies. It returns zero if given\n> invalid\n>  // input.\n>  func decodeBlockHandle(src []byte) (blockHandle, int) {\n> -       offset, n := varint.Decode(src)\n> -       length, m := varint.Decode(src[n:])\n> +       offset, n := binary.Uvarint(src)\n> +       length, m := binary.Uvarint(src[n:])\n>        if n == 0 || m == 0 {\n>                return blockHandle{}, 0\n>        }\n> @@ -37,8 +36,8 @@\n>  }\n>\n>  func encodeBlockHandle(dst []byte, b blockHandle) int {\n> -       n := varint.Encode(dst, b.offset)\n> -       m := varint.Encode(dst[n:], b.length)\n> +       n := binary.PutUvarint(dst, b.offset)\n> +       m := binary.PutUvarint(dst[n:], b.length)\n>        return n + m\n>  }\n>\n> @@ -64,8 +63,8 @@\n>                        // The varint encoding of 0 occupies 1 byte.\n>                        o++\n>                        // Decode the key at that restart point, and\n> compare it to the key sought.\n> -                       v1, n1 := varint.Decode(b[o:])\n> -                       _, n2 := varint.Decode(b[o+n1:])\n> +                       v1, n1 := binary.Uvarint(b[o:])\n> +                       _, n2 := binary.Uvarint(b[o+n1:])\n>                        m := o + n1 + n2\n>                        s := b[m : m+int(v1)]\n>                        return c.Compare(s, key) > 0\n> @@ -119,9 +118,9 @@\n>                i.Close()\n>                return false\n>        }\n> -       v0, n0 := varint.Decode(i.data)\n> -       v1, n1 := varint.Decode(i.data[n0:])\n> -       v2, n2 := varint.Decode(i.data[n0+n1:])\n> +       v0, n0 := binary.Uvarint(i.data)\n> +       v1, n1 := binary.Uvarint(i.data[n0:])\n> +       v2, n2 := binary.Uvarint(i.data[n0+n1:])\n>        n := n0 + n1 + n2\n>        i.key = append(i.key[:v0], i.data[n:n+int(v1)]...)\n>        i.val = i.data[n+int(v1) : n+int(v1+v2)]\n> Index: leveldb/table/writer.go\n> ==============================**==============================**=======\n> --- a/leveldb/table/writer.go\n> +++ b/leveldb/table/writer.go\n> @@ -15,7 +15,6 @@\n>        \"leveldb-go.googlecode.com/hg/**leveldb/crc<http://leveldb-go.googlecode.com/hg/leveldb/crc>\n> \"\n>        \"leveldb-go.googlecode.com/hg/**leveldb/db<http://leveldb-go.googlecode.com/hg/leveldb/db>\n> \"\n>        \"snappy-go.googlecode.com/hg/**snappy<http://snappy-go.googlecode.com/hg/snappy>\n> \"\n> -       \"snappy-go.googlecode.com/hg/**varint<http://snappy-go.googlecode.com/hg/varint>\n> \"\n>  )\n>\n>  // indexEntry is a block handle and the length of the separator key.\n> @@ -67,7 +66,7 @@\n>        // temporary buffer for each block.\n>        compressedBuf []byte\n>        // tmp is a scratch buffer, large enough to hold either footerLen\n> bytes,\n> -       // blockTrailerLen bytes, or (5 * varint.MaxLen) bytes.\n> +       // blockTrailerLen bytes, or (5 * binary.MaxVarintLen64) bytes.\n>        tmp [50]byte\n>  }\n>\n> @@ -142,9 +141,9 @@\n>        }\n>        w.prevKey = append(w.prevKey[:0], key...)\n>        w.nEntries++\n> -       n := varint.Encode(w.tmp[0:], uint64(nShared))\n> -       n += varint.Encode(w.tmp[n:], uint64(len(key)-nShared))\n> -       n += varint.Encode(w.tmp[n:], uint64(len(value)))\n> +       n := binary.PutUvarint(w.tmp[0:], uint64(nShared))\n> +       n += binary.PutUvarint(w.tmp[n:], uint64(len(key)-nShared))\n> +       n += binary.PutUvarint(w.tmp[n:], uint64(len(value)))\n>        w.buf.Write(w.tmp[:n])\n>        w.buf.Write(key[nShared:])\n>        w.buf.Write(value)\n> @@ -240,8 +239,8 @@\n>        }\n>\n>        // Write the index block.\n> -       // writer.append uses w.tmp[:3*varint.MaxLen].\n> -       i0, tmp := 0, w.tmp[3*varint.MaxLen:5***varint.MaxLen]\n> +       // writer.append uses w.tmp[:3*binary.**MaxVarintLen64].\n> +       i0, tmp := 0, w.tmp[3*binary.MaxVarintLen64:**\n> 5*binary.MaxVarintLen64]\n>        for _, ie := range w.indexEntries {\n>                n := encodeBlockHandle(tmp, ie.bh)\n>                i1 := i0 + ie.keyLen\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-11-07 23:16:13.312377",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as 6ff4a200ed95 ***\n\nleveldb: replace snappy's varint package with the standard\nencoding/binary package.\n\nR=bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5333058",
+			"disapproval": false,
+			"date": "2011-11-07 23:36:58.989630",
+			"approval": false
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 5333058: leveldb: replace snappy's varint package with the standard",
+	"created": "2011-11-03 23:10:37.641469",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		10001
+	],
+	"modified": "2011-11-07 23:37:01.296372",
+	"closed": true,
+	"issue": 5333058
+}

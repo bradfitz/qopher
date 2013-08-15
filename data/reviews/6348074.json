@@ -1,0 +1,205 @@
+{
+	"description": "encoding/asn1: promote untyped strings to UTF8 as needed.\n\nPreviously, strings that didn't have an explicit ASN.1 string type\nwere taken to be ASN.1 PrintableStrings. This resulted in an error if\na unrepresentable charactor was included.\n\nFor compatibility reasons, I'm too afraid to switch the default string\ntype to UTF8String, but this patch causes untyped strings to become\nUTF8Strings if they contain a charactor that's not valid in a\nPrintableString.\n\nFixes issue 3791.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"r@golang.org",
+		"r@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-07-09 15:20:32.846290",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "With the caveat that I don't know ASN.1 at all, what about keeping it\r\nprintable with the logic as you have it now (all runes <= 255 and\r\nprintable) but only setting the string type to UTF-8 if\r\nutf8.ValidString(string)?  I'm thinking of binary data in an ASN.1 string\r\nbeing false-positive flagged as UTF-8.\r\n\r\nOn Mon, Jul 9, 2012 at 8:20 AM, <agl@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> encoding/asn1: promote untyped strings to UTF8 as needed.\r\n>\r\n> Previously, strings that didn't have an explicit ASN.1 string type\r\n> were taken to be ASN.1 PrintableStrings. This resulted in an error if\r\n> a unrepresentable charactor was included.\r\n>\r\n> For compatibility reasons, I'm too afraid to switch the default string\r\n> type to UTF8String, but this patch causes untyped strings to become\r\n> UTF8Strings if they contain a charactor that's not valid in a\r\n> PrintableString.\r\n>\r\n> Fixes issue 3791.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6348074/<http://codereview.appspot.com/6348074/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/crypto/x509/x509_test.**go\r\n>   M src/pkg/encoding/asn1/common.**go\r\n>   M src/pkg/encoding/asn1/marshal.**go\r\n>   M src/pkg/encoding/asn1/marshal_**test.go\r\n>\r\n>\r\n> Index: src/pkg/crypto/x509/x509_test.**go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/x509/x509_**test.go\r\n> +++ b/src/pkg/crypto/x509/x509_**test.go\r\n> @@ -251,7 +251,7 @@\r\n>                 SerialNumber: big.NewInt(1),\r\n>                 Subject: pkix.Name{\r\n>                         CommonName:   commonName,\r\n> -                       Organization: []string{\"Acme Co\"},\r\n> +                       Organization: []string{\"\u03a3 Acme Co\"},\r\n>                 },\r\n>                 NotBefore: time.Unix(1000, 0),\r\n>                 NotAfter:  time.Unix(100000, 0),\r\n> Index: src/pkg/encoding/asn1/common.**go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/encoding/asn1/**common.go\r\n> +++ b/src/pkg/encoding/asn1/**common.go\r\n> @@ -98,6 +98,8 @@\r\n>                         ret.stringType = tagIA5String\r\n>                 case part == \"printable\":\r\n>                         ret.stringType = tagPrintableString\r\n> +               case part == \"utf8\":\r\n> +                       ret.stringType = tagUTF8String\r\n>                 case strings.HasPrefix(part, \"default:\"):\r\n>                         i, err := strconv.ParseInt(part[8:], 10, 64)\r\n>                         if err == nil {\r\n> Index: src/pkg/encoding/asn1/marshal.**go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/encoding/asn1/**marshal.go\r\n> +++ b/src/pkg/encoding/asn1/**marshal.go\r\n> @@ -280,6 +280,11 @@\r\n>         return\r\n>  }\r\n>\r\n> +func marshalUTF8String(out *forkableWriter, s string) (err error) {\r\n> +       _, err = out.Write([]byte(s))\r\n> +       return\r\n> +}\r\n> +\r\n>  func marshalTwoDigits(out *forkableWriter, v int) (err error) {\r\n>         err = out.WriteByte(byte('0' + (v/10)%10))\r\n>         if err != nil {\r\n> @@ -446,10 +451,13 @@\r\n>                 }\r\n>                 return\r\n>         case reflect.String:\r\n> -               if params.stringType == tagIA5String {\r\n> +               switch params.stringType {\r\n> +               case tagIA5String:\r\n>                         return marshalIA5String(out, v.String())\r\n> -               } else {\r\n> +               case tagPrintableString:\r\n>                         return marshalPrintableString(out, v.String())\r\n> +               default:\r\n> +                       return marshalUTF8String(out, v.String())\r\n>                 }\r\n>                 return\r\n>         }\r\n> @@ -492,11 +500,24 @@\r\n>         }\r\n>         class := classUniversal\r\n>\r\n> -       if params.stringType != 0 {\r\n> -               if tag != tagPrintableString {\r\n> -                       return StructuralError{\"Explicit string type given\r\n> to non-string member\"}\r\n> +       if params.stringType != 0 && tag != tagPrintableString {\r\n> +               return StructuralError{\"Explicit string type given to\r\n> non-string member\"}\r\n> +       }\r\n> +\r\n> +       if tag == tagPrintableString {\r\n> +               if params.stringType == 0 {\r\n> +                       // This is a string without an explicit string\r\n> type. We'll use\r\n> +                       // a PrintableString if the charactor set in the\r\n> string is\r\n> +                       // sufficiently limited, otherwise we'll use a\r\n> UTF8String.\r\n> +                       for _, r := range v.String() {\r\n> +                               if r > 255 || !isPrintable(byte(r)) {\r\n> +                                       tag = tagUTF8String\r\n> +                                       break\r\n> +                               }\r\n> +                       }\r\n> +               } else {\r\n> +                       tag = params.stringType\r\n>                 }\r\n> -               tag = params.stringType\r\n>         }\r\n>\r\n>         if params.set {\r\n> Index: src/pkg/encoding/asn1/marshal_**test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/encoding/asn1/**marshal_test.go\r\n> +++ b/src/pkg/encoding/asn1/**marshal_test.go\r\n> @@ -122,6 +122,7 @@\r\n>         {testSET([]int{10}), \"310302010a\"},\r\n>         {omitEmptyTest{[]string{}}, \"3000\"},\r\n>         {omitEmptyTest{[]string{\"1\"}}, \"30053003130131\"},\r\n> +       {\"\u03a3\", \"0c02cea3\"},\r\n>  }\r\n>\r\n>  func TestMarshal(t *testing.T) {\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-07-09 17:04:11.608250",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6348074/diff/10001/src/pkg/encoding/asn1/marshal.go\nFile src/pkg/encoding/asn1/marshal.go (right):\n\nhttp://codereview.appspot.com/6348074/diff/10001/src/pkg/encoding/asn1/marshal.go#newcode515\nsrc/pkg/encoding/asn1/marshal.go:515: if r > 255 || !isPrintable(byte(r)) {\nif that's what you're after, the question is r >= utf8.RuneSelf, which is 0x80 not 0xFF.",
+			"disapproval": false,
+			"date": "2012-07-09 22:22:59.234060",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jul 9, 2012 at 1:04 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> With the caveat that I don't know ASN.1 at all, what about keeping it\r\n> printable with the logic as you have it now (all runes <= 255 and printable)\r\n> but only setting the string type to UTF-8 if utf8.ValidString(string)?  I'm\r\n> thinking of binary data in an ASN.1 string being false-positive flagged as\r\n> UTF-8.\r\n\r\nThat's a fair point. I've updated the logic to check utf8.ValidString\r\nbefore encoding as a UTF-8 string. If it's invalid then we return an\r\nerror.\r\n\r\n\r\nCheers\r\n\r\nAGL\r\n",
+			"disapproval": false,
+			"date": "2012-07-09 17:11:35.202780",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Mon, Jul 9, 2012 at 10:11 AM, Adam Langley <agl@golang.org> wrote:\r\n\r\n> On Mon, Jul 9, 2012 at 1:04 PM, Brad Fitzpatrick <bradfitz@golang.org>\r\n> wrote:\r\n> > With the caveat that I don't know ASN.1 at all, what about keeping it\r\n> > printable with the logic as you have it now (all runes <= 255 and\r\n> printable)\r\n> > but only setting the string type to UTF-8 if utf8.ValidString(string)?\r\n>  I'm\r\n> > thinking of binary data in an ASN.1 string being false-positive flagged\r\n> as\r\n> > UTF-8.\r\n>\r\n> That's a fair point. I've updated the logic to check utf8.ValidString\r\n> before encoding as a UTF-8 string. If it's invalid then we return an\r\n> error.\r\n>\r\n>\r\n> Cheers\r\n>\r\n> AGL\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-07-09 17:19:08.663160",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6348074/diff/10001/src/pkg/encoding/asn1/marshal.go\nFile src/pkg/encoding/asn1/marshal.go (right):\n\nhttp://codereview.appspot.com/6348074/diff/10001/src/pkg/encoding/asn1/marshal.go#newcode515\nsrc/pkg/encoding/asn1/marshal.go:515: if r > 255 || !isPrintable(byte(r)) {\nsurely 127 or (better) >= 0x80\nthe combination of isPrintable and this check is odd. if the byte is, say, 0x00, why does it change from ASCII to UTF8?",
+			"disapproval": false,
+			"date": "2012-07-09 22:12:56.207510",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6348074/diff/10001/src/pkg/encoding/asn1/marshal.go\nFile src/pkg/encoding/asn1/marshal.go (right):\n\nhttp://codereview.appspot.com/6348074/diff/10001/src/pkg/encoding/asn1/marshal.go#newcode515\nsrc/pkg/encoding/asn1/marshal.go:515: if r > 255 || !isPrintable(byte(r)) {\nOn 2012/07/09 22:12:56, r wrote:\n> surely 127 or (better) >= 0x80\n> the combination of isPrintable and this check is odd. if the byte is, say, 0x00,\n> why does it change from ASCII to UTF8?\n\na PRINTABLESTRING isn't ASCII, it's a much more limited subset:\n\n// isPrintable returns true iff the given b is in the ASN.1 PrintableString set.\nfunc isPrintable(b byte) bool {\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7return 'a' <= b && b <= 'z' ||\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7'A' <= b && b <= 'Z' ||\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7'0' <= b && b <= '9' ||\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7'\\'' <= b && b <= ')' ||\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7'+' <= b && b <= '/' ||\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7b == ' ' ||\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7b == ':' ||\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7b == '=' ||\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7b == '?' ||\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7// This is technically not allowed in a PrintableString.\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7// However, x509 certificates with wildcard strings don't\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7// always use the correct string type so we permit it.\n\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00bb\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7b == '*'\n}\n\nSo the check for > 255 might be better written as r == rune(byte(r)) to make it clear that what it's checking is that we aren't aliasing two runes with the byte conversion.",
+			"disapproval": false,
+			"date": "2012-07-09 22:19:08.661380",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "checking my understanding: if the byte is not PRINTABLE, it must be part of a valid UTF-8 string and will be identified as such in the marshaled data.",
+			"disapproval": false,
+			"date": "2012-07-09 22:24:55.719490",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/07/09 22:24:55, r wrote:\n> checking my understanding: if the byte is not PRINTABLE, it must be part of a\n> valid UTF-8 string and will be identified as such in the marshaled data.\n\nRight. At the moment we serialise ASN.1 structures often without setting an explicit string type in the struct. So if someone puts a non-PRINTABLE string in there, Marshal fails because it defaults to PRINTABLESTRING.\n\nWe could also fix this by marking all the strings as UTF8 explicitly, but that would cause them to always be ASN.1 UTF8STRINGs. That is technically valid, but I expect it to be incompatible with something out there.\n\nSo the intent here is that, if the string in the struct isn't explicitly typed, then we'll use PRINTABLESTRING if possible, and UTF8STRING otherwise. If the string isn't valid UTF8 either, then we'll throw an error.",
+			"disapproval": false,
+			"date": "2012-07-09 22:29:02.959960",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"r@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=63d9b9b595c5 ***\n\nencoding/asn1: promote untyped strings to UTF8 as needed.\n\nPreviously, strings that didn't have an explicit ASN.1 string type\nwere taken to be ASN.1 PrintableStrings. This resulted in an error if\na unrepresentable charactor was included.\n\nFor compatibility reasons, I'm too afraid to switch the default string\ntype to UTF8String, but this patch causes untyped strings to become\nUTF8Strings if they contain a charactor that's not valid in a\nPrintableString.\n\nFixes issue 3791.\n\nR=golang-dev, bradfitz, r, r\nCC=golang-dev\nhttp://codereview.appspot.com/6348074\n\nhttp://codereview.appspot.com/6348074/diff/2002/src/pkg/encoding/asn1/marshal.go\nFile src/pkg/encoding/asn1/marshal.go (right):\n\nhttp://codereview.appspot.com/6348074/diff/2002/src/pkg/encoding/asn1/marshal.go#newcode515\nsrc/pkg/encoding/asn1/marshal.go:515: if r > utf8.RuneSelf || !isPrintable(byte(r)) {\nOn 2012/07/10 20:07:46, r wrote:\n> s/>/>=/\n\nDone.",
+			"disapproval": false,
+			"date": "2012-07-10 22:23:47.422410",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "this CL isn't viewable by me: chunk mismatch\r\n\r\n-rob\r\n\r\n",
+			"disapproval": false,
+			"date": "2012-07-10 19:51:05.721160",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"r@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM after fixing buglet\n\nhttp://codereview.appspot.com/6348074/diff/2002/src/pkg/encoding/asn1/marshal.go\nFile src/pkg/encoding/asn1/marshal.go (right):\n\nhttp://codereview.appspot.com/6348074/diff/2002/src/pkg/encoding/asn1/marshal.go#newcode515\nsrc/pkg/encoding/asn1/marshal.go:515: if r > utf8.RuneSelf || !isPrintable(byte(r)) {\ns/>/>=/",
+			"disapproval": false,
+			"date": "2012-07-10 20:07:46.293020",
+			"approval": true
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"r@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "uploaded again and codereview seems to be happy now.",
+			"disapproval": false,
+			"date": "2012-07-10 19:54:53.581930",
+			"approval": false
+		}
+	],
+	"owner_email": "agl@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "agl1",
+	"subject": "code review 6348074: encoding/asn1: promote untyped strings to UTF8 as needed.",
+	"created": "2012-07-03 16:11:13.995381",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		10001,
+		12006,
+		2002,
+		28001
+	],
+	"modified": "2012-07-10 22:23:48.507200",
+	"closed": true,
+	"issue": 6348074
+}

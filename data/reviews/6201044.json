@@ -1,0 +1,202 @@
+{
+	"description": "net/http: non-keepalive connections close successfully\n\nConnections did not close if Request.Close or Response.Close was true. This meant that if the user wanted the connection to close, or if the server requested it via \"Connection: close\", the connection would not be closed.\n\nFixes issue 1967.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [
+		"cookieo9@gmail.com",
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you test this without SetFinalizer, please?  There is no guarantee\r\nthat the GC will collect a particular block on a particular\r\ncollection.\r\n",
+			"disapproval": false,
+			"date": "2012-05-04 13:30:59.063099",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"james@james4k.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry for the slow review.  I lost this.\n\nhttp://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go\nFile src/pkg/net/http/transport_test.go (right):\n\nhttp://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode41\nsrc/pkg/net/http/transport_test.go:41: var connTestListMutex *sync.Mutex = &sync.Mutex{}\nyou don't need to list the type (*sync.Mutex) and sync.Mutex is generally declared just as a value.  do this:\n\nvar (\n       connTestMutex sync.Mutex // protects connTestList\n       connTestList     []*net.TCPConn\n)\n\nhttp://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode48\nsrc/pkg/net/http/transport_test.go:48: if connTestList == nil {\nthese three lines are unnecessary.  append does this for you.\n\nhttp://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode51\nsrc/pkg/net/http/transport_test.go:51: connTestList = append(connTestList, c.(*net.TCPConn))\nmight as well just make the list be on type []net.Conn, no?\n\nhttp://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode64\nsrc/pkg/net/http/transport_test.go:64: if c.Close() == nil {\nI'm not sure you can rely on this property?\n\nI'd recommend instead making testDial return a different implementation of net.Conn which wraps a net.Conn and removes the net.Conn from a map of outstanding conns (so change the protected datastructure from a slice to a map[net.Conn]bool)\n\nhttp://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode72\nsrc/pkg/net/http/transport_test.go:72: t.Errorf(\"%v out of %v tcp connections were not closed\", unclosed, len(connTestList))\n%d instead of %d when you know it's an integer.  (minor nit)\n\nhttp://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode116\nsrc/pkg/net/http/transport_test.go:116: tr.Dial = testDial\njust put this in the {}.\n\ntr := &Transport{\n    Dial: testDial,\n}",
+			"disapproval": false,
+			"date": "2012-05-07 10:18:46.745296",
+			"approval": false
+		},
+		{
+			"sender": "james@james4k.com",
+			"recipients": [
+				"james@james4k.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/05/04 13:30:59, rsc wrote:\n> Can you test this without SetFinalizer, please?  There is no guarantee\n> that the GC will collect a particular block on a particular\n> collection.\n\nAh, ok. Here's an alternative, but it involves a few global vars. It seems fitting to reuse it in a couple of the tests that are specifically testing for connections closing.",
+			"disapproval": false,
+			"date": "2012-05-04 16:38:04.342544",
+			"approval": false
+		},
+		{
+			"sender": "james@james4k.com",
+			"recipients": [
+				"james@james4k.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: bradfitz@golang.org),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-05-04 08:52:41.692892",
+			"approval": false
+		},
+		{
+			"sender": "james@james4k.com",
+			"recipients": [
+				"james@james4k.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "OK, I've implemented all of your suggestions. In addition, I've replaced the global state with a closure in makeTestDial.\n\nOn 2012/05/07 10:18:46, bradfitz wrote:\n> Sorry for the slow review.  I lost this.\n> \n> http://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go\n> File src/pkg/net/http/transport_test.go (right):\n> \n> http://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode41\n> src/pkg/net/http/transport_test.go:41: var connTestListMutex *sync.Mutex =\n> &sync.Mutex{}\n> you don't need to list the type (*sync.Mutex) and sync.Mutex is generally\n> declared just as a value.  do this:\n> \n> var (\n>        connTestMutex sync.Mutex // protects connTestList\n>        connTestList     []*net.TCPConn\n> )\n> \n> http://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode48\n> src/pkg/net/http/transport_test.go:48: if connTestList == nil {\n> these three lines are unnecessary.  append does this for you.\n> \n> http://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode51\n> src/pkg/net/http/transport_test.go:51: connTestList = append(connTestList,\n> c.(*net.TCPConn))\n> might as well just make the list be on type []net.Conn, no?\n> \n> http://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode64\n> src/pkg/net/http/transport_test.go:64: if c.Close() == nil {\n> I'm not sure you can rely on this property?\n> \n> I'd recommend instead making testDial return a different implementation of\n> net.Conn which wraps a net.Conn and removes the net.Conn from a map of\n> outstanding conns (so change the protected datastructure from a slice to a\n> map[net.Conn]bool)\n> \n> http://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode72\n> src/pkg/net/http/transport_test.go:72: t.Errorf(\"%v out of %v tcp connections\n> were not closed\", unclosed, len(connTestList))\n> %d instead of %d when you know it's an integer.  (minor nit)\n> \n> http://codereview.appspot.com/6201044/diff/3003/src/pkg/net/http/transport_test.go#newcode116\n> src/pkg/net/http/transport_test.go:116: tr.Dial = testDial\n> just put this in the {}.\n> \n> tr := &Transport{\n>     Dial: testDial,\n> }",
+			"disapproval": false,
+			"date": "2012-05-07 21:18:40.467026",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"james@james4k.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-05-18 17:17:37.085092",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"james@james4k.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=820ffde8c396 ***\n\nnet/http: non-keepalive connections close successfully\n\nConnections did not close if Request.Close or Response.Close was true. This meant that if the user wanted the connection to close, or if the server requested it via \"Connection: close\", the connection would not be closed.\n\nFixes issue 1967.\n\nR=golang-dev, rsc, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6201044\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2012-05-18 17:34:41.759891",
+			"approval": false
+		},
+		{
+			"sender": "cookieo9@gmail.com",
+			"recipients": [
+				"james@james4k.com",
+				"cookieo9@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/05/18 17:34:41, bradfitz wrote:\n> *** Submitted as http://code.google.com/p/go/source/detail?r=820ffde8c396 ***\n> \n> net/http: non-keepalive connections close successfully\n> \n> Connections did not close if Request.Close or Response.Close was true. This\n> meant that if the user wanted the connection to close, or if the server\n> requested it via \"Connection: close\", the connection would not be closed.\n> \n> Fixes issue 1967.\n> \n> R=golang-dev, rsc, bradfitz\n> CC=golang-dev\n> http://codereview.appspot.com/6201044\n> \n> Committer: Brad Fitzpatrick <mailto:bradfitz@golang.org>\n\nThis code breaks Client.Get() on non-persistent (\"Connection: close\") connections. Response.Body returns error(\"use of closed network connection\").\n\neg:\n\nresponse,err := http.Get(\"http://...\") // err == nil, but response.Close == true\nn,err := response.Body.Read(buf) // err == use of closed network connection",
+			"disapproval": false,
+			"date": "2012-05-19 08:06:33.670478",
+			"approval": false
+		},
+		{
+			"sender": "cookieo9@gmail.com",
+			"recipients": [
+				"james@james4k.com",
+				"cookieo9@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Full example (works in go1.0.1 but not after this CL):\n\npackage main\n\nimport (\n\t\"io/ioutil\"\n\t\"log\"\n\t\"net/http\"\n)\n\nfunc foo(rw http.ResponseWriter, rq *http.Request) {\n\t// Set header indicating keep-alive connection should be closed\n\trw.Header().Set(\"Connection\", \"close\")\n\t// Message must be of meaningful size to cause failure\n\tfor i := 0; i < 1024; i++ {\n\t\trw.Write([]byte(\"foo \"))\n\t}\n}\n\nfunc init() {\n\thttp.HandleFunc(\"/\", foo)\n\tgo func() {\n\t\tif err := http.ListenAndServe(\":8081\", nil); err != nil {\n\t\t\tpanic(err)\n\t\t}\n\t}()\n}\n\nfunc main() {\n\tresp, err := http.Get(\"http://localhost:8081/\")\n\tif err != nil {\n\t\tlog.Fatal(err)\n\t}\n\tdefer resp.Body.Close()\n\tlog.Printf(\"%#v\", resp)\n\n\tbs, err := ioutil.ReadAll(resp.Body)\n\tif err != nil {\n\t\tlog.Fatal(err)\n\t}\n\n\tlog.Print(string(bs))\n}",
+			"disapproval": false,
+			"date": "2012-05-19 08:21:52.476417",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for the report.\r\n\r\nWill fix. http://code.google.com/p/go/issues/detail?id=3644\r\n\r\n\r\nOn Sat, May 19, 2012 at 1:21 AM, <cookieo9@gmail.com> wrote:\r\n\r\n> Full example (works in go1.0.1 but not after this CL):\r\n>\r\n> package main\r\n>\r\n> import (\r\n>        \"io/ioutil\"\r\n>        \"log\"\r\n>        \"net/http\"\r\n> )\r\n>\r\n> func foo(rw http.ResponseWriter, rq *http.Request) {\r\n>        // Set header indicating keep-alive connection should be closed\r\n>        rw.Header().Set(\"Connection\", \"close\")\r\n>        // Message must be of meaningful size to cause failure\r\n>        for i := 0; i < 1024; i++ {\r\n>                rw.Write([]byte(\"foo \"))\r\n>        }\r\n> }\r\n>\r\n> func init() {\r\n>        http.HandleFunc(\"/\", foo)\r\n>        go func() {\r\n>                if err := http.ListenAndServe(\":8081\", nil); err != nil {\r\n>                        panic(err)\r\n>                }\r\n>        }()\r\n> }\r\n>\r\n> func main() {\r\n>        resp, err := http.Get(\"http://localhost:**8081/<http://localhost:8081/>\r\n> \")\r\n>        if err != nil {\r\n>                log.Fatal(err)\r\n>        }\r\n>        defer resp.Body.Close()\r\n>        log.Printf(\"%#v\", resp)\r\n>\r\n>        bs, err := ioutil.ReadAll(resp.Body)\r\n>        if err != nil {\r\n>                log.Fatal(err)\r\n>        }\r\n>\r\n>        log.Print(string(bs))\r\n> }\r\n>\r\n>\r\n>\r\n> http://codereview.appspot.com/**6201044/<http://codereview.appspot.com/6201044/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-05-19 13:13:34.400203",
+			"approval": false
+		},
+		{
+			"sender": "james@james4k.com",
+			"recipients": [
+				"james@james4k.com",
+				"cookieo9@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-01-03 20:42:05.125840",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "hg change -D 6201044\r\n\r\nnot -d, despite what the helpful text says.\r\n\r\nOn Fri, Jan 4, 2013 at 7:42 AM,  <james@james4k.com> wrote:\r\n> *** Abandoned ***\r\n>\r\n> https://codereview.appspot.com/6201044/\r\n",
+			"disapproval": false,
+			"date": "2013-01-03 22:59:06.519310",
+			"approval": false
+		},
+		{
+			"sender": "james@james4k.com",
+			"recipients": [
+				"james@james4k.com",
+				"cookieo9@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Eek, sorry. Thanks.\n\nOn 2013/01/03 22:59:06, dfc wrote:\n> hg change -D 6201044\n> \n> not -d, despite what the helpful text says.\n> \n> On Fri, Jan 4, 2013 at 7:42 AM,  <mailto:james@james4k.com> wrote:\n> > *** Abandoned ***\n> >\n> > https://codereview.appspot.com/6201044/",
+			"disapproval": false,
+			"date": "2013-01-04 00:29:49.750230",
+			"approval": false
+		}
+	],
+	"owner_email": "james@james4k.com",
+	"private": false,
+	"base_url": "",
+	"owner": "james4k",
+	"subject": "code review 6201044: net/http: non-keepalive connections close successfully",
+	"created": "2012-05-04 08:50:50.895928",
+	"patchsets": [
+		4001,
+		3003,
+		5003
+	],
+	"modified": "2013-01-04 00:29:49.891900",
+	"closed": true,
+	"issue": 6201044
+}

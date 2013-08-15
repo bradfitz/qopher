@@ -1,0 +1,213 @@
+{
+	"description": "runtime: faster parallel GC\nUse per-thread work buffers instead of global mutex-protected pool. This eliminates contention from parallel scan phase.\n\nbenchmark                             old ns/op    new ns/op    delta\ngarbage.BenchmarkTree2-8               97100768     71417553  -26.45%\ngarbage.BenchmarkTree2LastPause-8     970931485    714103692  -26.45%\ngarbage.BenchmarkTree2Pause-8         469127802    345029253  -26.45%\ngarbage.BenchmarkParser-8            2880950854   2715456901   -5.74%\ngarbage.BenchmarkParserLastPause-8    137047399    103336476  -24.60%\ngarbage.BenchmarkParserPause-8         80686028     58922680  -26.97%",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"0xe2.0x9a.0x9b@gmail.com",
+		"dave@cheney.net",
+		"adg@golang.org",
+		"rsc@golang.org",
+		"iant@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you, can you share any numbers for the single proc case?\r\n\r\n\r\n\r\nOn 17/03/2013, at 8:19 PM, dvyukov@google.com wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n> \r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n> \r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@code.google.com/p/go/\r\n> \r\n> \r\n> Description:\r\n> runtime: faster parallel GC\r\n> benchmark                             old ns/op    new ns/op    delta\r\n> garbage.BenchmarkTree2-8               97100768     71417553  -26.45%\r\n> garbage.BenchmarkTree2LastPause-8     970931485    714103692  -26.45%\r\n> garbage.BenchmarkTree2Pause-8         469127802    345029253  -26.45%\r\n> garbage.BenchmarkParser-8            2880950854   2715456901   -5.74%\r\n> garbage.BenchmarkParserLastPause-8    137047399    103336476  -24.60%\r\n> garbage.BenchmarkParserPause-8         80686028     58922680  -26.97%\r\n> \r\n> Please review this at https://codereview.appspot.com/7816044/\r\n> \r\n> Affected files:\r\n>  M src/pkg/runtime/mgc0.c\r\n>  M src/pkg/runtime/proc.c\r\n> \r\n> \r\n> Index: src/pkg/runtime/mgc0.c\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/mgc0.c\r\n> +++ b/src/pkg/runtime/mgc0.c\r\n> @@ -140,6 +140,7 @@\r\n> static Workbuf* getfull(Workbuf*);\r\n> static void    putempty(Workbuf*);\r\n> static Workbuf* handoff(Workbuf*);\r\n> +static void    gchelperstart(void);\r\n> \r\n> static struct {\r\n>    uint64    full;  // lock-free list of full blocks\r\n> @@ -287,11 +288,12 @@\r\n> {\r\n>    PtrTarget ptrtarget[IntermediateBufferCapacity];\r\n>    Obj obj[IntermediateBufferCapacity];\r\n> -    BufferList *next;\r\n> +    uint32 busy;\r\n> +    byte pad[CacheLineSize];\r\n> };\r\n> -static BufferList *bufferList;\r\n> +#pragma dataflag 16  // no pointers\r\n> +static BufferList bufferList[MaxGcproc];\r\n> \r\n> -static Lock lock;\r\n> static Type *itabtype;\r\n> \r\n> static void enqueue(Obj obj, Workbuf **_wbuf, Obj **_wp, uintptr *_nobj);\r\n> @@ -598,23 +600,11 @@\r\n> \r\n>    // Allocate ptrbuf\r\n>    {\r\n> -        runtime\u00b7lock(&lock);\r\n> -\r\n> -        if(bufferList == nil) {\r\n> -            bufferList = runtime\u00b7SysAlloc(sizeof(*bufferList));\r\n> -            if(bufferList == nil)\r\n> -                runtime\u00b7throw(\"runtime: cannot allocate memory\");\r\n> -            bufferList->next = nil;\r\n> -        }\r\n> -        scanbuffers = bufferList;\r\n> -        bufferList = bufferList->next;\r\n> -\r\n> +        scanbuffers = &bufferList[m->helpgc];\r\n>        ptrbuf = &scanbuffers->ptrtarget[0];\r\n>        ptrbuf_end = &scanbuffers->ptrtarget[0] + nelem(scanbuffers->ptrtarget);\r\n>        objbuf = &scanbuffers->obj[0];\r\n>        objbuf_end = &scanbuffers->obj[0] + nelem(scanbuffers->obj);\r\n> -\r\n> -        runtime\u00b7unlock(&lock);\r\n>    }\r\n> \r\n>    ptrbufpos = ptrbuf;\r\n> @@ -1020,11 +1010,7 @@\r\n>        nobj--;\r\n>    }\r\n> \r\n> -endscan:\r\n> -    runtime\u00b7lock(&lock);\r\n> -    scanbuffers->next = bufferList;\r\n> -    bufferList = scanbuffers;\r\n> -    runtime\u00b7unlock(&lock);\r\n> +endscan:;\r\n> }\r\n> \r\n> // debug_scanblock is the debug copy of scanblock.\r\n> @@ -1649,6 +1635,8 @@\r\n> void\r\n> runtime\u00b7gchelper(void)\r\n> {\r\n> +    gchelperstart();\r\n> +\r\n>    // parallel mark for over gc roots\r\n>    runtime\u00b7parfordo(work.markfor);\r\n> \r\n> @@ -1662,6 +1650,7 @@\r\n>    }\r\n> \r\n>    runtime\u00b7parfordo(work.sweepfor);\r\n> +    bufferList[m->helpgc].busy = 0;\r\n>    if(runtime\u00b7xadd(&work.ndone, +1) == work.nproc-1)\r\n>        runtime\u00b7notewakeup(&work.alldone);\r\n> }\r\n> @@ -1853,6 +1842,7 @@\r\n> \r\n>    t1 = runtime\u00b7nanotime();\r\n> \r\n> +    gchelperstart();\r\n>    runtime\u00b7parfordo(work.markfor);\r\n>    scanblock(nil, nil, 0, true);\r\n> \r\n> @@ -1864,6 +1854,7 @@\r\n>    t2 = runtime\u00b7nanotime();\r\n> \r\n>    runtime\u00b7parfordo(work.sweepfor);\r\n> +    bufferList[m->helpgc].busy = 0;\r\n>    t3 = runtime\u00b7nanotime();\r\n> \r\n>    if(work.nproc > 1)\r\n> @@ -2005,6 +1996,15 @@\r\n> }\r\n> \r\n> static void\r\n> +gchelperstart(void)\r\n> +{\r\n> +    if(m->helpgc < 0 || m->helpgc >= MaxGcproc)\r\n> +        runtime\u00b7throw(\"gchelperstart: bad m->helpgc\");\r\n> +    if(runtime\u00b7xchg(&bufferList[m->helpgc].busy, 1))\r\n> +        runtime\u00b7throw(\"gchelperstart: already busy\");\r\n> +}\r\n> +\r\n> +static void\r\n> runfinq(void)\r\n> {\r\n>    Finalizer *f;\r\n> Index: src/pkg/runtime/proc.c\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/proc.c\r\n> +++ b/src/pkg/runtime/proc.c\r\n> @@ -332,7 +332,7 @@\r\n>        mp = mget();\r\n>        if(mp == nil)\r\n>            runtime\u00b7throw(\"runtime\u00b7gcprocs inconsistency\");\r\n> -        mp->helpgc = 1;\r\n> +        mp->helpgc = n;\r\n>        mp->mcache = runtime\u00b7allp[pos]->mcache;\r\n>        pos++;\r\n>        runtime\u00b7notewakeup(&mp->park);\r\n> @@ -386,7 +386,7 @@\r\n> static void\r\n> mhelpgc(void)\r\n> {\r\n> -    m->helpgc = 1;\r\n> +    m->helpgc = -1;\r\n> }\r\n> \r\n> void\r\n> @@ -485,7 +485,7 @@\r\n>        m->mstartfn();\r\n> \r\n>    if(m->helpgc) {\r\n> -        m->helpgc = false;\r\n> +        m->helpgc = 0;\r\n>        stopm();\r\n>    } else if(m != &runtime\u00b7m0) {\r\n>        acquirep(m->nextp);\r\n> @@ -794,8 +794,8 @@\r\n>    runtime\u00b7notesleep(&m->park);\r\n>    runtime\u00b7noteclear(&m->park);\r\n>    if(m->helpgc) {\r\n> +        runtime\u00b7gchelper();\r\n>        m->helpgc = 0;\r\n> -        runtime\u00b7gchelper();\r\n>        m->mcache = nil;\r\n>        goto retry;\r\n>    }\r\n> \r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-03-17 09:35:52.656180",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xE2.0x9A.0x9B@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/17 09:19:32, dvyukov wrote:\n> Hello mailto:golang-dev@googlegroups.com,\n> \n> I'd like you to review this change to\n> https://dvyukov%2540google.com%40code.google.com/p/go/\n\nSGTM",
+			"disapproval": false,
+			"date": "2013-03-17 09:30:43.555960",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-17 09:19:32.352150",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xE2.0x9A.0x9B@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/17 09:35:52, dfc wrote:\n> Thank you, can you share any numbers for the single proc case?\n\nbenchmark                          old ns/op    new ns/op    delta\ngarbage.BenchmarkTree2             130886989    130157981   -0.56%\ngarbage.BenchmarkTree2LastPause   1308799713   1301522373   -0.56%\ngarbage.BenchmarkTree2Pause        685015129    679179882   -0.85%",
+			"disapproval": false,
+			"date": "2013-03-17 09:57:35.951560",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Excellent. I am pleased that there is no penalty for the single proc\r\n(*cough* arm *cough*) case.\r\n\r\nOn Sun, Mar 17, 2013 at 8:57 PM,  <dvyukov@google.com> wrote:\r\n> On 2013/03/17 09:35:52, dfc wrote:\r\n>>\r\n>> Thank you, can you share any numbers for the single proc case?\r\n>\r\n>\r\n> benchmark                          old ns/op    new ns/op    delta\r\n> garbage.BenchmarkTree2             130886989    130157981   -0.56%\r\n> garbage.BenchmarkTree2LastPause   1308799713   1301522373   -0.56%\r\n> garbage.BenchmarkTree2Pause        685015129    679179882   -0.85%\r\n>\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.com/7816044/\r\n",
+			"disapproval": false,
+			"date": "2013-03-17 11:02:06.495690",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xE2.0x9A.0x9B@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "There is another interesting point. I've modified the test to create N blocked goroutines in the beginning:\n\n        for i := 0; i < *gos; i++ {\n                go func() {\n                        select{}\n                }()\n        }\n\nWith 100MB heap and 100K goroutines the numbers are:\n\nbenchmark                            old ns/op    new ns/op    delta\ngarbage.BenchmarkTree2-8              15619722      9835418  -37.03%\ngarbage.BenchmarkTree2LastPause-8    156136947     98301229  -37.04%\ngarbage.BenchmarkTree2Pause-8        131758259     81782675  -37.93%\n\nGoroutines create additional GC roots, which results in additional contention and slowdown.",
+			"disapproval": false,
+			"date": "2013-03-17 10:01:59.568790",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xE2.0x9A.0x9B@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/17 11:02:06, dfc wrote:\n> Excellent. I am pleased that there is no penalty for the single proc\n> (*cough* arm *cough*) case.\n\nIn respect to the old GC?\n\n> On Sun, Mar 17, 2013 at 8:57 PM,  <mailto:dvyukov@google.com> wrote:\n> > On 2013/03/17 09:35:52, dfc wrote:\n> >>\n> >> Thank you, can you share any numbers for the single proc case?\n> >\n> >\n> > benchmark                          old ns/op    new ns/op    delta\n> > garbage.BenchmarkTree2             130886989    130157981   -0.56%\n> > garbage.BenchmarkTree2LastPause   1308799713   1301522373   -0.56%\n> > garbage.BenchmarkTree2Pause        685015129    679179882   -0.85%\n> >\n> >\n> >\n> >\n> > https://codereview.appspot.com/7816044/",
+			"disapproval": false,
+			"date": "2013-03-17 11:05:03.154980",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Mar 17, 2013 at 3:02 PM, Dave Cheney <dave@cheney.net> wrote:\r\n> Excellent. I am pleased that there is no penalty for the single proc\r\n> (*cough* arm *cough*) case.\r\n\r\nIf anything, single proc (and arm) is a dash faster.\r\n\r\n\r\n> On Sun, Mar 17, 2013 at 8:57 PM,  <dvyukov@google.com> wrote:\r\n>> On 2013/03/17 09:35:52, dfc wrote:\r\n>>>\r\n>>> Thank you, can you share any numbers for the single proc case?\r\n>>\r\n>>\r\n>> benchmark                          old ns/op    new ns/op    delta\r\n>> garbage.BenchmarkTree2             130886989    130157981   -0.56%\r\n>> garbage.BenchmarkTree2LastPause   1308799713   1301522373   -0.56%\r\n>> garbage.BenchmarkTree2Pause        685015129    679179882   -0.85%\r\n>>\r\n>>\r\n>>\r\n>>\r\n>> https://codereview.appspot.com/7816044/\r\n",
+			"disapproval": false,
+			"date": "2013-03-17 11:20:39.990320",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "No, just before and after this CL.\r\n\r\n\r\n\r\nOn 17/03/2013, at 10:05 PM, 0xE2.0x9A.0x9B@gmail.com wrote:\r\n\r\n> On 2013/03/17 11:02:06, dfc wrote:\r\n>> Excellent. I am pleased that there is no penalty for the single proc\r\n>> (*cough* arm *cough*) case.\r\n> \r\n> In respect to the old GC?\r\n> \r\n>> On Sun, Mar 17, 2013 at 8:57 PM,  <mailto:dvyukov@google.com> wrote:\r\n>> > On 2013/03/17 09:35:52, dfc wrote:\r\n>> >>\r\n>> >> Thank you, can you share any numbers for the single proc case?\r\n>> >\r\n>> >\r\n>> > benchmark                          old ns/op    new ns/op    delta\r\n>> > garbage.BenchmarkTree2             130886989    130157981   -0.56%\r\n>> > garbage.BenchmarkTree2LastPause   1308799713   1301522373   -0.56%\r\n>> > garbage.BenchmarkTree2Pause        685015129    679179882   -0.85%\r\n>> >\r\n>> >\r\n>> >\r\n>> >\r\n>> > https://codereview.appspot.com/7816044/\r\n> \r\n> \r\n> \r\n> https://codereview.appspot.com/7816044/\r\n",
+			"disapproval": false,
+			"date": "2013-03-17 12:08:20.196560",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xe2.0x9a.0x9b@gmail.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-03-19 21:53:36.848620",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Could you please add a sentence or two to the change description, to\r\nexplain what you've added here?\r\n\r\nAndrew\r\n\r\n\r\nOn 17 March 2013 20:19, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: faster parallel GC\r\n> benchmark                             old ns/op    new ns/op    delta\r\n> garbage.BenchmarkTree2-8               97100768     71417553  -26.45%\r\n> garbage.**BenchmarkTree2LastPause-8     970931485    714103692  -26.45%\r\n> garbage.BenchmarkTree2Pause-8         469127802    345029253  -26.45%\r\n> garbage.BenchmarkParser-8            2880950854   2715456901   -5.74%\r\n> garbage.**BenchmarkParserLastPause-8    137047399    103336476  -24.60%\r\n> garbage.BenchmarkParserPause-8         80686028     58922680  -26.97%\r\n>\r\n> Please review this at https://codereview.appspot.**com/7816044/<https://codereview.appspot.com/7816044/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/mgc0.c\r\n>   M src/pkg/runtime/proc.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/mgc0.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mgc0.c\r\n> +++ b/src/pkg/runtime/mgc0.c\r\n> @@ -140,6 +140,7 @@\r\n>  static Workbuf* getfull(Workbuf*);\r\n>  static void    putempty(Workbuf*);\r\n>  static Workbuf* handoff(Workbuf*);\r\n> +static void    gchelperstart(void);\r\n>\r\n>  static struct {\r\n>         uint64  full;  // lock-free list of full blocks\r\n> @@ -287,11 +288,12 @@\r\n>  {\r\n>         PtrTarget ptrtarget[**IntermediateBufferCapacity];\r\n>         Obj obj[**IntermediateBufferCapacity];\r\n> -       BufferList *next;\r\n> +       uint32 busy;\r\n> +       byte pad[CacheLineSize];\r\n>  };\r\n> -static BufferList *bufferList;\r\n> +#pragma dataflag 16  // no pointers\r\n> +static BufferList bufferList[MaxGcproc];\r\n>\r\n> -static Lock lock;\r\n>  static Type *itabtype;\r\n>\r\n>  static void enqueue(Obj obj, Workbuf **_wbuf, Obj **_wp, uintptr *_nobj);\r\n> @@ -598,23 +600,11 @@\r\n>\r\n>         // Allocate ptrbuf\r\n>         {\r\n> -               runtime\u00b7lock(&lock);\r\n> -\r\n> -               if(bufferList == nil) {\r\n> -                       bufferList = runtime\u00b7SysAlloc(sizeof(***\r\n> bufferList));\r\n> -                       if(bufferList == nil)\r\n> -                               runtime\u00b7throw(\"runtime: cannot allocate\r\n> memory\");\r\n> -                       bufferList->next = nil;\r\n> -               }\r\n> -               scanbuffers = bufferList;\r\n> -               bufferList = bufferList->next;\r\n> -\r\n> +               scanbuffers = &bufferList[m->helpgc];\r\n>                 ptrbuf = &scanbuffers->ptrtarget[0];\r\n>                 ptrbuf_end = &scanbuffers->ptrtarget[0] +\r\n> nelem(scanbuffers->ptrtarget);\r\n>                 objbuf = &scanbuffers->obj[0];\r\n>                 objbuf_end = &scanbuffers->obj[0] +\r\n> nelem(scanbuffers->obj);\r\n> -\r\n> -               runtime\u00b7unlock(&lock);\r\n>         }\r\n>\r\n>         ptrbufpos = ptrbuf;\r\n> @@ -1020,11 +1010,7 @@\r\n>                 nobj--;\r\n>         }\r\n>\r\n> -endscan:\r\n> -       runtime\u00b7lock(&lock);\r\n> -       scanbuffers->next = bufferList;\r\n> -       bufferList = scanbuffers;\r\n> -       runtime\u00b7unlock(&lock);\r\n> +endscan:;\r\n>  }\r\n>\r\n>  // debug_scanblock is the debug copy of scanblock.\r\n> @@ -1649,6 +1635,8 @@\r\n>  void\r\n>  runtime\u00b7gchelper(void)\r\n>  {\r\n> +       gchelperstart();\r\n> +\r\n>         // parallel mark for over gc roots\r\n>         runtime\u00b7parfordo(work.markfor)**;\r\n>\r\n> @@ -1662,6 +1650,7 @@\r\n>         }\r\n>\r\n>         runtime\u00b7parfordo(work.**sweepfor);\r\n> +       bufferList[m->helpgc].busy = 0;\r\n>         if(runtime\u00b7xadd(&work.ndone, +1) == work.nproc-1)\r\n>                 runtime\u00b7notewakeup(&work.**alldone);\r\n>  }\r\n> @@ -1853,6 +1842,7 @@\r\n>\r\n>         t1 = runtime\u00b7nanotime();\r\n>\r\n> +       gchelperstart();\r\n>         runtime\u00b7parfordo(work.markfor)**;\r\n>         scanblock(nil, nil, 0, true);\r\n>\r\n> @@ -1864,6 +1854,7 @@\r\n>         t2 = runtime\u00b7nanotime();\r\n>\r\n>         runtime\u00b7parfordo(work.**sweepfor);\r\n> +       bufferList[m->helpgc].busy = 0;\r\n>         t3 = runtime\u00b7nanotime();\r\n>\r\n>         if(work.nproc > 1)\r\n> @@ -2005,6 +1996,15 @@\r\n>  }\r\n>\r\n>  static void\r\n> +gchelperstart(void)\r\n> +{\r\n> +       if(m->helpgc < 0 || m->helpgc >= MaxGcproc)\r\n> +               runtime\u00b7throw(\"gchelperstart: bad m->helpgc\");\r\n> +       if(runtime\u00b7xchg(&bufferList[m-**>helpgc].busy, 1))\r\n> +               runtime\u00b7throw(\"gchelperstart: already busy\");\r\n> +}\r\n> +\r\n> +static void\r\n>  runfinq(void)\r\n>  {\r\n>         Finalizer *f;\r\n> Index: src/pkg/runtime/proc.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/proc.c\r\n> +++ b/src/pkg/runtime/proc.c\r\n> @@ -332,7 +332,7 @@\r\n>                 mp = mget();\r\n>                 if(mp == nil)\r\n>                         runtime\u00b7throw(\"runtime\u00b7gcprocs inconsistency\");\r\n> -               mp->helpgc = 1;\r\n> +               mp->helpgc = n;\r\n>                 mp->mcache = runtime\u00b7allp[pos]->mcache;\r\n>                 pos++;\r\n>                 runtime\u00b7notewakeup(&mp->park);\r\n> @@ -386,7 +386,7 @@\r\n>  static void\r\n>  mhelpgc(void)\r\n>  {\r\n> -       m->helpgc = 1;\r\n> +       m->helpgc = -1;\r\n>  }\r\n>\r\n>  void\r\n> @@ -485,7 +485,7 @@\r\n>                 m->mstartfn();\r\n>\r\n>         if(m->helpgc) {\r\n> -               m->helpgc = false;\r\n> +               m->helpgc = 0;\r\n>                 stopm();\r\n>         } else if(m != &runtime\u00b7m0) {\r\n>                 acquirep(m->nextp);\r\n> @@ -794,8 +794,8 @@\r\n>         runtime\u00b7notesleep(&m->park);\r\n>         runtime\u00b7noteclear(&m->park);\r\n>         if(m->helpgc) {\r\n> +               runtime\u00b7gchelper();\r\n>                 m->helpgc = 0;\r\n> -               runtime\u00b7gchelper();\r\n>                 m->mcache = nil;\r\n>                 goto retry;\r\n>         }\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-17 21:36:34.044110",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xe2.0x9a.0x9b@gmail.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/17 21:36:34, adg wrote:\n> Could you please add a sentence or two to the change description, to\n> explain what you've added here?\n\n\nDone",
+			"disapproval": false,
+			"date": "2013-03-18 03:59:45.578250",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xe2.0x9a.0x9b@gmail.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-03-19 18:46:40.333090",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"0xe2.0x9a.0x9b@gmail.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=0d7891ca5e06 ***\n\nruntime: faster parallel GC\nUse per-thread work buffers instead of global mutex-protected pool. This eliminates contention from parallel scan phase.\n\nbenchmark                             old ns/op    new ns/op    delta\ngarbage.BenchmarkTree2-8               97100768     71417553  -26.45%\ngarbage.BenchmarkTree2LastPause-8     970931485    714103692  -26.45%\ngarbage.BenchmarkTree2Pause-8         469127802    345029253  -26.45%\ngarbage.BenchmarkParser-8            2880950854   2715456901   -5.74%\ngarbage.BenchmarkParserLastPause-8    137047399    103336476  -24.60%\ngarbage.BenchmarkParserPause-8         80686028     58922680  -26.97%\n\nR=golang-dev, 0xe2.0x9a.0x9b, dave, adg, rsc, iant\nCC=golang-dev\nhttps://codereview.appspot.com/7816044",
+			"disapproval": false,
+			"date": "2013-03-21 08:48:09.417090",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 7816044: runtime: faster parallel GC",
+	"created": "2013-03-17 08:59:47.851920",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		2002,
+		25001
+	],
+	"modified": "2013-03-21 08:48:11.479050",
+	"closed": true,
+	"issue": 7816044
+}

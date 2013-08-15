@@ -1,0 +1,93 @@
+{
+	"description": "crypto/rc4: faster amd64 implementation\n\nXOR key into data 128 bits at a time instead of 64 bits\nand pipeline half of state loads. Rotate loop to allow\nsingle-register indexing for state[i].\n\nOn a MacBookPro10,2 (Core i5):\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128          412          224  -45.63%\nBenchmarkRC4_1K          3179         1613  -49.26%\nBenchmarkRC4_8K         25223        12545  -50.26%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128       310.51       570.42    1.84x\nBenchmarkRC4_1K        322.09       634.48    1.97x\nBenchmarkRC4_8K        320.97       645.32    2.01x\n\nFor comparison, on the same machine, openssl 0.9.8r reports\nits rc4 speed as somewhat under 350 MB/s for both 1K and 8K\n(it is operating 64 bits at a time).\n\nOn an Intel Xeon E5520:\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128          418          259  -38.04%\nBenchmarkRC4_1K          3200         1884  -41.12%\nBenchmarkRC4_8K         25173        14529  -42.28%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128       306.04       492.48    1.61x\nBenchmarkRC4_1K        319.93       543.26    1.70x\nBenchmarkRC4_8K        321.61       557.20    1.73x\n\nFor comparison, on the same machine, openssl 1.0.1\nreports its rc4 speed as 587 MB/s for 1K and 601 MB/s for 8K.",
+	"cc": [
+		"agl@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello agl1 (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-21 17:35:47.739200",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think the 2x speed-up is probably compelling enough, but we should beware of over-optimising for what we are measuring (benchmarks).\n\nThis change quadruples the cache pressure of RC4 and thus reduces the key agility. A TLS server servicing many connections may well end up slower because of the additional cache loads for all the cipher state.\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s\nFile src/pkg/crypto/rc4/rc4_amd64.s (right):\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s#newcode49\nsrc/pkg/crypto/rc4/rc4_amd64.s:49: LEAQ\t(SI)(BX*1),\t\tR9\t\t// rbx = in+len-16\nsource code alignment issues here and two lines down?\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s#newcode49\nsrc/pkg/crypto/rc4/rc4_amd64.s:49: LEAQ\t(SI)(BX*1),\t\tR9\t\t// rbx = in+len-16\nrbx -> r9 in comment?\n\nI'm also not sure where the -16 is coming from.\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s#newcode52\nsrc/pkg/crypto/rc4/rc4_amd64.s:52: JGE\tfinished\t\t\t\t// jump if (in+len-16 < in)\n\"jump if (in >= in+len-16)\" I think. (Although I could have the order of the arguments to CMP wrong.)\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s#newcode140\nsrc/pkg/crypto/rc4/rc4_amd64.s:140: CMPQ\tSI,\t\tR9\t\t// cmp in+len-16 with in XXX\nWas \"XXX\" a placeholder to be updated?",
+			"disapproval": false,
+			"date": "2013-03-21 19:48:24.539060",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nI tried using uint8 or uint16 instead of uint32 but they top out at 330 MB/s or 425 MB/s instead of 650 MB/s on my Core i5. I suspect this will overcome any cache effect.\n\nFor what it's worth, we're now within 10% of OpenSSL, which is plenty good enough, so I'm done.\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s\nFile src/pkg/crypto/rc4/rc4_amd64.s (right):\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s#newcode49\nsrc/pkg/crypto/rc4/rc4_amd64.s:49: LEAQ\t(SI)(BX*1),\t\tR9\t\t// rbx = in+len-16\nOn 2013/03/21 19:48:24, agl1 wrote:\n> source code alignment issues here and two lines down?\n\nDone.\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s#newcode49\nsrc/pkg/crypto/rc4/rc4_amd64.s:49: LEAQ\t(SI)(BX*1),\t\tR9\t\t// rbx = in+len-16\nOn 2013/03/21 19:48:24, agl1 wrote:\n> rbx -> r9 in comment?\n> \n> I'm also not sure where the -16 is coming from.\n\nDone.\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s#newcode52\nsrc/pkg/crypto/rc4/rc4_amd64.s:52: JGE\tfinished\t\t\t\t// jump if (in+len-16 < in)\nOn 2013/03/21 19:48:24, agl1 wrote:\n> \"jump if (in >= in+len-16)\" I think. (Although I could have the order of the\n> arguments to CMP wrong.)\n\nI tried to clean up the comparisons so they're all consistent, but I neglected to update the comments. Done.\n\nhttps://codereview.appspot.com/7865046/diff/9001/src/pkg/crypto/rc4/rc4_amd64.s#newcode140\nsrc/pkg/crypto/rc4/rc4_amd64.s:140: CMPQ\tSI,\t\tR9\t\t// cmp in+len-16 with in XXX\nOn 2013/03/21 19:48:24, agl1 wrote:\n> Was \"XXX\" a placeholder to be updated?\n\nDone.",
+			"disapproval": false,
+			"date": "2013-03-21 20:28:26.770600",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=eb2c99e6ec17 ***\n\ncrypto/rc4: faster amd64 implementation\n\nXOR key into data 128 bits at a time instead of 64 bits\nand pipeline half of state loads. Rotate loop to allow\nsingle-register indexing for state[i].\n\nOn a MacBookPro10,2 (Core i5):\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128          412          224  -45.63%\nBenchmarkRC4_1K          3179         1613  -49.26%\nBenchmarkRC4_8K         25223        12545  -50.26%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128       310.51       570.42    1.84x\nBenchmarkRC4_1K        322.09       634.48    1.97x\nBenchmarkRC4_8K        320.97       645.32    2.01x\n\nFor comparison, on the same machine, openssl 0.9.8r reports\nits rc4 speed as somewhat under 350 MB/s for both 1K and 8K\n(it is operating 64 bits at a time).\n\nOn an Intel Xeon E5520:\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkRC4_128          418          259  -38.04%\nBenchmarkRC4_1K          3200         1884  -41.12%\nBenchmarkRC4_8K         25173        14529  -42.28%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkRC4_128       306.04       492.48    1.61x\nBenchmarkRC4_1K        319.93       543.26    1.70x\nBenchmarkRC4_8K        321.61       557.20    1.73x\n\nFor comparison, on the same machine, openssl 1.0.1\nreports its rc4 speed as 587 MB/s for 1K and 601 MB/s for 8K.\n\nR=agl\nCC=golang-dev\nhttps://codereview.appspot.com/7865046",
+			"disapproval": false,
+			"date": "2013-03-21 20:39:00.232980",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-03-21 20:31:04.842680",
+			"approval": true
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 7865046: crypto/rc4: faster amd64 implementation",
+	"created": "2013-03-21 16:59:19.528030",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9001,
+		14001,
+		17001,
+		23001
+	],
+	"modified": "2013-03-21 20:39:01.077640",
+	"closed": true,
+	"issue": 7865046
+}

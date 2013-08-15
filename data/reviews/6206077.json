@@ -1,0 +1,366 @@
+{
+	"description": "cmd/gc: improve compilation speed by exporting constants in hexadecimal",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org",
+		"rsc@golang.org",
+		"iant@google.com",
+		"remyoudompheng@gmail.com",
+		"dave@cheney.net"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-05-16 14:56:50.787258",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Why do you want this? Caches are sources of mysterious bugs that don't\r\nhappen when you test, only much later when you and your user are far\r\napart.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-05-16 15:00:56.567024",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/05/18 15:47:33, rsc wrote:\n> Thanks.  Do you have timings for how much it helps?  I'm just curious.\n\nIn case of compiling the following program:\n\npackage main\nimport \"math\"\nfunc main() { println(math.Pi) }\n\nthe time spent in 8g goes down from 244ms to 22ms.\n\n> The changes to fmt seem more significant than necessary. I think you\n> can revert both fmt.c and go.h and still make this change.\n> \n> I think you can change the last few lines of Fconv from saying %B to\n> %#B and then in Bconv instead of using the global flag, consult\n> fp->flags&FmtSharp.\n\nThis would lead to %F printing out the mantissa in hexadecimal all the time. mparith3.c uses %F to print out some debugging messages.",
+			"disapproval": false,
+			"date": "2012-05-18 17:45:44.137345",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 15:57:35.041443",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"remyoudompheng@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=8f4c9f27ea77 ***\n\ncmd/gc: export constants in hexadecimal\n\nR=golang-dev, r, rsc, iant, remyoudompheng, dave\nCC=golang-dev\nhttp://codereview.appspot.com/6206077\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2012-05-22 17:53:40.857547",
+			"approval": false
+		},
+		{
+			"sender": "0xe2.0x9a.0x9b@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wednesday, May 16, 2012 5:00:56 PM UTC+2, r wrote:\r\n>\r\n> Why do you want this?\r\n\r\n\r\nCompiler performance.\r\n \r\n\r\n> Caches are sources of mysterious bugs that don't \r\n> happen when you test, only much later when you and your user are far \r\n> apart.\r\n\r\n\r\nThat is an interesting point.\r\n",
+			"disapproval": false,
+			"date": "2012-05-16 15:11:28.186225",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 16, 2012 at 11:25 AM, \u269b <0xe2.0x9a.0x9b@gmail.com> wrote:\r\n> On Wednesday, May 16, 2012 5:07:05 PM UTC+2, rsc wrote:\r\n>> I do believe there are opportunities for removing unnecessary floating\r\n>> point work,\r\n>\r\n> I do not see how. Can you describe this more closely?\r\n\r\nMaybe not floating point work, but at least big integers.  Right now\r\nif you write\r\n\r\nvar x = []byte{1,2,3,4,5,6,7,8,9,10}\r\n\r\nthat ends up creating 10 big integers, which is overkill.  I think it\r\nmight make sense to have a cache for small numbers (say, 0..1023) so\r\nthat\r\n\r\nvar y = []byte{1,2,3,4,5,6,7,8,9,10}\r\n\r\nwill reuse the same numbers.  It might also work to have a CTINT64\r\ntype for constants that is just an int64 instead of an Mpint*.\r\nHowever, then you get into problems with the big-int code paths\r\nexecuting only rarely, which worries me.  The cache for even [0..255]\r\nwould help a lot for programs that have large byte arrays, I believe,\r\nand also for\r\n\r\nvar z = []byte(\"hello\")\r\n\r\nI would rather try the Mpint* cache (a simple array indexed by value)\r\nthan a new CTINT64 type.  But that doesn't address what you are\r\nseeing.\r\n\r\n>> \u00a0What code exists with a large, repeated number\r\n>> of such huge floating point constants?\r\n>\r\n> It is Go's math package. This means that all Go source codes which are\r\n> importing \"math\" are affected. On my computer, the cost of importing math is\r\n> 200 milliseconds of compilation time. These 200 ms can be attributed to\r\n> function\u00a0mpatoflt.\r\n\r\nI see, thanks.  There are arguably two problems here.  One is that the\r\nexport data includes constants that are unnecessary, like pp0.  Some\r\nunexported constants might be necessary for inlined function bodies,\r\nbut most are not.  We could spend some effort on not exporting the\r\nones that don't matter.  As for mpatoflt itself, I think it would help\r\nto allow the 'p' floating point constants to use hexadecimal.  In\r\nlex.c:1274 or so, where it says goto ncu it could say if(c == 'p')\r\ngoto casep.  Then mpatoflt would be passed strings of the form\r\n0x123p-45, which it should have an easier time of.  It can convert the\r\nhex to words directly instead of needing all the multiply by 10\r\noperations.  Using hex in the exported constants would probably\r\neliminate the mpatoflt time entirely, which would make the export\r\ntrimming less important.\r\n\r\nAre you interested in looking into either of these?\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-16 15:53:03.649869",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-05-18 11:32:29.531999",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"remyoudompheng@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks.  The code looks good except for some C style nits.  I apologize for them, but it is a significant long term help to keep everything uniform.\n\nhttp://codereview.appspot.com/6206077/diff/16002/src/cmd/gc/mparith1.c\nFile src/cmd/gc/mparith1.c (right):\n\nhttp://codereview.appspot.com/6206077/diff/16002/src/cmd/gc/mparith1.c#newcode253\nsrc/cmd/gc/mparith1.c:253: long d;\nPlease move all variable declarations to the top of the function; that's the prevailing style of the rest of the code.  Thanks.\n\nhttp://codereview.appspot.com/6206077/diff/16002/src/cmd/gc/mparith1.c#newcode316\nsrc/cmd/gc/mparith1.c:316: char *start = 0;\nSame.\nAlso please use nil for pointers, not 0.\n\nhttp://codereview.appspot.com/6206077/diff/16002/src/cmd/gc/mparith1.c#newcode546\nsrc/cmd/gc/mparith1.c:546: int digit = mpgetfix(&r);\nSame.",
+			"disapproval": false,
+			"date": "2012-05-21 17:16:46.831416",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I would like to know whether this approach (files used as cache) is acceptable in the compiler.",
+			"disapproval": false,
+			"date": "2012-05-16 14:59:01.679977",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I do believe there are opportunities for removing unnecessary floating\r\npoint work, but it's hard to believe that storing conversions on disk\r\nis the right solution.  What code exists with a large, repeated number\r\nof such huge floating point constants?\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-16 15:07:27.068492",
+			"approval": false
+		},
+		{
+			"sender": "0xe2.0x9a.0x9b@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wednesday, May 16, 2012 5:07:05 PM UTC+2, rsc wrote:\r\n>\r\n> I do believe there are opportunities for removing unnecessary floating \r\n> point work,\r\n\r\n\r\nI do not see how. Can you describe this more closely?\r\n \r\n\r\n> but it's hard to believe that storing conversions on disk \r\n> is the right solution.\r\n\r\n\r\nI seemed to be the easiest and the most high performance solution. The code \r\nI submitted is only an initial version which I used to start this \r\ndiscussion.\r\n \r\n\r\n>  What code exists with a large, repeated number \r\n> of such huge floating point constants?\r\n\r\n\r\nIt is Go's math package. This means that all Go source codes which are \r\nimporting \"math\" are affected. On my computer, the cost of importing math \r\nis 200 milliseconds of compilation time. These 200 ms can be attributed to \r\nfunction mpatoflt.\r\n",
+			"disapproval": false,
+			"date": "2012-05-16 15:25:26.856998",
+			"approval": false
+		},
+		{
+			"sender": "0xe2.0x9a.0x9b@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wednesday, May 16, 2012 5:52:38 PM UTC+2, rsc wrote:\r\n>\r\n> >>  What code exists with a large, repeated number \r\n> >> of such huge floating point constants? \r\n> > \r\n> > It is Go's math package. This means that all Go source codes which are \r\n> > importing \"math\" are affected. On my computer, the cost of importing \r\n> math is \r\n> > 200 milliseconds of compilation time. These 200 ms can be attributed to \r\n> > function mpatoflt. \r\n>\r\n> I see, thanks.  There are arguably two problems here.  One is that the \r\n> export data includes constants that are unnecessary, like pp0.  Some \r\n> unexported constants might be necessary for inlined function bodies, \r\n> but most are not.  We could spend some effort on not exporting the \r\n> ones that don't matter.  As for mpatoflt itself, I think it would help \r\n> to allow the 'p' floating point constants to use hexadecimal.  In \r\n> lex.c:1274 or so, where it says goto ncu it could say if(c == 'p') \r\n> goto casep.  Then mpatoflt would be passed strings of the form \r\n> 0x123p-45, which it should have an easier time of.  It can convert the \r\n> hex to words directly instead of needing all the multiply by 10 \r\n> operations.  Using hex in the exported constants would probably \r\n> eliminate the mpatoflt time entirely, which would make the export \r\n> trimming less important. \r\n>\r\n\r\nI will try this and submit another patch.\r\n",
+			"disapproval": false,
+			"date": "2012-05-17 07:04:11.035484",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\u269b <0xe2.0x9a.0x9b@gmail.com> writes:\r\n\r\n> On Friday, May 18, 2012 3:24:23 PM UTC+2, Ian Lance Taylor wrote:\r\n>>\r\n>> \u269b <0xe2.0x9a.0x9b@gmail.com> writes: \r\n>>\r\n>> > Consider the following: The Go compiler reads in .go and .a files, and \r\n>> > outputs .8 files. The linker reads in .8 and .a files, and outputs an \r\n>> > executable. \r\n>> > \r\n>> > Those .a files are only caching the contents of valid .go files. So the \r\n>> > compiler is using a cache each time it reads an .a file. In addition to \r\n>> > this, .a files are more consistent than .go files (.a files have a \r\n>> definite \r\n>> > structure, but .go files are potentially just arbitrary text). \r\n>> > \r\n>> > If you are against caches, then it seems irrational to generate and use \r\n>> .a \r\n>> > files. \r\n>>\r\n>> That's not a cache, that's a transformation.  The term \"cache\" implies \r\n>> storing a value temporarily, such that when the cache is full you eject \r\n>> some value and then recreate it on demand.  The .8 and .a files are \r\n>> never evicted.  The tool that uses them can not recreate them. \r\n>>\r\n>\r\n> Ok. But why are, according to Rob Pike, \"caches sources of mysterious bugs \r\n> that don't happen when you test, only much later when you and your user are \r\n> far apart\" and transformations aren't sources of such mysterious bugs?   I \r\n> agree that caches are harder to implement because they need an eviction \r\n> algorithm, but I am not sure I understand how this alone can be the source \r\n> of \"mysterious bugs\".\r\n\r\nI can't speak for Rob, but the issue with a cache is recreating the\r\nvalue after it has been evicted.  That code is not routinely tested and\r\ncan contain bugs that only arise in unusual eviction cases.  Something\r\nlike generating a .8 or .a file is tested every time.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-05-18 20:04:16.469760",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\u269b <0xe2.0x9a.0x9b@gmail.com> writes:\r\n\r\n> Consider the following: The Go compiler reads in .go and .a files, and \r\n> outputs .8 files. The linker reads in .8 and .a files, and outputs an \r\n> executable.\r\n>\r\n> Those .a files are only caching the contents of valid .go files. So the \r\n> compiler is using a cache each time it reads an .a file. In addition to \r\n> this, .a files are more consistent than .go files (.a files have a definite \r\n> structure, but .go files are potentially just arbitrary text).\r\n>\r\n> If you are against caches, then it seems irrational to generate and use .a \r\n> files.\r\n\r\nThat's not a cache, that's a transformation.  The term \"cache\" implies\r\nstoring a value temporarily, such that when the cache is full you eject\r\nsome value and then recreate it on demand.  The .8 and .a files are\r\nnever evicted.  The tool that uses them can not recreate them.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-05-18 13:24:32.855042",
+			"approval": false
+		},
+		{
+			"sender": "0xe2.0x9a.0x9b@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wednesday, May 16, 2012 5:00:56 PM UTC+2, r wrote:\r\n>\r\n> Caches are sources of mysterious bugs that don't \r\n> happen when you test, only much later when you and your user are far \r\n> apart.\r\n>\r\n\r\nI was thinking about your statement and I have some trouble understanding \r\nwhat you mean by \"caches\".\r\n\r\nConsider the following: The Go compiler reads in .go and .a files, and \r\noutputs .8 files. The linker reads in .8 and .a files, and outputs an \r\nexecutable.\r\n\r\nThose .a files are only caching the contents of valid .go files. So the \r\ncompiler is using a cache each time it reads an .a file. In addition to \r\nthis, .a files are more consistent than .go files (.a files have a definite \r\nstructure, but .go files are potentially just arbitrary text).\r\n\r\nIf you are against caches, then it seems irrational to generate and use .a \r\nfiles.\r\n\r\nConsidering all of this, how would you explain your statement about caches?\r\n",
+			"disapproval": false,
+			"date": "2012-05-18 12:19:38.100753",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"remyoudompheng@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "While I can't claim to understand what you have done here, the results on 5g are remarkable, thank you.\n\nbefore:\n% /usr/bin/time -v ~/go/pkg/tool/linux_arm/5g pi.go \n        Command being timed: \"/home/dfc/go/pkg/tool/linux_arm/5g pi.go\"\n        User time (seconds): 0.89\n        System time (seconds): 0.01\n        Percent of CPU this job got: 99%\n        Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.91\n\nafter:\n% /usr/bin/time -v ~/go/pkg/tool/linux_arm/5g pi.go \n        Command being timed: \"/home/dfc/go/pkg/tool/linux_arm/5g pi.go\"\n        User time (seconds): 0.17\n        System time (seconds): 0.02\n        Percent of CPU this job got: 98%\n        Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.20",
+			"disapproval": false,
+			"date": "2012-05-20 05:59:57.323149",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks.  Do you have timings for how much it helps?  I'm just curious.\r\n\r\nThe changes to fmt seem more significant than necessary. I think you\r\ncan revert both fmt.c and go.h and still make this change.\r\n\r\nI think you can change the last few lines of Fconv from saying %B to\r\n%#B and then in Bconv instead of using the global flag, consult\r\nfp->flags&FmtSharp.\r\n\r\nThanks again.\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-18 15:47:33.585868",
+			"approval": false
+		},
+		{
+			"sender": "0xe2.0x9a.0x9b@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Friday, May 18, 2012 3:24:23 PM UTC+2, Ian Lance Taylor wrote:\r\n>\r\n> \u269b <0xe2.0x9a.0x9b@gmail.com> writes: \r\n>\r\n> > Consider the following: The Go compiler reads in .go and .a files, and \r\n> > outputs .8 files. The linker reads in .8 and .a files, and outputs an \r\n> > executable. \r\n> > \r\n> > Those .a files are only caching the contents of valid .go files. So the \r\n> > compiler is using a cache each time it reads an .a file. In addition to \r\n> > this, .a files are more consistent than .go files (.a files have a \r\n> definite \r\n> > structure, but .go files are potentially just arbitrary text). \r\n> > \r\n> > If you are against caches, then it seems irrational to generate and use \r\n> .a \r\n> > files. \r\n>\r\n> That's not a cache, that's a transformation.  The term \"cache\" implies \r\n> storing a value temporarily, such that when the cache is full you eject \r\n> some value and then recreate it on demand.  The .8 and .a files are \r\n> never evicted.  The tool that uses them can not recreate them. \r\n>\r\n\r\nOk. But why are, according to Rob Pike, \"caches sources of mysterious bugs \r\nthat don't happen when you test, only much later when you and your user are \r\nfar apart\" and transformations aren't sources of such mysterious bugs?   I \r\nagree that caches are harder to implement because they need an eviction \r\nalgorithm, but I am not sure I understand how this alone can be the source \r\nof \"mysterious bugs\".\r\n",
+			"disapproval": false,
+			"date": "2012-05-18 18:09:44.384686",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, May 18, 2012 at 1:45 PM,  <0xE2.0x9A.0x9B@gmail.com> wrote:\r\n> This would lead to %F printing out the mantissa in hexadecimal all the\r\n> time. mparith3.c uses %F to print out some debugging messages.\r\n\r\nThat's fine with me.\r\n",
+			"disapproval": false,
+			"date": "2012-05-18 17:50:22.186342",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "More generally, any change that introduces a new code path means you\r\nhave to worry about exercising that path during testing (or else\r\nsuffer bugs).  This is why, when we discussed possible ways to reduce\r\nbignum time in the compiler, I suggested that I'd rather have 256 or\r\n1024 fixed mpints for the small values instead of introducing a\r\nseparate kind of \"not-big-int\" constant inside the compiler.  The\r\nformer introduces fewer new, possibly buggy, hard to exercise code\r\npaths than the latter.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-18 20:13:43.765501",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, rsc@golang.org, iant@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-05-19 18:32:27.531117",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6206077/diff/16002/src/cmd/gc/mparith1.c\nFile src/cmd/gc/mparith1.c (right):\n\nhttp://codereview.appspot.com/6206077/diff/16002/src/cmd/gc/mparith1.c#newcode274\nsrc/cmd/gc/mparith1.c:274: // required syntax is [+-]d*[.]d*[e[+-]d*] or [+-]0xH*[e[+-]d*]\nis this using an hexadecimal mantissa and a decimal exponent? I though the CL was about using 0xdeadc0de0123456789p+12345 syntax? Or maybe the comment must be updated to explain that \"p\" exponents are accepted?",
+			"disapproval": false,
+			"date": "2012-05-19 18:48:11.791739",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"remyoudompheng@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, rsc@golang.org, iant@google.com, remyoudompheng@gmail.com, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-05-22 07:54:10.981746",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, rsc@golang.org, iant@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-05-19 09:06:20.163906",
+			"approval": false
+		},
+		{
+			"sender": "0xE2.0x9A.0x9B@gmail.com",
+			"recipients": [
+				"0xE2.0x9A.0x9B@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"iant@google.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6206077/diff/16002/src/cmd/gc/mparith1.c\nFile src/cmd/gc/mparith1.c (right):\n\nhttp://codereview.appspot.com/6206077/diff/16002/src/cmd/gc/mparith1.c#newcode274\nsrc/cmd/gc/mparith1.c:274: // required syntax is [+-]d*[.]d*[e[+-]d*] or [+-]0xH*[e[+-]d*]\nOn 2012/05/19 18:48:12, remyoudompheng wrote:\n> is this using an hexadecimal mantissa and a decimal exponent? I though the CL\n> was about using 0xdeadc0de0123456789p+12345 syntax? Or maybe the comment must be\n> updated to explain that \"p\" exponents are accepted?\n\nSome comments in mparith.c and fmt.c were imprecise already, and are remaining imprecise.",
+			"disapproval": false,
+			"date": "2012-05-20 05:42:25.694960",
+			"approval": false
+		}
+	],
+	"owner_email": "0xE2.0x9A.0x9B@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "atom",
+	"subject": "code review 6206077: cmd/gc: improve compilation speed by exporting constant...",
+	"created": "2012-05-16 14:53:40.923281",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		3002,
+		14002,
+		16002,
+		17003
+	],
+	"modified": "2012-05-26 07:43:11.766054",
+	"closed": true,
+	"issue": 6206077
+}

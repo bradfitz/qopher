@@ -1,0 +1,60 @@
+{
+	"description": "runtime: remove dead code\nRemove dead code related to allocation of type metadata with SysAlloc.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\n\r\n\r\nOn Sun, Aug 4, 2013 at 9:35 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> runtime: remove dead code\r\n> Remove dead code related to allocation of type metadata with SysAlloc.\r\n>\r\n> Please review this at https://codereview.appspot.**com/12311045/<https://codereview.appspot.com/12311045/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/malloc.goc\r\n>   M src/pkg/runtime/malloc.h\r\n>   M src/pkg/runtime/mgc0.c\r\n>   M src/pkg/runtime/mheap.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/malloc.goc\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/malloc.goc\r\n> +++ b/src/pkg/runtime/malloc.goc\r\n> @@ -116,7 +116,7 @@\r\n>\r\n>         m->mallocing = 0;\r\n>         if(UseSpanType && !(flag & FlagNoPointers) && typ != 0 &&\r\n> m->settype_bufsize == nelem(m->settype_buf))\r\n> -               runtime\u00b7settype_flush(m, false);\r\n> +               runtime\u00b7settype_flush(m);\r\n>         m->locks--;\r\n>         if(m->locks == 0 && g->preempt)  // restore the preemption request\r\n> in case we've cleared it in newstack\r\n>                 g->stackguard0 = StackPreempt;\r\n> @@ -563,14 +563,13 @@\r\n>  static Lock settype_lock;\r\n>\r\n>  void\r\n> -runtime\u00b7settype_flush(M *mp, bool sysalloc)\r\n> +runtime\u00b7settype_flush(M *mp)\r\n>  {\r\n>         uintptr *buf, *endbuf;\r\n>         uintptr size, ofs, j, t;\r\n>         uintptr ntypes, nbytes2, nbytes3;\r\n>         uintptr *data2;\r\n>         byte *data3;\r\n> -       bool sysalloc3;\r\n>         void *v;\r\n>         uintptr typ, p;\r\n>         MSpan *s;\r\n> @@ -605,20 +604,9 @@\r\n>                 case MTypes_Empty:\r\n>                         ntypes = (s->npages << PageShift) / size;\r\n>                         nbytes3 = 8*sizeof(uintptr) + 1*ntypes;\r\n> -\r\n> -                       if(!sysalloc) {\r\n> -                               data3 = runtime\u00b7mallocgc(nbytes3, 0,\r\n> FlagNoProfiling|**FlagNoPointers|FlagNoInvokeGC)**;\r\n> -                       } else {\r\n> -                               data3 = runtime\u00b7SysAlloc(nbytes3);\r\n> -                               if(data3 == nil)\r\n> -                                       runtime\u00b7throw(\"runtime: cannot\r\n> allocate memory\");\r\n> -                               if(0) runtime\u00b7printf(\"settype(0->3):\r\n> SysAlloc(%x) --> %p\\n\", (uint32)nbytes3, data3);\r\n> -                       }\r\n> -\r\n> +                       data3 = runtime\u00b7mallocgc(nbytes3, 0,\r\n> FlagNoProfiling|**FlagNoPointers|FlagNoInvokeGC)**;\r\n>                         s->types.compression = MTypes_Bytes;\r\n> -                       s->types.sysalloc = sysalloc;\r\n>                         s->types.data = (uintptr)data3;\r\n> -\r\n>                         ((uintptr*)data3)[1] = typ;\r\n>                         data3[8*sizeof(uintptr) + ofs] = 1;\r\n>                         break;\r\n> @@ -643,20 +631,8 @@\r\n>                         } else {\r\n>                                 ntypes = (s->npages << PageShift) / size;\r\n>                                 nbytes2 = ntypes * sizeof(uintptr);\r\n> -\r\n> -                               if(!sysalloc) {\r\n> -                                       data2 = runtime\u00b7mallocgc(nbytes2,\r\n> 0, FlagNoProfiling|**FlagNoPointers|FlagNoInvokeGC)**;\r\n> -                               } else {\r\n> -                                       data2 = runtime\u00b7SysAlloc(nbytes2);\r\n> -                                       if(data2 == nil)\r\n> -                                               runtime\u00b7throw(\"runtime:\r\n> cannot allocate memory\");\r\n> -                                       if(0)\r\n> runtime\u00b7printf(\"settype.(3->2)**: SysAlloc(%x) --> %p\\n\",\r\n> (uint32)nbytes2, data2);\r\n> -                               }\r\n> -\r\n> -                               sysalloc3 = s->types.sysalloc;\r\n> -\r\n> +                               data2 = runtime\u00b7mallocgc(nbytes2, 0,\r\n> FlagNoProfiling|**FlagNoPointers|FlagNoInvokeGC)**;\r\n>                                 s->types.compression = MTypes_Words;\r\n> -                               s->types.sysalloc = sysalloc;\r\n>                                 s->types.data = (uintptr)data2;\r\n>\r\n>                                 // Move the contents of data3 to data2.\r\n> Then deallocate data3.\r\n> @@ -665,12 +641,6 @@\r\n>                                         t = ((uintptr*)data3)[t];\r\n>                                         data2[j] = t;\r\n>                                 }\r\n> -                               if(sysalloc3) {\r\n> -                                       nbytes3 = 8*sizeof(uintptr) +\r\n> 1*ntypes;\r\n> -                                       if(0)\r\n> runtime\u00b7printf(\"settype.(3->2)**: SysFree(%p,%x)\\n\", data3,\r\n> (uint32)nbytes3);\r\n> -                                       runtime\u00b7SysFree(data3, nbytes3);\r\n> -                               }\r\n> -\r\n>                                 data2[ofs] = typ;\r\n>                         }\r\n>                         break;\r\n> @@ -681,33 +651,6 @@\r\n>         mp->settype_bufsize = 0;\r\n>  }\r\n>\r\n> -void\r\n> -runtime\u00b7settype_sysfree(MSpan *s)\r\n> -{\r\n> -       uintptr ntypes, nbytes;\r\n> -\r\n> -       if(!s->types.sysalloc)\r\n> -               return;\r\n> -\r\n> -       nbytes = (uintptr)-1;\r\n> -\r\n> -       switch (s->types.compression) {\r\n> -       case MTypes_Words:\r\n> -               ntypes = (s->npages << PageShift) / s->elemsize;\r\n> -               nbytes = ntypes * sizeof(uintptr);\r\n> -               break;\r\n> -       case MTypes_Bytes:\r\n> -               ntypes = (s->npages << PageShift) / s->elemsize;\r\n> -               nbytes = 8*sizeof(uintptr) + 1*ntypes;\r\n> -               break;\r\n> -       }\r\n> -\r\n> -       if(nbytes != (uintptr)-1) {\r\n> -               if(0) runtime\u00b7printf(\"settype: SysFree(%p,%x)\\n\",\r\n> (void*)s->types.data, (uint32)nbytes);\r\n> -               runtime\u00b7SysFree((void*)s->**types.data, nbytes);\r\n> -       }\r\n> -}\r\n> -\r\n>  uintptr\r\n>  runtime\u00b7gettype(void *v)\r\n>  {\r\n> Index: src/pkg/runtime/malloc.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/malloc.h\r\n> +++ b/src/pkg/runtime/malloc.h\r\n> @@ -334,7 +334,6 @@\r\n>  struct MTypes\r\n>  {\r\n>         byte    compression;    // one of MTypes_*\r\n> -       bool    sysalloc;       // whether (void*)data is from\r\n> runtime\u00b7SysAlloc\r\n>         uintptr data;\r\n>  };\r\n>\r\n> @@ -459,7 +458,7 @@\r\n>  void*  runtime\u00b7cnew(Type*);\r\n>  void*  runtime\u00b7cnewarray(Type*, intgo);\r\n>\r\n> -void   runtime\u00b7settype_flush(M*, bool);\r\n> +void   runtime\u00b7settype_flush(M*);\r\n>  void   runtime\u00b7settype_sysfree(MSpan***);\r\n>  uintptr        runtime\u00b7gettype(void*);\r\n>\r\n> Index: src/pkg/runtime/mgc0.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mgc0.c\r\n> +++ b/src/pkg/runtime/mgc0.c\r\n> @@ -2084,7 +2084,7 @@\r\n>                 runtime\u00b7memclr((byte*)&**gcstats, sizeof(gcstats));\r\n>\r\n>         for(mp=runtime\u00b7allm; mp; mp=mp->alllink)\r\n> -               runtime\u00b7settype_flush(mp, false);\r\n> +               runtime\u00b7settype_flush(mp);\r\n>\r\n>         heap0 = 0;\r\n>         obj0 = 0;\r\n> Index: src/pkg/runtime/mheap.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mheap.c\r\n> +++ b/src/pkg/runtime/mheap.c\r\n> @@ -330,8 +330,6 @@\r\n>         MSpan *t;\r\n>         PageID p;\r\n>\r\n> -       if(s->types.sysalloc)\r\n> -               runtime\u00b7settype_sysfree(s);\r\n>         s->types.compression = MTypes_Empty;\r\n>\r\n>         if(s->state != MSpanInUse || s->ref != 0) {\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-04 18:36:09.348800",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-08-04 16:35:02.564110",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=16e350b0c712 ***\n\nruntime: remove dead code\nRemove dead code related to allocation of type metadata with SysAlloc.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/12311045",
+			"disapproval": false,
+			"date": "2013-08-04 19:32:15.461280",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 12311045: runtime: remove dead code",
+	"created": "2013-08-04 16:34:00.506420",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		6003
+	],
+	"modified": "2013-08-04 19:32:16.985440",
+	"closed": true,
+	"issue": 12311045
+}

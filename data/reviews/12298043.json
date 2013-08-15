@@ -1,0 +1,60 @@
+{
+	"description": "runtime: disable preemption during software fp routines\n\nIt's okay to preempt at ordinary function calls because\ncompilers arrange that there are no live registers to save\non entry to the function call.\n\nThe software floating point routines are function calls\nmasquerading as individual machine instructions. They are\nexpected to keep all the registers intact. In particular,\nthey are expected not to clobber all the floating point\nregisters.\n\nThe floating point registers are kept per-M, because they\nare not live at non-preemptive goroutine scheduling events,\nand so keeping them per-M reduces the number of 132-byte\nregister blocks we are keeping in memory.\n\nBecause they are per-M, allowing the goroutine to be\nrescheduled during software floating point simulation\nwould mean some other goroutine could overwrite the registers\nor perhaps the goroutine would continue running on a different\nM entirely.\n\nDisallow preemption during the software floating point\nroutines to make sure that a function full of floating point\ninstructions has the same floating point registers throughout\nits execution.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-08-01 23:54:30.106710",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. Thank you.\r\n\r\nOn Fri, Aug 2, 2013 at 9:54 AM,  <rsc@golang.org> wrote:\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> runtime: disable preemption during software fp routines\r\n>\r\n> It's okay to preempt at ordinary function calls because\r\n> compilers arrange that there are no live registers to save\r\n> on entry to the function call.\r\n>\r\n> The software floating point routines are function calls\r\n> masquerading as individual machine instructions. They are\r\n> expected to keep all the registers intact. In particular,\r\n> they are expected not to clobber all the floating point\r\n> registers.\r\n>\r\n> The floating point registers are kept per-M, because they\r\n> are not live at non-preemptive goroutine scheduling events,\r\n> and so keeping them per-M reduces the number of 132-byte\r\n> register blocks we are keeping in memory.\r\n>\r\n> Because they are per-M, allowing the goroutine to be\r\n> rescheduled during software floating point simulation\r\n> would mean some other goroutine could overwrite the registers\r\n> or perhaps the goroutine would continue running on a different\r\n> M entirely.\r\n>\r\n> Disallow preemption during the software floating point\r\n> routines to make sure that a function full of floating point\r\n> instructions has the same floating point registers throughout\r\n> its execution.\r\n>\r\n> Please review this at https://codereview.appspot.com/12298043/\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/vlop_arm.s\r\n>\r\n>\r\n> Index: src/pkg/runtime/vlop_arm.s\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/vlop_arm.s\r\n> +++ b/src/pkg/runtime/vlop_arm.s\r\n> @@ -23,6 +23,8 @@\r\n>  // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\r\n> IN\r\n>  // THE SOFTWARE.\r\n>\r\n> +#include \"zasm_GOOS_GOARCH.h\"\r\n> +\r\n>  arg=0\r\n>\r\n>  /* replaced use of R10 by R11 because the former can be the data segment\r\n> base register */\r\n> @@ -54,7 +56,28 @@\r\n>         MOVW    R1, 60(R13)\r\n>         WORD    $0xe10f1000 // mrs r1, cpsr\r\n>         MOVW    R1, 64(R13)\r\n> +       // Disable preemption of this goroutine during _sfloat2 by\r\n> +       // m->locks++ and m->locks-- around the call.\r\n> +       // Rescheduling this goroutine may cause the loss of the\r\n> +       // contents of the software floating point registers in\r\n> +       // m->freghi, m->freglo, m->fflag, if the goroutine is moved\r\n> +       // to a different m or another goroutine runs on this m.\r\n> +       // Rescheduling at ordinary function calls is okay because\r\n> +       // all registers are caller save, but _sfloat2 and the things\r\n> +       // that it runs are simulating the execution of individual\r\n> +       // program instructions, and those instructions do not expect\r\n> +       // the floating point registers to be lost.\r\n> +       // An alternative would be to move the software floating point\r\n> +       // registers into G, but they do not need to be kept at the\r\n> +       // usual places a goroutine reschedules (at function calls),\r\n> +       // so it would be a waste of 132 bytes per G.\r\n> +       MOVW    m_locks(m), R1\r\n> +       ADD     $1, R1\r\n> +       MOVW    R1, m_locks(m)\r\n>         BL      runtime\u00b7_sfloat2(SB)\r\n> +       MOVW    m_locks(m), R1\r\n> +       SUB     $1, R1\r\n> +       MOVW    R1, m_locks(m)\r\n>         MOVW    R0, 0(R13)\r\n>         MOVW    64(R13), R1\r\n>         WORD    $0xe128f001     // msr cpsr_f, r1\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-02 00:01:27.268320",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=1e60fa9306de ***\n\nruntime: disable preemption during software fp routines\n\nIt's okay to preempt at ordinary function calls because\ncompilers arrange that there are no live registers to save\non entry to the function call.\n\nThe software floating point routines are function calls\nmasquerading as individual machine instructions. They are\nexpected to keep all the registers intact. In particular,\nthey are expected not to clobber all the floating point\nregisters.\n\nThe floating point registers are kept per-M, because they\nare not live at non-preemptive goroutine scheduling events,\nand so keeping them per-M reduces the number of 132-byte\nregister blocks we are keeping in memory.\n\nBecause they are per-M, allowing the goroutine to be\nrescheduled during software floating point simulation\nwould mean some other goroutine could overwrite the registers\nor perhaps the goroutine would continue running on a different\nM entirely.\n\nDisallow preemption during the software floating point\nroutines to make sure that a function full of floating point\ninstructions has the same floating point registers throughout\nits execution.\n\nR=golang-dev, dave\nCC=golang-dev\nhttps://codereview.appspot.com/12298043",
+			"disapproval": false,
+			"date": "2013-08-02 00:07:07.279810",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 12298043: runtime: disable preemption during software fp routines",
+	"created": "2013-08-01 23:54:03.646610",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		9001
+	],
+	"modified": "2013-08-02 00:07:09.500210",
+	"closed": true,
+	"issue": 12298043
+}

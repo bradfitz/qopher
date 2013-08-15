@@ -1,0 +1,291 @@
+{
+	"description": "proto: make safe for App Engine\n\nFactor unsafe code into its own file that can be replaced with\nreflect code when building for App Engine.\n\nbenchmark                                old MB/s     new MB/s  speedup\nBenchmarkMarshal                           126.34       120.38    0.95x\nBenchmarkUnmarshal                         111.84       110.78    0.99x\nBenchmarkMarshalBytes                      893.70       853.55    0.96x\nBenchmarkUnmarshalBytes                    615.23       619.73    1.01x\n\nComparing the two new variants, old = unsafe, new = reflect:\n\nbenchmark                                old MB/s     new MB/s  speedup\nBenchmarkMarshal                           120.38        50.52    0.42x\nBenchmarkUnmarshal                         110.78        20.12    0.18x\nBenchmarkMarshalBytes                      853.55       182.21    0.21x\nBenchmarkUnmarshalBytes                    619.73       227.66    0.37x\n\nBut really these numbers are unfair since they ignore the\nqualitative difference: proto was completely unavailable\non App Engine, and now it can be run there.",
+	"cc": [
+		"dsymonds@golang.org",
+		"r@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"rogpeppe@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> http://codereview.appspot.com/6494085/diff/6019/proto/pointer_reflect.go#newcode51\r\n> proto/pointer_reflect.go:51: // The reflect value must itself be a\r\n> pointer to a struct.\r\n> worth checking and panicking if this isn't the case? I could imagine\r\n> this would be very annoying to debug if this invariant were to be\r\n> violated.\r\n\r\nActually it is violated by extensions. There are comments about that\r\ntoo, in the field method. :-(\r\n\r\nBut the very nice thing about having pointer_reflect.go at all is that\r\nit does serve to double-check at run-time the encode/decode code when\r\ntesting in that mode. There's no guarantee that pointer_unsafe.go\r\nmatches, of course, but at least we have some validation that\r\nencode/decode are type-safe.\r\n\r\n> http://codereview.appspot.com/6494085/diff/6019/proto/pointer_reflect.go#newcode80\r\n> proto/pointer_reflect.go:80: func (f field) IsValid() bool { return f !=\r\n> nil }\r\n> return len(f) > 0?\r\n\r\nNil is fine.\r\n\r\n> http://codereview.appspot.com/6494085/diff/6019/proto/pointer_reflect.go#newcode154\r\n> proto/pointer_reflect.go:154: type structPointerSlice struct {\r\n> It's a bit awful, but the consistent name for this would be\r\n> structPointerSlicePointer. That's probably not worth it.\r\n\r\nNope.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-06 17:29:05.529540",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/goprotobuf/source/detail?r=acc2feade443 ***\n\nproto: make safe for App Engine\n\nFactor unsafe code into its own file that can be replaced with\nreflect code when building for App Engine.\n\nbenchmark                                old MB/s     new MB/s  speedup\nBenchmarkMarshal                           126.34       120.38    0.95x\nBenchmarkUnmarshal                         111.84       110.78    0.99x\nBenchmarkMarshalBytes                      893.70       853.55    0.96x\nBenchmarkUnmarshalBytes                    615.23       619.73    1.01x\n\nComparing the two new variants, old = unsafe, new = reflect:\n\nbenchmark                                old MB/s     new MB/s  speedup\nBenchmarkMarshal                           120.38        50.52    0.42x\nBenchmarkUnmarshal                         110.78        20.12    0.18x\nBenchmarkMarshalBytes                      853.55       182.21    0.21x\nBenchmarkUnmarshalBytes                    619.73       227.66    0.37x\n\nBut really these numbers are unfair since they ignore the\nqualitative difference: proto was completely unavailable\non App Engine, and now it can be run there.\n\nR=dsymonds, r\nCC=golang-dev\nhttp://codereview.appspot.com/6494085\n\nCommitter: David Symonds <dsymonds@golang.org>",
+			"disapproval": false,
+			"date": "2012-09-12 00:36:31.460110",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Sep 10, 2012 at 4:46 PM, Rob Pike <r@golang.org> wrote:\r\n>> Sadness. I get 'protoc: command not found' or something like that. I\r\n>> guess I finally have to install the protobuf code on my machine. It\r\n>> was nice while it lasted.\r\n>\r\n> Gack. I have no idea how you could make confident progress without\r\n> doing that first.\r\n\r\nYou don't need protoc for 'go test'. You only need it if you change\r\nthe .proto files.\r\n\r\nAnyway, it was a garbage collection bug, because of\r\n\r\ntype structPointer uintptr\r\n\r\nhiding the pointers from the garbage collector. I fixed it (type\r\nstructPointer struct { p unsafe.Pointer }) and uploaded but I'd like\r\nto rerun the performance comparison. On my Mac workstation I am\r\ngetting:\r\n\r\nBenchmarkMarshal                           168.20       160.56    0.95x\r\nBenchmarkUnmarshal                          90.53        79.08    0.87x\r\n\r\nwhich is too slow, but I don't trust Mac profiling. The numbers in the\r\nCL description are from my Linux laptop. I will try the code there\r\nagain tonight.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-10 21:04:16.492510",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\r\n\r\nI had to replace the methods with clunkily named functions in order to\r\nget the pointer type.\r\n(You can't have methods on named pointer types.)\r\n\r\nIt's the same structure, a little more long-winded in the code, and faster.\r\n",
+			"disapproval": false,
+			"date": "2012-09-11 23:05:26.226200",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dsymonds, r (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/goprotobuf",
+			"disapproval": false,
+			"date": "2012-09-06 00:42:53.872940",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry, I'll write detailed comments in pointer_*.go before you need to\r\nread this carefully. I was so happy I got it working (and that my\r\npower had come back on) that I forgot to clean it up.\r\n",
+			"disapproval": false,
+			"date": "2012-09-06 02:19:39.797930",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\r\n",
+			"disapproval": false,
+			"date": "2012-09-06 03:10:37.990140",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Sep 8, 2012 at 9:32 PM,  <dsymonds@golang.org> wrote:\r\n> I was going to submit this, but running \"make nuke install test\"\r\n> yielded:\r\n>\r\n>   ...\r\n>   make -B my_test/test.pb.go\r\n>   protoc --go_out=. my_test/test.proto\r\n>   2012/09/09 11:30:56 protoc-gen-go: error:unknown type for ?\r\n>   --go_out: protoc-gen-go: Plugin failed with status code 1.\r\n>   ...\r\n>\r\n> It works fine when reverting the clpatch.\r\n\r\nSadness. I get 'protoc: command not found' or something like that. I\r\nguess I finally have to install the protobuf code on my machine. It\r\nwas nice while it lasted.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-10 20:39:54.077720",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Sep 11, 2012 at 8:41 PM, Russ Cox <rsc@golang.org> wrote:\r\n> Sure, I'll give it a shot tomorrow.\r\n\r\nWell that went to the wrong place. Ignore.\r\n",
+			"disapproval": false,
+			"date": "2012-09-12 00:42:07.726300",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I was going to submit this, but running \"make nuke install test\" yielded:\n\n  ...\n  make -B my_test/test.pb.go\n  protoc --go_out=. my_test/test.proto\n  2012/09/09 11:30:56 protoc-gen-go: error:unknown type for ?\n  --go_out: protoc-gen-go: Plugin failed with status code 1.\n  ...\n\nIt works fine when reverting the clpatch.",
+			"disapproval": false,
+			"date": "2012-09-09 01:32:31.942480",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I didn't realise that struct { *something } doesn't registerise as\r\n> well as *something.\r\n> It's a technique I use often. Did you find out how much impact using\r\n> that representation had on the performance of this package?\r\n>\r\n> It seems to me that it would be better to use the natural representation\r\n> and fix the compiler, but perhaps that's hard to do.\r\n\r\nDepends. It was 5-10% in this case but appeared in some tight loops.\r\nI certainly agree that it shouldn't matter but I didn't want to hold\r\nthis CL up for it.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-17 21:13:59.010140",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks, this is a lot more digestible. I still haven't absorbed it all, but there's no need to hold it up for that.\n\nOver to r.\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_reflect.go\nFile proto/pointer_reflect.go (right):\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_reflect.go#newcode51\nproto/pointer_reflect.go:51: // The reflect value must itself be a pointer to a struct.\nworth checking and panicking if this isn't the case? I could imagine this would be very annoying to debug if this invariant were to be violated.\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_reflect.go#newcode77\nproto/pointer_reflect.go:77: var invalidField = field(nil)\nThis is just the zero type, right? So in properties.go you don't need to set unrecField to this.\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_reflect.go#newcode80\nproto/pointer_reflect.go:80: func (f field) IsValid() bool { return f != nil }\nreturn len(f) > 0?\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_reflect.go#newcode154\nproto/pointer_reflect.go:154: type structPointerSlice struct {\nIt's a bit awful, but the consistent name for this would be structPointerSlicePointer. That's probably not worth it.\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_unsafe.go\nFile proto/pointer_unsafe.go (right):\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_unsafe.go#newcode72\nproto/pointer_unsafe.go:72: const invalidField = ^field(0)\nah. my suggestion in pointer_reflect.go isn't going to work with this. oh, well.",
+			"disapproval": false,
+			"date": "2012-09-06 04:14:42.404940",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sure, I'll give it a shot tomorrow.\r\n",
+			"disapproval": false,
+			"date": "2012-09-12 00:41:41.780710",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Any idea why Unmarshal takes a bigger performance hit than Marshal?\r\n\r\nThis particular Unmarshal benchmark spends nearly all its time\r\nunmarshaling into an int32 slice. That's particularly expensive in the\r\nsafe version because 'int32' really means int32, uint32, float32, or\r\nenum, so there's a lot of extra fiddling. Most protos spend their\r\nbytes in []byte or string fields, not []int32 fields, and I wouldn't\r\nexpect those to see such a slowdown.\r\n",
+			"disapproval": false,
+			"date": "2012-09-06 02:22:24.097460",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PS issue 4092\r\n",
+			"disapproval": false,
+			"date": "2012-09-17 21:14:40.831800",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I haven't digested all of this, but it looks like a good cleanup independent of the safety. Thanks!\n\nAny idea why Unmarshal takes a bigger performance hit than Marshal?\n\nhttps://codereview.appspot.com/6494085/diff/2003/proto/lib.go\nFile proto/lib.go (right):\n\nhttps://codereview.appspot.com/6494085/diff/2003/proto/lib.go#newcode250\nproto/lib.go:250: \nwhy the blank here? Are the next slices different?\n\nhttps://codereview.appspot.com/6494085/diff/2003/proto/pointer_reflect.go\nFile proto/pointer_reflect.go (right):\n\nhttps://codereview.appspot.com/6494085/diff/2003/proto/pointer_reflect.go#newcode57\nproto/pointer_reflect.go:57: func (p pointer) rfield(f field) reflect.Value {\ncomment please\n\nhttps://codereview.appspot.com/6494085/diff/2003/proto/pointer_reflect.go#newcode68\nproto/pointer_reflect.go:68: func (p pointer) Byteses(f field) *[][]byte           { return p.field(f).(*[][]byte) }\nI have a mild preference for the slice versions to have more than just an \"s\" or \"es\" added. BytesSlice, BoolSlice, StringSlice, etc.\n\nhttps://codereview.appspot.com/6494085/diff/2003/proto/pointer_reflect.go#newcode109\nproto/pointer_reflect.go:109: type word32 struct {\ncomment on this please, as well as on the other word* types.\n\nhttps://codereview.appspot.com/6494085/diff/2003/proto/properties.go\nFile proto/properties.go (right):\n\nhttps://codereview.appspot.com/6494085/diff/2003/proto/properties.go#newcode120\nproto/properties.go:120: unrecField field          // offset of the XXX_unrecognized []byte field\ns/offset/field/?",
+			"disapproval": false,
+			"date": "2012-09-06 01:05:20.480860",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-09-12 00:29:28.100870",
+			"approval": true
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 12 September 2012 00:05, Russ Cox <rsc@golang.org> wrote:\r\n> PTAL\r\n>\r\n> I had to replace the methods with clunkily named functions in order to\r\n> get the pointer type.\r\n> (You can't have methods on named pointer types.)\r\n>\r\n> It's the same structure, a little more long-winded in the code, and faster.\r\n\r\nI didn't realise that struct { *something } doesn't registerise as\r\nwell as *something.\r\nIt's a technique I use often. Did you find out how much impact using\r\nthat representation had on the performance of this package?\r\n\r\nIt seems to me that it would be better to use the natural representation\r\nand fix the compiler, but perhaps that's hard to do.\r\n",
+			"disapproval": false,
+			"date": "2012-09-12 10:57:24.313290",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Sadness. I get 'protoc: command not found' or something like that. I\r\n> guess I finally have to install the protobuf code on my machine. It\r\n> was nice while it lasted.\r\n\r\nGack. I have no idea how you could make confident progress without\r\ndoing that first.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-09-10 20:46:59.288150",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\nleaving for dsymonds",
+			"disapproval": false,
+			"date": "2012-09-11 23:48:19.666720",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "very cleanly done, and with the performance improvements to reflect it's now practical.\nnice.\n\ntry the type definition suggested\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_unsafe.go\nFile proto/pointer_unsafe.go (right):\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_unsafe.go#newcode76\nproto/pointer_unsafe.go:76: return f != ^field(0)\nreturn f != invalidField\n\nhttp://codereview.appspot.com/6494085/diff/6019/proto/pointer_unsafe.go#newcode144\nproto/pointer_unsafe.go:144: type word32 uintptr\nhow about\ntype word32 struct {\n  **uint32\n}\nor\ntype word32 struct {\n  ptr **uint32\n}",
+			"disapproval": false,
+			"date": "2012-09-06 18:03:12.586770",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Done and uploaded. You or David will have to clpatch + submit.",
+			"disapproval": false,
+			"date": "2012-09-08 13:20:54.790310",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6494085: proto: make safe for App Engine",
+	"created": "2012-09-05 18:25:21.152130",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		2003,
+		9003,
+		11001,
+		6019,
+		6020,
+		7011,
+		6023,
+		1013
+	],
+	"modified": "2013-03-04 22:18:42.311670",
+	"closed": true,
+	"issue": 6494085
+}

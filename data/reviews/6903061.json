@@ -1,0 +1,503 @@
+{
+	"description": "cmd/go: handle os signals\n\nIgnore signals during \"go run\" and wait for running child\nprocess to exit. Stop executing further tests during \"go test\",\nwait for running tests to exit and report error exit code.\n\nOriginal CL 6351053 by dfc.\n\nFixes issue 3572.\nFixes issue 3581.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Actually, one more thing\n\n^c go test now does not stop the tests, it should prevent starting new tests if you're doing go test ./...",
+			"disapproval": false,
+			"date": "2012-12-10 05:07:49.232900",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks very much for working on this. \n\nI agree with Dave: the loop should set a flag saying it received an interrupt, and that should stop other work.\n\nIt looks to me like if you set the flag in the handler you can check it in cmd/go/build.go:611 or so, both before and after handle(a). If interrupted, just return from the goroutine.\n\nThe workers stopping early will require replacing the done channel and <-done at end with a waitgroup and defer wg.Done() in the workers.\n\nOnce the workers are done (wg.Wait returns in the main goroutine) if go test was interrupted it should os.Exit(1).\n\nhttps://codereview.appspot.com/6903061/diff/3/src/cmd/go/signal.go\nFile src/cmd/go/signal.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/3/src/cmd/go/signal.go#newcode20\nsrc/cmd/go/signal.go:20: fmt.Fprintf(os.Stderr, \"\\n%s: %s received, ignoring\\n\", os.Args[0], s)\nI don't think anything needs to be printed.\n\nOn Unix typing ^C the signal will go to all the foreground processes so both 'go test' and what it is running. The thing it's running should die quickly, and then the go command will exit. So I don't think any printing needs to be done there.\n\nOn Windows I don't know where ^C goes exactly. It might be necessary to relay the signal, although I would expect the child to get it before the parent.\n\nSo in both cases I think the print can just go away.",
+			"disapproval": false,
+			"date": "2012-12-10 06:41:16.455180",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/10 02:34:53, dfc wrote:\n> ... In 6351053 rsc ask that signals be ignored for go\n> test as well.\n> \n\nDone.\n\nhttps://codereview.appspot.com/6903061/diff/5001/src/cmd/go/signal.go\nFile src/cmd/go/signal.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/5001/src/cmd/go/signal.go#newcode21\nsrc/cmd/go/signal.go:21: fmt.Fprintf(os.Stderr, \"\\n%s received\\n\", s)\nOn 2012/12/10 02:34:53, dfc wrote:\n> I'm not sure if ignore should print something. ...\nI am thinking about the case when you press ctrl+c and nothing happens. Changed error message as per your suggestion.",
+			"disapproval": false,
+			"date": "2012-12-10 03:35:39.863130",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: dave@cheney.net),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-12-10 02:00:19.079570",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-10 03:34:55.135010",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. This works as expected on linux.\n\nInteresting sidebar, if you do go test ./... in a large tree, SIGQUIT now terminates the runtime.NumCPU() test jobs currently running and will move on to the next ones in the queue.  \n\nFAIL    launchpad.net/juju-core/worker/provisioner      0.271s\n^\\\ngo: quit received, ignoring\ngo build testmain: signal 3 (core dumped)\nFAIL    launchpad.net/juju-core/worker/uniter [build failed]\ngo build testmain: signal 3 (core dumped)\ngo build testmain: signal 3 (core dumped)",
+			"disapproval": false,
+			"date": "2012-12-10 03:52:52.157080",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for tackling this. In 6351053 rsc ask that signals be ignored for go test as well.\n\nhttps://codereview.appspot.com/6903061/diff/5001/src/cmd/go/signal.go\nFile src/cmd/go/signal.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/5001/src/cmd/go/signal.go#newcode21\nsrc/cmd/go/signal.go:21: fmt.Fprintf(os.Stderr, \"\\n%s received\\n\", s)\nI'm not sure if ignore should print something. If it does, it should probably do something like \"\\n%s: %s received, ignoring\\n\", os.Args[0], s\n\nhttps://codereview.appspot.com/6903061/diff/5001/src/cmd/go/signal_notunix.go\nFile src/cmd/go/signal_notunix.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/5001/src/cmd/go/signal_notunix.go#newcode4\nsrc/cmd/go/signal_notunix.go:4: \ncute name",
+			"disapproval": false,
+			"date": "2012-12-10 02:34:53.450180",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6903061/diff/13001/src/cmd/go/signal.go\nFile src/cmd/go/signal.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/13001/src/cmd/go/signal.go#newcode16\nsrc/cmd/go/signal.go:16: // interrupted returns true, if go process received signal.\nOn 2012/12/11 16:34:58, rsc wrote:\n> s/returns true, if/reports whether the/\n\nDone.",
+			"disapproval": false,
+			"date": "2012-12-13 03:18:51.064130",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-11 06:25:36.736020",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "At a guess the test process is exiting, but the go tool has lost a reference to it or has stopped waiting for it, and as we've ignored those signals, we can't use them to kill the go tool itself. \r\n\r\nOn 13/12/2012, at 13:48, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Shows how much I know about signals I guess. Any ideas why, Dave?\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 02:54:16.773870",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6903061/diff/3/src/cmd/go/signal.go\nFile src/cmd/go/signal.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/3/src/cmd/go/signal.go#newcode20\nsrc/cmd/go/signal.go:20: fmt.Fprintf(os.Stderr, \"\\n%s: %s received, ignoring\\n\", os.Args[0], s)\nOn 2012/12/10 06:41:16, rsc wrote:\n> ...\n> On Windows I don't know where ^C goes exactly. It might be necessary to relay\n> the signal, although I would expect the child to get it before the parent.\n\n^C goes to \"process group\", and go process ignores it now, but the children will die on receipt of ^C, unless they protect against it. So, it looks like it works like unix.\n\n> \n> So in both cases I think the print can just go away.\n\nRemoved it.",
+			"disapproval": false,
+			"date": "2012-12-11 06:25:42.607330",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Shows how much I know about signals I guess. Any ideas why, Dave?\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 02:48:55.557330",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6903061/diff/13001/src/cmd/go/signal.go\nFile src/cmd/go/signal.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/13001/src/cmd/go/signal.go#newcode16\nsrc/cmd/go/signal.go:16: // interrupted returns true, if go process received signal.\ns/returns true, if/reports whether the/",
+			"disapproval": false,
+			"date": "2012-12-11 16:34:58.031790",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "NOT LGTM\n\ntry go test net/http\n\nsend SIGQUIT to the test process via ^\\\n\ngo test itself will hang, ^C or ^\\ will not fix it.",
+			"disapproval": true,
+			"date": "2012-12-13 02:10:03.115370",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/13 02:10:03, dfc wrote:\n>  ...\n> go test itself will hang, ^C or ^\\ will not fix it.\n\nI have linux/386. I cannot make it hang. It does everything but hang:\n\n# hg id\n8b89b6326704+ tip\n# go test net/http\nok      net/http        5.946s\n# go test net/http\n^C# go test net/http\n^\\# go test net/http\n^\\SIGQUIT: quit\nPC=0xffffe422\n\ncreated by main.(*builder).do\n        /root/go/root/src/cmd/go/build.go:632 +0x2dd\n\ngoroutine 1 [semacquire]:\nsync.runtime_Semacquire(0x18bb8f88, 0x18bb8f88)\n        /root/go/root/src/pkg/runtime/zsema_linux_386.c:165 +0x32\nsync.(*WaitGroup).Wait(0x18c20e80, 0x18bb8ab8)\n        /root/go/root/src/pkg/sync/waitgroup.go:102 +0xda\nmain.(*builder).do(0x18ad08c0, 0x18ca3ee0, 0x18ac8160)\n        /root/go/root/src/cmd/go/build.go:635 +0x2fc\nmain.runTest(0x84b57c0, 0x18a5f010, 0x1)\n        /root/go/root/src/cmd/go/test.go:389 +0x19f0\nmain.main()\n        /root/go/root/src/cmd/go/main.go:148 +0x38b\n\ngoroutine 2 [syscall]:\ncreated by runtime.main\n        /root/go/root/src/pkg/runtime/proc.c:225\n\ngoroutine 3 [syscall]:\nos/signal.loop()\n        /root/go/root/src/pkg/os/signal/signal_unix.go:20 +0x1f\ncreated by os/signal.init\u00c2\u00b71\n        /root/go/root/src/pkg/os/signal/signal_unix.go:26 +0x32\n\ngoroutine 12 [syscall]:\nsyscall.Syscall()\n        /root/go/root/src/pkg/syscall/asm_linux_386.s:20 +0x1f\nsyscall.read(0x4, 0x18cabc00, 0x200, 0x200, 0x0, ...)\n        /root/go/root/src/pkg/syscall/zerrors_linux_386.go:2310 +0x5d\nsyscall.Read(0x4, 0x18cabc00, 0x200, 0x200, 0x8098e46, ...)\n        /root/go/root/src/pkg/syscall/syscall_unix.go:132 +0x53\nos.(*File).read(0x18bc9358, 0x18cabc00, 0x200, 0x200, 0x0, ...)\n        /root/go/root/src/pkg/os/file_unix.go:174 +0x58\nos.(*File).Read(0x18bc9358, 0x18cabc00, 0x200, 0x200, 0x0, ...)\n        /root/go/root/src/pkg/os/file.go:95 +0x79\nbytes.(*Buffer).ReadFrom(0x18aea600, 0x18a5f8c0, 0x18bc9358, 0x0, 0x0, ...)\n        /root/go/root/src/pkg/bytes/buffer.go:166 +0x196\nio.Copy(0x18c20f40, 0x18aea600, 0x18a5f8c0, 0x18bc9358, 0x0, ...)\n        /root/go/root/src/pkg/io/io.go:357 +0x83\nos/exec.func\u00c2\u00b7003(0x18bc92f0, 0x18bc92f8, 0x80c2ff3, 0x82326f4, 0x808d4b6, ...)\n        /root/go/root/src/pkg/os/exec/exec.go:207 +0x46\nos/exec.func\u00c2\u00b7004(0x18bc9278, 0x18b86e40, 0x0)\n        /root/go/root/src/pkg/os/exec/exec.go:274 +0x23\ncreated by os/exec.(*Cmd).Start\n        /root/go/root/src/pkg/os/exec/exec.go:275 +0x52e\neax     0x72\nebx     0x157d\necx     0x18bc94d8\nedx     0x0\nedi     0x0\nesi     0x18caa230\nebp     0x0\nesp     0xb759b79c\neip     0xffffe422\neflags  0x282\ncs      0x73\nfs      0x0\ngs      0x33\n#\n\nHow can I reproduce what you are seeing? Perhaps your net/http test does not exit on signal, and go waits for it forever?\n\nAlex",
+			"disapproval": false,
+			"date": "2012-12-13 02:49:03.242490",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/13 02:54:16, dfc wrote:\n> At a guess the test process is exiting, but the go tool has lost a reference to\n> it or has stopped waiting for it, and as we've ignored those signals, we can't\n> use them to kill the go tool itself. \n> \n\nCan you explain your theory in more details, please. I still do not see why go would be waiting. What would it be waiting for? Thank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-12-13 03:21:19.151890",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-13 23:40:26.531320",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry, I meant to write\ngo func() {\n    <- sig\n    close(interrupted)\n}()",
+			"disapproval": false,
+			"date": "2012-12-14 00:17:30.144940",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank Alex, I'm having a look now. What I see is also a lot of unhandled signals\n\nok      launchpad.net/juju-core/cert    2.583s\nok      launchpad.net/juju-core/charm   0.405s\nok      launchpad.net/juju-core/cloudinit       0.011s\nok      launchpad.net/juju-core/cmd     0.019s\n?       launchpad.net/juju-core/cmd/builddb     [no test files]\n?       launchpad.net/juju-core/cmd/charmd      [no test files]\n?       launchpad.net/juju-core/cmd/charmload   [no test files]\n^Cgo build testmain: signal 2\nlucky(~/src/launchpad.net/juju-core) % go test ./...\nwarning: building out-of-date packages:\n        launchpad.net/gocheck\n        launchpad.net/goamz/ec2/ec2test\n        launchpad.net/goamz/s3/s3test\ninstalling these packages with 'go test -i ./...' will speed future tests.\n\nok      launchpad.net/juju-core/cert    1.992s\nok      launchpad.net/juju-core/charm   0.381s\nok      launchpad.net/juju-core/cloudinit       0.013s\nok      launchpad.net/juju-core/cmd     0.019s\n?       launchpad.net/juju-core/cmd/builddb     [no test files]\n?       launchpad.net/juju-core/cmd/charmd      [no test files]\n?       launchpad.net/juju-core/cmd/charmload   [no test files]\n^\\^Cgo build testmain: signal 3 (core dumped)\ngo build testmain: signal 3 (core dumped)\ngo build testmain: signal 3 (core dumped)\nlucky(~/src/launchpad.net/juju-core) % go test ./...\nwarning: building out-of-date packages:\n        launchpad.net/gocheck\n        launchpad.net/goamz/ec2/ec2test\n        launchpad.net/goamz/s3/s3test\ninstalling these packages with 'go test -i ./...' will speed future tests.\n\nok      launchpad.net/juju-core/cert    2.519s\nok      launchpad.net/juju-core/charm   0.333s\nok      launchpad.net/juju-core/cloudinit       0.013s\nok      launchpad.net/juju-core/cmd     0.017s\n?       launchpad.net/juju-core/cmd/builddb     [no test files]\n?       launchpad.net/juju-core/cmd/charmd      [no test files]\n?       launchpad.net/juju-core/cmd/charmload   [no test files]\n^Cgo build testmain: signal 2",
+			"disapproval": false,
+			"date": "2012-12-13 08:45:24.682010",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. All my manual tests pass.\n\nThank you for your persistence, this is going to be a really useful feature.",
+			"disapproval": false,
+			"date": "2012-12-14 00:39:16.910490",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have stared plenty at my change. I cannot see any problems.\n\nDave, I will wait for you to decide what to do. If you have suggestions about how I can reproduce your problem here, I am happy to listen. Thank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-12-13 06:11:27.728370",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6903061/diff/29009/src/cmd/go/signal.go\nFile src/cmd/go/signal.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/29009/src/cmd/go/signal.go#newcode28\nsrc/cmd/go/signal.go:28: onceCloseInterrupted.Do(closeInterrupted)\nI'm sorry to harp on this. I don't think the sync.Once handler is adding anything that \n\ngo func() {\n   <- sig\n   close(closeInterrupted)\n}()\n\nwouldn't do",
+			"disapproval": false,
+			"date": "2012-12-14 00:16:44.935360",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/14 00:39:16, dfc wrote:\n> LGTM. All my manual tests pass.\n> \n\nThank you for your help. I will submit it tonight - give others chance to comment.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-12-14 00:41:58.288990",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ok, what I see in the simple case (go test go/build) is the go process waiting on the waitgroup to become ready. Once the ^C hits the test process it has exited, but the parent process has may have lost track of it.\n\n^C^\\SIGQUIT: quit\nPC=0x45bfd3\n\ncreated by addtimer\n        /home/dfc/go/src/pkg/runtime/ztime_linux_amd64.c:73\n\ngoroutine 1 [semacquire]:\nsync.runtime_Semacquire(0xc2001f5c00, 0xc2001f5c00)\n        /home/dfc/go/src/pkg/runtime/zsema_linux_amd64.c:165 +0x2e\nsync.(*WaitGroup).Wait(0xc200165440, 0xc2001f5828)\n        /home/dfc/go/src/pkg/sync/waitgroup.go:102 +0xf2\nmain.(*builder).do(0xc2001175b0, 0xc20032d5b0, 0xc20010e580, 0x1)\n        /home/dfc/go/src/cmd/go/build.go:635 +0x3f0\nmain.runTest(0x9a9b28, 0xc20009e020, 0x2, 0x2)\n        /home/dfc/go/src/cmd/go/test.go:389 +0x1e8c\nmain.main()\n        /home/dfc/go/src/cmd/go/main.go:148 +0x490\n\ngoroutine 2 [syscall]:\ncreated by runtime.main\n        /home/dfc/go/src/pkg/runtime/proc.c:225\n\ngoroutine 3 [syscall]:\nos/signal.loop()\n        /home/dfc/go/src/pkg/os/signal/signal_unix.go:20 +0x1c\ncreated by os/signal.init\u00b71\n        /home/dfc/go/src/pkg/os/signal/signal_unix.go:26 +0x2f\n\ngoroutine 6 [chan receive]:\nmain.func\u00b7005(0xc200165440, 0xc2001f5828, 0xc2001f5bf8, 0x0, 0x0, ...)\n        /home/dfc/go/src/cmd/go/build.go:615 +0x5b\ncreated by main.(*builder).do\n        /home/dfc/go/src/cmd/go/build.go:632 +0x3c6\n\ngoroutine 8 [chan receive]:\nmain.func\u00b7005(0xc200165440, 0xc2001f5828, 0xc2001f5bf8, 0x0, 0x0, ...)\n        /home/dfc/go/src/cmd/go/build.go:615 +0x5b\ncreated by main.(*builder).do\n        /home/dfc/go/src/cmd/go/build.go:632 +0x3c6\n\ngoroutine 17 [chan receive]:\nmain.func\u00b7024(0xc2000fc260, 0x0)\n        /home/dfc/go/src/cmd/go/signal.go:26 +0x3b\ncreated by main.ignoreSignals\n        /home/dfc/go/src/cmd/go/signal.go:29 +0x99\nrax     0xfffffffffffffffc\nrbx     0xc2000d58b8\nrcx     0xffffffffffffffff\nrdx     0x0\nrdi     0x9aff48\nrsi     0x0\nrbp     0xc2001d3d08\nrsp     0x7f43a093deb8\nr8      0x0\nr9      0x0\nr10     0x7f43a093df00\nr11     0x283\nr12     0x7895b0\nr13     0x2\nr14     0x0\nr15     0x2\nrip     0x45bfd3\nrflags  0x283\ncs      0x33\nfs      0x0\ngs      0x0",
+			"disapproval": false,
+			"date": "2012-12-13 08:50:57.945150",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/13 10:57:30, dfc wrote:\n> Hi Alex, please consider this alternative.\n> https://codereview.appspot.com/6943043\n> \n> I believe the problem is because my host has 4 cores, there were several workers\n> blocked waiting on the readSema to close, which blocked the main goroutine.\n\nI can see where the problem is. Your fix looks ok to me. Do you want to use your CL or should I change mine?\n\nAlex",
+			"disapproval": false,
+			"date": "2012-12-13 23:13:51.944380",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6903061/diff/22002/src/cmd/go/signal.go\nFile src/cmd/go/signal.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/22002/src/cmd/go/signal.go#newcode28\nsrc/cmd/go/signal.go:28: onceCloseInterrupted.Do(closeInterrupted)\nWhy do we need to keep this func running once a signal which would interrupt the downstream process has arrived ?",
+			"disapproval": false,
+			"date": "2012-12-13 23:45:54.553980",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6903061/diff/22002/src/cmd/go/signal.go\nFile src/cmd/go/signal.go (right):\n\nhttps://codereview.appspot.com/6903061/diff/22002/src/cmd/go/signal.go#newcode28\nsrc/cmd/go/signal.go:28: onceCloseInterrupted.Do(closeInterrupted)\nOn 2012/12/13 23:45:54, dfc wrote:\n> Why do we need to keep this func running once a signal which would interrupt the\n> downstream process has arrived ?\n\ngo process is ignoring these signals, so, I think, we can get second signal while we doing something else. We should be prepared.",
+			"disapproval": false,
+			"date": "2012-12-13 23:53:19.933290",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-14 00:26:14.902590",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Alex, please consider this alternative. https://codereview.appspot.com/6943043\n\nI believe the problem is because my host has 4 cores, there were several workers blocked waiting on the readSema to close, which blocked the main goroutine.",
+			"disapproval": false,
+			"date": "2012-12-13 10:57:30.542400",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-14 00:06:01.517570",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=ee5afd4b14b7 ***\n\ncmd/go: handle os signals\n\nIgnore signals during \"go run\" and wait for running child\nprocess to exit. Stop executing further tests during \"go test\",\nwait for running tests to exit and report error exit code.\n\nOriginal CL 6351053 by dfc.\n\nFixes issue 3572.\nFixes issue 3581.\n\nR=golang-dev, dave, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/6903061",
+			"disapproval": false,
+			"date": "2012-12-14 06:34:10.141420",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You've done the hard work on this CL, you should take the credit. I\r\nthink just integrate the two files from 6943043 and hg mail.\r\n\r\nOn Fri, Dec 14, 2012 at 10:13 AM,  <alex.brainman@gmail.com> wrote:\r\n> On 2012/12/13 10:57:30, dfc wrote:\r\n>>\r\n>> Hi Alex, please consider this alternative.\r\n>> https://codereview.appspot.com/6943043\r\n>\r\n>\r\n>> I believe the problem is because my host has 4 cores, there were\r\n>\r\n> several workers\r\n>>\r\n>> blocked waiting on the readSema to close, which blocked the main\r\n>\r\n> goroutine.\r\n>\r\n> I can see where the problem is. Your fix looks ok to me. Do you want to\r\n> use your CL or should I change mine?\r\n>\r\n> Alex\r\n>\r\n> https://codereview.appspot.com/6903061/\r\n",
+			"disapproval": false,
+			"date": "2012-12-13 23:15:53.607190",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> go process is ignoring these signals, so, I think, we can get second signal\n> while we doing something else. We should be prepared.\n\nignoredSignals is maybe not accurate. The go process doesn't ignore the signals, in fact, it watches for them. The downstream go test/run/whatever process doesn't ignore them either, it reacts to them.\n\nMaybe s/ignored/interruptible/ then it is clearer that the func waiting on the sig chan closes the interrupted chan and then it is done.",
+			"disapproval": false,
+			"date": "2012-12-13 23:56:20.184200",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 6903061: cmd/go: handle os signals",
+	"created": "2012-12-10 01:58:11.142930",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		3,
+		13001,
+		22001,
+		22002,
+		29009,
+		26002,
+		30002
+	],
+	"modified": "2012-12-14 06:34:13.268900",
+	"closed": true,
+	"issue": 6903061
+}

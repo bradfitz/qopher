@@ -1,0 +1,108 @@
+{
+	"description": "goprotobuf: remove unsafe buffer scratch allocator\nThis is part of the work towards making protobufs run on App Engine.\nBy the way, it's faster now.\n\nBefore:\nproto_test.BenchmarkUnmarshal\t   20000\t     87053 ns/op\nAfter:\nproto_test.BenchmarkUnmarshal\t   20000\t     84825 ns/op",
+	"cc": [
+		"dsymonds@golang.org",
+		"rsc@golang.org",
+		"ken@golang.org",
+		"r@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> > I think this could be a smaller number than 16 as the base type gets\n> > larger.\n> > 4 seems like it would be fine here: I think the most important part is\n> > that\n> > the total allocation be at least 16 bytes, to avoid wasting memory, and\n> > the\n> > smaller the number the less false sharing there is.\n> \n> i'll try different sizes and see how performance is affected. it's not just about cache lines.\n\nSorry, I didn't mean that kind of sharing.  I meant that\nputting multiple unrelated things in one allocation means\nthat the garbage collector can't free one until all are\nunreferenced.\n\n> > http://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode482\n> > proto/decode.go:482: o.strings = (*new([16]string))[:]\n> > The false sharing is especially important here.\n> > I would try not having any cache here at all.\n> > \n> > sp := new(string)\n> > *sp = s\n> > *(**string)(unsafe.Pointer(base + p.offset)) = sp\n> > return nil\n> \n> this one i don't like. the point is to get rid of unsafe.\n\nOf the 4 code lines above, only the first 1 is different.\nThe other 3 are already present in your rewrite.\n(You're not getting rid of unsafe.)\n\nIf you allocate [16]string, any one of the entries might\nbe pointing at a large string, and having them all in one\nblock means that none of the pointed-at strings can be freed\nuntil all 16 of the strings are unreferenced.  This is a\nbigger deal than the [16]int because if you are pinning\n15 other ints in memory just to keep 1, that's worst case 16x.\nThere is no upper bound on the worst case for pinning 15 \nother strings.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-10-20 18:06:49.318214",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"dsymonds@golang.org",
+				"rsc@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello dsymonds, rsc, ken2 (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://goprotobuf.googlecode.com/hg",
+			"disapproval": false,
+			"date": "2011-10-19 23:41:11.745014",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"dsymonds@golang.org",
+				"rsc@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nI love how much this cleans up.\n\nhttp://codereview.appspot.com/5310048/diff/3001/proto/decode.go\nFile proto/decode.go (right):\n\nhttp://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode357\nproto/decode.go:357: iv := unsafe.Unreflect(t, unsafe.Pointer(&ptr))\nis the extra variable still needed? Can &base just be used here?\n\nhttp://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode434\nproto/decode.go:434: o.int8s = (*new([16]int8))[:]\npull the 16 out as a constant, here and in the other functions.\n\nhttp://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode499\nproto/decode.go:499: *v = append([]byte{}, b...)\nThis just copies the bytes, so pass true to o.DecodeRawBytes on line 493, and change this line to\n  *v = b",
+			"disapproval": false,
+			"date": "2011-10-20 02:31:20.094764",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"dsymonds@golang.org",
+				"rsc@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM except the []string\n\nIf we drop the []string then there is no unbounded false sharing\nanymore, which would be a great property to have.\n\nhttp://codereview.appspot.com/5310048/diff/3001/proto/decode.go\nFile proto/decode.go (right):\n\nhttp://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode357\nproto/decode.go:357: iv := unsafe.Unreflect(t, unsafe.Pointer(&ptr))\nThe o.ptr was to avoid the & causing a heap allocation.\nThat still seems worth doing.\n\nhttp://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode434\nproto/decode.go:434: o.int8s = (*new([16]int8))[:]\no.int8s = make([]int8, 16).\nSame each time below.\n\nShould be identical in effect.\nAlso new([16]int8)[:] should have worked without the indirect.\n\nhttp://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode450\nproto/decode.go:450: o.int32s = (*new([16]int32))[:]\nHave you tried varying this?\n\nI think this could be a smaller number than 16 as the base type gets larger.\n4 seems like it would be fine here: I think the most important part is that\nthe total allocation be at least 16 bytes, to avoid wasting memory, and the\nsmaller the number the less false sharing there is.\n\nhttp://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode482\nproto/decode.go:482: o.strings = (*new([16]string))[:]\nThe false sharing is especially important here.\nI would try not having any cache here at all.\n\nsp := new(string)\n*sp = s\n*(**string)(unsafe.Pointer(base + p.offset)) = sp\nreturn nil",
+			"disapproval": false,
+			"date": "2011-10-20 15:11:41.336748",
+			"approval": true
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "\nOn Oct 20, 2011, at 8:11 AM, rsc@golang.org wrote:\n\n> LGTM except the []string\n> \n> If we drop the []string then there is no unbounded false sharing\n> anymore, which would be a great property to have.\n> \n> \n> \n> http://codereview.appspot.com/5310048/diff/3001/proto/decode.go\n> File proto/decode.go (right):\n> \n> http://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode357\n> proto/decode.go:357: iv := unsafe.Unreflect(t, unsafe.Pointer(&ptr))\n> The o.ptr was to avoid the & causing a heap allocation.\n> That still seems worth doing.\n> \n> http://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode434\n> proto/decode.go:434: o.int8s = (*new([16]int8))[:]\n> o.int8s = make([]int8, 16).\n> Same each time below.\n> \n> Should be identical in effect.\n> Also new([16]int8)[:] should have worked without the indirect.\n\ni was just outthinking myself.\n\n> http://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode450\n> proto/decode.go:450: o.int32s = (*new([16]int32))[:]\n> Have you tried varying this?\n> \n> I think this could be a smaller number than 16 as the base type gets\n> larger.\n> 4 seems like it would be fine here: I think the most important part is\n> that\n> the total allocation be at least 16 bytes, to avoid wasting memory, and\n> the\n> smaller the number the less false sharing there is.\n\ni'll try different sizes and see how performance is affected. it's not just about cache lines.\n\n> http://codereview.appspot.com/5310048/diff/3001/proto/decode.go#newcode482\n> proto/decode.go:482: o.strings = (*new([16]string))[:]\n> The false sharing is especially important here.\n> I would try not having any cache here at all.\n> \n> sp := new(string)\n> *sp = s\n> *(**string)(unsafe.Pointer(base + p.offset)) = sp\n> return nil\n\nthis one i don't like. the point is to get rid of unsafe.\n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2011-10-20 15:24:29.696840",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"dsymonds@golang.org",
+				"rsc@golang.org",
+				"ken@golang.org",
+				"r@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/goprotobuf/source/detail?r=9fe71978189f ***\n\ngoprotobuf: remove unsafe buffer scratch allocator\nThis is part of the work towards making protobufs run on App Engine.\nBy the way, it's faster now.\n\nBefore:\nproto_test.BenchmarkUnmarshal\t   20000\t     87053 ns/op\nAfter:\nproto_test.BenchmarkUnmarshal\t   20000\t     84825 ns/op\n\nR=dsymonds, rsc, ken, r\nCC=golang-dev\nhttp://codereview.appspot.com/5310048",
+			"disapproval": false,
+			"date": "2011-10-20 19:58:30.850935",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 5310048: goprotobuf: remove unsafe buffer scratch allocator",
+	"created": "2011-10-19 23:41:08.486894",
+	"patchsets": [
+		1,
+		3001,
+		6002
+	],
+	"modified": "2011-10-20 19:58:32.440414",
+	"closed": true,
+	"issue": 5310048
+}

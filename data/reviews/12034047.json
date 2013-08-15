@@ -1,0 +1,92 @@
+{
+	"description": "runtime: cut struct Hmap back to 48-byte allocation\n\nstruct Hmap is the header for a map value.\n\nCL 8377046 made flags a uint32 so that it could be updated atomically,\nbut that bumped the struct to 56 bytes, which allocates as 64 bytes (on amd64).\n\nhash0 is initialized from runtime.fastrand1, which returns a uint32,\nso the top 32 bits were always zero anyway. Declare it as a uint32\nto reclaim 4 bytes and bring the Hmap size back down to a 48-byte allocation.\n\nFixes issue 5237.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"khr@golang.org",
+		"khr@google.com",
+		"bradfitz@golang.org",
+		"dvyukov@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\r\n\r\n\r\nOn Tue, Jul 30, 2013 at 12:13 PM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1, khr,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com, khr (cc: bradfitz, dvyukov,\r\n> golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: cut struct Hmap back to 48-byte allocation\r\n>\r\n> struct Hmap is the header for a map value.\r\n>\r\n> CL 8377046 made flags a uint32 so that it could be updated atomically,\r\n> but that bumped the struct to 56 bytes, which allocates as 64 bytes (on\r\n> amd64).\r\n>\r\n> hash0 is initialized from runtime.fastrand1, which returns a uint32,\r\n> so the top 32 bits were always zero anyway. Declare it as a uint32\r\n> to reclaim 4 bytes and bring the Hmap size back down to a 48-byte\r\n> allocation.\r\n>\r\n> Fixes issue 5237.\r\n>\r\n> Please review this at https://codereview.appspot.**com/12034047/<https://codereview.appspot.com/12034047/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/hashmap.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/hashmap.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/hashmap.c\r\n> +++ b/src/pkg/runtime/hashmap.c\r\n> @@ -96,12 +96,12 @@\r\n>  {\r\n>         uintgo  count;        // # live cells == size of map.  Must be\r\n> first (used by len() builtin)\r\n>         uint32  flags;\r\n> +       uint32 hash0;        // hash seed\r\n>         uint8   B;            // log_2 of # of buckets (can hold up to\r\n> LOAD * 2^B items)\r\n>         uint8   keysize;      // key size in bytes\r\n>         uint8   valuesize;    // value size in bytes\r\n>         uint16  bucketsize;   // bucket size in bytes\r\n>\r\n> -       uintptr hash0;        // hash seed\r\n>         byte    *buckets;     // array of 2^B Buckets. may be nil if\r\n> count==0.\r\n>         byte    *oldbuckets;  // previous bucket array of half the size,\r\n> non-nil only when growing\r\n>         uintptr nevacuate;    // progress counter for evacuation (buckets\r\n> less than this have been evacuated)\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-30 19:20:11.286750",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2013-07-30 19:34:33.454550",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"bradfitz@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, khr (cc: bradfitz, dvyukov, golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-07-30 19:13:32.806400",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Also include something like: ?\r\n\r\ndiff -r f04c9f103e15 src/pkg/runtime/map_test.go\r\n--- a/src/pkg/runtime/map_test.go Tue Jul 30 19:47:16 2013 +0400\r\n+++ b/src/pkg/runtime/map_test.go Tue Jul 30 12:41:24 2013 -0700\r\n@@ -15,6 +15,45 @@\r\n  \"testing\"\r\n )\r\n\r\n+func TestMapSize(t *testing.T) {\r\n+ var m map[struct{}]struct{}\r\n+ size := bytesPerRun(100, func() {\r\n+ m = make(map[struct{}]struct{})\r\n+ })\r\n+ if size > 48 {\r\n+ t.Errorf(\"size = %v; want <= 48\", size)\r\n+ }\r\n+}\r\n+\r\n+// like testing.AllocsPerRun, but for bytes of memory, not number of\r\nallocations.\r\n+func bytesPerRun(runs int, f func()) (avg float64) {\r\n+ defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))\r\n+\r\n+ // Warm up the function\r\n+ f()\r\n+\r\n+ // Measure the starting statistics\r\n+ var memstats runtime.MemStats\r\n+ runtime.ReadMemStats(&memstats)\r\n+ sum := 0 - memstats.Alloc\r\n+\r\n+ // Run the function the specified number of times\r\n+ for i := 0; i < runs; i++ {\r\n+ f()\r\n+ }\r\n+\r\n+ // Read the final statistics\r\n+ runtime.ReadMemStats(&memstats)\r\n+ sum += memstats.Alloc\r\n+\r\n+ // Average the mallocs over the runs (not counting the warm-up).\r\n+ // We are forced to return a float64 because the API is silly, but do\r\n+ // the division as integers so we can ask if AllocsPerRun()==1\r\n+ // instead of AllocsPerRun()<2.\r\n+ return float64(sum / uint64(runs))\r\n+}\r\n+\r\n+\r\n // negative zero is a good test because:\r\n //  1) 0 and -0 are equal, yet have distinct representations.\r\n //  2) 0 is represented as all zeros, -0 isn't.\r\n\r\n\r\n\r\nOn Tue, Jul 30, 2013 at 12:34 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> LGTM\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-30 19:41:56.614680",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"khr@google.com",
+				"bradfitz@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=e21e678c5c66 ***\n\nruntime: cut struct Hmap back to 48-byte allocation\n\nstruct Hmap is the header for a map value.\n\nCL 8377046 made flags a uint32 so that it could be updated atomically,\nbut that bumped the struct to 56 bytes, which allocates as 64 bytes (on amd64).\n\nhash0 is initialized from runtime.fastrand1, which returns a uint32,\nso the top 32 bits were always zero anyway. Declare it as a uint32\nto reclaim 4 bytes and bring the Hmap size back down to a 48-byte allocation.\n\nFixes issue 5237.\n\nR=golang-dev, khr, khr\nCC=bradfitz, dvyukov, golang-dev\nhttps://codereview.appspot.com/12034047",
+			"disapproval": false,
+			"date": "2013-07-31 02:48:07.389820",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 12034047: runtime: cut struct Hmap back to 48-byte allocation",
+	"created": "2013-07-30 19:08:47.183740",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		8001,
+		13001,
+		16001
+	],
+	"modified": "2013-07-31 02:48:09.490720",
+	"closed": true,
+	"issue": 12034047
+}

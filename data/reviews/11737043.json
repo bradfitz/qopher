@@ -1,0 +1,91 @@
+{
+	"description": "log/syslog: restore use of serverConn interface\n\nRevision 15629 (8d71734a0cb0) removed the serverConn interface\nthat was introduce in revision 7718 (ee5e80c62862).  The\nserverConn interface was there for use by gccgo on Solaris,\nand it is still needed there.  Solaris does not support\nconnecting to the syslog daemon over TCP, and gccgo simply\ncalls the C library function.  This CL restores the\ninterface.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-07-23 21:18:41.971240",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n On Jul 23, 2013 2:18 PM, <iant@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> log/syslog: restore use of serverConn interface\r\n>\r\n> Revision 15629 (8d71734a0cb0) removed the serverConn interface\r\n> that was introduce in revision 7718 (ee5e80c62862).  The\r\n> serverConn interface was there for use by gccgo on Solaris,\r\n> and it is still needed there.  Solaris does not support\r\n> connecting to the syslog daemon over TCP, and gccgo simply\r\n> calls the C library function.  This CL restores the\r\n> interface.\r\n>\r\n> Please review this at https://codereview.appspot.**com/11737043/<https://codereview.appspot.com/11737043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/log/syslog/syslog.go\r\n>   M src/pkg/log/syslog/syslog_**unix.go\r\n>\r\n>\r\n> Index: src/pkg/log/syslog/syslog.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/log/syslog/syslog.go\r\n> +++ b/src/pkg/log/syslog/syslog.go\r\n> @@ -88,6 +88,15 @@\r\n>         raddr    string\r\n>\r\n>         mu   sync.Mutex // guards conn\r\n> +       conn serverConn\r\n> +}\r\n> +\r\n> +type serverConn interface {\r\n> +       writeString(p Priority, hostname, tag, s, nl string) error\r\n> +       close() error\r\n> +}\r\n> +\r\n> +type netConn struct {\r\n>         conn net.Conn\r\n>  }\r\n>\r\n> @@ -135,7 +144,7 @@\r\n>  func (w *Writer) connect() (err error) {\r\n>         if w.conn != nil {\r\n>                 // ignore err from close, it makes sense to continue anyway\r\n> -               w.conn.Close()\r\n> +               w.conn.close()\r\n>                 w.conn = nil\r\n>         }\r\n>\r\n> @@ -148,7 +157,7 @@\r\n>                 var c net.Conn\r\n>                 c, err = net.Dial(w.network, w.raddr)\r\n>                 if err == nil {\r\n> -                       w.conn = c\r\n> +                       w.conn = netConn{c}\r\n>                         if w.hostname == \"\" {\r\n>                                 w.hostname = c.LocalAddr().String()\r\n>                         }\r\n> @@ -168,7 +177,7 @@\r\n>         defer w.mu.Unlock()\r\n>\r\n>         if w.conn != nil {\r\n> -               err := w.conn.Close()\r\n> +               err := w.conn.close()\r\n>                 w.conn = nil\r\n>                 return err\r\n>         }\r\n> @@ -257,10 +266,7 @@\r\n>                 nl = \"\\n\"\r\n>         }\r\n>\r\n> -       timestamp := time.Now().Format(time.**RFC3339)\r\n> -       _, err := fmt.Fprintf(w.conn, \"<%d>%s %s %s[%d]: %s%s\",\r\n> -               p, timestamp, w.hostname,\r\n> -               w.tag, os.Getpid(), msg, nl)\r\n> +       err := w.conn.writeString(p, w.hostname, w.tag, msg, nl)\r\n>         if err != nil {\r\n>                 return 0, err\r\n>         }\r\n> @@ -270,6 +276,18 @@\r\n>         return len(msg), nil\r\n>  }\r\n>\r\n> +func (n netConn) writeString(p Priority, hostname, tag, msg, nl string)\r\n> error {\r\n> +       timestamp := time.Now().Format(time.**RFC3339)\r\n> +       _, err := fmt.Fprintf(n.conn, \"<%d>%s %s %s[%d]: %s%s\",\r\n> +               p, timestamp, hostname,\r\n> +               tag, os.Getpid(), msg, nl)\r\n> +       return err\r\n> +}\r\n> +\r\n> +func (n netConn) close() error {\r\n> +       return n.conn.Close()\r\n> +}\r\n> +\r\n>  // NewLogger creates a log.Logger whose output is written to\r\n>  // the system log service with the specified priority. The logFlag\r\n>  // argument is the flag set passed through to log.New to create\r\n> Index: src/pkg/log/syslog/syslog_**unix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/log/syslog/syslog_**unix.go\r\n> +++ b/src/pkg/log/syslog/syslog_**unix.go\r\n> @@ -14,7 +14,7 @@\r\n>  // unixSyslog opens a connection to the syslog daemon running on the\r\n>  // local machine using a Unix domain socket.\r\n>\r\n> -func unixSyslog() (conn net.Conn, err error) {\r\n> +func unixSyslog() (conn serverConn, err error) {\r\n>         logTypes := []string{\"unixgram\", \"unix\"}\r\n>         logPaths := []string{\"/dev/log\", \"/var/run/syslog\"}\r\n>         for _, network := range logTypes {\r\n> @@ -23,7 +23,7 @@\r\n>                         if err != nil {\r\n>                                 continue\r\n>                         } else {\r\n> -                               return conn, nil\r\n> +                               return netConn{conn}, nil\r\n>                         }\r\n>                 }\r\n>         }\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-23 21:22:28.531810",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please add a comment on serverConn explaining why it must be kept.\r\n",
+			"disapproval": false,
+			"date": "2013-07-23 21:24:21.926230",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 23, 2013 at 2:24 PM, Russ Cox <rsc@golang.org> wrote:\r\n> Please add a comment on serverConn explaining why it must be kept.\r\n\r\nDone.\r\n\r\nPTAL.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2013-07-23 21:28:08.319630",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 23, 2013 at 2:24 PM, Russ Cox <rsc@golang.org> wrote:\r\n> Please add a comment on serverConn explaining why it must be kept.\r\n\r\nDone.\r\n\r\nPTAL.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2013-07-23 21:29:12.606910",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=afb591d143cd ***\n\nlog/syslog: restore use of serverConn interface\n\nRevision 15629 (8d71734a0cb0) removed the serverConn interface\nthat was introduce in revision 7718 (ee5e80c62862).  The\nserverConn interface was there for use by gccgo on Solaris,\nand it is still needed there.  Solaris does not support\nconnecting to the syslog daemon over TCP, and gccgo simply\ncalls the C library function.  This CL restores the\ninterface.\n\nR=golang-dev, bradfitz, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/11737043",
+			"disapproval": false,
+			"date": "2013-07-24 17:29:01.348120",
+			"approval": false
+		}
+	],
+	"owner_email": "iant@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "iant",
+	"subject": "code review 11737043: log/syslog: restore use of serverConn interface",
+	"created": "2013-07-23 21:18:31.391980",
+	"patchsets": [
+		1,
+		6001,
+		10001
+	],
+	"modified": "2013-07-24 17:29:02.740650",
+	"closed": true,
+	"issue": 11737043
+}

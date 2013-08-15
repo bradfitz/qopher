@@ -1,0 +1,398 @@
+{
+	"description": "cmd/5g: use MOVB for fixed array nil check\n\nFixes issue 4396.\n\nFor fixed arrays larger than the unmapped page, agenr would general a nil check by loading the first word of the array. However there is no requirement for the first element of a byte array to be word aligned, so this check causes a trap on ARMv5 hardware (ARMv6 since relaxed that restriction, but it probably still comes at a cost).\n\nSwitching the check to MOVB ensures alignment is not an issue. This check is only invoked in a few places in the code where large fixed arrays are embedded into structs, compress/lzw is the biggest offender, and switching to MOVB has no observable performance penalty.\n\nThanks to R\u00e9my and Daniel Morsing for helping me debug this on IRC last night.",
+	"cc": [
+		"remyoudompheng@gmail.com",
+		"minux.ma@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6854063/diff/5003/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttps://codereview.appspot.com/6854063/diff/5003/src/cmd/5g/cgen.c#newcode957\nsrc/cmd/5g/cgen.c:957: regalloc(&tmp, types[TUINT8], N);\nOn 2012/11/24 19:43:45, remyoudompheng wrote:\n> i would use &n4 as third argument here so that we need one register instead of\n> 2.\n> \n> Then the op=INDREG part must move below the regalloc.\n\nI think that gets us back to where we started, using gins(AMOVB, ...)",
+			"disapproval": false,
+			"date": "2012-11-25 11:59:15.836970",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I need to test on some arm5 hardware on Monday.\r\nOn 25 Nov 2012 23:52, <remyoudompheng@gmail.com> wrote:\r\n\r\n>\r\n> http://codereview.appspot.com/**6854063/diff/4003/src/cmd/5g/**cgen.c<http://codereview.appspot.com/6854063/diff/4003/src/cmd/5g/cgen.c>\r\n> File src/cmd/5g/cgen.c (right):\r\n>\r\n> http://codereview.appspot.com/**6854063/diff/4003/src/cmd/5g/**\r\n> cgen.c#newcode783<http://codereview.appspot.com/6854063/diff/4003/src/cmd/5g/cgen.c#newcode783>\r\n> src/cmd/5g/cgen.c:783: gmove(a, &n1);\r\n> hum, the test should not have passed unless this part is fixed.\r\n>\r\n> If you want to only fix the arrays part, the previous patch looks good\r\n> to me\r\n>\r\n> http://codereview.appspot.com/**6854063/<http://codereview.appspot.com/6854063/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-25 12:54:51.232890",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It might be useful to use checkref (defined in gsubr.c) to the task.",
+			"disapproval": false,
+			"date": "2012-11-18 10:30:43.473640",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'd like to leave this proposal as is for the moment, so I can enable\r\nalignment traps on the arm5 builder, then take it from there.\r\n\r\nOn Sun, Nov 18, 2012 at 9:30 PM,  <remyoudompheng@gmail.com> wrote:\r\n> It might be useful to use checkref (defined in gsubr.c) to the task.\r\n>\r\n> https://codereview.appspot.com/6854063/\r\n",
+			"disapproval": false,
+			"date": "2012-11-18 11:00:10.721000",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for the suggestion, I'll try it. \r\n\r\nAs for the test, the types come from lzw.decoder, I should probably mention that in the comment \r\n\r\nOn 18/11/2012, at 19:15, minux.ma@gmail.com wrote:\r\n\r\n> \r\n> https://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c\r\n> File src/cmd/5g/cgen.c (right):\r\n> \r\n> https://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c#newcode953\r\n> src/cmd/5g/cgen.c:953: gmove(&n3, &n4);\r\n> i think this suffices:\r\n>    regalloc(&n4, types[TUINT8], N);\r\n>    gmove(&n3, &n4);\r\n>    regfree(&n4);\r\n> but this might be regarded as a hack.\r\n> \r\n> https://codereview.appspot.com/6854063/diff/2002/test/fixedbugs/issue4396.go\r\n> File test/fixedbugs/issue4396.go (right):\r\n> \r\n> https://codereview.appspot.com/6854063/diff/2002/test/fixedbugs/issue4396.go#newcode21\r\n> test/fixedbugs/issue4396.go:21: g             [4096]uint8\r\n> i think you can slightly simplify this struct to:\r\n> struct {\r\n>    _ uint32 // force &a[0] to align to 4-byte boundary\r\n>    a [4095]byte // &b[0] won't ever be aligned to 4-byte\r\n>    b [4096]byte\r\n> }\r\n> \r\n> https://codereview.appspot.com/6854063/\r\n",
+			"disapproval": false,
+			"date": "2012-11-18 08:24:29.529360",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6854063/diff/5003/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttps://codereview.appspot.com/6854063/diff/5003/src/cmd/5g/cgen.c#newcode957\nsrc/cmd/5g/cgen.c:957: regalloc(&tmp, types[TUINT8], N);\nOn 2012/11/25 11:59:15, dfc wrote:\n> On 2012/11/24 19:43:45, remyoudompheng wrote:\n> > i would use &n4 as third argument here so that we need one register instead of\n> > 2.\n> > \n> > Then the op=INDREG part must move below the regalloc.\n> \n> I think that gets us back to where we started, using gins(AMOVB, ...)\n\nI am thinking of:\n\nregalloc(&n4, types[tptr], N);\nregalloc(&tmp, types[TUINT8], &n4);\nn4.op = OINDREG;\nn4.type = types[TUINT8];\nn4.xoffset = 0;\ngmove(&n4, &tmp);\n\nIt's not cheaty like as gins(MOVB, &n4, &n4), but it saves a register.",
+			"disapproval": false,
+			"date": "2012-11-25 12:06:03.869640",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6854063/diff/4003/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttp://codereview.appspot.com/6854063/diff/4003/src/cmd/5g/cgen.c#newcode783\nsrc/cmd/5g/cgen.c:783: gmove(a, &n1);\nhum, the test should not have passed unless this part is fixed.\n\nIf you want to only fix the arrays part, the previous patch looks good to me",
+			"disapproval": false,
+			"date": "2012-11-25 12:52:44.874030",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttps://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c#newcode953\nsrc/cmd/5g/cgen.c:953: gmove(&n3, &n4);\nOn 2012/11/18 08:15:41, minux wrote:\n> i think this suffices:\n>     regalloc(&n4, types[TUINT8], N);\n>     gmove(&n3, &n4);\n>     regfree(&n4);\n\nI do not think that is sufficient as it just computes the address of a[0], then masks it to a UINT8\n\n   42ee8:       e59fb8b4        ldr     fp, [pc, #2228] ; 437a4 <compress/lzw.(*decoder).decode+0xa04>\n   42eec:       e084100b        add     r1, r4, fp\n   42ef0:       e20120ff        and     r2, r1, #255    ; 0xff\n   42ef4:       e1a00003        mov     r0, r3\n   42ef8:       e3a02a02        mov     r2, #8192       ; 0x2000\n   42efc:       e1530002        cmp     r3, r2",
+			"disapproval": false,
+			"date": "2012-11-18 09:57:01.715920",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, minux.ma@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-18 04:21:56.019790",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6854063/diff/4002/test/fixedbugs/issue4396.go\nFile test/fixedbugs/issue4396.go (right):\n\nhttp://codereview.appspot.com/6854063/diff/4002/test/fixedbugs/issue4396.go#newcode24\ntest/fixedbugs/issue4396.go:24: \ncan you add the following test:\n\ntype T struct {\n      U uint16\n      V T2\n}\n\ntype T2 struct {\n      T    [4096]byte\n      A, B byte\n}\n\nvar s, t = new(T), new(T)\n\nfunc main() {\n      var u, v *T2 = &s.V, &t.V\n      u.B = v.B\n}",
+			"disapproval": false,
+			"date": "2012-11-25 12:21:34.670020",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM once you're happy about the testing\n\nhttps://codereview.appspot.com/6854063/diff/4003/test/fixedbugs/issue4396.go\nFile test/fixedbugs/issue4396.go (right):\n\nhttps://codereview.appspot.com/6854063/diff/4003/test/fixedbugs/issue4396.go#newcode24\ntest/fixedbugs/issue4396.go:24: T    [4096]byte\nmaybe call this something other than T, like Pad or Buf?",
+			"disapproval": false,
+			"date": "2012-11-26 17:23:05.354920",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, minux.ma@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-17 22:12:07.246540",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "6g uses TESTB for that purpose, so LGTM\nI think 6g calls gins with nodes of the correct type, the current sequence in 5g is cheaty.",
+			"disapproval": false,
+			"date": "2012-11-17 22:48:04.133940",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, minux.ma@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-25 12:38:15.263600",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttps://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c#newcode953\nsrc/cmd/5g/cgen.c:953: gmove(&n3, &n4);\ni think this suffices:\n    regalloc(&n4, types[TUINT8], N);\n    gmove(&n3, &n4);\n    regfree(&n4);\nbut this might be regarded as a hack.\n\nhttps://codereview.appspot.com/6854063/diff/2002/test/fixedbugs/issue4396.go\nFile test/fixedbugs/issue4396.go (right):\n\nhttps://codereview.appspot.com/6854063/diff/2002/test/fixedbugs/issue4396.go#newcode21\ntest/fixedbugs/issue4396.go:21: g             [4096]uint8\ni think you can slightly simplify this struct to:\nstruct {\n    _ uint32 // force &a[0] to align to 4-byte boundary\n    a [4095]byte // &b[0] won't ever be aligned to 4-byte\n    b [4096]byte\n}",
+			"disapproval": false,
+			"date": "2012-11-18 08:15:41.554100",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL. I tried to make the check less cheaty and in the process it now produces one less instruction.\n\nbefore:\n\n                     d.output[d.o] = uint8(code)\n42ec4:       e1a00806        lsl     r0, r6, #16\n42ec8:       e1a00820        lsr     r0, r0, #16\n42ecc:       e20010ff        and     r1, r0, #255    ; 0xff\n42ed0:       e20150ff        and     r5, r1, #255    ; 0xff\n42ed4:       e5941000        ldr     r1, [r4]\n42ed8:       e59fb8c0        ldr     fp, [pc, #2240] ; 437a0 <compress/lzw.(*decoder).decode+0xa00>\n42edc:       e794300b        ldr     r3, [r4, fp]\n42ee0:       e5941000        ldr     r1, [r4]\n42ee4:       e5942000        ldr     r2, [r4]\n42ee8:       e59fb8b4        ldr     fp, [pc, #2228] ; 437a4 <compress/lzw.(*decoder).decode+0xa04>\n42eec:       e084100b        add     r1, r4, fp\n42ef0:       e1d120d0        ldrsb   r2, [r1]\n42ef4:       e1a00003        mov     r0, r3\n42ef8:       e3a02a02        mov     r2, #8192       ; 0x2000\n42efc:       e1530002        cmp     r3, r2\n42f00:       3a000000        bcc     42f08 <compress/lzw.(*decoder).decode+0x168>\n42f04:       ebff7d8d        bl      22540 <runtime.panicindex>\n42f08:       e0811000        add     r1, r1, r0\n42f0c:       e20500ff        and     r0, r5, #255    ; 0xff\n42f10:       e5c10000        strb    r0, [r1]\n\nafter: \n\n                     d.output[d.o] = uint8(code)\n42ec4:       e1a00807        lsl     r0, r7, #16\n42ec8:       e1a00820        lsr     r0, r0, #16\n42ecc:       e20010ff        and     r1, r0, #255    ; 0xff\n42ed0:       e20150ff        and     r5, r1, #255    ; 0xff\n42ed4:       e5941000        ldr     r1, [r4]\n42ed8:       e59fb8a4        ldr     fp, [pc, #2212] ; 43784 <compress/lzw.(*decoder).decode+0x9e4>\n42edc:       e794000b        ldr     r0, [r4, fp]\n42ee0:       e5941000        ldr     r1, [r4]\n42ee4:       e5942000        ldr     r2, [r4]\n42ee8:       e59fb898        ldr     fp, [pc, #2200] ; 43788 <compress/lzw.(*decoder).decode+0x9e8>\n42eec:       e084100b        add     r1, r4, fp\n42ef0:       e5d13000        ldrb    r3, [r1]\n42ef4:       e3a02a02        mov     r2, #8192       ; 0x2000\n42ef8:       e1500002        cmp     r0, r2\n42efc:       3a000000        bcc     42f04 <compress/lzw.(*decoder).decode+0x164>\n42f00:       ebff7d8e        bl      22540 <runtime.panicindex>\n42f04:       e0811000        add     r1, r1, r0\n42f08:       e20500ff        and     r0, r5, #255    ; 0xff\n42f0c:       e5c10000        strb    r0, [r1]\n\nThe important part is ~ 42ef0.",
+			"disapproval": false,
+			"date": "2012-11-18 04:20:26.670070",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6854063/diff/5003/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttp://codereview.appspot.com/6854063/diff/5003/src/cmd/5g/cgen.c#newcode957\nsrc/cmd/5g/cgen.c:957: regalloc(&tmp, types[TUINT8], N);\ni would use &n4 as third argument here so that we need one register instead of 2.\n\nThen the op=INDREG part must move below the regalloc.",
+			"disapproval": false,
+			"date": "2012-11-24 19:43:45.593440",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "you might also need to change gsubr.c\nine 1196 and 1969.\n\nOn 2012/11/18 09:57:01, dfc wrote:\nhttps://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c#newcode953\n> src/cmd/5g/cgen.c:953: gmove(&n3, &n4);\n> On 2012/11/18 08:15:41, minux wrote:\n> > i think this suffices:\n> >     regalloc(&n4, types[TUINT8], N);\n> >     gmove(&n3, &n4);\n> >     regfree(&n4);\n> I do not think that is sufficient as it just computes the address of a[0], then\n> masks it to a UINT8\noops, you're right. i missed something obvious.\n\nhttps://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttps://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c#newcode703\nsrc/cmd/5g/cgen.c:703: p1 = gins(AMOVW, &n1, &n1);\nyou also need to change here?\n\nhttps://codereview.appspot.com/6854063/diff/2002/src/cmd/5g/cgen.c#newcode784\nsrc/cmd/5g/cgen.c:784: p1 = gins(AMOVW, &n1, &n1);\nand here.",
+			"disapproval": false,
+			"date": "2012-11-18 10:21:29.287930",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, minux.ma@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-11-25 12:11:57.193210",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "No significant performance impact from this patch \n\nlinux/arm, OMAP4 pandaboard.\n\nbenchmark                 old ns/op    new ns/op    delta\nBenchmarkBinaryTree17    2147483647   2147483647   +0.35%\nBenchmarkFannkuch11      2147483647   2147483647   -0.02%\nBenchmarkGobDecode        131796200    129202200   -1.97%\nBenchmarkGobEncode         80310050     80659500   +0.44%\nBenchmarkGzip            2147483647   2147483647   +0.05%\nBenchmarkGunzip           984246800    986364800   +0.22%\nBenchmarkJSONEncode       703918400    693298400   -1.51%\nBenchmarkJSONDecode      1450744000   1451721000   +0.07%\nBenchmarkMandelbrot200   2147483647   2147483647   -0.18%\nBenchmarkParse             57535400     53913580   -6.29%\nBenchmarkRevcomp          126544200    125526400   -0.80%\nBenchmarkTemplate        1554077000   1551361000   -0.17%\n\nbenchmark                  old MB/s     new MB/s  speedup\nBenchmarkGobDecode             5.82         5.94    1.02x\nBenchmarkGobEncode             9.56         9.52    1.00x\nBenchmarkGzip                  3.65         3.65    1.00x\nBenchmarkGunzip               19.72        19.67    1.00x\nBenchmarkJSONEncode            2.76         2.80    1.01x\nBenchmarkJSONDecode            1.34         1.34    1.00x\nBenchmarkParse                 1.01         1.07    1.06x\nBenchmarkRevcomp              20.09        20.25    1.01x\nBenchmarkTemplate              1.25         1.25    1.00x",
+			"disapproval": false,
+			"date": "2012-12-05 04:51:08.624530",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, minux.ma@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-04 11:07:28.702590",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c#newcode707\nsrc/cmd/5g/cgen.c:707: n2.op = OINDREG;\ns/n2/n1 on these three lines\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c#newcode710\nsrc/cmd/5g/cgen.c:710: gmove(&n1, &n2);\nyou are doing \n\nMOVBU Rn, 0(Rn)\n\nhere, I suppose it's the contrary you want to do. How did you not get corrupted data?\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c#newcode790\nsrc/cmd/5g/cgen.c:790: n2.op = OINDREG;\ns/n2/n1 on these 3 lines\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c#newcode793\nsrc/cmd/5g/cgen.c:793: gmove(&n1, &n2);\nsame\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c#newcode968\nsrc/cmd/5g/cgen.c:968: gmove(&n4, &tmp);\nthis one is OK",
+			"disapproval": false,
+			"date": "2012-12-04 11:12:41.713080",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks Remy, testing now.\n\nhttps://codereview.appspot.com/6854063/diff/4002/test/fixedbugs/issue4396.go\nFile test/fixedbugs/issue4396.go (right):\n\nhttps://codereview.appspot.com/6854063/diff/4002/test/fixedbugs/issue4396.go#newcode24\ntest/fixedbugs/issue4396.go:24: \nOn 2012/11/25 12:21:34, remyoudompheng wrote:\n> can you add the following test:\n> \n> type T struct {\n>       U uint16\n>       V T2\n> }\n> \n> type T2 struct {\n>       T    [4096]byte\n>       A, B byte\n> }\n> \n> var s, t = new(T), new(T)\n> \n> func main() {\n>       var u, v *T2 = &s.V, &t.V\n>       u.B = v.B\n> }\n\nDone.\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c#newcode707\nsrc/cmd/5g/cgen.c:707: n2.op = OINDREG;\nOn 2012/12/04 11:12:41, remyoudompheng wrote:\n> s/n2/n1 on these three lines\n\nDone.\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c#newcode710\nsrc/cmd/5g/cgen.c:710: gmove(&n1, &n2);\nOn 2012/12/04 11:12:41, remyoudompheng wrote:\n> you are doing \n> \n> MOVBU Rn, 0(Rn)\n\nWhoops.\n\n> \n> here, I suppose it's the contrary you want to do. How did you not get corrupted\n> data?\n\nMaybe because we don't use n1 or n2 after this check.\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c#newcode790\nsrc/cmd/5g/cgen.c:790: n2.op = OINDREG;\nOn 2012/12/04 11:12:41, remyoudompheng wrote:\n> s/n2/n1 on these 3 lines\n\nDone.\n\nhttps://codereview.appspot.com/6854063/diff/15001/src/cmd/5g/cgen.c#newcode793\nsrc/cmd/5g/cgen.c:793: gmove(&n1, &n2);\nOn 2012/12/04 11:12:41, remyoudompheng wrote:\n> same\n\nDone.",
+			"disapproval": false,
+			"date": "2012-12-04 11:17:54.325470",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, minux.ma@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-04 11:44:48.546240",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=5eac1a2d6fc3 ***\n\ncmd/5g: use MOVB for fixed array nil check\n\nFixes issue 4396.\n\nFor fixed arrays larger than the unmapped page, agenr would general a nil check by loading the first word of the array. However there is no requirement for the first element of a byte array to be word aligned, so this check causes a trap on ARMv5 hardware (ARMv6 since relaxed that restriction, but it probably still comes at a cost).\n\nSwitching the check to MOVB ensures alignment is not an issue. This check is only invoked in a few places in the code where large fixed arrays are embedded into structs, compress/lzw is the biggest offender, and switching to MOVB has no observable performance penalty.\n\nThanks to R\u00e9my and Daniel Morsing for helping me debug this on IRC last night.\n\nR=remyoudompheng, minux.ma, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/6854063",
+			"disapproval": false,
+			"date": "2012-12-05 21:01:51.222200",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 6854063: cmd/5g: use MOVB for fixed array nil check",
+	"created": "2012-11-17 22:02:49.303700",
+	"patchsets": [
+		1,
+		1002,
+		4001,
+		8001,
+		8002,
+		2002,
+		5003,
+		4002,
+		4003,
+		6003,
+		8006,
+		15001,
+		16004,
+		22001,
+		24001
+	],
+	"modified": "2012-12-15 11:57:06.133370",
+	"closed": true,
+	"issue": 6854063
+}

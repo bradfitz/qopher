@@ -1,0 +1,81 @@
+{
+	"description": "freetype/truetype: first cut of a bytecode interpreter.",
+	"cc": [
+		"gri@golang.org",
+		"bsiegert@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bsiegert@gmail.com",
+			"recipients": [
+				"nigeltao@golang.org",
+				"gri@golang.org",
+				"bsiegert@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks nice, just two style remarks. Was this translated from C code or written from scratch?\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go\nFile freetype/truetype/hint.go (right):\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode67\nfreetype/truetype/hint.go:67: // SWAP[] SWAP the top two elements on the stack\nUse multiple assignment.\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode207\nfreetype/truetype/hint.go:207: goto pushb\nWhy not put the pushb code here directly?\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode212\nfreetype/truetype/hint.go:212: goto pushw\nditto for pushw",
+			"disapproval": false,
+			"date": "2012-07-02 13:16:43.910311",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gri@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/freetype-go",
+			"disapproval": false,
+			"date": "2012-07-02 13:01:37.034077",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"gri@golang.org",
+				"bsiegert@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nBut please address the comments before submitting. In particular, I think there should be named constants for the opcodes.\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go\nFile freetype/truetype/hint.go (right):\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode24\nfreetype/truetype/hint.go:24: pc, top   int32\ncan't these just be int?\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode25\nfreetype/truetype/hint.go:25: loopCount int\ninstrCount? (it's not counting loops), or perhaps just: \"steps\" ?\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode26\nfreetype/truetype/hint.go:26: // x and y are general purpose int32 variables.\nI think it's only worthwhile doing this here (x, y, x64, y64) if we can be fairly certain that they are allocated in registers. Otherwise I would declare them in the individual cases because they will always be initialized right in the declaration and it's very likely that they are going to be in registers.\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode31\nfreetype/truetype/hint.go:31: for int(pc) < len(program) {\nif pc is int, this cast is not needed\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode34\nfreetype/truetype/hint.go:34: return errors.New(\"truetype: hinting: too many instructions\")\nI would probably introduce a helper function that adds the \"truetype: hinting\" prefix. E.g.:\n\nfunc err(msg string) error\n\nand then just:\n\nreturn err(\"too many instructions\")\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode46\nfreetype/truetype/hint.go:46: case 0x20:\nAny reason for not defining an \"enum\" for the opcodes? then the comments wouldn't have to repeat the name.\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode54\nfreetype/truetype/hint.go:54: pc++\nHow about factoring this out, say at the end of the switch? Control-flow would use continue to not execute it. Alternatively, do it always and correct in control-flow by subtracting one?\n\nThere seem to be only a small number of cases where you add extra code this way (e.g. NPUSHB you can increment the pc early). Not sure it's worth doing it explicitly in each instruction.\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode110\nfreetype/truetype/hint.go:110: case 0x50, 0x51, 0x52, 0x53, 0x54, 0x55:\nThese I would split out into separate instructions, even though you will need to duplicate some code (assuming they are frequently used instructions). I would try to reduce the amount of extra control flow (switch):\n\ncase 0x50:\n   h.stack[top-2] = bool2int32(h.stack[top-2] < h.stack[top-1])\n   top--\n\nis not that bad (with pc++ factored out)\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode117\nfreetype/truetype/hint.go:117: x = h.stack[top-1]\nIf you want to leave the code as is, at least swap x and y here so that below the code reads x < y rather y < x.\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode138\nfreetype/truetype/hint.go:138: // AND[] logical AND\nagain, I'd split this into two cases\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode145\nfreetype/truetype/hint.go:145: x = bool2int32(x != 0 || y != 0)\nx|y != 0\n\n(less control flow - not sure it's worthwhile)\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode157\nfreetype/truetype/hint.go:157: case 0x60, 0x61:\nsplit into two cases\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode169\nfreetype/truetype/hint.go:169: case 0x62, 0x63:\nsplit into two cases\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode185\nfreetype/truetype/hint.go:185: case 0x64, 0x65:\nditto\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode194\nfreetype/truetype/hint.go:194: case 0x66, 0x67:\nditto\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode207\nfreetype/truetype/hint.go:207: goto pushb\nOn 2012/07/02 13:16:43, bsiegert wrote:\n> Why not put the pushb code here directly?\nbecause it's used from other places as well\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode212\nfreetype/truetype/hint.go:212: goto pushw\nOn 2012/07/02 13:16:43, bsiegert wrote:\n> ditto for pushw\nditto\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode213\nfreetype/truetype/hint.go:213: }\ndefault case? I assume eventually you want to get rid of the popCount[opcode] == q test in the beginning\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint.go#newcode252\nfreetype/truetype/hint.go:252: var popCount = [256]uint8{\ndon't know if you plan to keep this table around, but if so, please add numbers 0, 1, 2, ...C, D, E, F as comments left and at the top so that one can easily find an entry\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint_test.go\nFile freetype/truetype/hint_test.go (right):\n\nhttp://codereview.appspot.com/6347057/diff/5001/freetype/truetype/hint_test.go#newcode32\nfreetype/truetype/hint_test.go:32: 0xb2, // PUSHB[010] -> [10, 20, 30]\nif you use named constants for the opcodes, the comments don't need to repeat the opcode name",
+			"disapproval": false,
+			"date": "2012-07-02 20:22:21.283165",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"gri@golang.org",
+				"bsiegert@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/freetype-go/source/detail?r=a3eb07e20666 ***\n\nfreetype/truetype: first cut of a bytecode interpreter.\n\nR=gri, bsiegert\nCC=golang-dev\nhttp://codereview.appspot.com/6347057",
+			"disapproval": false,
+			"date": "2012-07-03 10:45:50.740611",
+			"approval": false
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 6347057: freetype/truetype: first cut of a bytecode interpreter.",
+	"created": "2012-07-02 13:00:45.938372",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		3005
+	],
+	"modified": "2012-07-03 10:45:53.007506",
+	"closed": true,
+	"issue": 6347057
+}

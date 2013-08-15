@@ -1,0 +1,107 @@
+{
+	"description": "net/http: fix data race in test\nFixes issue 2712.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dsymonds@golang.org",
+		"mpimenov@google.com"
+	],
+	"reviewers": [
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jan 16, 2012 at 9:11 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\n\n> This \"fix\" is kinda awkward.\n>\n> In all the other tests where the test HTTP server is supposed to vary its\n> behavior for a specific request, the parameter is put on the HTTP request.\n>  In this case we need to do two things to make a request: send the request,\n> and also write to that channel.  I'd rather just say /?override=1.\n>\n> I say \"fix\" because I can't see how this would happen in reality:  between\n> setting override from false to true, I believe there are a few dozen memory\n> barriers inside of making an HTTP request.\n>\n> Unlike some of the other fixes, this is just a theoretical clean-up, I\n> assume?\n>\n\nFirst of all, yes, it is a clean-up CL. We want fix all races to catch\nregressions (and potentially setup buildbots).\n\nPassing the parameter with the request (/?override=1) would be better, but\ncurrent code is at least formally correct (while it still takes advantage\nof knowledge that both client and server executes in a single process and\ncooperate).\n\nAs for \"few dozen memory barriers\", well, maybe yes, maybe no. In either\ncase we can't (strongly don't want to) treat it as correct synchronization.\nFirst, it encourages people to use that, second, it will lead to missed\nraces (where concurrent code synchronizes via sockets according to fact,\nbut is not intended to; moreover practically it's difficult to say whether\n2 file descriptors relate to a single underlying file/socket/pipe).\n\n\nOn Mon, Jan 16, 2012 at 1:02 AM, <dvyukov@google.com> wrote:\n>\n>> Reviewers: golang-dev_googlegroups.com,\n>>\n>> Message:\n>> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com,\n>> mpimenov@google.com),\n>>\n>> I'd like you to review this change to\n>> https://go.googlecode.com/hg/\n>>\n>>\n>> Description:\n>> net/http: fix data race in test\n>> Fixes issue 2712.\n>>\n>> Please review this at http://codereview.appspot.com/**5543062/<http://codereview.appspot.com/5543062/>\n>>\n>> Affected files:\n>>  M src/pkg/net/http/fs_test.go\n>>\n>>\n>> Index: src/pkg/net/http/fs_test.go\n>> ==============================**==============================**=======\n>> --- a/src/pkg/net/http/fs_test.go\n>> +++ b/src/pkg/net/http/fs_test.go\n>> @@ -224,9 +224,9 @@\n>>\n>>  func TestServeFileContentType(t *testing.T) {\n>>        const ctype = \"icecream/chocolate\"\n>> -       override := false\n>> +       override := make(chan bool, 1)\n>>        ts := httptest.NewServer(**HandlerFunc(func(w ResponseWriter, r\n>> *Request) {\n>> -               if override {\n>> +               if <-override {\n>>                        w.Header().Set(\"Content-Type\", ctype)\n>>                }\n>>                ServeFile(w, r, \"testdata/file\")\n>> @@ -241,8 +241,9 @@\n>>                        t.Errorf(\"Content-Type mismatch: got %q, want %q\",\n>> h, want)\n>>                }\n>>        }\n>> +       override <- false\n>>        get(\"text/plain; charset=utf-8\")\n>> -       override = true\n>> +       override <- true\n>>        get(ctype)\n>>  }\n>>\n>>\n>>\n>>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-17 07:57:38.631656",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2012-01-16 10:34:36.812118",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, mpimenov@google.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-16 09:02:28.686342",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This \"fix\" is kinda awkward.\n\nIn all the other tests where the test HTTP server is supposed to vary its\nbehavior for a specific request, the parameter is put on the HTTP request.\n In this case we need to do two things to make a request: send the request,\nand also write to that channel.  I'd rather just say /?override=1.\n\nI say \"fix\" because I can't see how this would happen in reality:  between\nsetting override from false to true, I believe there are a few dozen memory\nbarriers inside of making an HTTP request.\n\nUnlike some of the other fixes, this is just a theoretical clean-up, I\nassume?\n\n\nOn Mon, Jan 16, 2012 at 1:02 AM, <dvyukov@google.com> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com,\n> mpimenov@google.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> net/http: fix data race in test\n> Fixes issue 2712.\n>\n> Please review this at http://codereview.appspot.com/**5543062/<http://codereview.appspot.com/5543062/>\n>\n> Affected files:\n>  M src/pkg/net/http/fs_test.go\n>\n>\n> Index: src/pkg/net/http/fs_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/net/http/fs_test.go\n> +++ b/src/pkg/net/http/fs_test.go\n> @@ -224,9 +224,9 @@\n>\n>  func TestServeFileContentType(t *testing.T) {\n>        const ctype = \"icecream/chocolate\"\n> -       override := false\n> +       override := make(chan bool, 1)\n>        ts := httptest.NewServer(**HandlerFunc(func(w ResponseWriter, r\n> *Request) {\n> -               if override {\n> +               if <-override {\n>                        w.Header().Set(\"Content-Type\", ctype)\n>                }\n>                ServeFile(w, r, \"testdata/file\")\n> @@ -241,8 +241,9 @@\n>                        t.Errorf(\"Content-Type mismatch: got %q, want %q\",\n> h, want)\n>                }\n>        }\n> +       override <- false\n>        get(\"text/plain; charset=utf-8\")\n> -       override = true\n> +       override <- true\n>        get(ctype)\n>  }\n>\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-16 17:11:46.060968",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=221d98ac4a51 ***\n\nnet/http: fix data race in test\nFixes issue 2712.\n\nR=golang-dev, dsymonds\nCC=golang-dev, mpimenov\nhttp://codereview.appspot.com/5543062",
+			"disapproval": false,
+			"date": "2012-01-16 10:47:58.106907",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I agree with Brad about this.  I did not object because this is a test,\nbut in general it is not the role of the race detection to dictate the\nway we write Go code.\n",
+			"disapproval": false,
+			"date": "2012-01-17 16:14:52.045791",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jan 17, 2012 at 8:14 PM, Russ Cox <rsc@golang.org> wrote:\n\n> I agree with Brad about this.  I did not object because this is a test,\n> but in general it is not the role of the race detection to dictate the\n> way we write Go code.\n>\n\nThe tool merely points to potential issues. The way to fix it was solely my\nidea.\n",
+			"disapproval": false,
+			"date": "2012-01-19 12:16:17.446944",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 5543062: net/http: fix data race in test",
+	"created": "2012-01-16 09:01:37.084236",
+	"patchsets": [
+		1,
+		3,
+		3001,
+		6
+	],
+	"modified": "2012-01-17 16:14:52.174603",
+	"closed": true,
+	"issue": 5543062
+}

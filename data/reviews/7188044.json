@@ -1,0 +1,540 @@
+{
+	"description": "net: Use accept4() on Linux.\n\nAdd syscall.Accept4() and use it in net.fd.Accept().\nFallback to Accept() when Accept4() returns ENOSYS.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-01-22 09:59:22.935200",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "How can I emulate accept4 on bsd?\r\nChanging the signature of Accept() like following is OK?\r\n\r\nfunc Accept(fd, flags int, blocking bool) (nfd int, sa Sockaddr, err error)\r\n{\r\n    if !blocking && flags&SOCK_CLOEXEC {\r\n        ForkLock.RLock()\r\n    }\r\n    ....\r\n    nfd = accept(fd, &rsa, &len)\r\n    ....\r\n    if flags&SOCK_CLOEXEC {\r\n        CloseOnExec(nfd)\r\n        if !blocking {\r\n            ForkLock.RUnlock()\r\n        }\r\n    }\r\n    ....\r\n}\r\n\r\n\r\n\r\nOn Tue, Jan 22, 2013 at 7:16 PM, <dave@cheney.net> wrote:\r\n\r\n> On 2013/01/22 09:59:22, songofacandy wrote:\r\n>\r\n>> Hello mailto:golang-dev@**googlegroups.com <golang-dev@googlegroups.com>,\r\n>>\r\n>\r\n>  I'd like you to review this change to\r\n>> https://code.google.com/p/go\r\n>>\r\n>\r\n> Hello,\r\n>\r\n> Thank you for this. Reading the man page for accept, there is no\r\n> indication that accept4 is non blocking, and the majority of the\r\n> improvement appears from reducing the contention on the fork lock.\r\n>\r\n> Is it possible to redefine syscall.Accept in terms of accept4 and avoid\r\n> adding a new public symbol ?\r\n>\r\n> https://codereview.appspot.**com/7188044/<https://codereview.appspot.com/7188044/>\r\n>\r\n\r\n\r\n\r\n-- \r\nINADA Naoki  <songofacandy@gmail.com>\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 10:38:23.760360",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Do we know that this makes anything faster?\r\n",
+			"disapproval": false,
+			"date": "2013-01-23 02:52:17.060740",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jan 22, 2013 at 3:49 PM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> > Now I change the name of new function as Accept4().\r\n> > It returns ENOSYS when accept4 is not available and caller should\r\n> > fallback to\r\n> > syscall.Accept() with ForkLock.\r\n>\r\n> I think we can make this simpler by moving the decision to use accept\r\n> or accept4 into syscall.Accept. I will try to work up a CL today.\r\n\r\n\r\nI don't think we should change the behavior of go1's syscall.Accept.\r\n\r\nIn Go 1, syscall.Accept did not set the fd's CLOEXEC and it did not take\r\nlocks.\r\n\r\nIf we're going to be doing new things, I think we need a new function.  I\r\nstill don't think /NB$/ is the right naming, especially if it might grab\r\nlocks.\r\n\r\nLet's just add syscall.Accept4 for now (which can return ENOSYS) and do\r\n+build stuff in pkg/net until we can decide whether we want to make an\r\nAccept helper (cloexec'ing + syscall picking) in pkg syscall, and what it\r\nshould be named.\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 23:54:27.215920",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "We cannot change the signature of a public symbol already published in Go\r\n1.0. It would break the api check in the build stage, and more importantly,\r\nbreak the Go 1.0 contract.\r\nOn 22 Jan 2013 21:38, \"INADA Naoki\" <songofacandy@gmail.com> wrote:\r\n\r\n> How can I emulate accept4 on bsd?\r\n> Changing the signature of Accept() like following is OK?\r\n>\r\n> func Accept(fd, flags int, blocking bool) (nfd int, sa Sockaddr, err\r\n> error) {\r\n>     if !blocking && flags&SOCK_CLOEXEC {\r\n>         ForkLock.RLock()\r\n>     }\r\n>     ....\r\n>     nfd = accept(fd, &rsa, &len)\r\n>      ....\r\n>     if flags&SOCK_CLOEXEC {\r\n>         CloseOnExec(nfd)\r\n>         if !blocking {\r\n>             ForkLock.RUnlock()\r\n>         }\r\n>     }\r\n>     ....\r\n> }\r\n>\r\n>\r\n>\r\n> On Tue, Jan 22, 2013 at 7:16 PM, <dave@cheney.net> wrote:\r\n>\r\n>> On 2013/01/22 09:59:22, songofacandy wrote:\r\n>>\r\n>>> Hello mailto:golang-dev@**googlegroups.com <golang-dev@googlegroups.com>\r\n>>> ,\r\n>>>\r\n>>\r\n>>  I'd like you to review this change to\r\n>>> https://code.google.com/p/go\r\n>>>\r\n>>\r\n>> Hello,\r\n>>\r\n>> Thank you for this. Reading the man page for accept, there is no\r\n>> indication that accept4 is non blocking, and the majority of the\r\n>> improvement appears from reducing the contention on the fork lock.\r\n>>\r\n>> Is it possible to redefine syscall.Accept in terms of accept4 and avoid\r\n>> adding a new public symbol ?\r\n>>\r\n>> https://codereview.appspot.**com/7188044/<https://codereview.appspot.com/7188044/>\r\n>>\r\n>\r\n>\r\n>\r\n> --\r\n> INADA Naoki  <songofacandy@gmail.com>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 10:44:08.612390",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/22 19:47:00, bradfitz wrote:\n> It seems that the syscall.AcceptNB naming is a misleading use of \"NB\",\n> since it's rarely NB.\n\nWhen accept4 is not available, AcceptNB() can't use ForkLock without knowing\nthe fd is blocking or not. This is why I named it \"NB\".\n\n> \n> If we don't want to modify syscall.Accept to set CLOEXEC, we might want to\n> name it something like:\n> \n> func AcceptCloexec(fd int) (nfd int, sa Sockaddr, err error) { ... }\n> \n> ... which is like Accept, but guarantees CLOEXEC is set (via whatever\n> means), using accept4 on Linux if available.\n\nNow I change the name of new function as Accept4().\nIt returns ENOSYS when accept4 is not available and caller should fallback to\nsyscall.Accept() with ForkLock.",
+			"disapproval": false,
+			"date": "2013-01-22 23:46:36.033060",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "+1 for Accept4() on linux platforms only.\r\n\r\nOn Wed, Jan 23, 2013 at 10:54 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n>\r\n>\r\n> On Tue, Jan 22, 2013 at 3:49 PM, Dave Cheney <dave@cheney.net> wrote:\r\n>>\r\n>> > Now I change the name of new function as Accept4().\r\n>> > It returns ENOSYS when accept4 is not available and caller should\r\n>> > fallback to\r\n>> > syscall.Accept() with ForkLock.\r\n>>\r\n>> I think we can make this simpler by moving the decision to use accept\r\n>> or accept4 into syscall.Accept. I will try to work up a CL today.\r\n>\r\n>\r\n> I don't think we should change the behavior of go1's syscall.Accept.\r\n>\r\n> In Go 1, syscall.Accept did not set the fd's CLOEXEC and it did not take\r\n> locks.\r\n>\r\n> If we're going to be doing new things, I think we need a new function.  I\r\n> still don't think /NB$/ is the right naming, especially if it might grab\r\n> locks.\r\n>\r\n> Let's just add syscall.Accept4 for now (which can return ENOSYS) and do\r\n> +build stuff in pkg/net until we can decide whether we want to make an\r\n> Accept helper (cloexec'ing + syscall picking) in pkg syscall, and what it\r\n> should be named.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 23:57:21.812920",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7188044/diff/5009/src/pkg/net/fd_bsd.go\nFile src/pkg/net/fd_bsd.go (right):\n\nhttps://codereview.appspot.com/7188044/diff/5009/src/pkg/net/fd_bsd.go#newcode120\nsrc/pkg/net/fd_bsd.go:120: func (fd *netFD) accept(toAddr func(syscall.Sockaddr) Addr) (netfd *netFD, err error) {\nthis is a lot of subtle code to copy/paste between two files entirely.  I'd rather move this to a new file (accept_bsd.go and add +build to include darwin) than have it in twice. \n\nand where is linux?",
+			"disapproval": false,
+			"date": "2013-01-23 01:34:46.538990",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm pretty surprised about ForkLock contention. It's an RWMutex that is\r\nalmost never W-locked. The lock/unlock paths are each a single atomic add.\r\nI'm surprised that shows up in a profile.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-01-23 03:28:22.046670",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, bradfitz@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-23 03:01:21.918070",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/22 09:59:22, songofacandy wrote:\n> Hello mailto:golang-dev@googlegroups.com,\n> \n> I'd like you to review this change to\n> https://code.google.com/p/go\n\nHello,\n\nThank you for this. Reading the man page for accept, there is no indication that accept4 is non blocking, and the majority of the improvement appears from reducing the contention on the fork lock.\n\nIs it possible to redefine syscall.Accept in terms of accept4 and avoid adding a new public symbol ?",
+			"disapproval": false,
+			"date": "2013-01-22 10:16:01.200020",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-22 17:32:47.149650",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Now I change the name of new function as Accept4().\r\n> It returns ENOSYS when accept4 is not available and caller should\r\n> fallback to\r\n> syscall.Accept() with ForkLock.\r\n\r\nI think we can make this simpler by moving the decision to use accept\r\nor accept4 into syscall.Accept. I will try to work up a CL today.\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 23:50:00.097030",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, bradfitz@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-23 02:59:02.354560",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/22 10:44:08, dfc wrote:\n> We cannot change the signature of a public symbol already published in Go\n> 1.0. It would break the api check in the build stage, and more importantly,\n> break the Go 1.0 contract.\n\nThen, can I change behavior of the Accept() to set CLOEXEC?\nAre there any reason for don't set CLOEXEC to accepted socket?\n\nOr should I add syscall.Accept4()?",
+			"disapproval": false,
+			"date": "2013-01-22 11:04:44.600450",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Jan 23, 2013 at 11:52 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Do we know that this makes anything faster?\r\n\r\nThis patch just reduces # of syscalls at inbound TCP reception on Linux,\r\nso not for anything network ops.\r\n\r\nThe comment #34 on issue 3412 shows HTTP transaction numbers.\r\nI guess Dave or Brad will suggest to run TCP benchmarks once we\r\nhave clean patches.\r\n",
+			"disapproval": false,
+			"date": "2013-01-23 03:18:08.318860",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-22 17:34:42.829490",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It seems that the syscall.AcceptNB naming is a misleading use of \"NB\",\r\nsince it's rarely NB.\r\n\r\nIf we don't want to modify syscall.Accept to set CLOEXEC, we might want to\r\nname it something like:\r\n\r\nfunc AcceptCloexec(fd int) (nfd int, sa Sockaddr, err error) { ... }\r\n\r\n... which is like Accept, but guarantees CLOEXEC is set (via whatever\r\nmeans), using accept4 on Linux if available.\r\n\r\n\r\n\r\n\r\nOn Tue, Jan 22, 2013 at 1:59 AM, <songofacandy@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> net: Use accept4() on Linux.\r\n>\r\n> Add syscall.AcceptNB() and net.fd.Accept() use it.\r\n> AcceptNB() recieves nonblocking fd and returns new fd which is set\r\n> nonblock and cloexec.\r\n> On Linux, syscall.AcceptNB() is implemented by accept4() syscall.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7188044/<https://codereview.appspot.com/7188044/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/fd_unix.go\r\n>   M src/pkg/syscall/syscall_bsd.go\r\n>   M src/pkg/syscall/syscall_linux.**go\r\n>   M src/pkg/syscall/syscall_linux_**386.go\r\n>   M src/pkg/syscall/syscall_linux_**amd64.go\r\n>   M src/pkg/syscall/zsyscall_**linux_amd64.go\r\n>\r\n>\r\n> Index: src/pkg/net/fd_unix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/fd_unix.go\r\n> +++ b/src/pkg/net/fd_unix.go\r\n> @@ -615,16 +615,11 @@\r\n>         }\r\n>         defer fd.decref()\r\n>\r\n> -       // See ../syscall/exec_unix.go for description of ForkLock.\r\n> -       // It is okay to hold the lock across syscall.Accept\r\n> -       // because we have put fd.sysfd into non-blocking mode.\r\n>         var s int\r\n>         var rsa syscall.Sockaddr\r\n>         for {\r\n> -               syscall.ForkLock.RLock()\r\n> -               s, rsa, err = syscall.Accept(fd.sysfd)\r\n> +               s, rsa, err = syscall.AcceptNB(fd.sysfd)\r\n>                 if err != nil {\r\n> -                       syscall.ForkLock.RUnlock()\r\n>                         if err == syscall.EAGAIN {\r\n>                                 if err = fd.pollServer.WaitRead(fd); err\r\n> == nil {\r\n>                                         continue\r\n> @@ -638,8 +633,6 @@\r\n>                 }\r\n>                 break\r\n>         }\r\n> -       syscall.CloseOnExec(s)\r\n> -       syscall.ForkLock.RUnlock()\r\n>\r\n>         if netfd, err = newFD(s, fd.family, fd.sotype, fd.net); err !=\r\n> nil {\r\n>                 closesocket(s)\r\n> Index: src/pkg/syscall/syscall_bsd.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/syscall/syscall_bsd.**go\r\n> +++ b/src/pkg/syscall/syscall_bsd.**go\r\n> @@ -320,6 +320,24 @@\r\n>         return\r\n>  }\r\n>\r\n> +func AcceptNB(fd int) (nfd int, sa Sockaddr, err error) {\r\n> +       // See exec_unix.go for description of ForkLock.\r\n> +       // It is okay to hold the lock across syscall.Accept\r\n> +       // because we have put fd.sysfd into non-blocking mode.\r\n> +       ForkLock.RLock()\r\n> +       nfd, sa, err = Accept(fd)\r\n> +       if err != nil {\r\n> +               ForkLock.RUnlock()\r\n> +               return\r\n> +       }\r\n> +       CloseOnExec(nfd)\r\n> +       ForkLock.RUnlock()\r\n> +       err = SetNonblock(nfd, true)\r\n> +       if err != nil {\r\n> +               Close(nfd)\r\n> +       }\r\n> +}\r\n> +\r\n>  func Getsockname(fd int) (sa Sockaddr, err error) {\r\n>         var rsa RawSockaddrAny\r\n>         var len _Socklen = SizeofSockaddrAny\r\n> Index: src/pkg/syscall/syscall_linux.**go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/syscall/syscall_**linux.go\r\n> +++ b/src/pkg/syscall/syscall_**linux.go\r\n> @@ -427,6 +427,21 @@\r\n>         return\r\n>  }\r\n>\r\n> +func AcceptNB(fd int) (nfd int, sa Sockaddr, err error) {\r\n> +       var rsa RawSockaddrAny\r\n> +       var len _Socklen = SizeofSockaddrAny\r\n> +       nfd, err = accept4(fd, &rsa, &len, SOCK_NONBLOCK|SOCK_CLOEXEC)\r\n> +       if err != nil {\r\n> +               return\r\n> +       }\r\n> +       sa, err = anyToSockaddr(&rsa)\r\n> +       if err != nil {\r\n> +               Close(nfd)\r\n> +               nfd = 0\r\n> +       }\r\n> +       return\r\n> +}\r\n> +\r\n>  func Getsockname(fd int) (sa Sockaddr, err error) {\r\n>         var rsa RawSockaddrAny\r\n>         var len _Socklen = SizeofSockaddrAny\r\n> Index: src/pkg/syscall/syscall_linux_**386.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/syscall/syscall_**linux_386.go\r\n> +++ b/src/pkg/syscall/syscall_**linux_386.go\r\n> @@ -164,6 +164,7 @@\r\n>         _GETSOCKOPT  = 15\r\n>         _SENDMSG     = 16\r\n>         _RECVMSG     = 17\r\n> +       _ACCEPT4     = 18\r\n>  )\r\n>\r\n>  func socketcall(call int, a0, a1, a2, a3, a4, a5 uintptr) (n int, err\r\n> Errno)\r\n> @@ -177,6 +178,14 @@\r\n>         return\r\n>  }\r\n>\r\n> +func accept4(s int, rsa *RawSockaddrAny, addrlen *_Socklen, flags int)\r\n> (fd int, err error) {\r\n> +       fd, e := socketcall(_ACCEPT4, uintptr(s),\r\n> uintptr(unsafe.Pointer(rsa)), uintptr(unsafe.Pointer(**addrlen)),\r\n> uintptr(flags), 0, 0)\r\n> +       if e != 0 {\r\n> +               err = e\r\n> +       }\r\n> +       return\r\n> +}\r\n> +\r\n>  func getsockname(s int, rsa *RawSockaddrAny, addrlen *_Socklen) (err\r\n> error) {\r\n>         _, e := rawsocketcall(_GETSOCKNAME, uintptr(s),\r\n> uintptr(unsafe.Pointer(rsa)), uintptr(unsafe.Pointer(**addrlen)), 0, 0, 0)\r\n>         if e != 0 {\r\n> Index: src/pkg/syscall/syscall_linux_**amd64.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/syscall/syscall_**linux_amd64.go\r\n> +++ b/src/pkg/syscall/syscall_**linux_amd64.go\r\n> @@ -39,6 +39,7 @@\r\n>  //sys  SyncFileRange(fd int, off int64, n int64, flags int) (err error)\r\n>  //sys  Truncate(path string, length int64) (err error)\r\n>  //sys  accept(s int, rsa *RawSockaddrAny, addrlen *_Socklen) (fd int, err\r\n> error)\r\n> +//sysnb        accept4(s int, rsa *RawSockaddrAny, addrlen *_Socklen,\r\n> flags int) (fd int, err error)\r\n>  //sys  bind(s int, addr uintptr, addrlen _Socklen) (err error)\r\n>  //sys  connect(s int, addr uintptr, addrlen _Socklen) (err error)\r\n>  //sysnb        getgroups(n int, list *_Gid_t) (nn int, err error)\r\n> Index: src/pkg/syscall/zsyscall_**linux_amd64.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/syscall/zsyscall_**linux_amd64.go\r\n> +++ b/src/pkg/syscall/zsyscall_**linux_amd64.go\r\n> @@ -1721,6 +1721,17 @@\r\n>\r\n>  // THIS FILE IS GENERATED BY THE COMMAND AT THE TOP; DO NOT EDIT\r\n>\r\n> +func accept4(s int, rsa *RawSockaddrAny, addrlen *_Socklen, flags int)\r\n> (fd int, err error) {\r\n> +       r0, _, e1 := RawSyscall6(SYS_ACCEPT4, uintptr(s),\r\n> uintptr(unsafe.Pointer(rsa)), uintptr(unsafe.Pointer(**addrlen)),\r\n> uintptr(flags), 0, 0)\r\n> +       fd = int(r0)\r\n> +       if e1 != 0 {\r\n> +               err = e1\r\n> +       }\r\n> +       return\r\n> +}\r\n> +\r\n> +// THIS FILE IS GENERATED BY THE COMMAND AT THE TOP; DO NOT EDIT\r\n> +\r\n>  func bind(s int, addr uintptr, addrlen _Socklen) (err error) {\r\n>         _, _, e1 := Syscall(SYS_BIND, uintptr(s), uintptr(addr),\r\n> uintptr(addrlen))\r\n>         if e1 != 0 {\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 19:47:00.342900",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/22 23:46:36, songofacandy wrote:\n> On 2013/01/22 19:47:00, bradfitz wrote:\n> > It seems that the syscall.AcceptNB naming is a misleading use of \"NB\",\n> > since it's rarely NB.\n> \n> When accept4 is not available, AcceptNB() can't use ForkLock without knowing\n> the fd is blocking or not. This is why I named it \"NB\".\n> \n\nAccept() can know the fd is blocking or not with fcntl().\nBut it introduces additional overhead.\nCaller should tell that ForkLock is needed or not.",
+			"disapproval": false,
+			"date": "2013-01-22 23:55:55.937740",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-23 01:30:58.290010",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-23 01:31:24.865100",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, bradfitz@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-23 02:59:24.442580",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Per earlier thread, it seemed to reduce fork lock contention and qps from\r\nsiege increased.\r\n On Jan 22, 2013 6:52 PM, \"Russ Cox\" <rsc@golang.org> wrote:\r\n\r\n> Do we know that this makes anything faster?\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-23 03:17:51.902330",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The siege benchmarks also included the ReadNB stuff but we thought nobody\r\ncould make that look better in benchmarks. Hence attributing it to\r\nForkLock. I haven't actually looked at block profiles or done any\r\nbenchmarks.\r\n On Jan 22, 2013 7:28 PM, \"Russ Cox\" <rsc@golang.org> wrote:\r\n\r\n> I'm pretty surprised about ForkLock contention. It's an RWMutex that is\r\n> almost never W-locked. The lock/unlock paths are each a single atomic add.\r\n> I'm surprised that shows up in a profile.\r\n>\r\n> Russ\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-23 03:41:48.779290",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, bradfitz@golang.org, rsc@golang.org, mikioh.mikioh@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-23 06:07:44.835910",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "could you please split this CL into two, syscall and net.\nseems like we need accept4 for linux at first.",
+			"disapproval": false,
+			"date": "2013-01-23 06:10:40.080990",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Here is a possibly simpler way to benchmark this change -- hack syscall.Accept to call accept4 with a hardcoded set of flags. That should be a pretty small change.",
+			"disapproval": false,
+			"date": "2013-01-23 06:20:43.858800",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You do not need to use hg mail every time you want to upload a change\r\nto the code review server.\r\n\r\nUse hg upload NNNN to upload to codereview, then hg mail when you are\r\nhappy with the final revision.\r\n\r\nOn Wed, Jan 23, 2013 at 5:07 PM,  <songofacandy@gmail.com> wrote:\r\n> Hello golang-dev@googlegroups.com, dave@cheney.net, bradfitz@golang.org,\r\n> rsc@golang.org, mikioh.mikioh@gmail.com (cc:\r\n>\r\n> golang-dev@googlegroups.com),\r\n>\r\n> Please take another look.\r\n>\r\n>\r\n> https://codereview.appspot.com/7188044/\r\n",
+			"disapproval": false,
+			"date": "2013-01-23 06:09:40.689680",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have run micro benchmark and find that performance improvement comes from syscall.SetNonblock.\n\nbenchmark code: https://gist.github.com/4602406\nGOMAXPROCS=8\nwith accept4:\n$ time ./client \n\nreal    0m5.571s\nuser    0m0.124s\nsys     0m2.700s\n\nw/o accept4:\n\n$ time ./client \n\nreal    0m5.731s\nuser    0m0.116s\nsys     0m2.692s\n\nOn 2013/01/23 03:28:22, rsc wrote:\n> I'm pretty surprised about ForkLock contention. It's an RWMutex that is\n> almost never W-locked. The lock/unlock paths are each a single atomic add.\n> I'm surprised that shows up in a profile.\n> \n> Russ",
+			"disapproval": false,
+			"date": "2013-01-23 06:11:47.041910",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm concerned at how large a change this is. If this CL works then lets use it as a checkpoint to do benchmark comparisons and then consider ways to make the change smaller if it is an improvement.\n\nhttps://codereview.appspot.com/7188044/diff/17001/src/pkg/net/accept_linux.go\nFile src/pkg/net/accept_linux.go (right):\n\nhttps://codereview.appspot.com/7188044/diff/17001/src/pkg/net/accept_linux.go#newcode11\nsrc/pkg/net/accept_linux.go:11: var use_accept4 = true\nIdiomatic Go code uses camel case.\n\nAlso, this is not thread safe.\n\nhttps://codereview.appspot.com/7188044/diff/17001/src/pkg/net/sock_posix.go\nFile src/pkg/net/sock_posix.go (right):\n\nhttps://codereview.appspot.com/7188044/diff/17001/src/pkg/net/sock_posix.go#newcode53\nsrc/pkg/net/sock_posix.go:53: err = syscall.SetNonblock(s, true)\nCollapse this onto one line",
+			"disapproval": false,
+			"date": "2013-01-23 06:15:24.993770",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please, lets stop furious hacking, and come up with some benchmark numbers that support this change.\n\nhttps://codereview.appspot.com/7188044/diff/23001/src/pkg/net/accept_linux.go\nFile src/pkg/net/accept_linux.go (right):\n\nhttps://codereview.appspot.com/7188044/diff/23001/src/pkg/net/accept_linux.go#newcode21\nsrc/pkg/net/accept_linux.go:21: accept4 := useAccept4\nsorry, this hasn't fixed it. You could use an atomic boolean, or possibly an init function to determine if accept4 is supported before the program runs.",
+			"disapproval": false,
+			"date": "2013-01-23 06:29:23.491070",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hmm, this isn't a big improvement, what about rerunning the siege\r\nbenchmarks that you originally posted. Please rerun them for\r\nGOMAXSPROCS={1,2,4,8}\r\n\r\n> GOMAXPROCS=8\r\n> with accept4:\r\n> $ time ./client\r\n>\r\n> real    0m5.571s\r\n> user    0m0.124s\r\n> sys     0m2.700s\r\n>\r\n> w/o accept4:\r\n>\r\n> $ time ./client\r\n>\r\n> real    0m5.731s\r\n> user    0m0.116s\r\n> sys     0m2.692s\r\n>\r\n>\r\n> On 2013/01/23 03:28:22, rsc wrote:\r\n>>\r\n>> I'm pretty surprised about ForkLock contention. It's an RWMutex that\r\n>\r\n> is\r\n>>\r\n>> almost never W-locked. The lock/unlock paths are each a single atomic\r\n>\r\n> add.\r\n>>\r\n>> I'm surprised that shows up in a profile.\r\n>\r\n>\r\n>> Russ\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.com/7188044/\r\n",
+			"disapproval": false,
+			"date": "2013-01-23 06:16:44.953320",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, bradfitz@golang.org, rsc@golang.org, mikioh.mikioh@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-23 06:26:50.790740",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/23 06:16:44, dfc wrote:\n> Hmm, this isn't a big improvement, what about rerunning the siege\n> benchmarks that you originally posted. Please rerun them for\n> GOMAXSPROCS={1,2,4,8}\n\nNo significant gain for GOMAXPROCS>=2 (~1%)\nhttps://gist.github.com/4602686\n\n> \n> > GOMAXPROCS=8\n> > with accept4:\n> > $ time ./client\n> >\n> > real    0m5.571s\n> > user    0m0.124s\n> > sys     0m2.700s\n> >\n> > w/o accept4:\n> >\n> > $ time ./client\n> >\n> > real    0m5.731s\n> > user    0m0.116s\n> > sys     0m2.692s\n> >\n> >\n> > On 2013/01/23 03:28:22, rsc wrote:\n> >>\n> >> I'm pretty surprised about ForkLock contention. It's an RWMutex that\n> >\n> > is\n> >>\n> >> almost never W-locked. The lock/unlock paths are each a single atomic\n> >\n> > add.\n> >>\n> >> I'm surprised that shows up in a profile.\n> >\n> >\n> >> Russ\n> >\n> >\n> >\n> > https://codereview.appspot.com/7188044/",
+			"disapproval": false,
+			"date": "2013-01-23 06:53:20.036490",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/23 06:20:43, dfc wrote:\n> Here is a possibly simpler way to benchmark this change -- hack syscall.Accept\n> to call accept4 with a hardcoded set of flags. That should be a pretty small\n> change.\n\nAnd remove calling syscall.SetCloexec and syscall.SetNonblock.",
+			"disapproval": false,
+			"date": "2013-01-23 06:30:57.653790",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Removing reviewers; I believe Ian's CL supercedes this.",
+			"disapproval": false,
+			"date": "2013-01-30 16:57:56.171150",
+			"approval": false
+		},
+		{
+			"sender": "songofacandy@gmail.com",
+			"recipients": [
+				"songofacandy@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/30 16:57:56, rsc wrote:\n> Removing reviewers; I believe Ian's CL supercedes this.\n\nI hope https://codereview.appspot.com/7241050/ is merged.",
+			"disapproval": false,
+			"date": "2013-01-30 23:24:42.605420",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Iant's previous CL demonstrated a 10% speedup in GOMAXPROCS=1 and 0%\r\nspeedup in GOMAXPROCS=4 on one test system.\r\n\r\nI think we should only continue to tinker with this set of changes if\r\nthey can be shown to demonstrate a speedup.\r\n\r\nAre you able to benchmark Iant's change ?\r\n\r\nCheers\r\n\r\nDave\r\n\r\nOn Thu, Jan 31, 2013 at 10:24 AM,  <songofacandy@gmail.com> wrote:\r\n> On 2013/01/30 16:57:56, rsc wrote:\r\n>>\r\n>> Removing reviewers; I believe Ian's CL supercedes this.\r\n>\r\n>\r\n> I hope https://codereview.appspot.com/7241050/ is merged.\r\n>\r\n>\r\n> https://codereview.appspot.com/7188044/\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-30 23:32:23.266460",
+			"approval": false
+		}
+	],
+	"owner_email": "songofacandy@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "songofacandy",
+	"subject": "code review 7188044: net: Use accept4() on Linux.",
+	"created": "2013-01-22 09:48:18.536870",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		10002,
+		11001,
+		6010,
+		5009,
+		2010,
+		16001,
+		15016,
+		17001,
+		23001
+	],
+	"modified": "2013-01-30 23:32:23.363850",
+	"closed": true,
+	"issue": 7188044
+}

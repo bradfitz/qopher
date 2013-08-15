@@ -1,0 +1,117 @@
+{
+	"description": "runtime, runtime/cgo: track memory allocated by non-Go code\n\nOtherwise a poorly timed GC can collect the memory before it\nis returned to the Go program.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"dvyukov@google.com",
+		"minux.ma@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Nov 9, 2012 at 3:48 PM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> Very interesting. I wonder if this was a cause of the segfaults we see\r\n> occasionally on arm.\r\n>\r\nno. i think cgo_allocate is only used by swig generated code.\r\n",
+			"disapproval": false,
+			"date": "2012-11-09 09:51:32.657040",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-09 07:41:04.813540",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6819119/diff/1/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/6819119/diff/1/src/pkg/runtime/runtime.h#newcode226\nsrc/pkg/runtime/runtime.h:226: CgoMal*\tcgomal;\nI would prefer moving these 2 fields to M, there are much more G's than M's. The M is locked to G during cgo calls.",
+			"disapproval": false,
+			"date": "2012-11-09 09:44:09.160200",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Very interesting. I wonder if this was a cause of the segfaults we see occasionally on arm. \r\n\r\nOn 09/11/2012, at 18:41, iant@golang.org wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n> \r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n> \r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n> \r\n> \r\n> Description:\r\n> runtime, runtime/cgo: track memory allocated by non-Go code\r\n> \r\n> Otherwise a poorly timed GC can collect the memory before it\r\n> is returned to the Go program.\r\n> \r\n> Please review this at http://codereview.appspot.com/6819119/\r\n> \r\n> Affected files:\r\n>  M src/pkg/runtime/cgo/callbacks.c\r\n>  M src/pkg/runtime/cgocall.c\r\n>  M src/pkg/runtime/runtime.h\r\n> \r\n> \r\n> Index: src/pkg/runtime/cgo/callbacks.c\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/cgo/callbacks.c\r\n> +++ b/src/pkg/runtime/cgo/callbacks.c\r\n> @@ -33,7 +33,13 @@\r\n> static void\r\n> _cgo_allocate_internal(uintptr len, byte *ret)\r\n> {\r\n> +    CgoMal *c;\r\n> +\r\n>    ret = runtime\u00b7mal(len);\r\n> +    c = runtime\u00b7mal(sizeof(*c));\r\n> +    c->next = g->cgomal;\r\n> +    c->alloc = ret;\r\n> +    g->cgomal = c;\r\n>    FLUSH(&ret);\r\n> }\r\n> \r\n> Index: src/pkg/runtime/cgocall.c\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/cgocall.c\r\n> +++ b/src/pkg/runtime/cgocall.c\r\n> @@ -135,6 +135,8 @@\r\n>        g->defer = &d;\r\n>    }\r\n> \r\n> +    g->ncgo++;\r\n> +\r\n>    /*\r\n>     * Announce we are entering a system call\r\n>     * so that the scheduler knows to create another\r\n> @@ -150,6 +152,14 @@\r\n>    runtime\u00b7asmcgocall(fn, arg);\r\n>    runtime\u00b7exitsyscall();\r\n> \r\n> +    g->ncgo--;\r\n> +    if(g->ncgo == 0) {\r\n> +        // We are going back to Go and are not in a recursive\r\n> +        // call.  Let the GC collect any memory allocated via\r\n> +        // _cgo_allocate that is no longer referenced.\r\n> +        g->cgomal = nil;\r\n> +    }\r\n> +\r\n>    if(d.nofree) {\r\n>        if(g->defer != &d || d.fn != (byte*)unlockm)\r\n>            runtime\u00b7throw(\"runtime: bad defer entry in cgocallback\");\r\n> Index: src/pkg/runtime/runtime.h\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/runtime.h\r\n> +++ b/src/pkg/runtime/runtime.h\r\n> @@ -81,6 +81,7 @@\r\n> typedef struct    LFNode        LFNode;\r\n> typedef struct    ParFor        ParFor;\r\n> typedef struct    ParForThread    ParForThread;\r\n> +typedef struct    CgoMal        CgoMal;\r\n> \r\n> /*\r\n>  * Per-CPU declaration.\r\n> @@ -221,6 +222,8 @@\r\n>    uintptr    sigcode1;\r\n>    uintptr    sigpc;\r\n>    uintptr    gopc;    // pc of go statement that created this goroutine\r\n> +    int32    ncgo;        // number of cgo calls in progress\r\n> +    CgoMal*    cgomal;\r\n>    uintptr    end[];\r\n> };\r\n> struct    M\r\n> @@ -414,6 +417,14 @@\r\n>    uint64 nsleep;\r\n> };\r\n> \r\n> +// Track memory allocated by code not written in Go during a cgo call,\r\n> +// so that the garbage collector can see them.\r\n> +struct CgoMal\r\n> +{\r\n> +    CgoMal    *next;\r\n> +    byte    *alloc;\r\n> +};\r\n> +\r\n> /*\r\n>  * defined macros\r\n>  *    you need super-gopher-guru privilege\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2012-11-09 07:48:57.158780",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/09 14:54:04, iant wrote:\n> https://codereview.appspot.com/6819119/diff/1/src/pkg/runtime/runtime.h\n> File src/pkg/runtime/runtime.h (right):\n> \n> https://codereview.appspot.com/6819119/diff/1/src/pkg/runtime/runtime.h#newcode226\n> src/pkg/runtime/runtime.h:226: CgoMal*\tcgomal;\n> On 2012/11/09 09:44:09, dvyukov wrote:\n> > I would prefer moving these 2 fields to M, there are much more G's than M's.\n> The\n> > M is locked to G during cgo calls.\n> \n> Done.  Thanks.\n\nLGTM",
+			"disapproval": false,
+			"date": "2012-11-09 15:06:35.340730",
+			"approval": true
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6819119/diff/1/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttps://codereview.appspot.com/6819119/diff/1/src/pkg/runtime/runtime.h#newcode226\nsrc/pkg/runtime/runtime.h:226: CgoMal*\tcgomal;\nOn 2012/11/09 09:44:09, dvyukov wrote:\n> I would prefer moving these 2 fields to M, there are much more G's than M's. The\n> M is locked to G during cgo calls.\n\nDone.  Thanks.",
+			"disapproval": false,
+			"date": "2012-11-09 14:54:04.951170",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"dvyukov@google.com",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=97b8514db41b ***\n\nruntime, runtime/cgo: track memory allocated by non-Go code\n\nOtherwise a poorly timed GC can collect the memory before it\nis returned to the Go program.\n\nR=golang-dev, dave, dvyukov, minux.ma\nCC=golang-dev\nhttp://codereview.appspot.com/6819119",
+			"disapproval": false,
+			"date": "2012-11-10 19:19:11.926600",
+			"approval": false
+		}
+	],
+	"owner_email": "iant@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "iant",
+	"subject": "code review 6819119: runtime, runtime/cgo: track memory allocated by non-Go code",
+	"created": "2012-11-09 07:41:00.463870",
+	"patchsets": [
+		1,
+		4001,
+		3002
+	],
+	"modified": "2012-11-10 19:19:13.142350",
+	"closed": true,
+	"issue": 6819119
+}

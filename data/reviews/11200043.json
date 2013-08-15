@@ -1,0 +1,60 @@
+{
+	"description": "run.bash: actually stop on cgo failures\n\nI hate bash.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-07-12 03:06:09.635660",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n On Jul 12, 2013 1:06 PM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> run.bash: actually stop on cgo failures\r\n>\r\n> I hate bash.\r\n>\r\n> Please review this at https://codereview.appspot.**com/11200043/<https://codereview.appspot.com/11200043/>\r\n>\r\n> Affected files:\r\n>   M src/run.bash\r\n>\r\n>\r\n> Index: src/run.bash\r\n> ==============================**==============================**=======\r\n> --- a/src/run.bash\r\n> +++ b/src/run.bash\r\n> @@ -68,72 +68,88 @@\r\n>  xcd() {\r\n>         echo\r\n>         echo '#' $1\r\n> -       builtin cd \"$GOROOT\"/src/$1\r\n> +       builtin cd \"$GOROOT\"/src/$1 || exit 1\r\n>  }\r\n>\r\n> +# NOTE: \"set -e\" cannot help us in subshells. It works until you test it\r\n> with ||.\r\n> +#\r\n> +#      $ bash --version\r\n> +#      GNU bash, version 3.2.48(1)-release (x86_64-apple-darwin12)\r\n> +#      Copyright (C) 2007 Free Software Foundation, Inc.\r\n> +#\r\n> +#      $ set -e; (set -e; false; echo still here); echo subshell exit\r\n> status $?\r\n> +#      subshell exit status 1\r\n> +#      # correctly stopped early, set exit status, but outer set -e\r\n> didn't stop.\r\n> +#\r\n> +#      $ set -e; (set -e; false; echo still here) || echo stopped\r\n> +#      still here\r\n> +#      # somehow the '|| echo stopped' broke the inner set -e.\r\n> +#\r\n> +# To avoid this bug, every command in a subshell should have '|| exit 1'\r\n> on it.\r\n> +# Strictly speaking, the test may be unnecessary on the final command of\r\n> +# the subshell, but it aids later editing and may avoid future bash bugs.\r\n> +\r\n>  [ \"$CGO_ENABLED\" != 1 ] ||\r\n>  [ \"$GOHOSTOS\" == windows ] ||\r\n>  (xcd ../misc/cgo/stdio\r\n> -go run $GOROOT/test/run.go - .\r\n> +go run $GOROOT/test/run.go - . || exit 1\r\n>  ) || exit $?\r\n>\r\n>  [ \"$CGO_ENABLED\" != 1 ] ||\r\n>  (xcd ../misc/cgo/life\r\n> -go run $GOROOT/test/run.go - .\r\n> +go run $GOROOT/test/run.go - . || exit 1\r\n>  ) || exit $?\r\n>\r\n>  [ \"$CGO_ENABLED\" != 1 ] ||\r\n>  (xcd ../misc/cgo/test\r\n> -set -e\r\n> -go test -ldflags '-linkmode=auto'\r\n> -go test -ldflags '-linkmode=internal'\r\n> +go test -ldflags '-linkmode=auto' || exit 1\r\n> +go test -ldflags '-linkmode=internal' || exit 1\r\n>  case \"$GOHOSTOS-$GOARCH\" in\r\n>  openbsd-386 | openbsd-amd64)\r\n>         # test linkmode=external, but __thread not supported, so skip\r\n> testtls.\r\n> -       go test -ldflags '-linkmode=external'\r\n> +       go test -ldflags '-linkmode=external' || exit 1\r\n>         ;;\r\n>  darwin-386 | darwin-amd64)\r\n>         # linkmode=external fails on OS X 10.6 and earlier == Darwin\r\n>         # 10.8 and earlier.\r\n>         case $(uname -r) in\r\n>         [0-9].* | 10.*) ;;\r\n> -       *) go test -ldflags '-linkmode=external' ;;\r\n> +       *) go test -ldflags '-linkmode=external'  || exit 1;;\r\n>         esac\r\n>         ;;\r\n>  freebsd-386 | freebsd-amd64 | linux-386 | linux-amd64 | netbsd-386 |\r\n> netbsd-amd64)\r\n> -       go test -ldflags '-linkmode=external'\r\n> -       go test -ldflags '-linkmode=auto' ../testtls\r\n> -       go test -ldflags '-linkmode=external' ../testtls\r\n> +       go test -ldflags '-linkmode=external' || exit 1\r\n> +       go test -ldflags '-linkmode=auto' ../testtls || exit 1\r\n> +       go test -ldflags '-linkmode=external' ../testtls || exit 1\r\n>  esac\r\n>  ) || exit $?\r\n>\r\n>  [ \"$CGO_ENABLED\" != 1 ] ||\r\n>  [ \"$GOHOSTOS\" == windows ] ||\r\n>  (xcd ../misc/cgo/testso\r\n> -./test.bash\r\n> +./test.bash || exit 1\r\n>  ) || exit $?\r\n>\r\n>  [ \"$CGO_ENABLED\" != 1 ] ||\r\n>  [ \"$GOHOSTOS-$GOARCH\" != linux-amd64 ] ||\r\n>  (xcd ../misc/cgo/testasan\r\n> -go run main.go\r\n> +go run main.go || exit 1\r\n>  ) || exit $?\r\n>\r\n>  (xcd ../doc/progs\r\n> -time ./run\r\n> +time ./run || exit 1\r\n>  ) || exit $?\r\n>\r\n>  [ \"$GOARCH\" == arm ] ||  # uses network, fails under QEMU\r\n>  (xcd ../doc/articles/wiki\r\n> -make clean\r\n> -./test.bash\r\n> +make clean || exit 1\r\n> +./test.bash || exit 1\r\n>  ) || exit $?\r\n>\r\n>  (xcd ../doc/codewalk\r\n>  # TODO: test these too.\r\n> -set -e\r\n> -go build pig.go\r\n> -go build urlpoll.go\r\n> +go build pig.go || exit 1\r\n> +go build urlpoll.go || exit 1\r\n>  rm -f pig urlpoll\r\n>  ) || exit $?\r\n>\r\n> @@ -143,19 +159,19 @@\r\n>\r\n>  [ \"$GOARCH\" == arm ] ||\r\n>  (xcd ../test/bench/shootout\r\n> -./timing.sh -test\r\n> +./timing.sh -test || exit 1\r\n>  ) || exit $?\r\n>\r\n>  [ \"$GOOS\" == openbsd ] || # golang.org/issue/5057\r\n>  (\r\n>  echo\r\n>  echo '#' ../test/bench/go1\r\n> -go test ../test/bench/go1\r\n> +go test ../test/bench/go1 || exit 1\r\n>  ) || exit $?\r\n>\r\n>  (xcd ../test\r\n>  unset GOMAXPROCS\r\n> -time go run run.go\r\n> +time go run run.go || exit 1\r\n>  ) || exit $?\r\n>\r\n>  echo\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-12 03:08:45.047760",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=ba3df7385dcb ***\n\nrun.bash: actually stop on cgo failures\n\nI hate bash.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/11200043",
+			"disapproval": false,
+			"date": "2013-07-12 03:25:00.390790",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 11200043: run.bash: actually stop on cgo failures",
+	"created": "2013-07-12 03:05:54.567750",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		11001
+	],
+	"modified": "2013-07-12 03:25:02.486750",
+	"closed": true,
+	"issue": 11200043
+}

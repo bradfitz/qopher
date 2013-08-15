@@ -1,0 +1,209 @@
+{
+	"description": "syscall: fix mkall.sh, mksyscall_linux.pl, and regen for Linux/ARM\nCL 3075041 says ARM is not little-endian, but my test suggests otherwise.\nMy test program is:\n\n    package main\n    import (\"fmt\"; \"syscall\"; \"os\")\n    func main() {\n       err := syscall.Fallocate(1, 1/*FALLOC_FL_KEEP_SIZE*/, 0, int64(40960));\n       fmt.Fprintln(os.Stderr, err)\n    }\n\nWithout this CL, ./test > testfile will show: file too large; and strace shows:\n    fallocate(1, 01, 0, 175921860444160)    = -1 EFBIG (File too large)\nWith this CL, ./test > testfile will show: <nil>; and strace shows:\n    fallocate(1, 01, 0, 40960)              = 0\n\nQuoting rsc:\n\"[It turns out that] ARM syscall ABI requires 64-bit arguments to use an\n(even, odd) register pair, not an (odd, even) pair. Switching to \"big-endian\"\nworked because it ended up using the high 32-bits (always zero in the tests\nwe had) as the padding word, because the 64-bit argument was the last one,\nand because we fill in zeros for the rest of the system call arguments, up to\nsix. So it happened to work.\"\n\nI updated mksyscall_linux.pl to accommodate the register pair ABI requirement,\nand removed all hand-tweaked syscall routines in favor of the auto-generated\nones. These including: Ftruncate, Truncate, Pread and Pwrite.\n\n\nSome recent Linux/ARM distributions do not bundle kernel asm headers,\nso instead we always get latest asm/unistd.h from git.kernel.org (just like\nwhat we do for FreeBSD).",
+	"cc": [
+		"ken@golang.org",
+		"r@golang.org",
+		"rsc@golang.org",
+		"r@google.com",
+		"dave@cheney.net",
+		"iant@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2012-03-05 19:10:52.476197",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"ken@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"r@google.com",
+				"dave@cheney.net",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.",
+			"disapproval": false,
+			"date": "2012-03-05 18:28:29.370699",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"ken@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"r@google.com",
+				"dave@cheney.net",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/03/05 18:42:49, rsc wrote:\n> Do you believe this new O_FSYNC is the correct value?  On which systems?\nI think is because my system uses newer kernel, which has changed the behavior\nof that flag, see: \nhttp://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=blob_plain;f=include/asm-generic/fcntl.h;hb=HEAD\ngrep for __O_SYNC.\n\nFor maximum compatibility, I've reverted these changes.\n\n> http://codereview.appspot.com/5726051/diff/9002/src/pkg/syscall/mkall.sh#newcode148\n> src/pkg/syscall/mkall.sh:148: mksysnum=\"wget -q -O /dev/stdout\n> 'http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=blob_plain;f=arch/arm/include/asm/unistd.h;hb=HEAD'\n> | ./mksysnum_linux.pl\"\n> Please use curl, which available on both Linux and OS X.\nDone.",
+			"disapproval": false,
+			"date": "2012-03-05 19:04:16.088973",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\nOn 04/03/2012, at 3:55 AM, minux.ma@gmail.com wrote:\n\n> Reviewers: ken2, r, rsc,\n> \n> Message:\n> Hello ken@golang.org, r@golang.org, rsc@golang.org (cc:\n> golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://code.google.com/p/go/\n> \n> \n> Description:\n> syscall: fix mkall.sh, regen for Linux/ARM\n> CL 3075041 says ARM is not little-endian, but my test suggests\n> otherwise.\n> My test program is:\n> \n>    package main\n>    import (\"fmt\"; \"syscall\"; \"os\")\n>    func main() {\n>       err := syscall.Fallocate(1, 1/*FALLOC_FL_KEEP_SIZE*/, 0,\n> int64(40960));\n>       fmt.Fprintln(os.Stderr, err)\n>    }\n> \n> Without this CL, ./test > testfile will show: file too large; and strace\n> shows:\n>    fallocate(1, 01, 0, 175921860444160)    = -1 EFBIG (File too large)\n> With this CL, ./test > testfile will show: <nil>; and strace shows:\n>    fallocate(1, 01, 0, 40960)              = 0\n\nThat's the error 3075041 fixed in *our* builder, and if you make this change you'll just break some of the other systems that work today. I'm not sure what to do here; it's clear that both endiannesses of ARM exist in the wild.\n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2012-03-03 21:11:02.737572",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"ken@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"r@google.com",
+				"dave@cheney.net",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "For gcc ARM defaults to little-endian.  You select big-endian ARM by doing the equivalent of GOARCH=armb.",
+			"disapproval": false,
+			"date": "2012-03-04 20:20:37.891603",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\nOn Mar 5, 2012, at 7:26 AM, Rob 'Commander' Pike wrote:\n\n> \n> On Mar 5, 2012, at 7:20 AM, iant@golang.org wrote:\n> \n>> For gcc ARM defaults to little-endian.  You select big-endian ARM by\n>> doing the equivalent of GOARCH=armb.\n>> \n>> http://codereview.appspot.com/5726051/\n> \n> Then why did switching to big-endian solve the problem last time? I'm perfectly happy to flip this switch as long as we know it's right thing to do. We've been running for a long time, though, with the switch the other way and I'd like to understand what's changed.\n\nIt is now my belief that the ARM hardware we have here is little-endian and that, possibly, qemu was set up big-endian. I am willing to LGTM this if we think it's safe to do this now. Opinions welcome.\n\npackage main\n\nimport (\n\t\"unsafe\"\n)\n\nvar x int32 = 0x03020100\n\nfunc main() {\n\tp := uintptr(unsafe.Pointer(&x))\n\tswitch{\n\tcase indir(p+0) == 3 && indir(p+1) == 2 && indir(p+2) == 1 && indir(p+3) == 0:\n\t\tprintln(\"big-endian\")\n\tcase indir(p+0) == 0 && indir(p+1) == 1 && indir(p+2) == 2 && indir(p+3) == 3:\n\t\tprintln(\"little-endian\")\n\tdefault:\n\t\tprintln(\"unknown endian\")\n\t}\n}\n\nfunc indir(p uintptr) uint8 {\n\treturn *(*uint8)(unsafe.Pointer(p))\n}\n\nIf I were more amused I'd use NUXI.\n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2012-03-05 04:05:55.340632",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"ken@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"r@google.com",
+				"dave@cheney.net",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nVery nice.\n\nhttp://codereview.appspot.com/5726051/diff/4/src/pkg/syscall/zerrors_linux_arm.go\nFile src/pkg/syscall/zerrors_linux_arm.go (right):\n\nhttp://codereview.appspot.com/5726051/diff/4/src/pkg/syscall/zerrors_linux_arm.go#newcode627\nsrc/pkg/syscall/zerrors_linux_arm.go:627: O_FSYNC                          = 0x101000\nDo you believe this new O_FSYNC is the correct value?  On which systems?\n\nhttp://codereview.appspot.com/5726051/diff/9002/src/pkg/syscall/mkall.sh\nFile src/pkg/syscall/mkall.sh (right):\n\nhttp://codereview.appspot.com/5726051/diff/9002/src/pkg/syscall/mkall.sh#newcode148\nsrc/pkg/syscall/mkall.sh:148: mksysnum=\"wget -q -O /dev/stdout 'http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=blob_plain;f=arch/arm/include/asm/unistd.h;hb=HEAD' | ./mksysnum_linux.pl\"\nPlease use curl, which available on both Linux and OS X.",
+			"disapproval": false,
+			"date": "2012-03-05 18:42:49.684298",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"ken@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"r@google.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think this CL is correct, well, more correct than what exists today. The hand rolled EABI syscalls in\n\nhttp://code.google.com/p/go/source/browse/src/pkg/syscall/syscall_linux_arm.go#54\n\nsuggest we expect little endian syscalls.",
+			"disapproval": false,
+			"date": "2012-03-03 21:52:29.371657",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"ken@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello ken@golang.org, r@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-03-03 16:55:12.730286",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\nOn Mar 5, 2012, at 7:20 AM, iant@golang.org wrote:\n\n> For gcc ARM defaults to little-endian.  You select big-endian ARM by\n> doing the equivalent of GOARCH=armb.\n> \n> http://codereview.appspot.com/5726051/\n\nThen why did switching to big-endian solve the problem last time? I'm perfectly happy to flip this switch as long as we know it's right thing to do. We've been running for a long time, though, with the switch the other way and I'd like to understand what's changed.\n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2012-03-04 20:26:13.198559",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"ken@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"r@google.com",
+				"dave@cheney.net",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=18fc8b419260 ***\n\nsyscall: fix mkall.sh, mksyscall_linux.pl, and regen for Linux/ARM\nCL 3075041 says ARM is not little-endian, but my test suggests otherwise.\nMy test program is:\n\n    package main\n    import (\"fmt\"; \"syscall\"; \"os\")\n    func main() {\n       err := syscall.Fallocate(1, 1/*FALLOC_FL_KEEP_SIZE*/, 0, int64(40960));\n       fmt.Fprintln(os.Stderr, err)\n    }\n\nWithout this CL, ./test > testfile will show: file too large; and strace shows:\n    fallocate(1, 01, 0, 175921860444160)    = -1 EFBIG (File too large)\nWith this CL, ./test > testfile will show: <nil>; and strace shows:\n    fallocate(1, 01, 0, 40960)              = 0\n\nQuoting rsc:\n\"[It turns out that] ARM syscall ABI requires 64-bit arguments to use an\n(even, odd) register pair, not an (odd, even) pair. Switching to \"big-endian\"\nworked because it ended up using the high 32-bits (always zero in the tests\nwe had) as the padding word, because the 64-bit argument was the last one,\nand because we fill in zeros for the rest of the system call arguments, up to\nsix. So it happened to work.\"\n\nI updated mksyscall_linux.pl to accommodate the register pair ABI requirement,\nand removed all hand-tweaked syscall routines in favor of the auto-generated\nones. These including: Ftruncate, Truncate, Pread and Pwrite.\n\n\nSome recent Linux/ARM distributions do not bundle kernel asm headers,\nso instead we always get latest asm/unistd.h from git.kernel.org (just like\nwhat we do for FreeBSD).\n\nR=ken, r, rsc, r, dave, iant\nCC=golang-dev\nhttp://codereview.appspot.com/5726051",
+			"disapproval": false,
+			"date": "2012-03-05 19:12:20.827939",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The ARM hardware we have definitely uses little endian 32-bit integers.\n\nThe \"big-endian\" comment was referring to the way that 64-bit system\ncall arguments are handed to the kernel (since ARM is a 32-bit chip).\nIt appeared that they were passed as two 32-bit args: top-32, bottom-32.\nChanging to \"big-endian\" fixed Truncate and Ftruncate.\n\nHowever, since then we've moved Truncate and Ftruncate out of the\ngenerator and written them by hand, and the by-hand versions do use\n\"little-endian\", but they need an extra zero padding word before the\n64-bit argument, because the syscall ABI requires 64-bit arguments to\nuse an (even, odd) register pair, not an (odd, even) pair.\nSwitching to \"big-endian\" worked because it ended up using the high\n32-bits (always zero in the tests we had) as the padding word, because\nthe 64-bit argument was the last one, and because we fill in zeros for\nthe rest of the system call arguments, up to six.  So it happened to work.\nWe were all surprised at the time, and it turns out for good reason.\n\nThis CL looks good, but can you make mksyscall.pl add the padding\n(if it does not already) and then use the generator for Truncate and\nFtruncate again?\n\nThanks.\nRuss\n",
+			"disapproval": false,
+			"date": "2012-03-05 14:23:17.241285",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 5726051: syscall: fix mkall.sh, regen for Linux/ARM",
+	"created": "2012-03-03 11:58:27.501817",
+	"patchsets": [
+		1,
+		3,
+		4,
+		1002,
+		9001,
+		2007,
+		7010,
+		3009,
+		9002,
+		8012,
+		2010
+	],
+	"modified": "2012-03-05 19:12:24.738965",
+	"closed": true,
+	"issue": 5726051
+}

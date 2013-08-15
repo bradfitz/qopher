@@ -1,0 +1,271 @@
+{
+	"description": "bytes: optimise amd64 assembly for Equal: compare 8 bytes at a time.\n\nThere are other tricks that could be done here, such as doing the CMPSQ\non aligned addresses if possible, but this is good enough for now.\n\nI can come back to do the 386 equivalent.\n\n\nbenchmark                    old ns/op    new ns/op    delta\nBenchmarkEqual32                    45           37  -17.26%\nBenchmarkEqual4K                  2783          379  -86.38%\nBenchmarkEqual4M               3021084       695267  -76.99%\nBenchmarkEqual64M             48830500     16059860  -67.11%\nBenchmarkEqualPort32                81           81   +0.37%\nBenchmarkEqualPort4K              5533         5560   +0.49%\nBenchmarkEqualPortable4M       5739248      5754558   +0.27%\nBenchmarkEqualPortable64M     92205850     92283850   +0.08%\n\nbenchmark                     old MB/s     new MB/s  speedup\nBenchmarkEqual32                707.91       856.55    1.21x\nBenchmarkEqual4K               1471.79     10790.66    7.33x\nBenchmarkEqual4M               1388.34      6032.65    4.35x\nBenchmarkEqual64M              1374.32      4178.67    3.04x\nBenchmarkEqualPort32            394.28       392.60    1.00x\nBenchmarkEqualPort4K            740.27       736.58    1.00x\nBenchmarkEqualPortable4M        730.81       728.87    1.00x\nBenchmarkEqualPortable64M       727.82       727.20    1.00x",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-03-26 06:09:13.043349",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Per r's request, I've added an exhaustive test for bytes.Equal (and\nfriends). The package's test still runs in about a third of a second\non my machine.\n",
+			"disapproval": false,
+			"date": "2012-03-26 07:17:19.859818",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s\nFile src/pkg/bytes/asm_amd64.s (right):\n\nhttp://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s#newcode97\nsrc/pkg/bytes/asm_amd64.s:97: MOVL $0, AX\nOn 2012/03/26 07:38:14, dfc wrote:\n> XORQ AX, AX like your XORQ CX, CX above ?\n\nThere's no need. The CMPSQ uses the full quadword CX (a.k.a. RCX), but line 96 only sets the lower half of that, hence the need to clear it first. There's nowhere that reads more than the bottom of AX.\n\nhttp://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s#newcode109\nsrc/pkg/bytes/asm_amd64.s:109: MOVB $0, AX\nOn 2012/03/26 07:38:14, dfc wrote:\n> Why not just MOVB $0, ret+32(FP) then RET? It's the same number of instructions\n> .\n\nThat would work, but I think it's probably better to consolidate the call frame information in one place. I notice that IndexByte didn't, though. I'll leave the call on this to r/rsc.",
+			"disapproval": false,
+			"date": "2012-03-26 07:42:11.052308",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for this David. My ASM is rubbish, so please take my comments in good humor.\n\nhttp://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s\nFile src/pkg/bytes/asm_amd64.s (right):\n\nhttp://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s#newcode97\nsrc/pkg/bytes/asm_amd64.s:97: MOVL $0, AX\nXORQ AX, AX like your XORQ CX, CX above ?\n\nhttp://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s#newcode109\nsrc/pkg/bytes/asm_amd64.s:109: MOVB $0, AX\nWhy not just MOVB $0, ret+32(FP) then RET? It's the same number of instructions .",
+			"disapproval": false,
+			"date": "2012-03-26 07:38:14.426488",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Oh, really? That would be fantastic. \n\nI've spent a lot of time in pprof recently and I have found lots of cases where this doesn't appear to be happening. \n\nOn 26/03/2012, at 19:22, Anthony Martin <ality@pbrane.org> wrote:\n\n> dave@cheney.net once said:\n>> http://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s#newcode97\n>> src/pkg/bytes/asm_amd64.s:97: MOVL $0, AX\n>> XORQ AX, AX like your XORQ CX, CX above ?\n> \n> The linker will do this for you.  It turns\n> \"MOVx $0, reg\" into \"XORx reg, reg\" when\n> x is W, L, or Q.\n> \n>  Anthony\n",
+			"disapproval": false,
+			"date": "2012-03-26 08:41:15.703615",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Let's postpone this discussion for after Go 1.\n",
+			"disapproval": false,
+			"date": "2012-03-26 16:08:08.281466",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "dave@cheney.net once said:\n> http://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s#newcode97\n> src/pkg/bytes/asm_amd64.s:97: MOVL $0, AX\n> XORQ AX, AX like your XORQ CX, CX above ?\n\nThe linker will do this for you.  It turns\n\"MOVx $0, reg\" into \"XORx reg, reg\" when\nx is W, L, or Q.\n\n  Anthony\n",
+			"disapproval": false,
+			"date": "2012-03-26 08:22:37.568383",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Dave Cheney <dave@cheney.net> once said:\n> Oh, really? That would be fantastic. \n> \n> I've spent a lot of time in pprof recently and\n> I have found lots of cases where this doesn't\n> appear to be happening. \n\nMy assertion was based on reading the code\nbut this test confirms it:\n\n$ cat >a.s <<!\nTEXT \u00b7init(SB),7,$0\n\tRET\n\nTEXT \u00b7main(SB),7,$0\n\tMOVL $0, AX\n\tRET\n!\n$ go tool 8a a.s\n$ go tool 8l a.8\n$ objdump -d 8.out | sed -n '/main.main.:/,/^$/p'\n08048c01 <main.main>:\n 8048c01:\t31 c0                \txor    %eax,%eax\n 8048c03:\tc3                   \tret    \n\n$\n\nCheers,\n  Anthony\n",
+			"disapproval": false,
+			"date": "2012-03-26 09:04:19.584440",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "That is really interesting, thank you, I did not know the linker did this.\n\nCheers\n\nDave\nOn Mon, Mar 26, 2012 at 8:04 PM, Anthony Martin <ality@pbrane.org> wrote:\n> Dave Cheney <dave@cheney.net> once said:\n>> Oh, really? That would be fantastic.\n>>\n>> I've spent a lot of time in pprof recently and\n>> I have found lots of cases where this doesn't\n>> appear to be happening.\n>\n> My assertion was based on reading the code\n> but this test confirms it:\n>\n> $ cat >a.s <<!\n> TEXT \u00b7init(SB),7,$0\n> \u00a0 \u00a0 \u00a0 \u00a0RET\n>\n> TEXT \u00b7main(SB),7,$0\n> \u00a0 \u00a0 \u00a0 \u00a0MOVL $0, AX\n> \u00a0 \u00a0 \u00a0 \u00a0RET\n> !\n> $ go tool 8a a.s\n> $ go tool 8l a.8\n> $ objdump -d 8.out | sed -n '/main.main.:/,/^$/p'\n> 08048c01 <main.main>:\n> \u00a08048c01: \u00a0 \u00a0 \u00a0 31 c0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 xor \u00a0 \u00a0%eax,%eax\n> \u00a08048c03: \u00a0 \u00a0 \u00a0 c3 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0ret\n>\n> $\n>\n> Cheers,\n> \u00a0Anthony\n",
+			"disapproval": false,
+			"date": "2012-03-26 09:11:57.748258",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"ality@pbrane.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s\nFile src/pkg/bytes/asm_amd64.s (right):\n\nhttp://codereview.appspot.com/5903061/diff/5001/src/pkg/bytes/asm_amd64.s#newcode107\nsrc/pkg/bytes/asm_amd64.s:107: REP; CMPSQ\nIf one or both of the addresses is not 8-byte aligned, I would expect it to be faster to use one of the other CMP instructions, the one with the alignment that suits both pointers.\n\nIf both pointers are 16-byte aligned, and the length is 32 bytes or more, the fastest code will be an explicit loop using movdqa with an SSE register.\n\nIt's worth noting that the runtime package has a memequal function in runtime/alg.c.  If we're using asm code here we probably want to share code.",
+			"disapproval": false,
+			"date": "2012-03-26 16:07:14.081340",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can we pick this up again?\n\nAs to Ian's points, yes, I'm sure this could be improved further.\nHowever, I'm not personally familiar enough with SSE or its ilk to\nfeel confident about attempting those sorts of improvements, so I'd\nprefer to just go with what I've done here (which is still a huge\nimprovement), and leave it to someone else to improve it further.\n\n\nDave.\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:07:44.136277",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\nOn 02/04/2012, at 12:36 PM, Anthony Martin wrote:\n\n> Rob 'Commander' Pike <r@google.com> once said:\n>> This CL adds assembly for one architecture only, introduces another\n>> machine-dependent routine in the tree, and is admitted by you to be only\n>> a first step and not good enough yet.\n> \n> Bytes.Equal is already machine-dependent.\n> This CL just optimizes the assembly that's\n> already there.\n\nApologies, my head is a little addled by the meds.\n\nI still think the performance claims are overblown and that it's easy to outbenchmark yourself by finding uncommon cases that justify more complex code.\n\nI also don't understand the urgency.\n\n-rob\n\n\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:40:18.236945",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Apr 2, 2012 at 12:40 PM, Rob 'Commander' Pike <r@google.com> wrote:\n\n> I also don't understand the urgency.\n\nThere's no urgency. It can wait. I just thought I'd prompt to see\nwhether now was the right time to pick this back up.\n\n\nDave.\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:41:22.333925",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Every routine in the library could be written in assembly language to gain a modest speedup. Why single out this one?\n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:13:38.919870",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Apr 2, 2012 at 12:13 PM, Rob 'Commander' Pike <r@google.com> wrote:\n\n> Every routine in the library could be written in assembly language to gain a modest speedup. Why single out this one?\n\nThis is a 3x-7x speedup in a pretty low-level one, so it's got a high\npay-off. Lots of things get built on bytes.Equal.\n\n\nDave.\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:16:40.866466",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\nOn 02/04/2012, at 12:16 PM, David Symonds wrote:\n\n> On Mon, Apr 2, 2012 at 12:13 PM, Rob 'Commander' Pike <r@google.com> wrote:\n> \n>> Every routine in the library could be written in assembly language to gain a modest speedup. Why single out this one?\n> \n> This is a 3x-7x speedup in a pretty low-level one, so it's got a high\n> pay-off. Lots of things get built on bytes.Equal.\n\nI don't see 7X in your numbers and even if I did, the significant speedups are for huge slices. What do we have that depends on comparison speed of nearly-identical huge slices?\n\nThis CL adds assembly for one architecture only, introduces another machine-dependent routine in the tree, and is admitted by you to be only a first step and not good enough yet.\n\nI'm not saying no, at least not yet, but I need to see a much more convincing justification. As it stands, this is just a hack.\n\n-rob\n\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:26:58.601769",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FWIW bytes.Equal is used 130 times in the Go tree (outside of the\nbytes package), and bytes.* is mentioned 1125 times.\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:30:35.767516",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Apr 2, 2012 at 12:26 PM, Rob 'Commander' Pike <r@google.com> wrote:\n\n> I don't see 7X in your numbers and even if I did, the significant speedups are for huge slices. What do we have that depends on comparison speed of nearly-identical huge slices?\n\nBenchmarkEqual4K               1471.79     10790.66    7.33x\n\nThe speedup actually diminishes for bigger slices (presumably due to\nthe I/O bandwidth becoming the dominating factor). 32 bytes is 20%\nfaster (1.21x), and it ramps up from there. There's a bunch of the\ncrypto code that calls bytes.Equal a lot.\n\n\n> This CL adds assembly for one architecture only, introduces another machine-dependent routine in the tree, and is admitted by you to be only a first step and not good enough yet.\n\nIt's true it's only for amd64. I'm happy to do the 386 version next.\nThere's already asm in bytes for amd64 and 386 (and no arm), so it's\nintroducing a bit more asm, but only in a place where there already is\na fair bit.\n\nI never admitted that this is not good enough yet; I only said there's\nstill room for improvement. I think a 3x-7x speedup for this function\nis worthwhile even if we never do the next steps (SSE, etc.).\n\n\nDave.\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:39:45.365403",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "How did this come up?\n\nThere is a lot of performance work that can be done.\nWhy this?  Why now?\n\nI would rather wait a few months and do this as part\nof a larger performance effort.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-04-02 16:34:31.063576",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\nOn 02/04/2012, at 12:41 PM, David Symonds wrote:\n\n> On Mon, Apr 2, 2012 at 12:40 PM, Rob 'Commander' Pike <r@google.com> wrote:\n> \n>> I also don't understand the urgency.\n> \n> There's no urgency. It can wait. I just thought I'd prompt to see\n> whether now was the right time to pick this back up.\n\nI'd rather hold off; this is a very scary CL and I'm not convinced the Go 1 release binaries are finalized yet.\n\nLeaving for rsc.\n\n-rob\n\n\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:43:48.749371",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "That works for me.\n",
+			"disapproval": false,
+			"date": "2012-04-02 02:51:02.886680",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2012-06-03 04:48:48.883780",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-09-23 01:05:55.491340",
+			"approval": false
+		}
+	],
+	"owner_email": "dsymonds@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "dsymonds",
+	"subject": "code review 5903061: [AFTER GO 1]",
+	"created": "2012-03-26 05:24:49.469617",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		5001
+	],
+	"modified": "2012-09-23 01:05:57.317440",
+	"closed": true,
+	"issue": 5903061
+}

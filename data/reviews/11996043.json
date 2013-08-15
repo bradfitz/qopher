@@ -1,0 +1,59 @@
+{
+	"description": "[release-branch.go1.1] syscall: prlimit argument error for Getrlimit and Setrlimit on Linux 32-bit\n\n\u00ab\u00ab\u00ab CL 11803043 / ba52f6399462\nsyscall: prlimit argument error for Getrlimit and Setrlimit on Linux 32-bit\n\nThe rlimit arguments for prlimit are reversed for linux 32-bit (386 and arm).\nGetrlimit becomes Setrlimit and vice versa.\nFixes issue 5949.\n\nR=iant, mikioh.mikioh, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/11803043\n\nCommitter: Russ Cox <rsc@golang.org>\n\u00bb\u00bb\u00bb\n\nUpdate issue 5928",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. This one needs to be called out in the release notes.\r\n\r\nOn Mon, Jul 29, 2013 at 10:03 AM,  <adg@golang.org> wrote:\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> [release-branch.go1.1] syscall: prlimit argument error for Getrlimit and\r\n> Setrlimit on Linux 32-bit\r\n>\r\n> \u00ab\u00ab\u00ab CL 11803043 / ba52f6399462\r\n> syscall: prlimit argument error for Getrlimit and Setrlimit on Linux\r\n> 32-bit\r\n>\r\n> The rlimit arguments for prlimit are reversed for linux 32-bit (386 and\r\n> arm).\r\n> Getrlimit becomes Setrlimit and vice versa.\r\n> Fixes issue 5949.\r\n>\r\n> R=iant, mikioh.mikioh, rsc\r\n> CC=golang-dev\r\n> https://codereview.appspot.com/11803043\r\n>\r\n> Committer: Russ Cox <rsc@golang.org>\r\n> \u00bb\u00bb\u00bb\r\n>\r\n> Update issue 5928\r\n>\r\n> Please review this at https://codereview.appspot.com/11996043/\r\n>\r\n> Affected files:\r\n>   A src/pkg/syscall/rlimit_linux_test.go\r\n>   M src/pkg/syscall/syscall_linux_386.go\r\n>   M src/pkg/syscall/syscall_linux_arm.go\r\n>\r\n>\r\n> Index: src/pkg/syscall/rlimit_linux_test.go\r\n> ===================================================================\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/src/pkg/syscall/rlimit_linux_test.go\r\n> @@ -0,0 +1,41 @@\r\n> +// Copyright 2013 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +package syscall_test\r\n> +\r\n> +import (\r\n> +       \"syscall\"\r\n> +       \"testing\"\r\n> +)\r\n> +\r\n> +func TestRlimit(t *testing.T) {\r\n> +       var rlimit, zero syscall.Rlimit\r\n> +       err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rlimit)\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Getrlimit: save failed: %v\", err)\r\n> +       }\r\n> +       if zero == rlimit {\r\n> +               t.Fatalf(\"Getrlimit: save failed: got zero value %#v\",\r\n> rlimit)\r\n> +       }\r\n> +       set := rlimit\r\n> +       set.Cur = set.Max - 1\r\n> +       err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &set)\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Setrlimit: set failed: %#v %v\", set, err)\r\n> +       }\r\n> +       var get syscall.Rlimit\r\n> +       err = syscall.Getrlimit(syscall.RLIMIT_NOFILE, &get)\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Getrlimit: get failed: %v\", err)\r\n> +       }\r\n> +       set = rlimit\r\n> +       set.Cur = set.Max - 1\r\n> +       if set != get {\r\n> +               t.Fatalf(\"Rlimit: change failed: wanted %#v got %#v\", set,\r\n> get)\r\n> +       }\r\n> +       err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rlimit)\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Setrlimit: restore failed: %#v %v\", rlimit, err)\r\n> +       }\r\n> +}\r\n> Index: src/pkg/syscall/syscall_linux_386.go\r\n> ===================================================================\r\n> --- a/src/pkg/syscall/syscall_linux_386.go\r\n> +++ b/src/pkg/syscall/syscall_linux_386.go\r\n> @@ -78,7 +78,7 @@\r\n>  const rlimInf64 = ^uint64(0)\r\n>\r\n>  func Getrlimit(resource int, rlim *Rlimit) (err error) {\r\n> -       err = prlimit(0, resource, rlim, nil)\r\n> +       err = prlimit(0, resource, nil, rlim)\r\n>         if err != ENOSYS {\r\n>                 return err\r\n>         }\r\n> @@ -106,7 +106,7 @@\r\n>  //sysnb setrlimit(resource int, rlim *rlimit32) (err error) = SYS_SETRLIMIT\r\n>\r\n>  func Setrlimit(resource int, rlim *Rlimit) (err error) {\r\n> -       err = prlimit(0, resource, nil, rlim)\r\n> +       err = prlimit(0, resource, rlim, nil)\r\n>         if err != ENOSYS {\r\n>                 return err\r\n>         }\r\n> Index: src/pkg/syscall/syscall_linux_arm.go\r\n> ===================================================================\r\n> --- a/src/pkg/syscall/syscall_linux_arm.go\r\n> +++ b/src/pkg/syscall/syscall_linux_arm.go\r\n> @@ -119,7 +119,7 @@\r\n>  const rlimInf64 = ^uint64(0)\r\n>\r\n>  func Getrlimit(resource int, rlim *Rlimit) (err error) {\r\n> -       err = prlimit(0, resource, rlim, nil)\r\n> +       err = prlimit(0, resource, nil, rlim)\r\n>         if err != ENOSYS {\r\n>                 return err\r\n>         }\r\n> @@ -147,7 +147,7 @@\r\n>  //sysnb setrlimit(resource int, rlim *rlimit32) (err error) = SYS_SETRLIMIT\r\n>\r\n>  func Setrlimit(resource int, rlim *Rlimit) (err error) {\r\n> -       err = prlimit(0, resource, nil, rlim)\r\n> +       err = prlimit(0, resource, rlim, nil)\r\n>         if err != ENOSYS {\r\n>                 return err\r\n>         }\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-29 00:19:58.929660",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-07-29 00:03:01.321080",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=55ac276af5a7 ***\n\n[release-branch.go1.1] syscall: prlimit argument error for Getrlimit and Setrlimit on Linux 32-bit\n\n\u00ab\u00ab\u00ab CL 11803043 / ba52f6399462\nsyscall: prlimit argument error for Getrlimit and Setrlimit on Linux 32-bit\n\nThe rlimit arguments for prlimit are reversed for linux 32-bit (386 and arm).\nGetrlimit becomes Setrlimit and vice versa.\nFixes issue 5949.\n\nR=iant, mikioh.mikioh, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/11803043\n\nCommitter: Russ Cox <rsc@golang.org>\n\u00bb\u00bb\u00bb\n\nUpdate issue 5928\n\nR=golang-dev, dave\nCC=golang-dev\nhttps://codereview.appspot.com/11996043",
+			"disapproval": false,
+			"date": "2013-07-29 00:34:57.331970",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 11996043: [release-branch.go1.1] syscall: prlimit argument error ...",
+	"created": "2013-07-29 00:00:35.614160",
+	"patchsets": [
+		1,
+		3001,
+		7001
+	],
+	"modified": "2013-07-29 00:35:00.463240",
+	"closed": true,
+	"issue": 11996043
+}

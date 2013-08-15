@@ -1,0 +1,147 @@
+{
+	"description": "go/parser: better error synchronization\n\ngofmt reports now a single, accurate error for\nthe test case of issue 3106.\n\nAlso: Added test harness for general error\nchecking and two test cases for now.\n\nFixes issue 3106.",
+	"cc": [
+		"rsc@golang.org",
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-03-07 01:42:04.184013",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I agree.  It would be nice to have an error test case\nfor this and for the comma issue.\n",
+			"disapproval": false,
+			"date": "2012-03-07 03:04:20.922178",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What is the \"single, accurate error\" for 3106? I would expect it to be in\nthis CL somewhere?\n\nOn Tue, Mar 6, 2012 at 5:42 PM, <gri@golang.org> wrote:\n\n> Reviewers: rsc,\n>\n> Message:\n> Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://code.google.com/p/go\n>\n>\n> Description:\n> go/parser: better error synchronization\n>\n> gofmt reports now a single, accurate error for\n> the test case of issue 3106.\n>\n> Fixes issue 3106.\n>\n> Please review this at http://codereview.appspot.com/**5755062/<http://codereview.appspot.com/5755062/>\n>\n> Affected files:\n>  M src/pkg/go/parser/parser.go\n>\n>\n> Index: src/pkg/go/parser/parser.go\n> ==============================**==============================**=======\n> --- a/src/pkg/go/parser/parser.go\n> +++ b/src/pkg/go/parser/parser.go\n> @@ -371,8 +371,16 @@\n>  }\n>\n>  func (p *parser) expectSemi() {\n> +       // semicolon is optional before a closing ')' or '}'\n>        if p.tok != token.RPAREN && p.tok != token.RBRACE {\n> -               p.expect(token.SEMICOLON)\n> +               if p.tok == token.SEMICOLON {\n> +                       p.next()\n> +               } else {\n> +                       p.errorExpected(p.pos, \"';'\")\n> +                       for !isStmtSync(p.tok) {\n> +                               p.next() // make progress\n> +                       }\n> +               }\n>        }\n>  }\n>\n> @@ -396,6 +404,31 @@\n>        }\n>  }\n>\n> +// isStmtSync reports whether tok starts a new statement.\n> +// Used for synchronization after an error.\n> +//\n> +func isStmtSync(tok token.Token) bool {\n> +       switch tok {\n> +       case token.BREAK, token.CONST, token.CONTINUE, token.DEFER,\n> +               token.FALLTHROUGH, token.FOR, token.GO, token.GOTO,\n> +               token.IF, token.RETURN, token.SELECT, token.SWITCH,\n> +               token.TYPE, token.VAR, token.EOF:\n> +               return true\n> +       }\n> +       return false\n> +}\n> +\n> +// isDeclSync reports whether tok starts a new declaration.\n> +// Used for synchronization after an error.\n> +//\n> +func isDeclSync(tok token.Token) bool {\n> +       switch tok {\n> +       case token.CONST, token.TYPE, token.VAR, token.EOF:\n> +               return true\n> +       }\n> +       return false\n> +}\n> +\n>  // ------------------------------**------------------------------**\n> ----------------\n>  // Identifiers\n>\n> @@ -536,9 +569,11 @@\n>        for i, x := range list {\n>                ident, isIdent := x.(*ast.Ident)\n>                if !isIdent {\n> -                       pos := x.Pos()\n> -                       p.errorExpected(pos, \"identifier\")\n> -                       ident = &ast.Ident{NamePos: pos, Name: \"_\"}\n> +                       if _, isBad := x.(*ast.BadExpr); !isBad {\n> +                               // only report error if it's a new one\n> +                               p.errorExpected(x.Pos(), \"identifier\")\n> +                       }\n> +                       ident = &ast.Ident{NamePos: x.Pos(), Name: \"_\"}\n>                }\n>                idents[i] = ident\n>        }\n> @@ -1005,19 +1040,21 @@\n>\n>        case token.FUNC:\n>                return p.parseFuncTypeOrLit()\n> -\n> -       default:\n> -               if typ := p.tryIdentOrType(true); typ != nil {\n> -                       // could be type for composite literal or\n> conversion\n> -                       _, isIdent := typ.(*ast.Ident)\n> -                       assert(!isIdent, \"type cannot be identifier\")\n> -                       return typ\n> -               }\n>        }\n>\n> +       if typ := p.tryIdentOrType(true); typ != nil {\n> +               // could be type for composite literal or conversion\n> +               _, isIdent := typ.(*ast.Ident)\n> +               assert(!isIdent, \"type cannot be identifier\")\n> +               return typ\n> +       }\n> +\n> +       // we have an error\n>        pos := p.pos\n>        p.errorExpected(pos, \"operand\")\n> -       p.next() // make progress\n> +       if !isStmtSync(p.tok) {\n> +               p.next() // make progress\n> +       }\n>        return &ast.BadExpr{From: pos, To: p.pos}\n>  }\n>\n> @@ -1276,8 +1313,8 @@\n>                                x = p.parseTypeAssertion(p.**checkExpr(x))\n>                        default:\n>                                pos := p.pos\n> +                               p.errorExpected(pos, \"selector or type\n> assertion\")\n>                                p.next() // make progress\n> -                               p.errorExpected(pos, \"selector or type\n> assertion\")\n>                                x = &ast.BadExpr{From: pos, To: p.pos}\n>                        }\n>                case token.LBRACK:\n> @@ -1485,7 +1522,10 @@\n>        if call, isCall := x.(*ast.CallExpr); isCall {\n>                return call\n>        }\n> -       p.errorExpected(x.Pos(), \"function/method call\")\n> +       if _, isBad := x.(*ast.BadExpr); !isBad {\n> +               // only report error if it's a new one\n> +               p.errorExpected(x.Pos(), \"function/method call\")\n> +       }\n>        return nil\n>  }\n>\n> @@ -1876,7 +1916,7 @@\n>\n>        switch p.tok {\n>        case token.CONST, token.TYPE, token.VAR:\n> -               s = &ast.DeclStmt{Decl: p.parseDecl()}\n> +               s = &ast.DeclStmt{Decl: p.parseDecl(isStmtSync)}\n>        case\n>                // tokens that may start an expression\n>                token.IDENT, token.INT, token.FLOAT, token.IMAG,\n> token.CHAR, token.STRING, token.FUNC, token.LPAREN, // operands\n> @@ -1918,7 +1958,9 @@\n>                // no statement found\n>                pos := p.pos\n>                p.errorExpected(pos, \"statement\")\n> -               p.next() // make progress\n> +               for !isStmtSync(p.tok) {\n> +                       p.next() // make progress\n> +               }\n>                s = &ast.BadStmt{From: pos, To: p.pos}\n>        }\n>\n> @@ -2109,8 +2151,13 @@\n>        recv := par.List[0]\n>        base := deref(recv.Type)\n>        if _, isIdent := base.(*ast.Ident); !isIdent {\n> -               p.errorExpected(base.Pos(), \"(unqualified) identifier\")\n> -               par.List = []*ast.Field{{Type: &ast.BadExpr{From:\n> recv.Pos(), To: recv.End()}}}\n> +               if _, isBad := base.(*ast.BadExpr); !isBad {\n> +                       // only report error if it's a new one\n> +                       p.errorExpected(base.Pos(), \"(unqualified)\n> identifier\")\n> +               }\n> +               par.List = []*ast.Field{\n> +                       {Type: &ast.BadExpr{From: recv.Pos(), To:\n> recv.End()}},\n> +               }\n>        }\n>\n>        return par\n> @@ -2166,7 +2213,7 @@\n>        return decl\n>  }\n>\n> -func (p *parser) parseDecl() ast.Decl {\n> +func (p *parser) parseDecl(isSync func(token.Token) bool) ast.Decl {\n>        if p.trace {\n>                defer un(trace(p, \"Declaration\"))\n>        }\n> @@ -2188,9 +2235,10 @@\n>        default:\n>                pos := p.pos\n>                p.errorExpected(pos, \"declaration\")\n> -               p.next() // make progress\n> -               decl := &ast.BadDecl{From: pos, To: p.pos}\n> -               return decl\n> +               for !isSync(p.tok) {\n> +                       p.next() // make progress\n> +               }\n> +               return &ast.BadDecl{From: pos, To: p.pos}\n>        }\n>\n>        return p.parseGenDecl(p.tok, f)\n> @@ -2229,7 +2277,7 @@\n>                if p.mode&ImportsOnly == 0 {\n>                        // rest of package body\n>                        for p.tok != token.EOF {\n> -                               decls = append(decls, p.parseDecl())\n> +                               decls = append(decls,\n> p.parseDecl(isDeclSync))\n>                        }\n>                }\n>        }\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-03-07 01:50:31.348121",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\non tests especially. not very familiar with parser code, but seems sane.\n\nhttp://codereview.appspot.com/5755062/diff/10001/src/pkg/go/parser/error_test.go\nFile src/pkg/go/parser/error_test.go (right):\n\nhttp://codereview.appspot.com/5755062/diff/10001/src/pkg/go/parser/error_test.go#newcode58\nsrc/pkg/go/parser/error_test.go:58: var errRx = regexp.MustCompile(`^/\\* *ERROR *\"([^\"]*)\" *\\*/$`)\nthe * in \" *\" probably isn't necessary. you document the format as a single space.",
+			"disapproval": false,
+			"date": "2012-03-07 20:04:52.666955",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=097e02a1815a ***\n\ngo/parser: better error synchronization\n\ngofmt reports now a single, accurate error for\nthe test case of issue 3106.\n\nAlso: Added test harness for general error\nchecking and two test cases for now.\n\nFixes issue 3106.\n\nR=rsc, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5755062",
+			"disapproval": false,
+			"date": "2012-03-07 20:24:23.237091",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/5755062/diff/10001/src/pkg/go/parser/error_test.go\nFile src/pkg/go/parser/error_test.go (right):\n\nhttp://codereview.appspot.com/5755062/diff/10001/src/pkg/go/parser/error_test.go#newcode91\nsrc/pkg/go/parser/error_test.go:91: func eliminate(t *testing.T, expected map[token.Pos]string, found scanner.ErrorList) {\ndoc comment here would help\nmake clear that eliminate edits expected,\ncomplains about unexpected errors in found,\nbut leaves the complaining about missing errors\nto the caller.",
+			"disapproval": false,
+			"date": "2012-03-07 20:06:40.915251",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttp://codereview.appspot.com/5755062/diff/10001/src/pkg/go/parser/error_test.go\nFile src/pkg/go/parser/error_test.go (right):\n\nhttp://codereview.appspot.com/5755062/diff/10001/src/pkg/go/parser/error_test.go#newcode58\nsrc/pkg/go/parser/error_test.go:58: var errRx = regexp.MustCompile(`^/\\* *ERROR *\"([^\"]*)\" *\\*/$`)\nOn 2012/03/07 20:04:52, bradfitz wrote:\n> the * in \" *\" probably isn't necessary. you document the format as a single\n> space.\n\nleft alone - no harm done\n\nhttp://codereview.appspot.com/5755062/diff/10001/src/pkg/go/parser/error_test.go#newcode91\nsrc/pkg/go/parser/error_test.go:91: func eliminate(t *testing.T, expected map[token.Pos]string, found scanner.ErrorList) {\nOn 2012/03/07 20:06:41, rsc wrote:\n> doc comment here would help\n> make clear that eliminate edits expected,\n> complains about unexpected errors in found,\n> but leaves the complaining about missing errors\n> to the caller.\n\nAdded comment and reorganized so that all complaining happens in this function.",
+			"disapproval": false,
+			"date": "2012-03-07 20:14:15.732274",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-03-07 19:56:46.629574",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/5755062/diff/11006/src/pkg/go/parser/error_test.go\nFile src/pkg/go/parser/error_test.go (right):\n\nhttp://codereview.appspot.com/5755062/diff/11006/src/pkg/go/parser/error_test.go#newcode117\nsrc/pkg/go/parser/error_test.go:117: t.Errorf(\"%s: no (multiple?) error expected, but found: %s\", error.Pos, error.Msg)\ns/no (multiple?) error expected, but found/unexpected error/",
+			"disapproval": false,
+			"date": "2012-03-07 20:15:34.102688",
+			"approval": true
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 5755062: go/parser: better error synchronization",
+	"created": "2012-03-07 01:40:06.721214",
+	"patchsets": [
+		1,
+		1001,
+		3001,
+		7001,
+		10001,
+		11006,
+		8010,
+		8011
+	],
+	"modified": "2012-03-07 20:24:24.636408",
+	"closed": true,
+	"issue": 5755062
+}

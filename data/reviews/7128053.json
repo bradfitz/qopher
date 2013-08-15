@@ -1,0 +1,135 @@
+{
+	"description": "time: Sleep does better job then runtime.Gosched in TestAfterStress\n\nfor slow windows-386 builder",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"rsc@golang.org"
+	],
+	"reviewers": [
+		"nightlyone@googlemail.com"
+	],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This change is, probably, not enough to fix windows-386. It also struggles with new TestReset. Perhaps, it is possible to make TestReset work by fiddling with timeout values. But, I think, this pc is running our of puff in general. It was not fast to start with, but we keep adding new tests.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-01-18 01:19:28.389520",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"nightlyone@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/18 22:16:40, ioe wrote:\n> \n> Maybe the culprit is that the OS and Go scheduler are not aware about the \n> atomics.\n> What about giving the schedulers sth. to sleep/wake on?\n> \n\nI am not 100% clear what is been tested here in the first place. So it is hard for me to comment on your proposed approach.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-01-18 23:29:51.538250",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-01-18 01:16:05.919220",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Nice fix, but I wonder if it is masking a deeper issue.\r\nOn 18 Jan 2013 12:16, <alex.brainman@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> time: Sleep does better job then runtime.Gosched in TestAfterStress\r\n>\r\n> for slow windows-386 builder\r\n>\r\n> Please review this at https://codereview.appspot.**com/7128053/<https://codereview.appspot.com/7128053/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/time/sleep_test.go\r\n>\r\n>\r\n> Index: src/pkg/time/sleep_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/time/sleep_test.go\r\n> +++ b/src/pkg/time/sleep_test.go\r\n> @@ -56,7 +56,7 @@\r\n>                         runtime.GC()\r\n>                         // Need to yield, because otherwise\r\n>                         // the main goroutine will never set the stop flag.\r\n> -                       runtime.Gosched()\r\n> +                       Sleep(Nanosecond)\r\n>                 }\r\n>         }()\r\n>         c := Tick(1)\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 01:18:32.706390",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/18 01:18:32, dfc wrote:\n> Nice fix, but I wonder if it is masking a deeper issue.\n\nSure thing. Explain yourself, please.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-01-18 01:20:46.317440",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nThe problem is that the timer thread is waiting to run (the timer has\r\ngone off but the OS hasn't run the thread in response yet) and so we\r\ndon't see a goroutine waiting, and instead we just keep spinning doing\r\nour own work. It's hard for the timer thread to compete with that, and\r\napparently Windows is okay with letting the one thread run away. It's\r\nnot a goroutine scheduler issue.\r\n\r\n// Yield so that the OS can wake up the timer thread,\r\n// so that it can generate channel sends for the main goroutine,\r\n// which will eventually set stop = 1 for us.\r\nSleep(1*Nanosecond)\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 03:24:18.385380",
+			"approval": true
+		},
+		{
+			"sender": "nightlyone@googlemail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I know, I'm late in the game.\r\n\r\nMaybe the culprit is that the OS and Go scheduler are not aware about the \r\natomics.\r\nWhat about giving the schedulers sth. to sleep/wake on?\r\n\r\nSo I would suggest sth. like\r\n\r\nfunc TestAfterStress(t *testing.T) {\r\n        stop := make(chan bool)\r\n        go func() {\r\n                       select {\r\n                       case _, _ = <- stop:\r\n                       }\r\n        }()\r\n        c := Tick(1)\r\n        for i := 0; i < 100; i++ {\r\n                <-c\r\n        }\r\n        close(stop)\r\n}\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 22:16:40.703290",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=69a06608d3b1 ***\n\ntime: Sleep does better job then runtime.Gosched in TestAfterStress\n\nfor slow windows-386 builder\n\nR=golang-dev, dave, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/7128053",
+			"disapproval": false,
+			"date": "2013-01-18 04:31:09.755340",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think what's there now is fine. Let's do more important things.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 18:25:11.573990",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 7128053: time: Sleep does better job then runtime.Gosched in Tes...",
+	"created": "2013-01-18 01:14:32.112720",
+	"patchsets": [
+		1,
+		2001,
+		3001,
+		4
+	],
+	"modified": "2013-01-18 23:29:51.698510",
+	"closed": true,
+	"issue": 7128053
+}

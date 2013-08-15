@@ -1,0 +1,623 @@
+{
+	"description": "syscall: return EINVAL when string arguments have NUL characters\n\nSince NUL usually terminates strings in underlying syscalls, allowing\nit when converting string arguments is a security risk, especially\nwhen dealing with filenames. For example, a program might reason that\nfilename like \"/root/..\\x00/\" is a subdirectory or \"/root/\" and allow\naccess to it, while underlying syscall will treat \"\\x00\" as an end of\nthat string and the actual filename will be \"/root/..\", which might\nbe unexpected. Returning EINVAL when string arguments have NUL in\nthem makes sure this attack vector is unusable.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org",
+		"bradfitz@golang.org",
+		"fullung@gmail.com",
+		"rsc@golang.org",
+		"minux.ma@gmail.com"
+	],
+	"reviewers": [
+		"yarikos@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The versions of these functions that obsolete existing exported\r\nfunctions should be exported.  I don't like the 'safe' name much\r\nthough. I'll sleep on it.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 05:46:57.749120",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 31, 2012 at 12:44 AM,  <snaury@gmail.com> wrote:\r\n> syscall: return EINVAL when string arguments have NUL characters\r\n>\r\n> Since NUL usually terminates strings in underlying syscalls, allowing\r\n> it when converting string arguments is a security risk, especially\r\n> when dealing with filenames. For example, a program might reason that\r\n> filename like \"/root/..\\x00/\" is a subdirectory or \"/root/\" and allow\r\n> access to it, while underlying syscall will treat \"\\x00\" as an end of\r\n> that string and the actual filename will be \"/root/..\", which might\r\n> be unexpected. Returning EINVAL when string arguments have NUL in\r\n> them makes sure this attack vector is unusable.\r\n>\r\n> Please review this at http://codereview.appspot.com/6458050/\r\n\r\nPlease note however that I only ran the test suite on darwin. I\r\nhaven't tested any other OS beyond running GOOS=platform GOARCH=386\r\n./make.bash to make sure it builds, so it probably needs a lot of\r\ntesting to make sure it doesn't break any platform in unexpected ways.\r\n",
+			"disapproval": false,
+			"date": "2012-07-30 20:47:04.966030",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6458050/diff/4004/src/pkg/syscall/syscall.go\nFile src/pkg/syscall/syscall.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/4004/src/pkg/syscall/syscall.go#newcode27\nsrc/pkg/syscall/syscall.go:27: func SafeStringByteSlice(s string) (a []byte, err error) {\nThis is looking better. I don't like the \"Safe\" name though because it's about the bug this version fixes, not what the function actually does. It carries no information. What does \"safe\" mean? And whose safety is it preserving? The doc comment should describe the safety property; the name should be what it does.\n\nThere are two ways to go.\n\n1) Be really clear: StringByteSliceNULTerminated or some such.\n2) Just pick a different name that means the same thing, and let the doc comment carry the weight: StringToByteSlice. The name doesn't really say everything, but don't forget that outsiders will see it as syscall.StringToByteSlice, which is pretty evocative.\n\nI vote for option 2, giving us:\n\n// StringByteSlice returns a NUL-terminated slice of bytes\n// containing the text of s unmodified. It does not check for\n// NUL bytes within the string, so it should be used with care.\n// StringToByteSlice is almost always a better choice when\n// passing strings to system calls.\nfunc StringByteSlice(s string) []byte {\n...\n\n// StringToByteSlice returns a NUL-terminated slice of bytes containing\n// the text of s. If s contains a NUL byte at any location, it returns\n// EINVAL. This is the correct routine to use when passing strings\n// to system calls.\nfunc StringToByteSlice(s string) (a []byte, err error) {",
+			"disapproval": false,
+			"date": "2012-07-31 19:49:56.006390",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 31, 2012 at 11:49 PM,  <r@golang.org> wrote:\r\n>\r\n> http://codereview.appspot.com/6458050/diff/4004/src/pkg/syscall/syscall.go\r\n> File src/pkg/syscall/syscall.go (right):\r\n>\r\n> http://codereview.appspot.com/6458050/diff/4004/src/pkg/syscall/syscall.go#newcode27\r\n> src/pkg/syscall/syscall.go:27: func SafeStringByteSlice(s string) (a\r\n> []byte, err error) {\r\n> This is looking better. I don't like the \"Safe\" name though because it's\r\n> about the bug this version fixes, not what the function actually does.\r\n\r\nOf course, you said you'll sleep on it, so this was a temporary update\r\n(it was primarily about exporting and fixing more packages that use\r\nsyscall conversion functions). See my comment to Russ about a possible\r\ndifferent name. Right now \"safe\" prefix is playing a very good role in\r\nmy tree by just being an easy to search marker (search for \\bSafe to\r\nsee all uses of new functions, search for \\bString for all uses of old\r\nfunctions), thus being easy to replace to whatever we choose.\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 20:16:45.655550",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You're right about avoiding range in the loop but I had a larger\r\npoint: don't copy the bytes one a time if you don't have to, and you\r\nalmost never have to.  So it's more like this:\r\n\r\nvar i int\r\nfor i := 0; i < len(s); i++ {\r\n  if s[i] == '\\x00' {\r\n    return nil, syscall.EINVAL\r\n  }\r\n}\r\na = make([]byte, i+1)\r\ncopy(a, s)\r\nreturn a\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 05:45:40.429020",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 31, 2012 at 11:53 PM,  <rsc@golang.org> wrote:\r\n> StringToByteSlice SGTM.\r\n>\r\n> I think StringByteSlice could check for NUL and panic (be a thin wrapper\r\n> around StringToByteSlice).\r\n\r\nIt seems you are forgetting that there are Windows variants of these\r\nAPIs as well, which are already named String*To*UTF16, etc. (which are\r\nactually widely used outside syscall, far more so than StringByteSlice\r\nand StringBytePtr), besides there would be very little distinction\r\nbetween function names, almost like a typo, very hard to spot right\r\naway.\r\n\r\nWhat about a suffix of *NoNUL, like StringByteSliceNoNUL,\r\nStringBytePtrNoNUL, etc.?\r\n\r\nPanicking is a bad idea in my opinion. This CL should be about fixing\r\npotential vulnerabilities, not introducing new ones (think denial of\r\nservice) in pre-existing code.\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 20:10:14.574470",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/01 21:49:43, rsc wrote:\n> This should panic. On the review someone said that panicking is itself a\n> security risk. I disagree but even so it is a smaller one.\n\nOk, since it seems panics are going to happen anyway, I'm changing my patch to add panicking and fix comments.",
+			"disapproval": false,
+			"date": "2012-08-05 18:09:44.849200",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 31, 2012 at 3:54 AM,  <r@golang.org> wrote:\r\n> http://codereview.appspot.com/6458050/diff/4001/src/pkg/syscall/syscall.go#newcode17\r\n> src/pkg/syscall/syscall.go:17: // StringByteSlice returns a\r\n> NUL-terminated slice of bytes\r\n> assuming we're going with the design proposed in this CL, this function\r\n> is now deprecated and, in fact, all but unused. it should be marked\r\n> deprecated and the new function should be exported.\r\n\r\nInitially I made it that way for several reasons:\r\n\r\n- I wasn't sure all relevant syscalls had an error result, but\r\nsearching now it turns out there are indeed no calls to the old\r\nfunction, so you may be right\r\n- Since it's exported it's likely intended for use in other packages,\r\nit's not our job to force all users to use new API, checking for\r\nconversion errors in user code (especially in tests) is clumsy and\r\noften not needed, and is only relatively easy to do in syscall package\r\nbecause it's mostly auto-generated.\r\n\r\nThere are 5 new \"safe\" functions:\r\n\r\n- safeStringByteSlice\r\n- safeStringBytePtr\r\n- safeStringSlicePtr\r\n- safeStringToUTF16\r\n- safeStringToUTF16Ptr\r\n\r\nShould all be exported? Not all old functions can be deprecated though.\r\n\r\n> http://codereview.appspot.com/6458050/diff/4001/src/pkg/syscall/syscall.go#newcode29\r\n> src/pkg/syscall/syscall.go:29: for i := 0; i < len(s); i++ {\r\n> for i, c := range s\r\n>\r\n> but this is doing a lot of copying and other stuff that is rarely\r\n> necessary.\r\n> make the common path fast.\r\n> faster but untested:\r\n>\r\n> var i int\r\n> var c rune\r\n> for i, c = range s {\r\n>   if c == '\\x00' {\r\n>     break\r\n>   }\r\n> }\r\n> a = make([]byte, i+1)\r\n> copy(a, s)\r\n> return a\r\n\r\nAre you sure it's faster? I didn't use range to avoid useless UTF-8\r\ndecoding, I didn't use copy in the end because then we would scan the\r\ninput string twice (though there's an extra index check on write, so\r\nmaybe copy would indeed be faster on the common case of short\r\nstrings). I'll try to make a benchmark in the evening (that's in ~12\r\nhours, moscow time) and see it for real.\r\n\r\nP.S. I'll update a changeset now, but it only changes a single place\r\nwhere unsafe conversion was used in Getenv on Windows, it doesn't\r\nchange anything else. I'll only be able to see to other changes in the\r\nevening.\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 05:30:42.192390",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The Windows naming problem is easily resolved by reversing the names\r\nof the new functions, so: ByteSliceFromString (and BytePtrFromString)\r\nand UTF16FromString. A name like StringByteSliceNoNUL is poor because\r\nit contradicts its purpose: it *adds* a NUL.\r\n\r\nRegarding panicking, the Go 1  compatibility document  allows this:\r\n\r\n\"Security. A security issue in the specification or implementation may\r\ncome to light whose resolution requires breaking compatibility. We\r\nreserve the right to address such security issues.\"\r\n\r\nI argue that this is a security hole that should be closed. We will\r\nalso eliminate all uses of the old functions from the standard tree\r\nand deprecate those functions.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 21:06:38.920650",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, bradfitz@golang.org, fullung@gmail.com, rsc@golang.org, minux.ma@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-05 18:18:45.328600",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Gri proposes option 4:\r\n\r\n4) Since the returned []byte is different from the string anyway (it\r\nis one byte longer), if we find an unexpected NUL we can return a name\r\nthat signals that:\r\n\r\n  foo\\x00bar becomes, say foo%NULBYTE%bar\r\n\r\nThat means no API change is necessary, error messages will look good,\r\nbut leaves one ugly corner case I can think of, which is creating a\r\nfile with such an unpleasant name.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 00:17:16.837720",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-07-31 05:31:44.668450",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 1, 2012 at 1:06 AM, Rob Pike <r@golang.org> wrote:\r\n> The Windows naming problem is easily resolved by reversing the names\r\n> of the new functions, so: ByteSliceFromString (and BytePtrFromString)\r\n> and UTF16FromString. A name like StringByteSliceNoNUL is poor because\r\n> it contradicts its purpose: it *adds* a NUL.\r\n\r\nOk, I think I like this too, though it will need a little more work.\r\n\r\n> Regarding panicking, the Go 1  compatibility document  allows this:\r\n[...]\r\n> I argue that this is a security hole that should be closed. We will\r\n> also eliminate all uses of the old functions from the standard tree\r\n> and deprecate those functions.\r\n\r\nThe problem that I see with panicking is that it doesn't resolve a\r\nsecurity issue, it actually *adds* a new one. However we could limit\r\nthe scope of the panic by not using old functions in the standard\r\nlibrary at all (and thus deprecating them all). I can see one way to\r\ndo it: make error an advisement, e.g. if NUL byte is detected always\r\ndo the conversion anyway, *in addition to*, returning an error. This\r\nway test code (as well as code that doesn't care about NUL bytes or\r\nactually needs embedded NULs for some reason) would be able to use\r\nBytePtrFromString(...)[0], etc. What do you think?\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 21:28:05.418190",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Aug 2, 2012 at 1:49 AM,  <rsc@golang.org> wrote:\r\n> This should panic. On the review someone said that panicking is itself a\r\n> security risk. I disagree but even so it is a smaller one.\r\n>\r\n> a, err := ByteSliceFromString(s)\r\n> if err != nil {\r\n>     panic(\"syscall: string with NUL passed to StringByteSlice\")\r\n> }\r\n> return a\r\n>\r\n> Then the comment can be significantly simpler:\r\n\r\nI think Rob said above that he will deal with panicking in a separate CL.\r\n",
+			"disapproval": false,
+			"date": "2012-08-01 21:54:01.919530",
+			"approval": false
+		},
+		{
+			"sender": "yarikos@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"yarikos@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The path separator is the same as on unix here.\nHere's what go -v -x says:\n\nterm% /go/pkg/tool/plan9_386/go_bootstrap build -v -x runtime\nWORK=/tmp/go-build103475222\nruntime\nmkdir -p $WORK/runtime/_obj/\ncd /go/src/pkg/runtime\n/go/pkg/tool/plan9_386/8g -o $WORK/runtime/_obj/_go_.8 -p runtime -+ -D _/go/src/pkg/runtime -I $WORK ./compiler.go ./debug.go ./error.go ./extern.go ./mem.go ./softfloat64.go ./type.go ./zgoarch_386.go ./zgoos_plan9.go ./zruntime_defs_plan9_386.go ./zversion.go\ngo build runtime: fork/exec /go/pkg/tool/plan9_386/8g: bad arg in system call\n\n\nWhat follows is an excerpt from syscall trace near the point of failure:\n\n149868 go_bootstrap Pwrite e6bfa 1  0x10755000/\"cd./go/src/pkg/runtime./go/pkg/tool/plan9_386/8g.-o.$WORK/runtim\" 286 -1cd /go/src/pkg/runtime\n/go/pkg/tool/plan9_386/8g -o $WORK/runtime/_obj/_go_.8 -p runtime -+ -D _/go/src/pkg/runtime -I $WORK ./compiler.go ./debug.go ./error.go ./extern.go ./mem.go ./softfloat64.go ./type.go ./zgoarch_386.go ./zgoos_plan9.go ./zruntime_defs_plan9_386.go ./zversion.go\n = 286 \"\" 1344258448894496659 1344258448894766522\n149868 go_bootstrap Stat e6ba7 0x1073efe0/\"/go/pkg/tool/plan9_386/8g\" 0x106fd180 113 = 63 \"\" 1344258448895335579 1344258448896411677\n149868 go_bootstrap Open e6ba7 0x10743890/\"/dev/null\" 0x0 = 4 \"\" 1344258448897079628 1344258448897384690\n149868 go_bootstrap Pipe e6ba7 0x10715200 = 0 \"\" 1344258448898021633 1344258448898080298\n149868 go_bootstrap Close e6ba7 4 = 0 \"\" 1344258448898846305 1344258448898855524\n149868 go_bootstrap Close e6ba7 6 = 0 \"\" 1344258448899517609 1344258448899527666\n149868 go_bootstrap Close e6ba7 5 = 0 \"\" 1344258448900188913 1344258448900201484\n149868 go_bootstrap Pread 45737 3 0x30711e28 8 0 0x30711e28/\"......&F\" 8 0 = 8 \"\" 1344258448900819989 1344258448900831722\n149868 go_bootstrap Pwrite e6bfa 2  0x10717140/\"go.build.runtime:.fork/exec./go/pkg/tool/plan9_386/8g:.bad.arg.i\" 78 -1go build runtime: fork/exec /go/pkg/tool/plan9_386/8g: bad arg in system call\n\nThanks.",
+			"disapproval": false,
+			"date": "2012-08-06 13:12:32.306770",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6458050/diff/4001/src/pkg/syscall/syscall.go\nFile src/pkg/syscall/syscall.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/4001/src/pkg/syscall/syscall.go#newcode17\nsrc/pkg/syscall/syscall.go:17: // StringByteSlice returns a NUL-terminated slice of bytes\nassuming we're going with the design proposed in this CL, this function is now deprecated and, in fact, all but unused. it should be marked deprecated and the new function should be exported.\n\nhttp://codereview.appspot.com/6458050/diff/4001/src/pkg/syscall/syscall.go#newcode29\nsrc/pkg/syscall/syscall.go:29: for i := 0; i < len(s); i++ {\nfor i, c := range s\n\nbut this is doing a lot of copying and other stuff that is rarely necessary.\nmake the common path fast.\nfaster but untested:\n\nvar i int\nvar c rune\nfor i, c = range s {\n  if c == '\\x00' {\n    break\n  }\n}\na = make([]byte, i+1)\ncopy(a, s)\nreturn a",
+			"disapproval": false,
+			"date": "2012-07-30 23:54:27.316340",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jul 31, 2012 at 9:30 AM, Alexey Borzenkov <snaury@gmail.com> wrote:\r\n> There are 5 new \"safe\" functions:\r\n>\r\n> - safeStringByteSlice\r\n> - safeStringBytePtr\r\n> - safeStringSlicePtr\r\n> - safeStringToUTF16\r\n> - safeStringToUTF16Ptr\r\n>\r\n> Should all be exported? Not all old functions can be deprecated though.\r\n\r\nOn the other hand, maybe they should be. I just realized at least\r\nWindows versions are used in other packages (e.g.\r\npkg/os/file_windows.go, func openDir) that need to use safe variants.\r\nSo, do I export these new safe functions?\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 05:37:51.138280",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello\r\n\r\nSince the syscall package isn't exhaustive, there's probably quite a few \r\nsyscall wrapper functions in the world that might need everything that is \r\navailable to the wrappers inside the syscall package.\r\n\r\nRegards\r\n\r\nAlbert\r\n\r\nOn Tuesday, July 31, 2012 7:46:57 AM UTC+2, Rob Pike wrote:\r\n>\r\n> The versions of these functions that obsolete existing exported \r\n> functions should be exported.  I don't like the 'safe' name much \r\n> though. I'll sleep on it. \r\n>\r\n> -rob\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 06:16:26.175700",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, bradfitz@golang.org, fullung@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-01 06:12:41.191010",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, bradfitz@golang.org, fullung@gmail.com, rsc@golang.org, minux.ma@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-01 20:46:45.552730",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jul 30, 2012 at 4:36 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> On Mon, Jul 30, 2012 at 4:25 PM, <r@golang.org> wrote:\r\n>>\r\n>> This is a pretty big change and I'm not convinced you need to work this\r\n>> hard. I see two simpler approaches:\r\n>>\r\n>> 1) Just terminate the string at any NUL byte.\r\n>\r\n>\r\n> Go is not C.  That feels wrong.\r\n\r\nBut the Unix syscall interface isn't using Go strings either. I'm not\r\nsaying this is the right answer, but I am dismayed by the amount of\r\nextra processing and handling required to let the user know something\r\nthat's probably not even interesting.\r\n\r\n>> 2) Panic if you see a NUL byte.\r\n>\r\n>\r\n> That also feels wrong.  I don't want input from users (GET /foo%00 HTTP/1.1)\r\n> to panic my programs any more than os.Open(\"/file-not-exist\") panicing my\r\n> programs.\r\n\r\nSee Point 1.\r\n\r\n>> And then there's this CL:\r\n>>\r\n>> 3) Generate an error if there's a NUL byte\r\n>\r\n>\r\n> Go style is to use errors, no?\r\n\r\nYes, but this one... well, it just bugs me. Goo is creeping up through the code.\r\n\r\n> Isn't this what Russ asked for?\r\n\r\nThat doesn't mean I can't question it.\r\n\r\nAgain, I'm asking for discussion here. This is a huge change when\r\ncompared to the likelihood of trouble. Is the tradeoff right?\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-07-30 23:46:13.419660",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/01 19:35:59, snaury wrote:\n> Now fixed a small typo in a windows test and successfully tested on windows/386.\n> Also all tests pass on linux/amd64.\nall test passed on darwin/amd64 and darwin/386.",
+			"disapproval": false,
+			"date": "2012-08-01 19:47:44.141370",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2012-08-05 21:18:45.025280",
+			"approval": true
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think I understand why. On plan9 path separator is NUL, so in env\r\nembedded NULs is a feature, so should be converted differently.\r\nOn Aug 6, 2012 2:08 PM, <yarikos@gmail.com> wrote:\r\n\r\n> the commit breaks builds on Plan 9:\r\n>\r\n> go build runtime: fork/exec /go/pkg/tool/plan9_386/8g: bad arg in system\r\n> call\r\n>\r\n>\r\n> http://codereview.appspot.com/**6458050/<http://codereview.appspot.com/6458050/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-08-06 11:58:02.016780",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-07-30 20:44:14.679690",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6458050/diff/14003/src/pkg/syscall/syscall.go\nFile src/pkg/syscall/syscall.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/14003/src/pkg/syscall/syscall.go#newcode18\nsrc/pkg/syscall/syscall.go:18: // containing the text of s.\nPlease add here the commentary I wrote in a prior review that tells people to use the new functions. Same for StringBytePtr.\n\nhttp://codereview.appspot.com/6458050/diff/14003/src/pkg/syscall/syscall.go#newcode27\nsrc/pkg/syscall/syscall.go:27: // location it additionally returns EINVAL.\nI think on error it should return\nnil, EINVAL\nPeople shouldn't be ignoring this error; it's a security risk.",
+			"disapproval": false,
+			"date": "2012-08-01 20:24:11.608800",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, bradfitz@golang.org, fullung@gmail.com, rsc@golang.org, minux.ma@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-01 21:43:40.274640",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This is a pretty big change and I'm not convinced you need to work this hard. I see two simpler approaches:\n\n1) Just terminate the string at any NUL byte.\n2) Panic if you see a NUL byte.\n\nAnd then there's this CL:\n\n3) Generate an error if there's a NUL byte and update all places that handle strings from the user.\n\nEssay question: compare and contrast.",
+			"disapproval": false,
+			"date": "2012-07-30 23:25:54.705280",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Now fixed a small typo in a windows test and successfully tested on windows/386. Also all tests pass on linux/amd64.",
+			"disapproval": false,
+			"date": "2012-08-01 19:35:59.323080",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jul 30, 2012 at 4:25 PM, <r@golang.org> wrote:\r\n\r\n> This is a pretty big change and I'm not convinced you need to work this\r\n> hard. I see two simpler approaches:\r\n>\r\n> 1) Just terminate the string at any NUL byte.\r\n>\r\n\r\nGo is not C.  That feels wrong.\r\n\r\n\r\n> 2) Panic if you see a NUL byte.\r\n>\r\n\r\nThat also feels wrong.  I don't want input from users (GET /foo%00\r\nHTTP/1.1) to panic my programs any more than os.Open(\"/file-not-exist\")\r\npanicing my programs.\r\n\r\nAnd then there's this CL:\r\n>\r\n> 3) Generate an error if there's a NUL byte\r\n\r\n\r\nGo style is to use errors, no?\r\n\r\n\r\n> and update all places that\r\n> handle strings from the user.\r\n>\r\n\r\nIsn't this what Russ asked for?\r\n",
+			"disapproval": false,
+			"date": "2012-07-30 23:36:42.248040",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Let's leave the question of panic aside for this CL, which is big\r\nenough already. Let's just get the new functions designed and\r\ninstalled.\r\n\r\nIn any case we would not be using the old functions in the standard\r\nlibrary, and this CL should delete all references to them.\r\n\r\nLet me think about the question regarding what to do on error.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 22:46:34.812360",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6458050/diff/3034/src/pkg/crypto/x509/root_windows.go\nFile src/pkg/crypto/x509/root_windows.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/crypto/x509/root_windows.go#newcode102\nsrc/pkg/crypto/x509/root_windows.go:102: if e != nil {\njust use err here (it's declared below already).\nin many of these functions, e is used when err would be better, but don't change them. here err is the local standard (and in general the preferred style) so use it.\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/os/error_test.go\nFile src/pkg/os/error_test.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/os/error_test.go#newcode88\nsrc/pkg/os/error_test.go:88: return\ndelete. Fatal returns.\nsame below\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/os/error_test.go#newcode99\nsrc/pkg/os/error_test.go:99: t.Fatalf(\"open ErrPathNUL second: %s\", err)\ns/ second//\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/env_windows.go\nFile src/pkg/syscall/env_windows.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/env_windows.go#newcode37\nsrc/pkg/syscall/env_windows.go:37: func Setenv(key, value string) (err error) {\nthere's no reason to declare err here\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/exec_plan9.go#newcode68\nsrc/pkg/syscall/exec_plan9.go:68: // arrays of strings to system calls.\nwhile we're here let's make this a more canonical doc comment\n\nStringSlicePtr converts a slice of strings to a slice of pointers to\nNUL-terminated byte slices.\nThis function is a security risk because it does not check for the\npresence of NUL bytes in the strings.  SlicePtrFromStrings should\nbe used instead when the result is to be passed to a system call;\nStringSlicePtr remains only for backward compatibility.\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/exec_plan9.go#newcode82\nsrc/pkg/syscall/exec_plan9.go:82: // passing arrays of strings to system calls.\nditto:\n\n\nSlicePtrFromStrings converts a slice of strings to a slice of pointers to\nNUL-terminated byte slices. If any of the strings contain NUL bytes,\nit returns (nil, EINVAL).\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/exec_unix.go\nFile src/pkg/syscall/exec_unix.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/exec_unix.go#newcode72\nsrc/pkg/syscall/exec_unix.go:72: func StringSlicePtr(ss []string) []*byte {\ncopy rewritten comments from other file.\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/syscall.go\nFile src/pkg/syscall/syscall.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/syscall.go#newcode21\nsrc/pkg/syscall/syscall.go:21: // passing strings to system calls.\ncopy comments from other file.\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/syscall_windows.go\nFile src/pkg/syscall/syscall_windows.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/3034/src/pkg/syscall/syscall_windows.go#newcode60\nsrc/pkg/syscall/syscall_windows.go:60: func StringToUTF16(s string) []uint16 { return utf16.Encode([]rune(s + \"\\x00\")) }\ncopy (and adapt) comments from other file.",
+			"disapproval": false,
+			"date": "2012-08-01 21:08:40.895840",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=86c7b6d67466 ***\n\nsyscall: return EINVAL when string arguments have NUL characters\n\nSince NUL usually terminates strings in underlying syscalls, allowing\nit when converting string arguments is a security risk, especially\nwhen dealing with filenames. For example, a program might reason that\nfilename like \"/root/..\\x00/\" is a subdirectory or \"/root/\" and allow\naccess to it, while underlying syscall will treat \"\\x00\" as an end of\nthat string and the actual filename will be \"/root/..\", which might\nbe unexpected. Returning EINVAL when string arguments have NUL in\nthem makes sure this attack vector is unusable.\n\nR=golang-dev, r, bradfitz, fullung, rsc, minux.ma\nCC=golang-dev\nhttp://codereview.appspot.com/6458050\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2012-08-05 21:24:37.830870",
+			"approval": false
+		},
+		{
+			"sender": "yarikos@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"yarikos@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Could you please see if http://codereview.appspot.com/6454104 fixes plan9 build?\n\nyes, it does. \n\u0421\u043f\u0430\u0441\u0438\u0431\u043e!",
+			"disapproval": false,
+			"date": "2012-08-07 07:40:49.965870",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Okay I have convinced myself we need to do the error version. let's make it\r\nas palatable as possible\r\n\r\nOn Monday, July 30, 2012, Rob Pike wrote:\r\n\r\n> Gri proposes option 4:\r\n>\r\n> 4) Since the returned []byte is different from the string anyway (it\r\n> is one byte longer), if we find an unexpected NUL we can return a name\r\n> that signals that:\r\n>\r\n>   foo\\x00bar becomes, say foo%NULBYTE%bar\r\n>\r\n> That means no API change is necessary, error messages will look good,\r\n> but leaves one ugly corner case I can think of, which is creating a\r\n> file with such an unpleasant name.\r\n>\r\n> -rob\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-07-31 01:05:09.458400",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, bradfitz@golang.org, fullung@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-07-31 19:05:26.955230",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "approach looks good. i didn't read all the files.\n\nhttp://codereview.appspot.com/6458050/diff/14044/src/pkg/syscall/syscall.go\nFile src/pkg/syscall/syscall.go (right):\n\nhttp://codereview.appspot.com/6458050/diff/14044/src/pkg/syscall/syscall.go#newcode19\nsrc/pkg/syscall/syscall.go:19: // This function is a security risk because it does not check for\nThis should panic. On the review someone said that panicking is itself a security risk. I disagree but even so it is a smaller one.\n\na, err := ByteSliceFromString(s)\nif err != nil {\n    panic(\"syscall: string with NUL passed to StringByteSlice\")\n}\nreturn a\n\nThen the comment can be significantly simpler:\n\n// StringByteSlice is deprecated. Use ByteSliceFromString instead.\n// StringByteSlice is like ByteSliceFromString, but if s contains a NUL,\n// StringByteSlice panics instead of returning an error.",
+			"disapproval": false,
+			"date": "2012-08-01 21:49:43.455940",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, bradfitz@golang.org, fullung@gmail.com, rsc@golang.org, minux.ma@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-05 18:11:17.460530",
+			"approval": false
+		},
+		{
+			"sender": "yarikos@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"yarikos@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "the commit breaks builds on Plan 9: \n\ngo build runtime: fork/exec /go/pkg/tool/plan9_386/8g: bad arg in system call",
+			"disapproval": false,
+			"date": "2012-08-06 10:08:50.327780",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "StringToByteSlice SGTM.\n\nI think StringByteSlice could check for NUL and panic (be a thin wrapper around StringToByteSlice).",
+			"disapproval": false,
+			"date": "2012-07-31 19:53:06.869180",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, bradfitz@golang.org, fullung@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-01 18:56:30.331630",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"yarikos@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/06 13:12:32, yarikos wrote:\n> The path separator is the same as on unix here.\n> Here's what go -v -x says:\n\nCould you please see if http://codereview.appspot.com/6454104 fixes plan9 build?",
+			"disapproval": false,
+			"date": "2012-08-06 17:01:56.051680",
+			"approval": false
+		}
+	],
+	"owner_email": "snaury@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "snaury",
+	"subject": "code review 6458050: syscall: return EINVAL when string arguments have NUL c...",
+	"created": "2012-07-30 20:43:22.718770",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		7002,
+		4004,
+		2033,
+		14003,
+		3034,
+		14044,
+		13040,
+		6096
+	],
+	"modified": "2012-08-07 07:40:50.119360",
+	"closed": true,
+	"issue": 6458050
+}

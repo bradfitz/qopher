@@ -1,0 +1,414 @@
+{
+	"description": "net/http: buffer before chunking\n\nThis introduces a buffer between writing from a handler and\nwriting chunks.  Further, it delays writing the header until\nthe first full chunk is ready.  In the case where the first\nfull chunk is also the final chunk (for small responses), that\nmeans we can also compute a Content-Length, which is a nice\nside effect for certain benchmarks.\n\nFixes issue 2357",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"minux.ma@gmail.com",
+		"rsc@golang.org",
+		"adg@golang.org",
+		"balasanjay@gmail.com"
+	],
+	"reviewers": [
+		"fullung@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Dec 19, 2012 at 9:53 AM, <minux.ma@gmail.com> wrote:\r\n\r\n> On 2012/12/19 02:35:37, brad wrote:\r\n>\r\n>> the first full chunk is ready.  In the case where the first\r\n>> full chunk is also the final chunk (for small responses), that\r\n>> means we can also compute a Content-Length, which is a nice\r\n>> side effect for certain benchmarks.\r\n>>\r\n> Any benchmark data available?\r\n>\r\n> my tests shows minor performance gain but doubles memory allocation:\r\n>\r\n\r\nNo benchmark data.\r\n\r\nThe goal of this CL isn't performance.\r\n\r\nBut I think things are simpler now (e.g. the MIME sniffing is in one place,\r\nand not sprinkled about), and I think this CL provides a better base to\r\noptimize from.\r\n\r\nThe extra allocations are expected:  I'm now allocating things which I\r\nwasn't before.  But they're also trivially avoided by re-using the\r\ntoConnWriter & buffer.  But many such objects could be re-used in the same\r\nway.  I'd planned to do those in a future CL, to keep this one easier to\r\nread.  Or do you think this CL should grow to achieve parity first?\r\n",
+			"disapproval": false,
+			"date": "2012-12-19 18:29:35.640960",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> the first full chunk is ready.  In the case where the first\r\n> full chunk is also the final chunk (for small responses), that\r\n> means we can also compute a Content-Length, which is a nice\r\n> side effect for certain benchmarks.\r\n\r\n^ awesome!\r\n",
+			"disapproval": false,
+			"date": "2012-12-19 02:35:37.964120",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-12-19 02:33:32.353070",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/19 02:35:37, brad wrote:\n> the first full chunk is ready.  In the case where the first\n> full chunk is also the final chunk (for small responses), that\n> means we can also compute a Content-Length, which is a nice\n> side effect for certain benchmarks.\nAny benchmark data available?\n\nmy tests shows minor performance gain but doubles memory allocation:\nbenchmark          old ns/op    new ns/op    delta\nBenchmarkServer       141029       140079   -0.67%\n\nbenchmark         old allocs   new allocs    delta\nBenchmarkServer           40           47   17.50%\n\nbenchmark          old bytes    new bytes    delta\nBenchmarkServer         2277         4666  104.92%",
+			"disapproval": false,
+			"date": "2012-12-19 17:53:28.678060",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 20, 2012 at 2:29 AM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> The goal of this CL isn't performance.\r\n>\r\n> But I think things are simpler now (e.g. the MIME sniffing is in one\r\n> place, and not sprinkled about), and I think this CL provides a better base\r\n> to optimize from.\r\n>\r\n> The extra allocations are expected:  I'm now allocating things which I\r\n> wasn't before.  But they're also trivially avoided by re-using the\r\n> toConnWriter & buffer.  But many such objects could be re-used in the same\r\n> way.  I'd planned to do those in a future CL, to keep this one easier to\r\n> read.  Or do you think this CL should grow to achieve parity first?\r\n>\r\nUnderstood. I'm just curios to benchmark this CL, and report my findings.\r\nThank you for your explanations.\r\nwhy we need to deep copy the headers if we don't support trailers (yet)?\r\n",
+			"disapproval": false,
+			"date": "2012-12-19 18:34:20.548130",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Dec 19, 2012 at 10:33 AM, minux <minux.ma@gmail.com> wrote:\r\n\r\n>\r\n> On Thu, Dec 20, 2012 at 2:29 AM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n>\r\n>> The goal of this CL isn't performance.\r\n>>\r\n>> But I think things are simpler now (e.g. the MIME sniffing is in one\r\n>> place, and not sprinkled about), and I think this CL provides a better base\r\n>> to optimize from.\r\n>>\r\n>> The extra allocations are expected:  I'm now allocating things which I\r\n>> wasn't before.  But they're also trivially avoided by re-using the\r\n>> toConnWriter & buffer.  But many such objects could be re-used in the same\r\n>> way.  I'd planned to do those in a future CL, to keep this one easier to\r\n>> read.  Or do you think this CL should grow to achieve parity first?\r\n>>\r\n> Understood. I'm just curios to benchmark this CL, and report my findings.\r\n>\r\n\r\nYeah, that's fine.  Please do.\r\n\r\n\r\n> Thank you for your explanations.\r\n> why we need to deep copy the headers if we don't support trailers (yet)?\r\n>\r\n\r\nNow that WriteHeader is lazy, I wanted to be conservative and preserve the\r\nsame semantics:\r\n\r\n     h := rw.Header()\r\n     h.Set(\"Content-Type\", \"text/foo\")\r\n     rw.WriteHeader(200)\r\n     h.Set(\"Content-Type\", \"XXXXXXXXXX\")  // should be ignored\r\n\r\nThe XXXXXX was previously \"ignored\" because WriteHeader wrote the header\r\nmap to the wire (or at least the rwc buf writer) immediately.  Now that\r\nit's lazy, I want to snapshot the contents of the header map at the time of\r\nWriteHeader.\r\n\r\nThose allocations could also be amortized in a future CL, since the private\r\nmap clone in toConnWriter and its []string fields never escape the net/http\r\npackage.\r\n",
+			"disapproval": false,
+			"date": "2012-12-19 18:52:55.496600",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ping.\r\n\r\nR=rsc + anybody else\r\n\r\n\r\nOn Tue, Dec 18, 2012 at 6:33 PM, <bradfitz@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> net/http: buffer before chunking\r\n>\r\n> This introduces a buffer between writing from a handler and\r\n> writing chunks.  Further, it delays writing the header until\r\n> the first full chunk is ready.  In the case where the first\r\n> full chunk is also the final chunk (for small responses), that\r\n> means we can also compute a Content-Length, which is a nice\r\n> side effect for certain benchmarks.\r\n>\r\n> Fixes issue 2357\r\n>\r\n> Please review this at https://codereview.appspot.**com/6964043/<https://codereview.appspot.com/6964043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/http/serve_test.go\r\n>   M src/pkg/net/http/server.go\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-07 19:34:49.098100",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, minux.ma@gmail.com, rsc@golang.org, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-08 19:23:21.957420",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have read through this a few times and I'm not sure I understand it fully. It has a bit of a spaghetti flavor, particularly because the twc reaches into the response conn.\n\nNote that I feel a bit lame making this criticism, because the problem is complex and I it's not in my head, so I can't offer a simpler approach. Sorry :/\n\nhttps://codereview.appspot.com/6964043/diff/5001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/6964043/diff/5001/src/pkg/net/http/server.go#newcode358\nsrc/pkg/net/http/server.go:358: if w.req.Method == \"HEAD\" || code == StatusNotModified {\nconsider using a switch statement\n\nhttps://codereview.appspot.com/6964043/diff/8001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/6964043/diff/8001/src/pkg/net/http/server.go#newcode195\nsrc/pkg/net/http/server.go:195: func cloneHeader(h Header) Header {\nthis could be\n\nfunc (h Header) clone() Header",
+			"disapproval": false,
+			"date": "2013-01-08 05:15:08.285730",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6964043/diff/5001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/6964043/diff/5001/src/pkg/net/http/server.go#newcode358\nsrc/pkg/net/http/server.go:358: if w.req.Method == \"HEAD\" || code == StatusNotModified {\nOn 2013/01/08 05:15:08, adg wrote:\n> consider using a switch statement\n\nThis is just code movement.  I could try to move things around so the diff looks smaller, at the cost of overall ordering.  Or I could reorder it in a follow-up CL?",
+			"disapproval": false,
+			"date": "2013-01-08 05:33:34.535390",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 7 January 2013 21:33, <bradfitz@golang.org> wrote:\r\n\r\n> This is just code movement.  I could try to move things around so the\r\n> diff looks smaller, at the cost of overall ordering.  Or I could reorder\r\n> it in a follow-up CL?\r\n>\r\n\r\nIt might be nice to avoid the big diff. I saw that it was just code moving,\r\nbut maybe the reduced diff would help.\r\n",
+			"disapproval": false,
+			"date": "2013-01-08 05:38:58.184060",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nAll these wrapped writers are hard to keep straight in my head, but now I understand what is going on it's quite clear, and seems correct to me.\n\nMy main request is more documentation about what's going on. Perhaps a higher-level comment that describes the layers from ResponseWriter to the underlying net.Conn would be helpful.\n\nhttps://codereview.appspot.com/6964043/diff/17001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/6964043/diff/17001/src/pkg/net/http/server.go#newcode199\nsrc/pkg/net/http/server.go:199: // toConnWriter writes to a response's conn buffer, and is the writer\nthat's not all it does.  can you expand this comment a little?\n\nhttps://codereview.appspot.com/6964043/diff/17001/src/pkg/net/http/server.go#newcode206\nsrc/pkg/net/http/server.go:206: // Set after header is written:\nperhaps \"set by the writeHeader method\" ?\n\nhttps://codereview.appspot.com/6964043/diff/17001/src/pkg/net/http/server.go#newcode471\nsrc/pkg/net/http/server.go:471: log.Printf(\"http: invalid Content-Length of %q sent\", cl)\nsent or specified? does it actually get sent?\n\nhttps://codereview.appspot.com/6964043/diff/17001/src/pkg/net/http/server.go#newcode485\nsrc/pkg/net/http/server.go:485: func (cw *toConnWriter) writeHeader(p []byte) {\ni feel this should be named 'tcw' to reflect the field name, so you know they're one and the same\n\nhttps://codereview.appspot.com/6964043/diff/17001/src/pkg/net/http/server.go#newcode492\nsrc/pkg/net/http/server.go:492: code := cw.res.status\nw.status\n\nhttps://codereview.appspot.com/6964043/diff/17001/src/pkg/net/http/server.go#newcode558\nsrc/pkg/net/http/server.go:558: cw.header.Set(\"Content-Type\", DetectContentType(p))\nnice",
+			"disapproval": false,
+			"date": "2013-01-09 00:10:19.340650",
+			"approval": true
+		},
+		{
+			"sender": "balasanjay@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"balasanjay@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "drive-by typo...\n\nhttps://codereview.appspot.com/6964043/diff/17001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/6964043/diff/17001/src/pkg/net/http/server.go#newcode283\nsrc/pkg/net/http/server.go:283: handlerDone bool // set true when the handler exists\ns/exists/exits/",
+			"disapproval": false,
+			"date": "2013-01-09 02:51:47.934960",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6964043/diff/8001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/6964043/diff/8001/src/pkg/net/http/server.go#newcode195\nsrc/pkg/net/http/server.go:195: func cloneHeader(h Header) Header {\nOn 2013/01/08 05:15:08, adg wrote:\n> this could be\n> \n> func (h Header) clone() Header\n\nDone, and moved to header.go.  Putting it here was lazy.",
+			"disapproval": false,
+			"date": "2013-01-08 19:23:15.189850",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Code is now rearranged so the diff is more readable.\r\n\r\nI can rearrange it back later.\r\n\r\n\r\nOn Tue, Jan 8, 2013 at 11:23 AM, <bradfitz@golang.org> wrote:\r\n\r\n> Hello golang-dev@googlegroups.com, dave@cheney.net, minux.ma@gmail.com,\r\n> rsc@golang.org, adg@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> Please take another look.\r\n>\r\n>\r\n> https://codereview.appspot.**com/6964043/<https://codereview.appspot.com/6964043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-08 19:24:13.832370",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"balasanjay@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, minux.ma@gmail.com, rsc@golang.org, adg@golang.org, balasanjay@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-10 00:46:41.291330",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "All done, and lots of comments and TODOs added.  PTAL.\r\n\r\nOn Wed, Jan 9, 2013 at 4:46 PM, <bradfitz@golang.org> wrote:\r\n\r\n> Hello golang-dev@googlegroups.com, dave@cheney.net, minux.ma@gmail.com,\r\n> rsc@golang.org, adg@golang.org, balasanjay@gmail.com (cc:\r\n>\r\n> golang-dev@googlegroups.com),\r\n>\r\n> Please take another look.\r\n>\r\n>\r\n> https://codereview.appspot.**com/6964043/<https://codereview.appspot.com/6964043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-10 00:49:01.305360",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Andrew,\r\n\r\nWhat about the name \"chunkWriter\" instead of \"toConnWriter\"?  It is the\r\nwriter that writes chunks and the chunk headers now.  It just also happens\r\nto the header fixups also.  Naming where it is in the pipeline is weird,\r\nand naming all the things it does is also kinda weird.\r\n\r\nThe big comment should make it easier to understand now without having to\r\nuse the type name to describe its position.\r\n\r\nThoughts?\r\n\r\n\r\nOn Wed, Jan 9, 2013 at 4:48 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> All done, and lots of comments and TODOs added.  PTAL.\r\n>\r\n>\r\n> On Wed, Jan 9, 2013 at 4:46 PM, <bradfitz@golang.org> wrote:\r\n>\r\n>> Hello golang-dev@googlegroups.com, dave@cheney.net, minux.ma@gmail.com,\r\n>> rsc@golang.org, adg@golang.org, balasanjay@gmail.com (cc:\r\n>>\r\n>> golang-dev@googlegroups.com),\r\n>>\r\n>> Please take another look.\r\n>>\r\n>>\r\n>> https://codereview.appspot.**com/6964043/<https://codereview.appspot.com/6964043/>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-11 01:51:57.104700",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 11 January 2013 12:51, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n\r\n> What about the name \"chunkWriter\" instead of \"toConnWriter\"?  It is the\r\n> writer that writes chunks and the chunk headers now.  It just also happens\r\n> to the header fixups also.  Naming where it is in the pipeline is weird,\r\n> and naming all the things it does is also kinda weird.\r\n>\r\n\r\nI agree. chunkWriter is much more appropriate.\r\n",
+			"disapproval": false,
+			"date": "2013-01-11 02:55:45.901090",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello\r\n\r\nOn Tue, Jan 15, 2013 at 3:02 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> This CL changed nothing about concurrency.\r\n> It did, however, change chunking.  But the tests were adjusted.\r\n> Is this a sporadic failure?  How to reproduce?  I have machines with over 10\r\n> cores.\r\n\r\nXeon E5-2670 0 @ 2.60GHz, performance governor, F16 64-bit kernel 3.3.8.\r\n\r\nTest always passes with GOMAXPROCS=1 and fails about 80% of the time\r\nwith GOMAXPROCS=2 or greater.\r\n\r\nHere's a few runs:\r\n\r\n$ GOMAXPROCS=1 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking\r\n--- PASS: TestServerBufferedChunking (0.00 seconds)\r\nPASS\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\nserve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\nchunk; got:\r\n        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\ncharset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:27\r\nGMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\nFAIL\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\nPASS\r\n$ GOMAXPROCS=1 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking\r\n--- PASS: TestServerBufferedChunking (0.00 seconds)\r\nPASS\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\nPASS\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\nserve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\nchunk; got:\r\n        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\ncharset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:40\r\nGMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\nFAIL\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\nserve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\nchunk; got:\r\n        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\ncharset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:41\r\nGMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\nFAIL\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\nPASS\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\nPASS\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\nserve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\nchunk; got:\r\n        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\ncharset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\nGMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\nFAIL\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\nserve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\nchunk; got:\r\n        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\ncharset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\nGMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\nFAIL\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\nserve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\nchunk; got:\r\n        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\ncharset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\nGMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\nFAIL\r\n$ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n=== RUN TestServerBufferedChunking-2\r\n--- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\nPASS\r\n\r\nRegards\r\n\r\nAlbert\r\n",
+			"disapproval": false,
+			"date": "2013-01-15 09:16:59.429070",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jan 10, 2013 at 6:55 PM, Andrew Gerrand <adg@golang.org> wrote:\r\n\r\n>\r\n> On 11 January 2013 12:51, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n>\r\n>> What about the name \"chunkWriter\" instead of \"toConnWriter\"?  It is the\r\n>> writer that writes chunks and the chunk headers now.  It just also happens\r\n>> to the header fixups also.  Naming where it is in the pipeline is weird,\r\n>> and naming all the things it does is also kinda weird.\r\n>>\r\n>\r\n> I agree. chunkWriter is much more appropriate.\r\n>\r\n\r\nRenamed. Submitting.\r\n",
+			"disapproval": false,
+			"date": "2013-01-11 18:03:09.871120",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"balasanjay@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=fc9545bf5a1f ***\n\nnet/http: buffer before chunking\n\nThis introduces a buffer between writing from a handler and\nwriting chunks.  Further, it delays writing the header until\nthe first full chunk is ready.  In the case where the first\nfull chunk is also the final chunk (for small responses), that\nmeans we can also compute a Content-Length, which is a nice\nside effect for certain benchmarks.\n\nFixes issue 2357\n\nR=golang-dev, dave, minux.ma, rsc, adg, balasanjay\nCC=golang-dev\nhttps://codereview.appspot.com/6964043",
+			"disapproval": false,
+			"date": "2013-01-11 18:03:46.474730",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Great catch Brad!\r\n\r\nAlbert, thank you for being so persistent with this issue. I'm sorry\r\nthat I thought this was some weird Fedora kernel issue. At least for\r\nevery failure we find and fix we gain more confidence that the next\r\nfailure reported _is_ real.\r\n\r\nOn Wed, Jan 16, 2013 at 2:06 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> Reproduced on my laptop with GOMAXPROCS=4.\r\n>\r\n> Fix is https://codereview.appspot.com/7109043\r\n>\r\n>\r\n> On Tue, Jan 15, 2013 at 1:16 AM, Albert Strasheim <fullung@gmail.com> wrote:\r\n>>\r\n>> Hello\r\n>>\r\n>> On Tue, Jan 15, 2013 at 3:02 AM, Brad Fitzpatrick <bradfitz@golang.org>\r\n>> wrote:\r\n>> > This CL changed nothing about concurrency.\r\n>> > It did, however, change chunking.  But the tests were adjusted.\r\n>> > Is this a sporadic failure?  How to reproduce?  I have machines with\r\n>> > over 10\r\n>> > cores.\r\n>>\r\n>> Xeon E5-2670 0 @ 2.60GHz, performance governor, F16 64-bit kernel 3.3.8.\r\n>>\r\n>> Test always passes with GOMAXPROCS=1 and fails about 80% of the time\r\n>> with GOMAXPROCS=2 or greater.\r\n>>\r\n>> Here's a few runs:\r\n>>\r\n>> $ GOMAXPROCS=1 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking\r\n>> --- PASS: TestServerBufferedChunking (0.00 seconds)\r\n>> PASS\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n>> chunk; got:\r\n>>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n>> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:27\r\n>> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n>> FAIL\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> PASS\r\n>> $ GOMAXPROCS=1 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking\r\n>> --- PASS: TestServerBufferedChunking (0.00 seconds)\r\n>> PASS\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> PASS\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n>> chunk; got:\r\n>>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n>> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:40\r\n>> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n>> FAIL\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n>> chunk; got:\r\n>>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n>> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:41\r\n>> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n>> FAIL\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> PASS\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> PASS\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n>> chunk; got:\r\n>>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n>> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\n>> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n>> FAIL\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n>> chunk; got:\r\n>>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n>> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\n>> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n>> FAIL\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n>> chunk; got:\r\n>>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n>> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\n>> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n>> FAIL\r\n>> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n>> === RUN TestServerBufferedChunking-2\r\n>> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n>> PASS\r\n>>\r\n>> Regards\r\n>>\r\n>> Albert\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-15 20:03:52.985100",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"minux.ma@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"balasanjay@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Howdy\n\nThere seems to be something wrong according to the torture box:\n\nFAIL: TestServerBufferedChunking-10 at serve_test.go:1165\n\nresponse didn't end with a single 3 byte 'xyz' chunk; got: \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nDate: Mon, 14 Jan 2013 08:24:10 GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\n\nLooks a bit like this stuff from a while ago, but maybe that's just a coincidence.\n\nhttp://code.google.com/p/go/issues/detail?id=4021\n\nCheers\n\nAlbert",
+			"disapproval": false,
+			"date": "2013-01-14 08:30:10.665690",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This CL changed nothing about concurrency.\r\n\r\nIt did, however, change chunking.  But the tests were adjusted.\r\n\r\nIs this a sporadic failure?  How to reproduce?  I have machines with over\r\n10 cores.\r\n\r\n\r\nOn Mon, Jan 14, 2013 at 12:30 AM, <fullung@gmail.com> wrote:\r\n\r\n> Howdy\r\n>\r\n> There seems to be something wrong according to the torture box:\r\n>\r\n> FAIL: TestServerBufferedChunking-10 at serve_test.go:1165\r\n>\r\n> response didn't end with a single 3 byte 'xyz' chunk; got: \"HTTP/1.1 200\r\n> OK\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nDate: Mon, 14 Jan 2013\r\n> 08:24:10 GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n>\r\n> Looks a bit like this stuff from a while ago, but maybe that's just a\r\n> coincidence.\r\n>\r\n> http://code.google.com/p/go/**issues/detail?id=4021<http://code.google.com/p/go/issues/detail?id=4021>\r\n>\r\n> Cheers\r\n>\r\n> Albert\r\n>\r\n> https://codereview.appspot.**com/6964043/<https://codereview.appspot.com/6964043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-15 01:02:45.793790",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I know it is a big ask, but it would be a very useful data point for me if you were able to test this under another Linux distro on this hardware. It would be sufficient to do this from a live cd using a prebuilt binary from go test -c. \r\n\r\nIs that an option ?\r\n\r\nOn 15/01/2013, at 20:16, Albert Strasheim <fullung@gmail.com> wrote:\r\n\r\n> Hello\r\n> \r\n> On Tue, Jan 15, 2013 at 3:02 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n>> This CL changed nothing about concurrency.\r\n>> It did, however, change chunking.  But the tests were adjusted.\r\n>> Is this a sporadic failure?  How to reproduce?  I have machines with over 10\r\n>> cores.\r\n> \r\n> Xeon E5-2670 0 @ 2.60GHz, performance governor, F16 64-bit kernel 3.3.8.\r\n> \r\n> Test always passes with GOMAXPROCS=1 and fails about 80% of the time\r\n> with GOMAXPROCS=2 or greater.\r\n> \r\n> Here's a few runs:\r\n> \r\n> $ GOMAXPROCS=1 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking\r\n> --- PASS: TestServerBufferedChunking (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:27\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=1 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking\r\n> --- PASS: TestServerBufferedChunking (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:40\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:41\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>        \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n> \r\n> Regards\r\n> \r\n> Albert\r\n",
+			"disapproval": false,
+			"date": "2013-01-15 09:21:08.438400",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello\r\n\r\nOn Tue, Jan 15, 2013 at 11:21 AM, Dave Cheney <dave@cheney.net> wrote:\r\n> I know it is a big ask, but it would be a very useful data point for me if you were able to test this under another Linux distro on this hardware. It would be sufficient to do this from a live cd using a prebuilt binary from go test -c.\r\n> Is that an option ?\r\n\r\nThis Xeon is in use by multiple people, so that's a bit tricky.\r\n\r\nI can also reproduce this on F17 on a i7-3720QM running\r\n3.6.3-1.fc17.x86_64. I'll fire up an Ubuntu live CD to see what I see.\r\n\r\nCheers\r\n\r\nAlbert\r\n",
+			"disapproval": false,
+			"date": "2013-01-15 09:36:41.378800",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks, that would be a very useful datapoint.\r\n\r\nOn Tue, Jan 15, 2013 at 8:36 PM, Albert Strasheim <fullung@gmail.com> wrote:\r\n> Hello\r\n>\r\n> On Tue, Jan 15, 2013 at 11:21 AM, Dave Cheney <dave@cheney.net> wrote:\r\n>> I know it is a big ask, but it would be a very useful data point for me if you were able to test this under another Linux distro on this hardware. It would be sufficient to do this from a live cd using a prebuilt binary from go test -c.\r\n>> Is that an option ?\r\n>\r\n> This Xeon is in use by multiple people, so that's a bit tricky.\r\n>\r\n> I can also reproduce this on F17 on a i7-3720QM running\r\n> 3.6.3-1.fc17.x86_64. I'll fire up an Ubuntu live CD to see what I see.\r\n>\r\n> Cheers\r\n>\r\n> Albert\r\n",
+			"disapproval": false,
+			"date": "2013-01-15 09:42:14.747880",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Reproduced on my laptop with GOMAXPROCS=4.\r\n\r\nFix is https://codereview.appspot.com/7109043\r\n\r\nOn Tue, Jan 15, 2013 at 1:16 AM, Albert Strasheim <fullung@gmail.com> wrote:\r\n\r\n> Hello\r\n>\r\n> On Tue, Jan 15, 2013 at 3:02 AM, Brad Fitzpatrick <bradfitz@golang.org>\r\n> wrote:\r\n> > This CL changed nothing about concurrency.\r\n> > It did, however, change chunking.  But the tests were adjusted.\r\n> > Is this a sporadic failure?  How to reproduce?  I have machines with\r\n> over 10\r\n> > cores.\r\n>\r\n> Xeon E5-2670 0 @ 2.60GHz, performance governor, F16 64-bit kernel 3.3.8.\r\n>\r\n> Test always passes with GOMAXPROCS=1 and fails about 80% of the time\r\n> with GOMAXPROCS=2 or greater.\r\n>\r\n> Here's a few runs:\r\n>\r\n> $ GOMAXPROCS=1 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking\r\n> --- PASS: TestServerBufferedChunking (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:27\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=1 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking\r\n> --- PASS: TestServerBufferedChunking (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:40\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:41\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- FAIL: TestServerBufferedChunking-2 (0.00 seconds)\r\n> serve_test.go:1165:     response didn't end with a single 3 byte 'xyz'\r\n> chunk; got:\r\n>         \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain;\r\n> charset=utf-8\\r\\nDate: Tue, 15 Jan 2013 09:12:43\r\n> GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n> FAIL\r\n> $ GOMAXPROCS=2 ./http.test -test.v -test.run=TestServerBufferedChunking\r\n> === RUN TestServerBufferedChunking-2\r\n> --- PASS: TestServerBufferedChunking-2 (0.00 seconds)\r\n> PASS\r\n>\r\n> Regards\r\n>\r\n> Albert\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-15 15:06:56.994560",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Btw, we really should have at least one GOMAXPROCS >1 builder on the\r\ndashboard.  But thanks again for being our dashboard in the meantime and\r\nfinding all these.\r\n\r\nOn Mon, Jan 14, 2013 at 12:30 AM, <fullung@gmail.com> wrote:\r\n\r\n> Howdy\r\n>\r\n> There seems to be something wrong according to the torture box:\r\n>\r\n> FAIL: TestServerBufferedChunking-10 at serve_test.go:1165\r\n>\r\n> response didn't end with a single 3 byte 'xyz' chunk; got: \"HTTP/1.1 200\r\n> OK\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nDate: Mon, 14 Jan 2013\r\n> 08:24:10 GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n>\r\n> Looks a bit like this stuff from a while ago, but maybe that's just a\r\n> coincidence.\r\n>\r\n> http://code.google.com/p/go/**issues/detail?id=4021<http://code.google.com/p/go/issues/detail?id=4021>\r\n>\r\n> Cheers\r\n>\r\n> Albert\r\n>\r\n> https://codereview.appspot.**com/6964043/<https://codereview.appspot.com/6964043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-15 15:09:09.919260",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I set my Darwin builders to GOMAXPROCS=4 yesterday. \r\n\r\nOn 16/01/2013, at 2:09, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n\r\n> Btw, we really should have at least one GOMAXPROCS >1 builder on the dashboard.  But thanks again for being our dashboard in the meantime and finding all these.\r\n> \r\n> On Mon, Jan 14, 2013 at 12:30 AM, <fullung@gmail.com> wrote:\r\n>> Howdy\r\n>> \r\n>> There seems to be something wrong according to the torture box:\r\n>> \r\n>> FAIL: TestServerBufferedChunking-10 at serve_test.go:1165\r\n>> \r\n>> response didn't end with a single 3 byte 'xyz' chunk; got: \"HTTP/1.1 200\r\n>> OK\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nDate: Mon, 14 Jan 2013\r\n>> 08:24:10 GMT\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\"\r\n>> \r\n>> Looks a bit like this stuff from a while ago, but maybe that's just a\r\n>> coincidence.\r\n>> \r\n>> http://code.google.com/p/go/issues/detail?id=4021\r\n>> \r\n>> Cheers\r\n>> \r\n>> Albert\r\n>> \r\n>> https://codereview.appspot.com/6964043/\r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-01-15 19:19:49.305430",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 6964043: net/http: buffer before chunking",
+	"created": "2012-12-19 00:55:09.231400",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		17001,
+		21001,
+		26001,
+		29001
+	],
+	"modified": "2013-01-14 08:30:10.890160",
+	"closed": true,
+	"issue": 6964043
+}

@@ -1,0 +1,79 @@
+{
+	"description": "undo CL 6112054 / 2eec2501961c\n\nNow that we've fixed the Expect: test, this CL should be okay.\n\n\u00ab\u00ab\u00ab original CL description\nnet/http: revert 97d027b3aa68\n\nRevert the following change set:\n\n        changeset:   13018:97d027b3aa68\n        user:        Gustavo Niemeyer <gustavo@niemeyer.net>\n        date:        Mon Apr 23 22:00:16 2012 -0300\n        summary:     net/http: allow clients to disable keep-alive\n\nThis broke a test on Windows 64 and somebody else\nwill have to check.\n\nR=golang-dev, r\nCC=golang-dev\nhttp://codereview.appspot.com/6112054\n\u00bb\u00bb\u00bb\n\nFixes issue 3540.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nThere's a TODO that should (or at least could) be done with this CL too.\r\n\r\nbradfitz@gopher:~/go/src$ grep -A 5 -r -E TODO.*gustavo pkg/net/http/\r\npkg/net/http/transport_test.go: // TODO(bradfitz,gustavo): make the\r\nfollowing\r\npkg/net/http/transport_test.go- // line an Errorf, not Logf, once issue 3540\r\npkg/net/http/transport_test.go- // is fixed again.\r\npkg/net/http/transport_test.go- t.Logf(\"TCP connection #%d (of %d total)\r\nwas not closed\", i+1, len(tcs.list))\r\npkg/net/http/transport_test.go- }\r\npkg/net/http/transport_test.go- }\r\n\r\nAnd this can re-\"Fixes issue 3540\".\r\n\r\n\r\nOn Tue, May 22, 2012 at 10:49 AM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> undo CL 6112054 / 2eec2501961c\r\n>\r\n> Now that we've fixed the Expect: test, this CL should be okay.\r\n>\r\n> \u00ab\u00ab\u00ab original CL description\r\n> net/http: revert 97d027b3aa68\r\n>\r\n> Revert the following change set:\r\n>\r\n>        changeset:   13018:97d027b3aa68\r\n>        user:        Gustavo Niemeyer <gustavo@niemeyer.net>\r\n>        date:        Mon Apr 23 22:00:16 2012 -0300\r\n>        summary:     net/http: allow clients to disable keep-alive\r\n>\r\n> This broke a test on Windows 64 and somebody else\r\n> will have to check.\r\n>\r\n> R=golang-dev, r\r\n> CC=golang-dev\r\n> http://codereview.appspot.com/**6112054<http://codereview.appspot.com/6112054>\r\n> \u00bb\u00bb\u00bb\r\n>\r\n> Please review this at http://codereview.appspot.com/**6228046/<http://codereview.appspot.com/6228046/>\r\n>\r\n> Affected files:\r\n>  M src/pkg/net/http/request.go\r\n>  M src/pkg/net/http/serve_test.go\r\n>  M src/pkg/net/http/server.go\r\n>\r\n>\r\n> Index: src/pkg/net/http/request.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/http/request.go\r\n> +++ b/src/pkg/net/http/request.go\r\n> @@ -732,12 +732,24 @@\r\n>  }\r\n>\r\n>  func (r *Request) expectsContinue() bool {\r\n> -       return strings.ToLower(r.Header.Get(\"**Expect\")) == \"100-continue\"\r\n> +       return hasToken(r.Header.Get(\"Expect\"**), \"100-continue\")\r\n>  }\r\n>\r\n>  func (r *Request) wantsHttp10KeepAlive() bool {\r\n>        if r.ProtoMajor != 1 || r.ProtoMinor != 0 {\r\n>                return false\r\n>        }\r\n> -       return strings.Contains(strings.**ToLower(r.Header.Get(\"**Connection\")),\r\n> \"keep-alive\")\r\n> +       return hasToken(r.Header.Get(\"**Connection\"), \"keep-alive\")\r\n>  }\r\n> +\r\n> +func (r *Request) wantsClose() bool {\r\n> +       return hasToken(r.Header.Get(\"**Connection\"), \"close\")\r\n> +}\r\n> +\r\n> +func hasToken(s, token string) bool {\r\n> +       if s == \"\" {\r\n> +               return false\r\n> +       }\r\n> +       // TODO This is a poor implementation of the RFC. See\r\n> http://golang.org/issue/3535\r\n> +       return strings.Contains(strings.**ToLower(s), token)\r\n> +}\r\n> Index: src/pkg/net/http/serve_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/http/serve_test.**go\r\n> +++ b/src/pkg/net/http/serve_test.**go\r\n> @@ -370,7 +370,7 @@\r\n>        })\r\n>  }\r\n>\r\n> -func testTcpConnectionCloses(t *testing.T, req string, h Handler) {\r\n> +func testTCPConnectionCloses(t *testing.T, req string, h Handler) {\r\n>        s := httptest.NewServer(h)\r\n>        defer s.Close()\r\n>\r\n> @@ -410,21 +410,28 @@\r\n>\r\n>  // TestServeHTTP10Close verifies that HTTP/1.0 requests won't be kept\r\n> alive.\r\n>  func TestServeHTTP10Close(t *testing.T) {\r\n> -       testTcpConnectionCloses(t, \"GET / HTTP/1.0\\r\\n\\r\\n\",\r\n> HandlerFunc(func(w ResponseWriter, r *Request) {\r\n> +       testTCPConnectionCloses(t, \"GET / HTTP/1.0\\r\\n\\r\\n\",\r\n> HandlerFunc(func(w ResponseWriter, r *Request) {\r\n>                ServeFile(w, r, \"testdata/file\")\r\n>        }))\r\n>  }\r\n>\r\n> +// TestClientCanClose verifies that clients can also force a connection\r\n> to close.\r\n> +func TestClientCanClose(t *testing.T) {\r\n> +       testTCPConnectionCloses(t, \"GET / HTTP/1.1\\r\\nConnection:\r\n> close\\r\\n\\r\\n\", HandlerFunc(func(w ResponseWriter, r *Request) {\r\n> +               // Nothing.\r\n> +       }))\r\n> +}\r\n> +\r\n>  // TestHandlersCanSetConnectionCl**ose verifies that handlers can force\r\n> a connection to close,\r\n>  // even for HTTP/1.1 requests.\r\n>  func TestHandlersCanSetConnectionCl**ose11(t *testing.T) {\r\n> -       testTcpConnectionCloses(t, \"GET / HTTP/1.1\\r\\n\\r\\n\",\r\n> HandlerFunc(func(w ResponseWriter, r *Request) {\r\n> +       testTCPConnectionCloses(t, \"GET / HTTP/1.1\\r\\n\\r\\n\",\r\n> HandlerFunc(func(w ResponseWriter, r *Request) {\r\n>                w.Header().Set(\"Connection\", \"close\")\r\n>        }))\r\n>  }\r\n>\r\n>  func TestHandlersCanSetConnectionCl**ose10(t *testing.T) {\r\n> -       testTcpConnectionCloses(t, \"GET / HTTP/1.0\\r\\nConnection:\r\n> keep-alive\\r\\n\\r\\n\", HandlerFunc(func(w ResponseWriter, r *Request) {\r\n> +       testTCPConnectionCloses(t, \"GET / HTTP/1.0\\r\\nConnection:\r\n> keep-alive\\r\\n\\r\\n\", HandlerFunc(func(w ResponseWriter, r *Request) {\r\n>                w.Header().Set(\"Connection\", \"close\")\r\n>        }))\r\n>  }\r\n> Index: src/pkg/net/http/server.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/http/server.go\r\n> +++ b/src/pkg/net/http/server.go\r\n> @@ -303,8 +303,7 @@\r\n>                if !connectionHeaderSet {\r\n>                        w.header.Set(\"Connection\", \"keep-alive\")\r\n>                }\r\n> -       } else if !w.req.ProtoAtLeast(1, 1) {\r\n> -               // Client did not ask to keep connection alive.\r\n> +       } else if !w.req.ProtoAtLeast(1, 1) || w.req.wantsClose() {\r\n>                w.closeAfterReply = true\r\n>        }\r\n>\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 17:54:27.369552",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=fa807f847959 ***\n\nundo CL 6112054 / 2eec2501961c\n\nNow that we've fixed the Expect: test, this CL should be okay.\n\n\u00ab\u00ab\u00ab original CL description\nnet/http: revert 97d027b3aa68\n\nRevert the following change set:\n\n        changeset:   13018:97d027b3aa68\n        user:        Gustavo Niemeyer <gustavo@niemeyer.net>\n        date:        Mon Apr 23 22:00:16 2012 -0300\n        summary:     net/http: allow clients to disable keep-alive\n\nThis broke a test on Windows 64 and somebody else\nwill have to check.\n\nR=golang-dev, r\nCC=golang-dev\nhttp://codereview.appspot.com/6112054\n\u00bb\u00bb\u00bb\n\nFixes issue 3540.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6228046",
+			"disapproval": false,
+			"date": "2012-05-22 17:56:44.168341",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-05-22 17:49:37.919858",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'd rather not touch that file in this CL, since it's not part of the\r\noriginal, and this is already an undo of an undo, but I will add the\r\nFixes note.\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 17:56:23.417175",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 22, 2012 at 10:56 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> I'd rather not touch that file in this CL, since it's not part of the\r\n> original,\r\n>\r\n\r\nokay, CL coming after testing it.\r\n",
+			"disapproval": false,
+			"date": "2012-05-22 17:59:15.966457",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6228046: undo CL 6112054 / 2eec2501961c",
+	"created": "2012-05-22 17:48:19.044285",
+	"patchsets": [
+		1,
+		2001,
+		7001
+	],
+	"modified": "2012-05-22 17:56:45.199743",
+	"closed": true,
+	"issue": 6228046
+}

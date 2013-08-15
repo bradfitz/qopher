@@ -1,0 +1,111 @@
+{
+	"description": "exp/ssh: improve client channel close behavior",
+	"cc": [
+		"gustav.paul@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"cw@f00f.org"
+	],
+	"messages": [
+		{
+			"sender": "gustav.paul@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"gustav.paul@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM, just one comment inline.\n\nhttp://codereview.appspot.com/5480062/diff/5002/src/pkg/exp/ssh/client.go\nFile src/pkg/exp/ssh/client.go (right):\n\nhttp://codereview.appspot.com/5480062/diff/5002/src/pkg/exp/ssh/client.go#newcode371\nsrc/pkg/exp/ssh/client.go:371: return c.sendClose()\nI wonder if calling c.stdin.Close() before c.sendClose() might be in order?",
+			"disapproval": false,
+			"date": "2011-12-12 14:00:56.917526",
+			"approval": true
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=91c80f889b73 ***\n\nexp/ssh: improve client channel close behavior\n\nR=gustav.paul\nCC=golang-dev\nhttp://codereview.appspot.com/5480062\n\nCommitter: Adam Langley <agl@golang.org>\n\nhttp://codereview.appspot.com/5480062/diff/6003/src/pkg/exp/ssh/client.go\nFile src/pkg/exp/ssh/client.go (right):\n\nhttp://codereview.appspot.com/5480062/diff/6003/src/pkg/exp/ssh/client.go#newcode311\nsrc/pkg/exp/ssh/client.go:311: weClosed   bool // incidates the close msg has been send from our side\ns/send/sent/",
+			"disapproval": false,
+			"date": "2011-12-13 15:27:38.435925",
+			"approval": false
+		},
+		{
+			"sender": "gustav.paul@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn Tue, Dec 13, 2011 at 1:08 PM, <dave@cheney.net> wrote:\n\n> Reviewers: gpaul,\n>\n> Message:\n> Hello gustav.paul@gmail.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> exp/ssh: improve client channel close behavior\n>\n> Please review this at http://codereview.appspot.com/**5480062/<http://codereview.appspot.com/5480062/>\n>\n> Affected files:\n>  M src/pkg/exp/ssh/client.go\n>\n>\n> Index: src/pkg/exp/ssh/client.go\n> ==============================**==============================**=======\n> --- a/src/pkg/exp/ssh/client.go\n> +++ b/src/pkg/exp/ssh/client.go\n> @@ -200,7 +200,7 @@\n>                        peersId := uint32(packet[1])<<24 |\n> uint32(packet[2])<<16 | uint32(packet[3])<<8 | uint32(packet[4])\n>                        if length := int(packet[5])<<24 |\n> int(packet[6])<<16 | int(packet[7])<<8 | int(packet[8]); length > 0 {\n>                                packet = packet[9:]\n> -                               c.getChan(peersId).stdout.data <-\n> packet[:length]\n> +                               c.getChan(peersId).stdout.**\n> handleData(packet[:length])\n>                        }\n>                case msgChannelExtendedData:\n>                        if len(packet) < 13 {\n> @@ -215,7 +215,7 @@\n>                                // for stderr on interactive sessions.\n> Other data types are\n>                                // silently discarded.\n>                                if datatype == 1 {\n> -                                       c.getChan(peersId).stderr.data <-\n> packet[:length]\n> +                                       c.getChan(peersId).stderr.**\n> handleData(packet[:length])\n>                                }\n>                        }\n>                default:\n> @@ -228,13 +228,22 @@\n>                                c.getChan(msg.PeersId).msg <- msg\n>                        case *channelCloseMsg:\n>                                ch := c.getChan(msg.PeersId)\n> +                               ch.theyClosed = true\n>                                close(ch.stdin.win)\n> -                               close(ch.stdout.data)\n> -                               close(ch.stderr.data)\n> +                               ch.stdout.eof()\n> +                               ch.stderr.eof()\n>                                close(ch.msg)\n> +                               if !ch.weClosed {\n> +                                       ch.weClosed = true\n> +                                       ch.sendClose()\n> +                               }\n>                                c.chanlist.remove(msg.PeersId)\n>                        case *channelEOFMsg:\n> -                               c.getChan(msg.PeersId).**sendEOF()\n> +                               ch := c.getChan(msg.PeersId)\n> +                               ch.stdout.eof()\n> +                               // RFC 4254 is mute on how EOF affects\n> dataExt messages but\n> +                               // it is logical to signal EOF at the same\n> time.\n> +                               ch.stderr.eof()\n>                        case *channelRequestSuccessMsg:\n>                                c.getChan(msg.PeersId).msg <- msg\n>                        case *channelRequestFailureMsg:\n> @@ -243,6 +252,8 @@\n>                                c.getChan(msg.PeersId).msg <- msg\n>                        case *windowAdjustMsg:\n>                                c.getChan(msg.PeersId).stdin.**win <-\n> int(msg.AdditionalBytes)\n> +                       case *disconnectMsg:\n> +                               break\n>                        default:\n>                                fmt.Printf(\"mainLoop: unhandled message %T:\n> %v\\n\", msg, msg)\n>                        }\n> @@ -295,6 +306,9 @@\n>        stdout      *chanReader      // receives the payload of channelData\n> messages\n>        stderr      *chanReader      // receives the payload of\n> channelExtendedData messages\n>        msg         chan interface{} // incoming messages\n> +\n> +       theyClosed bool // indicates the close msg has been received from\n> the remote side\n> +       weClosed   bool // incidates the close msg has been send from our\n> side\n>  }\n>\n>  // newClientChan returns a partially constructed *clientChan\n> @@ -336,20 +350,29 @@\n>        return errors.New(\"unexpected packet\")\n>  }\n>\n> -// sendEOF Sends EOF to the server. RFC 4254 Section 5.3\n> +// sendEOF sends EOF to the server. RFC 4254 Section 5.3\n>  func (c *clientChan) sendEOF() error {\n>        return c.writePacket(marshal(**msgChannelEOF, channelEOFMsg{\n>                PeersId: c.peersId,\n>        }))\n>  }\n>\n> -// Close closes the channel. This does not close the underlying\n> connection.\n> -func (c *clientChan) Close() error {\n> +// sendClose signals the intent to close the channel.\n> +func (c *clientChan) sendClose() error {\n>        return c.writePacket(marshal(**msgChannelClose, channelCloseMsg{\n>                PeersId: c.peersId,\n>        }))\n>  }\n>\n> +// Close closes the channel. This does not close the underlying\n> connection.\n> +func (c *clientChan) Close() error {\n> +       if !c.weClosed {\n> +               c.weClosed = true\n> +               return c.sendClose()\n> +       }\n> +       return nil\n> +}\n> +\n>  // Thread safe channel list.\n>  type chanlist struct {\n>        // protects concurrent access to chans\n> @@ -421,7 +444,7 @@\n>  }\n>\n>  func (w *chanWriter) Close() error {\n> -       return w.clientChan.writePacket(**marshal(msgChannelEOF,\n> channelEOFMsg{w.clientChan.**peersId}))\n> +       return w.clientChan.sendEOF()\n>  }\n>\n>  // A chanReader represents stdout or stderr of a remote process.\n> @@ -430,10 +453,27 @@\n>        // If writes to this channel block, they will block mainLoop, making\n>        // it unable to receive new messages from the remote side.\n>        data       chan []byte // receives data from remote\n> +       dataClosed bool        // protects data from being closed twice\n>        clientChan *clientChan // the channel backing this reader\n>        buf        []byte\n>  }\n>\n> +// eof signals to the consumer that there is no more data to be received.\n> +func (r *chanReader) eof() {\n> +       if !r.dataClosed {\n> +               r.dataClosed = true\n> +               close(r.data)\n> +       }\n> +}\n> +\n> +// handleData sends buf to the reader's consumer. If r.data is closed\n> +// the data will be silently discarded\n> +func (r *chanReader) handleData(buf []byte) {\n> +       if !r.dataClosed {\n> +               r.data <- buf\n> +       }\n> +}\n> +\n>  // Read reads data from the remote process's stdout or stderr.\n>  func (r *chanReader) Read(data []byte) (int, error) {\n>        var ok bool\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-12-13 14:02:15.365336",
+			"approval": true
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"dave@cheney.net",
+				"cw@f00f.org",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "this still doesn't seem to propagate EOF all the way to Stdout/Stderr\n\ni get zero length reads with err as nil",
+			"disapproval": false,
+			"date": "2011-12-13 18:11:40.183593",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I'll look into that, after you receive 0, nil does the next read\n> return 0, EOF or are you left to deduce EOF from the 0 length Read?\n\nI can infer EOF from a 0 length read (that is the same as before), but\nfor consistency with existing interfaces EOF would be nice:\n\n  XXX stdout read got: 1359,<nil>\n  XXX stderr read got: 0,<nil>\n  XXX stdout read got: 0,<nil>\n  XXX stderr read got: 0,<nil>\n\n(continues)\n",
+			"disapproval": false,
+			"date": "2011-12-13 21:44:52.871850",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gustav.paul@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-12-13 11:08:23.072241",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'll look into that, after you receive 0, nil does the next read return 0, EOF or are you left to deduce EOF from the 0 length Read?\n\nSent from my iPhone\n\nOn 14/12/2011, at 5:11, cw@f00f.org wrote:\n\n> this still doesn't seem to propagate EOF all the way to Stdout/Stderr\n> \n> i get zero length reads with err as nil\n> \n> \n> http://codereview.appspot.com/5480062/\n",
+			"disapproval": false,
+			"date": "2011-12-13 20:44:45.965967",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 5480062: exp/ssh: improve client channel close behavior",
+	"created": "2011-12-11 03:53:54.748100",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		5002,
+		4002,
+		6003
+	],
+	"modified": "2011-12-14 09:23:09.342146",
+	"closed": true,
+	"issue": 5480062
+}

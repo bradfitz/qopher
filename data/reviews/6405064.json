@@ -1,0 +1,242 @@
+{
+	"description": "go.crypto/ssh: prevent channel writes after Close\n\nFixes issue 3810.\n\nThis change introduces an atomic boolean to guard the close\nof the clientChan. Previously the client code was quite\nlax with the ordering of the close messages and could allow\nwindow adjustment or EOF messages to leak after Close had\nbeen signaled.\n\nConsolidating the changes to the serverChan will be handled\nin a following CL.",
+	"cc": [
+		"agl@golang.org",
+		"kardianos@gmail.com",
+		"gustav.paul@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's tough to dive into this change and understand whether it's correct, but I don't see any major red flags.\n\nhttp://codereview.appspot.com/6405064/diff/10003/ssh/channel.go\nFile ssh/channel.go (right):\n\nhttp://codereview.appspot.com/6405064/diff/10003/ssh/channel.go#newcode93\nssh/channel.go:93: if c.setWeClosed() {\nI'd turn this condition inside out so that the bulk of the function isn't indented.",
+			"disapproval": false,
+			"date": "2012-07-21 14:04:06.265580",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello agl@golang.org, kardianos@gmail.com, gustav.paul@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.crypto",
+			"disapproval": false,
+			"date": "2012-07-21 07:05:52.056210",
+			"approval": false
+		},
+		{
+			"sender": "kardianos@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Moving the msg chan into the channel struct rubs me the wrong way, though I see why you did. Server code changes LGTM, the client changes appear benign (I have less experience with that code).",
+			"disapproval": false,
+			"date": "2012-07-23 05:43:02.612170",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for your comments. I can make this diff slightly smaller by not touching the serverChan side (it will retain weClosed as a bool, and closed will never be non zero).\n\nhttp://codereview.appspot.com/6405064/diff/10003/ssh/channel.go\nFile ssh/channel.go (right):\n\nhttp://codereview.appspot.com/6405064/diff/10003/ssh/channel.go#newcode93\nssh/channel.go:93: if c.setWeClosed() {\nOn 2012/07/21 14:04:06, agl1 wrote:\n> I'd turn this condition inside out so that the bulk of the function isn't\n> indented.\n\nWill address. In a future CL I want to make the atomic bool a type, and use it for serverChan.dead as well, so this will possibly become c.weClosed.set().",
+			"disapproval": false,
+			"date": "2012-07-22 01:57:39.725820",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Moving the msg chan into the channel struct rubs me the wrong way,\r\n> though I see why you did. Server code changes LGTM, the client changes\r\n> appear benign (I have less experience with that code).\r\n\r\nYes, moving the msg chan up a level could be handled another way, but\r\nit would need a sendClose method on both *clientChan and *serverChan.\r\nTo me, the cost of the duplication was more than the check for a nil\r\nchan during the close cycle.\r\n\r\n>\r\n> http://codereview.appspot.com/6405064/\r\n",
+			"disapproval": false,
+			"date": "2012-07-23 16:05:27.580580",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello agl@golang.org, kardianos@gmail.com, gustav.paul@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-22 10:46:41.375610",
+			"approval": false
+		},
+		{
+			"sender": "kardianos@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I like how this removes redundant code in the client.\n\nhttp://codereview.appspot.com/6405064/diff/25001/ssh/channel.go\nFile ssh/channel.go (right):\n\nhttp://codereview.appspot.com/6405064/diff/25001/ssh/channel.go#newcode122\nssh/channel.go:122: // TODO(dfc) should this be io.EOF ?\nYes, I think this should be io.EOF. I would want to know if I'm not writing everything I'm trying to.\n\nhttp://codereview.appspot.com/6405064/diff/25001/ssh/channel.go#newcode149\nssh/channel.go:149: theySentEOF bool // used by serverChan\nCan remove these comments, as they are now in serverChan.",
+			"disapproval": false,
+			"date": "2012-08-22 15:25:43.238680",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please take another look. I have refactored the CL to be only the minimum change required to pass the sample code in issue 3810.",
+			"disapproval": false,
+			"date": "2012-08-22 10:47:31.221410",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6405064/diff/25005/ssh/channel.go\nFile ssh/channel.go (right):\n\nhttps://codereview.appspot.com/6405064/diff/25005/ssh/channel.go#newcode85\nssh/channel.go:85: isclosed          uint32 // atomic bool, non zero if true\nisClosed?\n\nhttps://codereview.appspot.com/6405064/diff/25005/ssh/session_test.go\nFile ssh/session_test.go (right):\n\nhttps://codereview.appspot.com/6405064/diff/25005/ssh/session_test.go#newcode383\nssh/session_test.go:383: // TODO(dfc) currently writes succeed after Close()\nyou have this TODO, but the test Fatalf's is it's actually the case.",
+			"disapproval": false,
+			"date": "2012-08-23 16:17:29.200380",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=951fbbb0a477&repo=crypto ***\n\ngo.crypto/ssh: prevent channel writes after Close\n\nFixes issue 3810.\n\nThis change introduces an atomic boolean to guard the close\nof the clientChan. Previously the client code was quite\nlax with the ordering of the close messages and could allow\nwindow adjustment or EOF messages to leak after Close had\nbeen signaled.\n\nConsolidating the changes to the serverChan will be handled\nin a following CL.\n\nR=agl, kardianos, gustav.paul\nCC=golang-dev\nhttp://codereview.appspot.com/6405064",
+			"disapproval": false,
+			"date": "2012-08-23 23:46:50.596530",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "@agl - sorry I failed to address your two comments. I will address\r\nthem in the follow up CL.\r\n\r\nOn Fri, Aug 24, 2012 at 9:46 AM,  <dave@cheney.net> wrote:\r\n> *** Submitted as\r\n> http://code.google.com/p/go/source/detail?r=951fbbb0a477&repo=crypto ***\r\n>\r\n> go.crypto/ssh: prevent channel writes after Close\r\n>\r\n> Fixes issue 3810.\r\n>\r\n> This change introduces an atomic boolean to guard the close\r\n> of the clientChan. Previously the client code was quite\r\n> lax with the ordering of the close messages and could allow\r\n> window adjustment or EOF messages to leak after Close had\r\n> been signaled.\r\n>\r\n> Consolidating the changes to the serverChan will be handled\r\n> in a following CL.\r\n>\r\n> R=agl, kardianos, gustav.paul\r\n> CC=golang-dev\r\n> http://codereview.appspot.com/6405064\r\n>\r\n>\r\n> http://codereview.appspot.com/6405064/\r\n",
+			"disapproval": false,
+			"date": "2012-08-23 23:47:52.980130",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for your comments. I have restored the Close() -> io.EOF behaviour, which came at the cost of a larger diff.\n\nThe serverChan and clientChan Close paths have now diverged again, so my next CL will attempt to unify them again.\n\nhttp://codereview.appspot.com/6405064/diff/25001/ssh/channel.go\nFile ssh/channel.go (right):\n\nhttp://codereview.appspot.com/6405064/diff/25001/ssh/channel.go#newcode122\nssh/channel.go:122: // TODO(dfc) should this be io.EOF ?\nOn 2012/08/22 15:25:43, kardia wrote:\n> Yes, I think this should be io.EOF. I would want to know if I'm not writing\n> everything I'm trying to.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-08-23 00:15:18.514240",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello agl@golang.org, kardianos@gmail.com, gustav.paul@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-23 00:15:57.647470",
+			"approval": false
+		},
+		{
+			"sender": "kardianos@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"agl@golang.org",
+				"kardianos@gmail.com",
+				"gustav.paul@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-08-23 00:21:34.971710",
+			"approval": true
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 6405064: go.crypto/ssh: prevent channel writes after Close",
+	"created": "2012-07-20 10:17:37.192090",
+	"patchsets": [
+		1,
+		2001,
+		1002,
+		2002,
+		3003,
+		9001,
+		2003,
+		10003,
+		14001,
+		17001,
+		18001,
+		21001,
+		21002,
+		25001,
+		26001,
+		20004,
+		24002,
+		25005,
+		18006
+	],
+	"modified": "2012-08-23 23:46:53.300460",
+	"closed": true,
+	"issue": 6405064
+}

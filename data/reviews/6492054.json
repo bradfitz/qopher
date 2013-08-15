@@ -1,0 +1,86 @@
+{
+	"description": "text/template: make spaces significant\n\nOther than catching an error case that was missed before, this\nCL introduces no changes to the template language or API.\n\nFor simplicity, templates use spaces as argument separators.\nThis means that spaces are significant: .x .y is not the same as .x.y.\nIn the existing code, these cases are discriminated by the lexer,\nbut that means for instance that (a b).x cannot be distinguished\nfrom (a b) .x, which is lousy. Although that syntax is not\nsupported yet, we want to support it and this CL is a necessary\nstep.\n\nThis CL emits a \"space\" token (actually a run of spaces) from\nthe lexer so the parser can discriminate these cases. It therefore\nfixes a couple of undisclosed bugs (\"hi\".x is now an error) but\ndoesn't otherwise change the language. Later CLs will amend\nthe grammar to make .X a proper operator.\n\nThere is one unpleasantness: With space a token, three-token\nlookahead is now required when parsing variable declarations\nto discriminate them from plain variable references. Otherwise\nthe change isn't bad.\n\nThe CL also moves the debugging print code out of the lexer\ninto the test, which is the only place it's needed or useful.\n\nStep towards resolving issue 3999.\nIt still remains to move field chaining out of the lexer\nand into the parser and make field access an operator.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dsymonds@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-08-29 16:25:56.176850",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/lex.go\nFile src/pkg/text/template/parse/lex.go (right):\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/lex.go#newcode497\nsrc/pkg/text/template/parse/lex.go:497: case ' ', '\\t':\nOn 2012/08/30 04:09:29, dsymonds wrote:\n> At this stage it might be simpler to turn this function into\n>   return r == ' ' || r == '\\t'\n\nDone.\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/lex.go#newcode506\nsrc/pkg/text/template/parse/lex.go:506: case '\\n', '\\r':\nOn 2012/08/30 04:09:29, dsymonds wrote:\n> ditto\n\nDone.\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/parse.go\nFile src/pkg/text/template/parse/parse.go (right):\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/parse.go#newcode65\nsrc/pkg/text/template/parse/parse.go:65: func (t *Tree) backup3(t2, t1 item) { // Reverse order: we're pushing back.\nThat means creating a slice. I don't think it's worth it. It's only got two call sites, one each.\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/parse.go#newcode361\nsrc/pkg/text/template/parse/parse.go:361: // Since space as a token, we need 3-token look-ahead here in the worst case:\nOn 2012/08/30 04:09:29, dsymonds wrote:\n> s/as/is/\n\nDone.",
+			"disapproval": false,
+			"date": "2012-08-30 04:41:29.965700",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nIs it at all conceivable that someone might be relying on the old behaviour?\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/lex.go\nFile src/pkg/text/template/parse/lex.go (right):\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/lex.go#newcode497\nsrc/pkg/text/template/parse/lex.go:497: case ' ', '\\t':\nAt this stage it might be simpler to turn this function into\n  return r == ' ' || r == '\\t'\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/lex.go#newcode506\nsrc/pkg/text/template/parse/lex.go:506: case '\\n', '\\r':\nditto\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/parse.go\nFile src/pkg/text/template/parse/parse.go (right):\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/parse.go#newcode65\nsrc/pkg/text/template/parse/parse.go:65: func (t *Tree) backup3(t2, t1 item) { // Reverse order: we're pushing back.\ntime to cut your losses and make backup variadic?\n\nfunc (t *Tree) backup(items ...item) { // items in normal order\n  for i, it := range items {\n    t.token[i+1] = it\n  }\n  t.peekCount += len(items) + 1\n}\n\nhttp://codereview.appspot.com/6492054/diff/1005/src/pkg/text/template/parse/parse.go#newcode361\nsrc/pkg/text/template/parse/parse.go:361: // Since space as a token, we need 3-token look-ahead here in the worst case:\ns/as/is/",
+			"disapproval": false,
+			"date": "2012-08-30 04:09:28.817390",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=ed09aaf4a4e4 ***\n\ntext/template: make spaces significant\n\nOther than catching an error case that was missed before, this\nCL introduces no changes to the template language or API.\n\nFor simplicity, templates use spaces as argument separators.\nThis means that spaces are significant: .x .y is not the same as .x.y.\nIn the existing code, these cases are discriminated by the lexer,\nbut that means for instance that (a b).x cannot be distinguished\nfrom (a b) .x, which is lousy. Although that syntax is not\nsupported yet, we want to support it and this CL is a necessary\nstep.\n\nThis CL emits a \"space\" token (actually a run of spaces) from\nthe lexer so the parser can discriminate these cases. It therefore\nfixes a couple of undisclosed bugs (\"hi\".x is now an error) but\ndoesn't otherwise change the language. Later CLs will amend\nthe grammar to make .X a proper operator.\n\nThere is one unpleasantness: With space a token, three-token\nlookahead is now required when parsing variable declarations\nto discriminate them from plain variable references. Otherwise\nthe change isn't bad.\n\nThe CL also moves the debugging print code out of the lexer\ninto the test, which is the only place it's needed or useful.\n\nStep towards resolving issue 3999.\nIt still remains to move field chaining out of the lexer\nand into the parser and make field access an operator.\n\nR=golang-dev, dsymonds\nCC=golang-dev\nhttp://codereview.appspot.com/6492054",
+			"disapproval": false,
+			"date": "2012-08-30 04:42:58.775160",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Aug 29, 2012 at 9:09 PM,  <dsymonds@golang.org> wrote:\r\n> LGTM\r\n>\r\n> Is it at all conceivable that someone might be relying on the old\r\n> behaviour?\r\n\r\nOnly by error. We're allowed to break things by fixing bugs. The\r\ndocumentation says args are space-separated.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-08-30 04:38:16.583370",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 6492054: text/template: make spaces significant",
+	"created": "2012-08-29 16:25:52.380500",
+	"patchsets": [
+		1,
+		3001,
+		1005,
+		3002
+	],
+	"modified": "2012-08-30 04:43:00.083180",
+	"closed": true,
+	"issue": 6492054
+}

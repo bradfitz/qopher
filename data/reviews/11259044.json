@@ -1,0 +1,77 @@
+{
+	"description": "go.tools/ssa: add debug information for all ast.Idents.\n\nThis CL adds three new functions to determine the SSA Value\nfor a given syntactic var, func or const object:\n  Program.{Const,Func,Var}Value.\nSince constants and functions are immutable, the first\ntwo only need a types.Object; but each distinct\nreference to a var may return a distinct Value, so the third\nrequires an ast.Ident parameter too.\n\nDebug information for local vars is encoded in the\ninstruction stream in the form of DebugRef instructions,\nwhich are a no-op but relate their operand to a particular\nident in the AST.  The beauty of this approach is that it\nnaturally stays consistent during optimisation passes\n(e.g. lifting) without additional bookkeeping.\n\nDebugRef instructions are only generated if the DebugMode\nbuilder flag is set; I plan to make the policy more fine-\ngrained (per function).\n\nDebugRef instructions are inserted for:\n- expr(Ident) for rvalue idents\n- address.store() for idents that update an lvalue\n- address.address() for idents that take address of lvalue\n  (this new method replaces all uses of lval.(address).addr)\n- expr() for all constant expressions\n- local ValueSpecs with implicit zero initialization (no RHS)\n  (this case doesn't call store() or address())\n\nTo ensure we don't forget to emit debug info for uses of Idents,\nwe must use the lvalue mechanism consistently.  (Previously,\nmany simple cases had effectively inlined these functions.)\nSimilarly setCallFunc no longer inlines expr(Ident).\n\nAlso:\n- Program.Value() has been inlined & specialized.\n- Program.Package() has moved nearer the new lookup functions.\n- refactoring: funcSyntax has lost paramFields, resultFields;\n  gained funcType, which provides access to both.\n- add package-level constants to Package.values map.\n- opt: don't call localValueSpec for constants.\n  (The resulting code is always optimised away.)\n\nThere are a number of comments asking whether Literals\nshould have positions.  Will address in a follow-up.\n\nAdded tests of all interesting cases.",
+	"cc": [
+		"gri@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source.go\nFile ssa/source.go (right):\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source.go#newcode295\nssa/source.go:295: // way?  From an analytical perspective, their type and value\nIf I have an expression r * math.Pi and I look at the position of the math.Pi operand, I probably want to see the one in this specific expression.\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source_test.go\nFile ssa/source_test.go (right):\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source_test.go#newcode287\nssa/source_test.go:287: f, err := parser.ParseFile(imp.Fset, \"testdata/objlookup.go\", nil, parser.DeclarationErrors|parser.ParseComments)\nthe type checker will take care of declaration errors\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source_test.go#newcode302\nssa/source_test.go:302: fmt.Println(pos.Line, text)\nso this is printed each time the test is run?\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source_test.go#newcode372\nssa/source_test.go:372: fmt.Printf(\"FuncValue(%s) = %s\\n\", obj, v) // debugging\nsame here: always printing when running the test?",
+			"disapproval": false,
+			"date": "2013-07-15 17:41:53.198330",
+			"approval": true
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11259044/diff/12001/ssa/source.go\nFile ssa/source.go (right):\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source.go#newcode295\nssa/source.go:295: // way?  From an analytical perspective, their type and value\nOn 2013/07/15 17:41:53, gri wrote:\n> If I have an expression r * math.Pi and I look at the position of the math.Pi\n> operand, I probably want to see the one in this specific expression.\n\nThat's what I thought initially, but notice:\n(a) you already knew the position in order to form the question; and:\n(b) for math.Sin (a function) you get the Value (*ssa.Function) of Sin itself--there's no Value for \"this particular reference to a function object\".\n\nI think constants are like functions in this respect (immutable, global, independent of any particular reference) and AFAICT none of the stuff I've built atop ssa will suffer without this info.  So I think I will probably remove it again.\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source_test.go\nFile ssa/source_test.go (right):\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source_test.go#newcode302\nssa/source_test.go:302: fmt.Println(pos.Line, text)\nOn 2013/07/15 17:41:53, gri wrote:\n> so this is printed each time the test is run?\n\nOops; deleted.\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source_test.go#newcode372\nssa/source_test.go:372: fmt.Printf(\"FuncValue(%s) = %s\\n\", obj, v) // debugging\nOn 2013/07/15 17:41:53, gri wrote:\n> same here: always printing when running the test?\n\nOops; commented out.\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source_test.go#newcode399\nssa/source_test.go:399: fmt.Printf(\"ConstValue(%s) = %s\\n\", obj, lit) // debugging\nDitto.\n\nhttps://codereview.appspot.com/11259044/diff/12001/ssa/source_test.go#newcode430\nssa/source_test.go:430: fmt.Printf(\"%s = %v (kind %q; expect %q) addr=%t\\n\",\nDitto.",
+			"disapproval": false,
+			"date": "2013-07-15 17:55:10.616310",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=4fdbf6cd2c4d&repo=tools ***\n\ngo.tools/ssa: add debug information for all ast.Idents.\n\nThis CL adds three new functions to determine the SSA Value\nfor a given syntactic var, func or const object:\n  Program.{Const,Func,Var}Value.\nSince constants and functions are immutable, the first\ntwo only need a types.Object; but each distinct\nreference to a var may return a distinct Value, so the third\nrequires an ast.Ident parameter too.\n\nDebug information for local vars is encoded in the\ninstruction stream in the form of DebugRef instructions,\nwhich are a no-op but relate their operand to a particular\nident in the AST.  The beauty of this approach is that it\nnaturally stays consistent during optimisation passes\n(e.g. lifting) without additional bookkeeping.\n\nDebugRef instructions are only generated if the DebugMode\nbuilder flag is set; I plan to make the policy more fine-\ngrained (per function).\n\nDebugRef instructions are inserted for:\n- expr(Ident) for rvalue idents\n- address.store() for idents that update an lvalue\n- address.address() for idents that take address of lvalue\n  (this new method replaces all uses of lval.(address).addr)\n- expr() for all constant expressions\n- local ValueSpecs with implicit zero initialization (no RHS)\n  (this case doesn't call store() or address())\n\nTo ensure we don't forget to emit debug info for uses of Idents,\nwe must use the lvalue mechanism consistently.  (Previously,\nmany simple cases had effectively inlined these functions.)\nSimilarly setCallFunc no longer inlines expr(Ident).\n\nAlso:\n- Program.Value() has been inlined & specialized.\n- Program.Package() has moved nearer the new lookup functions.\n- refactoring: funcSyntax has lost paramFields, resultFields;\n  gained funcType, which provides access to both.\n- add package-level constants to Package.values map.\n- opt: don't call localValueSpec for constants.\n  (The resulting code is always optimised away.)\n\nThere are a number of comments asking whether Literals\nshould have positions.  Will address in a follow-up.\n\nAdded tests of all interesting cases.\n\nR=gri\nCC=golang-dev\nhttps://codereview.appspot.com/11259044",
+			"disapproval": false,
+			"date": "2013-07-15 17:56:48.486720",
+			"approval": false
+		},
+		{
+			"sender": "adonovan@google.com",
+			"recipients": [
+				"adonovan@google.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gri@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.tools",
+			"disapproval": false,
+			"date": "2013-07-15 17:56:43.726860",
+			"approval": false
+		}
+	],
+	"owner_email": "adonovan@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "adonovan",
+	"subject": "code review 11259044: go.tools/ssa: add debug information for all ast.Idents.",
+	"created": "2013-07-15 02:43:09.352390",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		10001,
+		12001,
+		19001
+	],
+	"modified": "2013-07-15 17:56:50.026610",
+	"closed": true,
+	"issue": 11259044
+}

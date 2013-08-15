@@ -1,0 +1,77 @@
+{
+	"description": "runtime: make map reads multithreaded safe.\n\nDoing grow work on reads is not multithreaded safe.\nChanged code to do grow work only on inserts & deletes.\n\nThis is a short-term fix, eventually we'll want to do\ngrow work in parallel to recover the space of the old\ntable.\n\nFixes issue 5120.",
+	"cc": [
+		"bradfitz@golang.org",
+		"khr@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"bradfitz@golang.org",
+				"khr@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=af469280a34b ***\n\nruntime: make map reads multithreaded safe.\n\nDoing grow work on reads is not multithreaded safe.\nChanged code to do grow work only on inserts & deletes.\n\nThis is a short-term fix, eventually we'll want to do\ngrow work in parallel to recover the space of the old\ntable.\n\nFixes issue 5120.\n\nR=bradfitz, khr\nCC=golang-dev\nhttps://codereview.appspot.com/8242043",
+			"disapproval": false,
+			"date": "2013-04-02 02:00:04.172810",
+			"approval": false
+		},
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-04-02 00:02:31.512920",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c\nFile src/pkg/runtime/hashmap.c (right):\n\nhttps://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode750\nsrc/pkg/runtime/hashmap.c:750: intptr check_bucket;\nis there a reason you use -1 here for \"none\" instead of 0 which seems to be done elsewhere?\n\nhttps://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode760\nsrc/pkg/runtime/hashmap.c:760: if(sizeof(struct hash_iter) / sizeof(uintptr) > 11) {\nI assume this bit you and you're just adding this here to future-proof it?  would != 11 be more paranoid so you remember to shrink it as well?\n\nhttps://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode776\nsrc/pkg/runtime/hashmap.c:776: h->flags |= Iterator | OldIterator;\nso I guess this means a lot of the frees elsewhere never trigger now?\n\nworth a TODO here with a reference to the bug number?\n\nhttps://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode851\nsrc/pkg/runtime/hashmap.c:851: t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k));\nThis is unfortunate. Could we add a new bool field to alg so we could say:\n\neq = true;\nif(t->key->alg->has_whack_equal)\n     t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k));\n\nI realize equal will usually be cheap for simple types.  At least worth a TODO?\n\nhttps://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode862\nsrc/pkg/runtime/hashmap.c:862: t->key->alg->hash(&hash, t->key->size, IK(h, k));\nnevermind equality, this is more unfortunate, but you have to do it.  :-/\n\nI suppose you considered storing the hash value in the table for expensive types.\n\nhttps://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap_fast.c\nFile src/pkg/runtime/hashmap_fast.c (right):\n\nhttps://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap_fast.c#newcode20\nsrc/pkg/runtime/hashmap_fast.c:20: uintptr bucket, oldbucket;\nI think you have another word of stack left. :)\n\nhttps://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap_fast.c#newcode139\nsrc/pkg/runtime/hashmap_fast.c:139: b = (Bucket*)(h->buckets + bucket * h->bucketsize);\nh->bucketsize is nicer to read now at least :)",
+			"disapproval": false,
+			"date": "2013-04-02 00:38:43.430040",
+			"approval": true
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Apr 1, 2013 at 5:38 PM, <bradfitz@golang.org> wrote:\r\n\r\n> LGTM\r\n>\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/8242043/diff/5001/src/pkg/**\r\n> runtime/hashmap.c<https://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c>\r\n> File src/pkg/runtime/hashmap.c (right):\r\n>\r\n> https://codereview.appspot.**com/8242043/diff/5001/src/pkg/**\r\n> runtime/hashmap.c#newcode750<https://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode750>\r\n> src/pkg/runtime/hashmap.c:750: intptr check_bucket;\r\n> is there a reason you use -1 here for \"none\" instead of 0 which seems to\r\n> be done elsewhere?\r\n>\r\n\r\nYes, 0 here is a valid value.\r\n\r\n\r\n>\r\n> https://codereview.appspot.**com/8242043/diff/5001/src/pkg/**\r\n> runtime/hashmap.c#newcode760<https://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode760>\r\n> src/pkg/runtime/hashmap.c:760: if(sizeof(struct hash_iter) /\r\n> sizeof(uintptr) > 11) {\r\n> I assume this bit you and you're just adding this here to future-proof\r\n> it?  would != 11 be more paranoid so you remember to shrink it as well?\r\n>\r\n\r\nSure.\r\n\r\n\r\n>\r\n> https://codereview.appspot.**com/8242043/diff/5001/src/pkg/**\r\n> runtime/hashmap.c#newcode776<https://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode776>\r\n> src/pkg/runtime/hashmap.c:776: h->flags |= Iterator | OldIterator;\r\n> so I guess this means a lot of the frees elsewhere never trigger now?\r\n>\r\n>\r\nOnly a little more restriction, we will not be able to explicitly free\r\nbuckets at level B-1 if we\r\nstart an iterator at level B.\r\n\r\n\r\n> worth a TODO here with a reference to the bug number\r\n>\r\n\r\nSure.\r\n\r\n\r\n> https://codereview.appspot.**com/8242043/diff/5001/src/pkg/**\r\n> runtime/hashmap.c#newcode851<https://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode851>\r\n> src/pkg/runtime/hashmap.c:851: t->key->alg->equal(&eq, t->key->size,\r\n> IK(h, k), IK(h, k));\r\n> This is unfortunate. Could we add a new bool field to alg so we could\r\n> say:\r\n>\r\n> eq = true;\r\n> if(t->key->alg->has_whack_**equal)\r\n>      t->key->alg->equal(&eq, t->key->size, IK(h, k), IK(h, k));\r\n>\r\n> I realize equal will usually be cheap for simple types.  At least worth\r\n> a TODO?\r\n>\r\n> https://codereview.appspot.**com/8242043/diff/5001/src/pkg/**\r\n> runtime/hashmap.c#newcode862<https://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap.c#newcode862>\r\n> src/pkg/runtime/hashmap.c:862: t->key->alg->hash(&hash, t->key->size,\r\n> IK(h, k));\r\n> nevermind equality, this is more unfortunate, but you have to do it.\r\n> :-/\r\n>\r\n> I suppose you considered storing the hash value in the table for\r\n> expensive types.\r\n>\r\n>\r\nPossibly.  I'm planning on doing a real thread-safe grow, at which point\r\nthis code will go.\r\nAnyway, this will only happen for iterators for growing maps, not a very\r\ncommon case.\r\n\r\n\r\n> https://codereview.appspot.**com/8242043/diff/5001/src/pkg/**\r\n> runtime/hashmap_fast.c<https://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap_fast.c>\r\n> File src/pkg/runtime/hashmap_fast.c (right):\r\n>\r\n> https://codereview.appspot.**com/8242043/diff/5001/src/pkg/**\r\n> runtime/hashmap_fast.c#**newcode20<https://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap_fast.c#newcode20>\r\n> src/pkg/runtime/hashmap_fast.**c:20: uintptr bucket, oldbucket;\r\n> I think you have another word of stack left. :)\r\n>\r\n>\r\nI like to think of it as 8 booleans - sounds bigger :)\r\n\r\n\r\n> https://codereview.appspot.**com/8242043/diff/5001/src/pkg/**\r\n> runtime/hashmap_fast.c#**newcode139<https://codereview.appspot.com/8242043/diff/5001/src/pkg/runtime/hashmap_fast.c#newcode139>\r\n> src/pkg/runtime/hashmap_fast.**c:139: b = (Bucket*)(h->buckets + bucket *\r\n> h->bucketsize);\r\n> h->bucketsize is nicer to read now at least :)\r\n>\r\n> https://codereview.appspot.**com/8242043/<https://codereview.appspot.com/8242043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-02 01:55:23.411100",
+			"approval": false
+		}
+	],
+	"owner_email": "khr@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "khr",
+	"subject": "code review 8242043: runtime: make map reads multithreaded safe.",
+	"created": "2013-04-02 00:01:26.941320",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		12001,
+		15001
+	],
+	"modified": "2013-04-02 02:00:05.344840",
+	"closed": true,
+	"issue": 8242043
+}

@@ -1,0 +1,270 @@
+{
+	"description": "sync: faster Cond\nThe new version does not require any memory allocations and is 30-50% faster.\nAlso detect and painc if Cond is copied after first.\n\nbenchmark            old ns/op    new ns/op    delta\nBenchmarkCond1             317          195  -38.49%\nBenchmarkCond1-2           875          607  -30.63%\nBenchmarkCond1-4          1116          548  -50.90%\nBenchmarkCond1-8          1013          613  -39.49%\nBenchmarkCond1-16          983          450  -54.22%\nBenchmarkCond2             559          352  -37.03%\nBenchmarkCond2-2          1916         1378  -28.08%\nBenchmarkCond2-4          1518         1322  -12.91%\nBenchmarkCond2-8          2313         1291  -44.19%\nBenchmarkCond2-16         1885         1078  -42.81%\nBenchmarkCond4            1070          614  -42.62%\nBenchmarkCond4-2          4899         3047  -37.80%\nBenchmarkCond4-4          3813         3006  -21.16%\nBenchmarkCond4-8          3605         3045  -15.53%\nBenchmarkCond4-16         4148         2637  -36.43%\nBenchmarkCond8            2086         1264  -39.41%\nBenchmarkCond8-2          9961         6736  -32.38%\nBenchmarkCond8-4          8135         7689   -5.48%\nBenchmarkCond8-8          9623         7517  -21.89%\nBenchmarkCond8-16        11661         8093  -30.60%",
+	"cc": [
+		"sougou@google.com",
+		"rsc@golang.org",
+		"bradfitz@golang.org",
+		"r@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "sougou@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Don't know enough about runtime to comment there, but the Cond side looks peachy.",
+			"disapproval": false,
+			"date": "2013-07-19 15:54:34.530360",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Okay, now I understand why this works.\n\nI want to avoid putting runtime Locks into user data structures.\nUsers could corrupt the Lock by copying one Cond onto another and cause all manner of interesting problems in the runtime, especially since on some platforms the Lock holds an M pointer.\n\nCan you use an address-indexed table like the SemaRoot table?",
+			"disapproval": false,
+			"date": "2013-08-09 14:44:51.325500",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If you don't want to use an address-indexed table it is also fine to make\r\nthe Cond pass in an opaque uintptr that you use as a pointer to a SyncSema\r\nallocated on first use.\r\n\r\nPlease reuse the Sema struct instead of defining the basically identical\r\nSyncSemaWaiter.\r\nWe can rename Sema to Waiter if you want.\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 15:15:10.460520",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 9, 2013 at 7:15 PM, Russ Cox <rsc@golang.org> wrote:\r\n> If you don't want to use an address-indexed table it is also fine to make\r\n> the Cond pass in an opaque uintptr that you use as a pointer to a SyncSema\r\n> allocated on first use.\r\n\r\nAllocations is the thing that this CL tries to avoid.\r\nI will see how to do it w/o allocations and w/o exposing M.\r\n\r\n> Please reuse the Sema struct instead of defining the basically identical\r\n> SyncSemaWaiter.\r\n> We can rename Sema to Waiter if you want.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 15:19:49.373030",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 9, 2013 at 6:44 PM,  <rsc@golang.org> wrote:\r\n> Okay, now I understand why this works.\r\n>\r\n> I want to avoid putting runtime Locks into user data structures.\r\n> Users could corrupt the Lock by copying one Cond onto another and cause\r\n> all manner of interesting problems in the runtime, especially since on\r\n> some platforms the Lock holds an M pointer.\r\n>\r\n> Can you use an address-indexed table like the SemaRoot table?\r\n\r\n\r\nIs copying the only concern?\r\nIf so, then I can add a back pointer to itself to SyncSema. Initialize\r\nit lazily in acquire/release. If already initialized check that it's\r\ncorrect. If incorrect - panic.\r\nThe same trick can be used in async semaphores to avoid the hashtable.\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 16:52:09.376520",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 9, 2013 at 6:44 PM,  <rsc@golang.org> wrote:\r\n> Okay, now I understand why this works.\r\n>\r\n> I want to avoid putting runtime Locks into user data structures.\r\n> Users could corrupt the Lock by copying one Cond onto another and cause\r\n> all manner of interesting problems in the runtime, especially since on\r\n> some platforms the Lock holds an M pointer.\r\n>\r\n> Can you use an address-indexed table like the SemaRoot table?\r\n\r\n\r\nIs copying the only concern?\r\nIf so, then I can add a back pointer to itself to SyncSema. Initialize\r\nit lazily in acquire/release. If already initialized check that it's\r\ncorrect. If incorrect - panic.\r\nThe same trick can be used in async semaphores to avoid the hashtable.\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 16:58:48.833090",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 9, 2013 at 12:50 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> On Fri, Aug 9, 2013 at 6:44 PM,  <rsc@golang.org> wrote:\r\n> > Okay, now I understand why this works.\r\n> >\r\n> > I want to avoid putting runtime Locks into user data structures.\r\n> > Users could corrupt the Lock by copying one Cond onto another and cause\r\n> > all manner of interesting problems in the runtime, especially since on\r\n> > some platforms the Lock holds an M pointer.\r\n> >\r\n> > Can you use an address-indexed table like the SemaRoot table?\r\n>\r\n> Is copying the only concern?\r\n>\r\n\r\nIt's the only problem I can think of.\r\n\r\n\r\n> If so, then I can add a back pointer to itself to SyncSema. Initialize\r\n> it lazily in acquire/release. If already initialized check that it's\r\n> correct. If incorrect - panic.\r\n> The same trick can be used in async semaphores to avoid the hashtable.\r\n>\r\n\r\nOkay, let's try that.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 18:02:31.780320",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/09 18:02:31, rsc wrote:\n> On Fri, Aug 9, 2013 at 12:50 PM, Dmitry Vyukov <mailto:dvyukov@google.com> wrote:\n> \n> > On Fri, Aug 9, 2013 at 6:44 PM,  <mailto:rsc@golang.org> wrote:\n> > > Okay, now I understand why this works.\n> > >\n> > > I want to avoid putting runtime Locks into user data structures.\n> > > Users could corrupt the Lock by copying one Cond onto another and cause\n> > > all manner of interesting problems in the runtime, especially since on\n> > > some platforms the Lock holds an M pointer.\n> > >\n> > > Can you use an address-indexed table like the SemaRoot table?\n> >\n> > Is copying the only concern?\n> >\n> \n> It's the only problem I can think of.\n> \n> \n> > If so, then I can add a back pointer to itself to SyncSema. Initialize\n> > it lazily in acquire/release. If already initialized check that it's\n> > correct. If incorrect - panic.\n> > The same trick can be used in async semaphores to avoid the hashtable.\n> >\n> \n> Okay, let's try that.\n\n\nI've just refactored the following:\n\nvar mu sync.Mutex\nmu.Lock\ngo func() {\n  mu.Unlock()\n}()\n\ninto the following:\n\nvar mu sync.Mutex\nmu.Lock\ngo foo(mu)\n\nfunc foo(mu sync.Mutex) {\n  mu.Unlock()\n}()\n\nand it hanged (the mutex was copied).\n\nAs a side effect of the back pointer trick, we will be able to detect and panic with a proper message in such cases -- copy a mutex that was already locked, and then use the copy.",
+			"disapproval": false,
+			"date": "2013-08-09 18:07:48.226670",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": ">\r\n> As a side effect of the back pointer trick, we will be able to detect\r\n> and panic with a proper message in such cases -- copy a mutex that was\r\n> already locked, and then use the copy.\r\n>\r\n\r\nGreat!\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 18:13:43.134430",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello sougou@google.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-12 13:49:31.635320",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/09 18:13:43, rsc wrote:\n> >\n> > As a side effect of the back pointer trick, we will be able to detect\n> > and panic with a proper message in such cases -- copy a mutex that was\n> > already locked, and then use the copy.\n> >\n> \n> Great!\n> \n> Russ\n\n\nIf we decide that we can panic on sync.Mutex copying, then we can change async semaphores to use the same scheme and then remove the sem table, hashing, list traversals, etc.",
+			"disapproval": false,
+			"date": "2013-08-12 13:55:36.238430",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/11573043/diff/36001/src/pkg/runtime/sema.goc\nFile src/pkg/runtime/sema.goc (right):\n\nhttps://codereview.appspot.com/11573043/diff/36001/src/pkg/runtime/sema.goc#newcode221\nsrc/pkg/runtime/sema.goc:221: // Returns false if the semaphore is corrupted.\nOn 2013/08/12 17:52:53, bradfitz wrote:\n> also doesn't return\n\nWell, if memory is corrupted, I can imagine that void function still returns something :)\n\nDone",
+			"disapproval": false,
+			"date": "2013-08-12 18:05:57.755810",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11573043/diff/29001/src/pkg/sync/runtime.go\nFile src/pkg/sync/runtime.go (right):\n\nhttps://codereview.appspot.com/11573043/diff/29001/src/pkg/sync/runtime.go#newcode22\nsrc/pkg/sync/runtime.go:22: type syncSema [3]uintptr\nadd a comment referencing where/what this is in the runtime code, so something can explain the [3]?\n\n// same size as struct SyncSema in sema.goc.\n\nhttps://codereview.appspot.com/11573043/diff/29001/src/pkg/sync/runtime.go#newcode25\nsrc/pkg/sync/runtime.go:25: // Returns false if the semaphore is corrupted.\nhow does it return false? it has no return value.\n\nhttps://codereview.appspot.com/11573043/diff/29001/src/pkg/sync/runtime.go#newcode29\nsrc/pkg/sync/runtime.go:29: // Returns false if the semaphore is corrupted.\nlikewise",
+			"disapproval": false,
+			"date": "2013-08-12 14:55:34.810880",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/11573043/diff/29001/src/pkg/sync/runtime.go\nFile src/pkg/sync/runtime.go (right):\n\nhttps://codereview.appspot.com/11573043/diff/29001/src/pkg/sync/runtime.go#newcode22\nsrc/pkg/sync/runtime.go:22: type syncSema [3]uintptr\nOn 2013/08/12 14:55:35, bradfitz wrote:\n> add a comment referencing where/what this is in the runtime code, so something\n> can explain the [3]?\n> \n> // same size as struct SyncSema in sema.goc.\n\nDone.\n\nhttps://codereview.appspot.com/11573043/diff/29001/src/pkg/sync/runtime.go#newcode25\nsrc/pkg/sync/runtime.go:25: // Returns false if the semaphore is corrupted.\nOn 2013/08/12 14:55:35, bradfitz wrote:\n> how does it return false? it has no return value.\n\nDone.\n\nhttps://codereview.appspot.com/11573043/diff/29001/src/pkg/sync/runtime.go#newcode29\nsrc/pkg/sync/runtime.go:29: // Returns false if the semaphore is corrupted.\nOn 2013/08/12 14:55:35, bradfitz wrote:\n> likewise\n\nDone.",
+			"disapproval": false,
+			"date": "2013-08-12 17:23:12.509370",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11573043/diff/36001/src/pkg/runtime/sema.goc\nFile src/pkg/runtime/sema.goc (right):\n\nhttps://codereview.appspot.com/11573043/diff/36001/src/pkg/runtime/sema.goc#newcode221\nsrc/pkg/runtime/sema.goc:221: // Returns false if the semaphore is corrupted.\nalso doesn't return\n\nhttps://codereview.appspot.com/11573043/diff/36001/src/pkg/runtime/sema.goc#newcode264\nsrc/pkg/runtime/sema.goc:264: // Returns false if the semaphore is corrupted.\nalso doesn't return",
+			"disapproval": false,
+			"date": "2013-08-12 17:52:53.016160",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11573043/diff/43001/src/pkg/sync/runtime.go\nFile src/pkg/sync/runtime.go (right):\n\nhttps://codereview.appspot.com/11573043/diff/43001/src/pkg/sync/runtime.go#newcode28\nsrc/pkg/sync/runtime.go:28: // Syncsemrelease waits for n pairing Syncsemacquire on the same semaphore s.\nshould these be CamelCaSed?",
+			"disapproval": false,
+			"date": "2013-08-13 03:50:09.496030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/11573043/diff/43001/src/pkg/sync/runtime.go\nFile src/pkg/sync/runtime.go (right):\n\nhttps://codereview.appspot.com/11573043/diff/43001/src/pkg/sync/runtime.go#newcode28\nsrc/pkg/sync/runtime.go:28: // Syncsemrelease waits for n pairing Syncsemacquire on the same semaphore s.\nOn 2013/08/13 03:50:09, r wrote:\n> should these be CamelCaSed?\n\nperhaps, but the existing code set the pattern. this is all a weird mix of C and Go so it's unclear.\nlet's leave it as is. it's not user-visible.",
+			"disapproval": false,
+			"date": "2013-08-13 04:05:50.355590",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=0b7a3fb56379 ***\n\nsync: faster Cond\nThe new version does not require any memory allocations and is 30-50% faster.\nAlso detect and painc if Cond is copied after first.\n\nbenchmark            old ns/op    new ns/op    delta\nBenchmarkCond1             317          195  -38.49%\nBenchmarkCond1-2           875          607  -30.63%\nBenchmarkCond1-4          1116          548  -50.90%\nBenchmarkCond1-8          1013          613  -39.49%\nBenchmarkCond1-16          983          450  -54.22%\nBenchmarkCond2             559          352  -37.03%\nBenchmarkCond2-2          1916         1378  -28.08%\nBenchmarkCond2-4          1518         1322  -12.91%\nBenchmarkCond2-8          2313         1291  -44.19%\nBenchmarkCond2-16         1885         1078  -42.81%\nBenchmarkCond4            1070          614  -42.62%\nBenchmarkCond4-2          4899         3047  -37.80%\nBenchmarkCond4-4          3813         3006  -21.16%\nBenchmarkCond4-8          3605         3045  -15.53%\nBenchmarkCond4-16         4148         2637  -36.43%\nBenchmarkCond8            2086         1264  -39.41%\nBenchmarkCond8-2          9961         6736  -32.38%\nBenchmarkCond8-4          8135         7689   -5.48%\nBenchmarkCond8-8          9623         7517  -21.89%\nBenchmarkCond8-16        11661         8093  -30.60%\n\nR=sougou, rsc, bradfitz, r\nCC=golang-dev\nhttps://codereview.appspot.com/11573043",
+			"disapproval": false,
+			"date": "2013-08-13 10:45:41.868450",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "sync: faster Cond",
+	"created": "2013-07-19 13:50:38.214500",
+	"patchsets": [
+		1,
+		3001,
+		18001,
+		21001,
+		23001,
+		26001,
+		29001,
+		36001,
+		43001,
+		51001
+	],
+	"modified": "2013-08-13 10:45:44.706300",
+	"closed": true,
+	"issue": 11573043
+}

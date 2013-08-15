@@ -1,0 +1,164 @@
+{
+	"description": "syscall: Plan 9: use lightweight errstr in entersyscall mode\r\n\r\nChange 231af8ac63aa (CL 7314062) made runtime.enteryscall()\r\nset m->mcache = nil, which means that we can no longer use\r\nsyscall.errstr in syscall.Syscall and syscall.Syscall6, since it\r\nrequires a new buffer to be allocated for holding the error string.\r\nInstead, we use pre-allocated per-M storage to hold error strings\r\nfrom syscalls made while in entersyscall mode, and call\r\nruntime.findnull to calculate the lengths.\r\n\r\nFixes issue 4994.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"rsc@golang.org",
+		"rminnich@gmail.com",
+		"ality@pbrane.org",
+		"dvyukov@google.com",
+		"rminnich@google.com",
+		"r@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please also take a look at the updated patch-set, version 4.\r\n\r\nI think that the original (patch-set 3) is more organized in\r\nterms of documentation, but that version 4 is simpler in\r\nterms of the 32-bit implementation, since otherwise we\r\nneed to pollute both packages in order to carry around\r\nthe _tos.\r\n\r\nOn 7 March 2013 11:32,  <seed@mail.nanosouffle.net> wrote:\r\n> Reviewers: rsc, rminnich, ality,\r\n>\r\n> Message:\r\n> Hello rsc@golang.org, rminnich@gmail.com, ality@pbrane.org (cc:\r\n> golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> syscall: Plan 9: use lightweight errstr in entersyscall mode\r\n>\r\n> Change 231af8ac63aa (CL 7314062) made runtime.enteryscall()\r\n> set m->mcache = nil, which means that we can no longer use\r\n> syscall.errstr in syscall.Syscall and syscall.Syscall6, since it\r\n> requires a new buffer to be allocated for holding the error string.\r\n> Instead, we use pre-allocated per-M storage to hold error strings\r\n> from syscalls made while in entersyscall mode, and call\r\n> runtime.findnull to calculate the lengths.\r\n>\r\n> Fixes issue 4994.\r\n>\r\n> Please review this at https://codereview.appspot.com/7567043/\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/runtime.h\r\n>   M src/pkg/runtime/sys_plan9_386.s\r\n>   M src/pkg/runtime/thread_plan9.c\r\n>   M src/pkg/syscall/asm_plan9_386.s\r\n>   M src/pkg/syscall/asm_plan9_amd64.s\r\n>\r\n>\r\n> Index: src/pkg/runtime/runtime.h\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/runtime.h\r\n> +++ b/src/pkg/runtime/runtime.h\r\n> @@ -320,6 +320,7 @@\r\n>  #endif\r\n>  #ifdef GOOS_plan9\r\n>         int8*           notesig;\r\n> +       byte*   errstr;\r\n>  #endif\r\n>         SEH*    seh;\r\n>         uintptr end[];\r\n> Index: src/pkg/runtime/sys_plan9_386.s\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/sys_plan9_386.s\r\n> +++ b/src/pkg/runtime/sys_plan9_386.s\r\n> @@ -170,3 +170,9 @@\r\n>  // Only used by the 64-bit runtime.\r\n>  TEXT runtime\u00b7setfpmasks(SB),7,$0\r\n>         RET\r\n> +\r\n> +// Only used by package syscall.\r\n> +// See ../syscall/asm_plan9_386.s:/^TEXT errstr/\r\n> +TEXT runtime\u00b7get_tls(SB),7,$0\r\n> +       MOVL _tos(SB), AX\r\n> +       RET\r\n> Index: src/pkg/runtime/thread_plan9.c\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/thread_plan9.c\r\n> +++ b/src/pkg/runtime/thread_plan9.c\r\n> @@ -19,6 +19,11 @@\r\n>         // Initialize stack and goroutine for note handling.\r\n>         mp->gsignal = runtime\u00b7malg(32*1024);\r\n>         mp->notesig = (int8*)runtime\u00b7malloc(ERRMAX*sizeof(int8));\r\n> +\r\n> +       // Initialize stack for handling strings from the\r\n> +       // errstr system call, as used in package syscall.\r\n> +       // See ../syscall/asm_plan9_386.s:/^TEXT errstr/\r\n> +       mp->errstr = (byte*)runtime\u00b7malloc(ERRMAX*sizeof(byte));\r\n>  }\r\n>\r\n>  // Called to initialize a new m (including the bootstrap m).\r\n> Index: src/pkg/syscall/asm_plan9_386.s\r\n> ===================================================================\r\n> --- a/src/pkg/syscall/asm_plan9_386.s\r\n> +++ b/src/pkg/syscall/asm_plan9_386.s\r\n> @@ -11,6 +11,27 @@\r\n>  //func RawSyscall(trap, a1, a2, a3 uintptr) (r1, r2, err uintptr)\r\n>  //func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err\r\n> uintptr)\r\n>\r\n> +#include \"../runtime/zasm_plan9_386.h\"\r\n> +\r\n> +#define SYS_ERRSTR 41  /* from zsysnum_plan9_386.go */\r\n> +#define ERRMAX 128     /* from ztypes_plan9_386.go */\r\n> +\r\n> +//func errstr() String\r\n> +// Grab error string due to a syscall made\r\n> +// in entersyscall mode, without going\r\n> +// through the allocator (issue 4994).\r\n> +TEXT errstr(SB),7,$0\r\n> +       CALL    runtime\u00b7get_tls(SB)\r\n> +       MOVL    m(AX), BX\r\n> +       MOVL    m_errstr(BX), CX\r\n> +       MOVL    CX, 4(SP)\r\n> +       MOVL    $ERRMAX, 8(SP)\r\n> +       MOVL    $SYS_ERRSTR, AX\r\n> +       INT     $64\r\n> +       CALL    runtime\u00b7findnull(SB)\r\n> +       MOVL    AX, 8(SP)\r\n> +       RET\r\n> +\r\n>  // Trap # in AX, args on stack above caller pc.\r\n>  TEXT   \u00b7Syscall(SB),7,$0\r\n>         CALL    runtime\u00b7entersyscall(SB)\r\n> @@ -29,7 +50,7 @@\r\n>         JNE     ok3\r\n>\r\n>         SUBL    $8, SP\r\n> -       CALL    syscall\u00b7errstr(SB)\r\n> +       CALL    errstr(SB)\r\n>         MOVL    SP, SI\r\n>         ADDL    $8, SP\r\n>         JMP     copyresult3\r\n> @@ -67,7 +88,7 @@\r\n>         JNE     ok4\r\n>\r\n>         SUBL    $8, SP\r\n> -       CALL    syscall\u00b7errstr(SB)\r\n> +       CALL    errstr(SB)\r\n>         MOVL    SP, SI\r\n>         ADDL    $8, SP\r\n>         JMP     copyresult4\r\n> Index: src/pkg/syscall/asm_plan9_amd64.s\r\n> ===================================================================\r\n> --- a/src/pkg/syscall/asm_plan9_amd64.s\r\n> +++ b/src/pkg/syscall/asm_plan9_amd64.s\r\n> @@ -11,6 +11,28 @@\r\n>  //func RawSyscall(trap, a1, a2, a3 uintptr) (r1, r2, err uintptr)\r\n>  //func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err\r\n> uintptr)\r\n>\r\n> +#include \"../runtime/zasm_plan9_amd64.h\"\r\n> +\r\n> +#define SYS_ERRSTR 41  /* from zsysnum_plan9_amd64.go */\r\n> +#define ERRMAX 128     /* from ztypes_plan9_amd64.go */\r\n> +\r\n> +//func errstr() String\r\n> +// Grab error string due to a syscall made\r\n> +// in entersyscall mode, without going\r\n> +// through the allocator (issue 4994).\r\n> +TEXT errstr(SB),7,$0\r\n> +       get_tls(AX)\r\n> +       MOVQ    m(AX), BX\r\n> +       MOVQ    m_errstr(BX), CX\r\n> +       MOVQ    CX, 8(SP)\r\n> +       MOVQ    $ERRMAX, 16(SP)\r\n> +       MOVQ    $0x8000, AX\r\n> +       MOVQ    $SYS_ERRSTR, BP\r\n> +       SYSCALL\r\n> +       CALL    runtime\u00b7findnull(SB)\r\n> +       MOVQ    AX, 16(SP)\r\n> +       RET\r\n> +\r\n>  // Trap # in BP, args on stack above caller pc.\r\n>  // NxM requires that Plan 9 system calls be\r\n>  // marked with $0x8000 in AX.\r\n> @@ -32,7 +54,7 @@\r\n>         JNE     ok3\r\n>\r\n>         SUBQ    $16, SP\r\n> -       CALL    syscall\u00b7errstr(SB)\r\n> +       CALL    errstr(SB)\r\n>         MOVQ    SP, SI\r\n>         ADDQ    $16, SP\r\n>         JMP     copyresult3\r\n> @@ -71,7 +93,7 @@\r\n>         JNE     ok4\r\n>\r\n>         SUBQ    $16, SP\r\n> -       CALL    syscall\u00b7errstr(SB)\r\n> +       CALL    errstr(SB)\r\n>         MOVQ    SP, SI\r\n>         ADDQ    $16, SP\r\n>         JMP     copyresult4\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 12:19:22.636900",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, rminnich@gmail.com, ality@pbrane.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-03-07 11:32:33.508010",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Change 231af8ac63aa (CL 7314062) made runtime.enteryscall()\n> set m->mcache = nil, which means that we can no longer use\n> syscall.errstr in syscall.Syscall\n\nJust to make it clear. This is another latent bug triggered by the scheduler change, the code was never allowed to call malloc() after entersyscall. Earlier it lead to silent heap corruptions.",
+			"disapproval": false,
+			"date": "2013-03-07 12:53:47.563840",
+			"approval": false
+		},
+		{
+			"sender": "rminnich@google.com",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"dvyukov@google.com",
+				"rminnich@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This one looks the most reasonable of the variations of I've seen.",
+			"disapproval": false,
+			"date": "2013-03-07 18:10:07.945050",
+			"approval": false
+		},
+		{
+			"sender": "rminnich@google.com",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"dvyukov@google.com",
+				"rminnich@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI've done one more pass and this one still is the easiest for me to deal with, so let me know soon if any of you see a problem with it. I think ality is right, the differences at this point are probably quibbles, but given that they might be quibbles, this one is the one I'll go with.",
+			"disapproval": false,
+			"date": "2013-03-07 21:33:12.075890",
+			"approval": true
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "rminnich@google.com once said:\r\n> I've done one more pass and this one still is the easiest for me to deal\r\n> with, so let me know soon if any of you see a problem with it. I think\r\n> ality is right, the differences at this point are probably quibbles, but\r\n> given that they might be quibbles, this one is the one I'll go with.\r\n\r\nWhy?\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 23:42:34.734670",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Let's bring this to a conclusion. Ron, can you please review the\r\noptions, decide which way to go, and check it in?\r\nThanks.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-03-07 23:49:21.634630",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"dvyukov@google.com",
+				"rminnich@google.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Submitted.\n\nSee revision 9340a6dd822e.",
+			"disapproval": false,
+			"date": "2013-03-08 20:31:38.697760",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Rob Pike <r@golang.org> once said:\r\n> Let's bring this to a conclusion. Ron, can you please review the\r\n> options, decide which way to go, and check it in?\r\n\r\nSeriously, what's up with the process lately? I went \r\nthrough the trouble to find out what was causing the\r\nproblem and responded\u00b9 to the original bug report on\r\ngo-nuts. I then sent a CL to fix it.\r\n\r\nRuss pointed out a problem and I responded with a short\r\ndescription of a potential solution and asked for his\r\nsuggestion. He never responded.\r\n\r\nThe next morning, I uploaded a new version of my CL\r\nbefore checking my email. Meanwhile, Akshat had created\r\nanother CL implementing what I had described previously.\r\n\r\nThe only significant difference between them is that\r\nmine has less assembly.\r\n\r\nRon then submits the CL from Akshat.\r\n\r\nWho made Ron the final arbiter? Is it because he's made\r\nover 100 commits? Oh, no, that's me. Is it because he's\r\nhad the commit bit for over a year? Nope, me again.\r\n\r\nAlso, why didn't his commit update this CL?\r\n\r\n  Anthony\r\n\r\n1. https://groups.google.com/d/msg/golang-nuts/uX9YNSVT91c/LyukIUROQtIJ\r\n",
+			"disapproval": false,
+			"date": "2013-03-08 05:44:54.615840",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Mar 8, 2013 at 12:44 AM, Anthony Martin <ality@pbrane.org> wrote:\r\n\r\n> Rob Pike <r@golang.org> once said:\r\n> > Let's bring this to a conclusion. Ron, can you please review the\r\n> > options, decide which way to go, and check it in?\r\n>\r\n> Seriously, what's up with the process lately?\r\n\r\n\r\nWe're all busy getting ready for Go 1.1. I have been debugging breakages on\r\nsix other operating systems that are fully working. Plan 9 has not yet\r\nreached that milestone, and there are many fewer users, so it is not as\r\nhigh on our priority list as other work. We're happy to provide storage in\r\nthe repository for the code, but we just don't have the bandwidth to review\r\npatches carefully right now.\r\n\r\n\r\n> Russ pointed out a problem and I responded with a short\r\n> description of a potential solution and asked for his\r\n> suggestion. He never responded.\r\n>\r\n\r\nI apologize for not replying. I've had my head down trying to bring up the\r\nnew cgo implementation - the biggest outstanding piece for Go 1.1, by far.\r\nFor things that subtle, I have to focus on the code for long stretches, and\r\nthat means falling behind in the email firehose. Right now, just in my\r\ngolang.org inbox, there are over 100 mail threads I am behind on.\r\n\r\n\r\n> The next morning, I uploaded a new version of my CL\r\n> before checking my email. Meanwhile, Akshat had created\r\n> another CL implementing what I had described previously.\r\n>\r\n> The only significant difference between them is that\r\n> mine has less assembly.\r\n>\r\n> Ron then submits the CL from Akshat.\r\n>\r\n> Who made Ron the final arbiter? Is it because he's made\r\n> over 100 commits? Oh, no, that's me. Is it because he's\r\n> had the commit bit for over a year? Nope, me again.\r\n>\r\n\r\nWe made Ron a committer to try to help move the Plan 9 port along. He has a\r\nstrong understanding of Plan 9 and an interest in helping to see the port\r\ncompleted. (And unlike me, he's written programs using Plan 9 in the last\r\ndecade.) It's always good to have more people who can commit code. We don't\r\nlike to be bottlenecks that way.\r\n\r\nIt is fundamental to the distributed nature of open source work that\r\noccasionally there will be duplicated effort. The best outcome in that case\r\nis that the lessons learned in both can be merged to arrive at the best\r\nsolution. In this specific instance, you and Akshat had separate CLs doing\r\nthe same thing. Since Rob and I didn't have time to look at them, Rob asked\r\nRon (a few messages back) to look at them and pick one. He picked this one.\r\n\r\nI just reviewed both CLs, and I agree with your claim about them being\r\nessentially the same. The amount of assembly involved seems inconsequential\r\neither way; I think either decision would have been fine.\r\n\r\nAlso, why didn't his commit update this CL?\r\n>\r\n\r\nSometimes the hg plugin fails. It's far from perfect. My first guess would\r\nbe that for whatever reason the auth or message send on\r\ncodereview.appspot.com failed, but then the hg push worked. Apologies for\r\nthe confusion.\r\n\r\nI suggest to move on from this pair of CLs and focus on getting Go fully\r\nworking on Plan 9. I hope that you, Akshat, and Ron will continue to work\r\ntogether to make that happen.\r\n\r\nThanks.\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-03-08 06:24:16.926450",
+			"approval": false
+		}
+	],
+	"owner_email": "seed@mail.nanosouffle.net",
+	"private": false,
+	"base_url": "",
+	"owner": "akumar",
+	"subject": "code review 7567043: syscall: Plan 9: use lightweight errstr in entersyscall mode",
+	"created": "2013-03-07 11:09:26.987490",
+	"patchsets": [
+		1,
+		4001,
+		10001,
+		19001
+	],
+	"modified": "2013-03-08 20:31:39.234730",
+	"closed": true,
+	"issue": 7567043
+}

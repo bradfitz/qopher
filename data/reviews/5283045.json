@@ -1,0 +1,62 @@
+{
+	"description": "http, crypto/tls: fix read timeouts and closing.\n\ntls.Conn.Close() didn't close the underlying connection and tried to\ndo a handshake in order to send the close notify alert.\n\nhttp didn't look for errors from the TLS handshake.\n\nFixes issue 2281.",
+	"cc": [
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-14 19:00:18.810907",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn Fri, Oct 14, 2011 at 12:00 PM, <agl@golang.org> wrote:\n\n> Reviewers: bradfitz,\n>\n> Message:\n> Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> http, crypto/tls: fix read timeouts and closing.\n>\n> tls.Conn.Close() didn't close the underlying connection and tried to\n> do a handshake in order to send the close notify alert.\n>\n> http didn't look for errors from the TLS handshake.\n>\n> Fixes issue 2281.\n>\n> Please review this at http://codereview.appspot.com/**5283045/<http://codereview.appspot.com/5283045/>\n>\n> Affected files:\n>  M src/pkg/crypto/tls/conn.go\n>  M src/pkg/http/serve_test.go\n>  M src/pkg/http/server.go\n>\n>\n> Index: src/pkg/crypto/tls/conn.go\n> ==============================**==============================**=======\n> --- a/src/pkg/crypto/tls/conn.go\n> +++ b/src/pkg/crypto/tls/conn.go\n> @@ -658,7 +658,9 @@\n>                if c.err != nil {\n>                        return nil, c.err\n>                }\n> -               c.readRecord(**recordTypeHandshake)\n> +               if err := c.readRecord(**recordTypeHandshake); err != nil\n> {\n> +                       return nil, err\n> +               }\n>        }\n>\n>        data := c.hand.Bytes()\n> @@ -671,7 +673,9 @@\n>                if c.err != nil {\n>                        return nil, c.err\n>                }\n> -               c.readRecord(**recordTypeHandshake)\n> +               if err := c.readRecord(**recordTypeHandshake); err != nil\n> {\n> +                       return nil, err\n> +               }\n>        }\n>        data = c.hand.Next(4 + n)\n>        var m handshakeMessage\n> @@ -762,10 +766,18 @@\n>\n>  // Close closes the connection.\n>  func (c *Conn) Close() os.Error {\n> -       if err := c.Handshake(); err != nil {\n> +       var alertErr os.Error\n> +\n> +       c.handshakeMutex.Lock()\n> +       defer c.handshakeMutex.Unlock()\n> +       if c.handshakeComplete {\n> +               alertErr = c.sendAlert(alertCloseNotify)\n> +       }\n> +\n> +       if err := c.conn.Close(); err != nil {\n>                return err\n>        }\n> -       return c.sendAlert(alertCloseNotify)\n> +       return alertErr\n>  }\n>\n>  // Handshake runs the client or server handshake\n> Index: src/pkg/http/serve_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/http/serve_test.go\n> +++ b/src/pkg/http/serve_test.go\n> @@ -536,10 +536,6 @@\n>  }\n>\n>  func TestTLSHandshakeTimeout(t *testing.T) {\n> -       if true {\n> -               t.Logf(\"Skipping broken test; issue 2281\")\n> -               return\n> -       }\n>        ts := httptest.NewUnstartedServer(**HandlerFunc(func(w\n> ResponseWriter, r *Request) {}))\n>        ts.Config.ReadTimeout = 250e6\n>        ts.StartTLS()\n> Index: src/pkg/http/server.go\n> ==============================**==============================**=======\n> --- a/src/pkg/http/server.go\n> +++ b/src/pkg/http/server.go\n> @@ -556,7 +556,10 @@\n>        }()\n>\n>        if tlsConn, ok := c.rwc.(*tls.Conn); ok {\n> -               tlsConn.Handshake()\n> +               if err := tlsConn.Handshake(); err != nil {\n> +                       c.close()\n> +                       return\n> +               }\n>                c.tlsState = new(tls.ConnectionState)\n>                *c.tlsState = tlsConn.ConnectionState()\n>        }\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-14 19:11:54.643136",
+			"approval": true
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=330818296ada ***\n\nhttp, crypto/tls: fix read timeouts and closing.\n\ntls.Conn.Close() didn't close the underlying connection and tried to\ndo a handshake in order to send the close notify alert.\n\nhttp didn't look for errors from the TLS handshake.\n\nFixes issue 2281.\n\nR=bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5283045",
+			"disapproval": false,
+			"date": "2011-10-18 16:59:38.754712",
+			"approval": false
+		}
+	],
+	"owner_email": "agl@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "agl1",
+	"subject": "code review 5283045: http, crypto/tls: fix read timeouts and closing.",
+	"created": "2011-10-14 18:58:54.447448",
+	"patchsets": [
+		1,
+		4,
+		1001,
+		4001,
+		6001
+	],
+	"modified": "2011-10-18 16:59:40.146437",
+	"closed": true,
+	"issue": 5283045
+}

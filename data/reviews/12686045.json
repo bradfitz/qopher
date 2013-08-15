@@ -1,0 +1,123 @@
+{
+	"description": "runtime: fix network timers related crash\nFixes issue 6103.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"bsiegert@gmail.com",
+		"alex.brainman@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-12 08:21:03.371860",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nfor all I know about this stuff.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-08-12 23:16:37.711690",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=03ca8d80b840 ***\n\nruntime: fix network timers related crash\nFixes issue 6103.\n\nR=golang-dev, alex.brainman\nCC=golang-dev\nhttps://codereview.appspot.com/12686045",
+			"disapproval": false,
+			"date": "2013-08-13 08:56:35.053270",
+			"approval": false
+		},
+		{
+			"sender": "bsiegert@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This change broke the build on Windows, OpenBSD, NetBSD and FreeBSD,\r\nas far as I can see. The test times out after 2 minutes.\r\n\r\nExample: http://build.golang.org/log/6bb93acb1bd32675761813840a85bb7f259a817c\r\n(NetBSD/x64).\r\n\r\nOn Mon, Aug 12, 2013 at 10:21 AM,  <dvyukov@google.com> wrote:\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: fix network timers related crash\r\n> Fixes issue 6103.\r\n>\r\n> Please review this at https://codereview.appspot.com/12686045/\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/timeout_test.go\r\n>   M src/pkg/runtime/netpoll.goc\r\n>\r\n>\r\n> Index: src/pkg/net/timeout_test.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/timeout_test.go\r\n> +++ b/src/pkg/net/timeout_test.go\r\n> @@ -703,3 +703,36 @@\r\n>                 c.Write(buf[:])\r\n>         }\r\n>  }\r\n> +\r\n> +func TestDeadlineRace(t *testing.T) {\r\n> +       switch runtime.GOOS {\r\n> +       case \"plan9\":\r\n> +               t.Skipf(\"skipping test on %q\", runtime.GOOS)\r\n> +       }\r\n> +\r\n> +       defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(4))\r\n> +       ln := newLocalListener(t)\r\n> +       defer ln.Close()\r\n> +       c, err := Dial(\"tcp\", ln.Addr().String())\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"Dial: %v\", err)\r\n> +       }\r\n> +       defer c.Close()\r\n> +       done := make(chan bool)\r\n> +       go func() {\r\n> +               t := time.NewTicker(2 * time.Microsecond).C\r\n> +               for {\r\n> +                       if err := c.SetDeadline(time.Now().Add(2 *\r\n> time.Microsecond)); err != nil {\r\n> +                               break\r\n> +                       }\r\n> +                       <-t\r\n> +               }\r\n> +               done <- true\r\n> +       }()\r\n> +       var buf [1]byte\r\n> +       for i := 0; i < 1024; i++ {\r\n> +               c.Read(buf[:]) // ignore possible timeout errors\r\n> +       }\r\n> +       c.Close()\r\n> +       <-done\r\n> +}\r\n> Index: src/pkg/runtime/netpoll.goc\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/netpoll.goc\r\n> +++ b/src/pkg/runtime/netpoll.goc\r\n> @@ -113,10 +113,13 @@\r\n>         runtime\u00b7lock(pd);\r\n>         err = checkerr(pd, mode);\r\n>         if(err == 0) {\r\n> -               if(!netpollblock(pd, mode)) {\r\n> +               while(!netpollblock(pd, mode)) {\r\n>                         err = checkerr(pd, mode);\r\n> -                       if(err == 0)\r\n> -                               runtime\u00b7throw(\"runtime_pollWait: unblocked\r\n> by ioready\");\r\n> +                       if(err != 0)\r\n> +                               break;\r\n> +                       // Can happen if timeout has fired and unblocked us,\r\n> +                       // but before we had a chance to run, timeout has\r\n> been reset.\r\n> +                       // Pretend it has not happened and retry.\r\n>                 }\r\n>         }\r\n>         runtime\u00b7unlock(pd);\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n\r\n\r\n\r\n-- \r\nThe first essential in chemistry is that you should perform practical\r\nwork and conduct experiments, for he who performs not practical work\r\nnor makes experiments will never attain the least degree of mastery.\r\n        -- Abu Musa Jabir ibn Hayyan (721-815)\r\n",
+			"disapproval": false,
+			"date": "2013-08-13 13:55:09.473720",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"bsiegert@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/13 13:55:09, bsiegert wrote:\n> This change broke the build on Windows, OpenBSD, NetBSD and FreeBSD,\n> as far as I can see. The test times out after 2 minutes.\n\nThe test turned out to be that good that it uncovered 4 different bugs.\nThe fix is here:\nhttps://codereview.appspot.com/12847043/\nOnce somebody LGTMs it, I will submit.\nSorry.",
+			"disapproval": false,
+			"date": "2013-08-13 14:04:10.371840",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"bsiegert@gmail.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Dmitry,\n\nUnfortunately, I think TestDeadlineRace is not going to work. There is a race here in this test:\n\n1) read blocks waiting for deadline to arrive;\n2) net deadline is fired;\n3) ticker channel is ready and deadline is extended;\n\n2 and 3 are fired simultaneously. Where is guarantee that 2 happens before 3? And once 3 completes 2 is no longer true. We could make ticker deadline longer, so net deadline always gets fired, but that defeat the purpose of this test.\n\nAnd secondly, even if everything works properly here, just waiting on the ticker for 1024 times on my Windows XP takes more then 15s (https://code.google.com/p/go/issues/detail?id=6142). And that is unacceptable for -short test.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-08-14 04:32:47.458690",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You are right.\r\nI will address this today.\r\n\r\n\r\nOn Wed, Aug 14, 2013 at 8:32 AM, <alex.brainman@gmail.com> wrote:\r\n\r\n> Dmitry,\r\n>\r\n> Unfortunately, I think TestDeadlineRace is not going to work. There is a\r\n> race here in this test:\r\n>\r\n> 1) read blocks waiting for deadline to arrive;\r\n> 2) net deadline is fired;\r\n> 3) ticker channel is ready and deadline is extended;\r\n>\r\n> 2 and 3 are fired simultaneously. Where is guarantee that 2 happens\r\n> before 3? And once 3 completes 2 is no longer true. We could make ticker\r\n> deadline longer, so net deadline always gets fired, but that defeat the\r\n> purpose of this test.\r\n>\r\n> And secondly, even if everything works properly here, just waiting on\r\n> the ticker for 1024 times on my Windows XP takes more then 15s\r\n> (https://code.google.com/p/go/**issues/detail?id=6142<https://code.google.com/p/go/issues/detail?id=6142>).\r\n> And that is\r\n> unacceptable for -short test.\r\n>\r\n> Alex\r\n>\r\n> https://codereview.appspot.**com/12686045/<https://codereview.appspot.com/12686045/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 09:51:27.930550",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "sent https://codereview.appspot.com/12937043\r\n\r\n\r\nOn Wed, Aug 14, 2013 at 1:51 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> You are right.\r\n> I will address this today.\r\n>\r\n>\r\n> On Wed, Aug 14, 2013 at 8:32 AM, <alex.brainman@gmail.com> wrote:\r\n>\r\n>> Dmitry,\r\n>>\r\n>> Unfortunately, I think TestDeadlineRace is not going to work. There is a\r\n>> race here in this test:\r\n>>\r\n>> 1) read blocks waiting for deadline to arrive;\r\n>> 2) net deadline is fired;\r\n>> 3) ticker channel is ready and deadline is extended;\r\n>>\r\n>> 2 and 3 are fired simultaneously. Where is guarantee that 2 happens\r\n>> before 3? And once 3 completes 2 is no longer true. We could make ticker\r\n>> deadline longer, so net deadline always gets fired, but that defeat the\r\n>> purpose of this test.\r\n>>\r\n>> And secondly, even if everything works properly here, just waiting on\r\n>> the ticker for 1024 times on my Windows XP takes more then 15s\r\n>> (https://code.google.com/p/go/**issues/detail?id=6142<https://code.google.com/p/go/issues/detail?id=6142>).\r\n>> And that is\r\n>> unacceptable for -short test.\r\n>>\r\n>> Alex\r\n>>\r\n>> https://codereview.appspot.**com/12686045/<https://codereview.appspot.com/12686045/>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-14 17:11:19.006620",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 12686045: runtime: fix network timers related crash",
+	"created": "2013-08-11 14:49:42.468150",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		10001
+	],
+	"modified": "2013-08-14 17:11:19.079030",
+	"closed": true,
+	"issue": 12686045
+}

@@ -1,0 +1,122 @@
+{
+	"description": "runtime: detect deadlocks in programs using cgo\nWhen cgo is used, runtime creates an additional M to handle callbacks on threads not created by Go.\nThis effectively disabled deadlock detection, which is a right thing, because Go program can be blocked\nand only serve callbacks on external threads.\nThis also disables deadlock detection under race detector, because it happens to use cgo.\nWith this change the additional M is created lazily on first cgo call. So deadlock detector\nworks for programs that import \"C\", \"net\" or \"net/http/pprof\" but do not use them in fact.\nAlso fixes deadlock detector under race detector.\nIt should be fine to create the M later, because C code can not call into Go before first cgo call,\nbecause C code does not know when Go initialization has completed. So a Go program need to call into C\nfirst either to create an external thread, or notify a thread created in global ctor that Go\ninitialization has completed.\nFixes issue 4973.\nFixes issue 5475.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"minux.ma@gmail.com",
+		"iant@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-15 11:57:55.049680",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\nAdded diagnostics for early cgo callbacks",
+			"disapproval": false,
+			"date": "2013-05-15 12:27:42.714020",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 15, 2013 at 7:57 PM, <dvyukov@google.com> wrote:\r\n\r\n> Description:\r\n> runtime: detect deadlocks in programs using cgo\r\n> When cgo is used, runtime creates an additional M to handle callbacks on\r\n> threads not created by Go.\r\n> This effectively disabled deadlock detection, which is a right thing,\r\n> because Go program can be blocked\r\n> and only serve callbacks on external threads.\r\n> This also disables deadlock detection under race detector, because it\r\n> happens to use cgo.\r\n> With this change the additional M is created lazily on first cgo call.\r\n> So deadlock detector\r\n> works for programs that import \"C\", \"net\" or \"net/http/pprof\" but do not\r\n> use them in fact.\r\n> Also fixes deadlock detector under race detector.\r\n> It should be fine to create the M later, because C code can not call\r\n> into Go before first cgo call,\r\n> because C code does not know when Go initialization has completed. So a\r\n> Go program need to call into C\r\n> first either to create an external thread, or notify a thread created in\r\n> global ctor that Go\r\n> initialization has completed.\r\n>\r\nThank you for the detailed explanation.\r\n\r\nwhat if Go code and foreign thread are using polling and atomic\r\ninstructions to signify\r\nthe completion of Go initialization?\r\n\r\nI think a better approach would be to create the extra M only when there is\r\nexported Go\r\nfunctions in this program, the linker could provide such information.\r\n",
+			"disapproval": false,
+			"date": "2013-05-15 12:32:50.159410",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 15, 2013 at 4:32 PM, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Wed, May 15, 2013 at 7:57 PM, <dvyukov@google.com> wrote:\r\n>>\r\n>> Description:\r\n>> runtime: detect deadlocks in programs using cgo\r\n>> When cgo is used, runtime creates an additional M to handle callbacks on\r\n>> threads not created by Go.\r\n>> This effectively disabled deadlock detection, which is a right thing,\r\n>> because Go program can be blocked\r\n>> and only serve callbacks on external threads.\r\n>> This also disables deadlock detection under race detector, because it\r\n>> happens to use cgo.\r\n>> With this change the additional M is created lazily on first cgo call.\r\n>> So deadlock detector\r\n>> works for programs that import \"C\", \"net\" or \"net/http/pprof\" but do not\r\n>> use them in fact.\r\n>> Also fixes deadlock detector under race detector.\r\n>> It should be fine to create the M later, because C code can not call\r\n>> into Go before first cgo call,\r\n>> because C code does not know when Go initialization has completed. So a\r\n>> Go program need to call into C\r\n>> first either to create an external thread, or notify a thread created in\r\n>> global ctor that Go\r\n>> initialization has completed.\r\n>\r\n> Thank you for the detailed explanation.\r\n>\r\n> what if Go code and foreign thread are using polling and atomic instructions\r\n> to signify\r\n> the completion of Go initialization?\r\n\r\nIs it possible to link Go var and C var together?\r\nI think gcc will have a problem with . in symbol name.\r\n\r\nOf course there can be other weird cases, e.g. use filesystem of\r\nnetwork to signal initialization. But I think we can ignore this,\r\nespecially since the fix is simple -- make a fake cgo call.\r\n\r\nAlso note that this can only happen if C creates the thread in a global ctor.\r\n\r\n> I think a better approach would be to create the extra M only when there is\r\n> exported Go\r\n> functions in this program, the linker could provide such information.\r\n\r\nWon't work for race detector, because it does contain callbacks.\r\n",
+			"disapproval": false,
+			"date": "2013-05-15 12:40:41.280050",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 15, 2013 at 8:40 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> Is it possible to link Go var and C var together?\r\n> I think gcc will have a problem with . in symbol name.\r\n>\r\none can use __asm__(\"pkg.A\") to make a symbol name anything he wants,\r\nhowever, this is very cumbersome to do (my example needs one Go package\r\nand one main package with global constructors in C).\r\n\r\n>\r\n> Of course there can be other weird cases, e.g. use filesystem of\r\n> network to signal initialization. But I think we can ignore this,\r\n> especially since the fix is simple -- make a fake cgo call.\r\n>\r\nright.\r\n\r\n>\r\n> Also note that this can only happen if C creates the thread in a global\r\n> ctor.\r\n>\r\n> > I think a better approach would be to create the extra M only when there\r\n> is\r\n> > exported Go\r\n> > functions in this program, the linker could provide such information.\r\n>\r\n> Won't work for race detector, because it does contain callbacks.\r\n>\r\nbut race detector won't use the callback from arbitrary C thread, right?\r\nwe can special case race detector here (we've been already specially\r\nhandling cgo calls issued by the race detector). in fact, iiuc, race\r\ndetector\r\nwon't do callback from foreign C thread so its callback actually doesn't\r\nneed\r\nthe extram, we can just treat runtime/race as not containing exported Go\r\nfunc.\r\n\r\nthe reason why i propose that approach is that i think being able to use\r\nthe deadlock detector when using package net (and os/user) is important.\r\n",
+			"disapproval": false,
+			"date": "2013-05-15 19:04:27.028010",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 15, 2013 at 11:04 PM, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Wed, May 15, 2013 at 8:40 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n>>\r\n>> Is it possible to link Go var and C var together?\r\n>> I think gcc will have a problem with . in symbol name.\r\n>\r\n> one can use __asm__(\"pkg.A\") to make a symbol name anything he wants,\r\n> however, this is very cumbersome to do (my example needs one Go package\r\n> and one main package with global constructors in C).\r\n>>\r\n>>\r\n>> Of course there can be other weird cases, e.g. use filesystem of\r\n>> network to signal initialization. But I think we can ignore this,\r\n>> especially since the fix is simple -- make a fake cgo call.\r\n>\r\n> right.\r\n>>\r\n>>\r\n>> Also note that this can only happen if C creates the thread in a global\r\n>> ctor.\r\n>>\r\n>> > I think a better approach would be to create the extra M only when there\r\n>> > is\r\n>> > exported Go\r\n>> > functions in this program, the linker could provide such information.\r\n>>\r\n>> Won't work for race detector, because it does contain callbacks.\r\n>\r\n> but race detector won't use the callback from arbitrary C thread, right?\r\n> we can special case race detector here (we've been already specially\r\n> handling cgo calls issued by the race detector). in fact, iiuc, race\r\n> detector\r\n> won't do callback from foreign C thread so its callback actually doesn't\r\n> need\r\n> the extram, we can just treat runtime/race as not containing exported Go\r\n> func.\r\n>\r\n> the reason why i propose that approach is that i think being able to use\r\n> the deadlock detector when using package net (and os/user) is important.\r\n\r\n\r\nA single timer, syscall or outstanding network read disables the\r\ndeadlock detector. So I do not think current implementation is useful\r\nfor anything other than toy programs. In fact, current network poller\r\nimplementation (as well as previous) disabled deadlock detector even\r\nw/o outstanding reads. So it does not work with net.\r\n",
+			"disapproval": false,
+			"date": "2013-05-15 19:12:57.444760",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-05-22 18:51:23.261460",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=ef383a4cd6bd ***\n\nruntime: detect deadlocks in programs using cgo\nWhen cgo is used, runtime creates an additional M to handle callbacks on threads not created by Go.\nThis effectively disabled deadlock detection, which is a right thing, because Go program can be blocked\nand only serve callbacks on external threads.\nThis also disables deadlock detection under race detector, because it happens to use cgo.\nWith this change the additional M is created lazily on first cgo call. So deadlock detector\nworks for programs that import \"C\", \"net\" or \"net/http/pprof\" but do not use them in fact.\nAlso fixes deadlock detector under race detector.\nIt should be fine to create the M later, because C code can not call into Go before first cgo call,\nbecause C code does not know when Go initialization has completed. So a Go program need to call into C\nfirst either to create an external thread, or notify a thread created in global ctor that Go\ninitialization has completed.\nFixes issue 4973.\nFixes issue 5475.\n\nR=golang-dev, minux.ma, iant\nCC=golang-dev\nhttps://codereview.appspot.com/9303046",
+			"disapproval": false,
+			"date": "2013-05-22 18:59:53.367620",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 9303046: runtime: detect deadlocks in programs using cgo",
+	"created": "2013-05-15 11:40:55.253550",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		7001,
+		10001,
+		14001,
+		23001,
+		26001
+	],
+	"modified": "2013-05-22 18:59:53.367620",
+	"closed": true,
+	"issue": 9303046
+}

@@ -1,0 +1,111 @@
+{
+	"description": "net: separate unix pollster initialization from network file descriptor allocation\n\nUnlike the existing net package own pollster, runtime-integrated\nnetwork pollster on BSD variants, actually kqueue, requires a socket\nthat has beed passed to syscall.Listen previously for a stream\nlistener.\n\nThis CL separates pollDesc.Init of Unix network pollster from newFD\nto avoid any breakages in the transition from Unix network pollster\nto runtime-integrated pollster. Upcoming CLs will rearrange the call\norder of pollster and syscall functions like the following;\n\n- For dialers that open active connections, pollDesc.Init will be\n  called in between syscall.Bind and syscall.Connect.\n\n- For stream listeners that open passive stream connections,\n  pollDesc.Init will be called just after syscall.Listen.\n\n- For datagram listeners that open datagram connections,\n  pollDesc.Init will be called just after syscall.Bind.\n\nThis is in preparation for runtime-integrated network pollster for BSD\nvariants.\n\nUpdate issue 5199",
+	"cc": [
+		"dvyukov@google.com",
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "When you switch to runtime netpoll, you will delete fd_poll_unix.go. So why do we need to modify it now?",
+			"disapproval": false,
+			"date": "2013-08-08 21:41:50.100660",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=333a1fab08e7 ***\n\nnet: separate unix pollster initialization from network file descriptor allocation\n\nUnlike the existing net package own pollster, runtime-integrated\nnetwork pollster on BSD variants, actually kqueue, requires a socket\nthat has beed passed to syscall.Listen previously for a stream\nlistener.\n\nThis CL separates pollDesc.Init of Unix network pollster from newFD\nto avoid any breakages in the transition from Unix network pollster\nto runtime-integrated pollster. Upcoming CLs will rearrange the call\norder of pollster and syscall functions like the following;\n\n- For dialers that open active connections, pollDesc.Init will be\n  called in between syscall.Bind and syscall.Connect.\n\n- For stream listeners that open passive stream connections,\n  pollDesc.Init will be called just after syscall.Listen.\n\n- For datagram listeners that open datagram connections,\n  pollDesc.Init will be called just after syscall.Bind.\n\nThis is in preparation for runtime-integrated network pollster for BSD\nvariants.\n\nUpdate issue 5199\n\nR=dvyukov, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/12663043",
+			"disapproval": false,
+			"date": "2013-08-09 00:03:00.432640",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-08-08 20:49:24.951080",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Who is calling these methods when they don't have pollServers?\r\n\r\n\r\n\r\nOn Thu, Aug 8, 2013 at 1:49 PM, <mikioh.mikioh@gmail.com> wrote:\r\n\r\n> Reviewers: dvyukov,\r\n>\r\n> Message:\r\n> Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> net: separate unix pollster initialization from network file descriptor\r\n> allocation\r\n>\r\n> This is in preparation for runtime-integrated network pollster for BSD\r\n> variants.\r\n>\r\n> Update issue 5199\r\n>\r\n> Please review this at https://codereview.appspot.**com/12663043/<https://codereview.appspot.com/12663043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/fd_poll_unix.go\r\n>\r\n>\r\n> Index: src/pkg/net/fd_poll_unix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/fd_poll_unix.go\r\n> +++ b/src/pkg/net/fd_poll_unix.go\r\n> @@ -252,14 +252,23 @@\r\n>  }\r\n>\r\n>  func (pd *pollDesc) Lock() {\r\n> +       if pd.pollServer == nil {\r\n> +               return\r\n> +       }\r\n>         pd.pollServer.Lock()\r\n>  }\r\n>\r\n>  func (pd *pollDesc) Unlock() {\r\n> +       if pd.pollServer == nil {\r\n> +               return\r\n> +       }\r\n>         pd.pollServer.Unlock()\r\n>  }\r\n>\r\n>  func (pd *pollDesc) Wakeup() {\r\n> +       if pd.pollServer == nil {\r\n> +               return\r\n> +       }\r\n>         pd.pollServer.Wakeup()\r\n>  }\r\n>\r\n> @@ -294,6 +303,9 @@\r\n>  }\r\n>\r\n>  func (pd *pollDesc) Evict() bool {\r\n> +       if pd.pollServer == nil {\r\n> +               return false\r\n> +       }\r\n>         return pd.pollServer.Evict(pd)\r\n>  }\r\n>\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 21:27:48.776020",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 9, 2013 at 6:41 AM,  <dvyukov@google.com> wrote:\r\n\r\n> When you switch to runtime netpoll, you will delete fd_poll_unix.go. So\r\n> why do we need to modify it now?\r\n\r\nI don't think it will happen at the same time.\r\n\r\n- rearranging the call order of pollster and syscall functions w/ old\r\nunix pollster\r\n- switching from unix pollster to runtime-integrated pollster\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 22:01:08.757910",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 9, 2013 at 6:27 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n\r\n> Who is calling these methods when they don't have pollServers?\r\n\r\nAfter rearranging the call oder of pollster and syscall functions it\r\nwill happen.\r\nUpdated the CL description.\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 22:09:23.336070",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"dvyukov@google.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\nI think I understand what happens",
+			"disapproval": false,
+			"date": "2013-08-08 22:28:43.053540",
+			"approval": true
+		}
+	],
+	"owner_email": "mikioh.mikioh@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "mikio",
+	"subject": "code review 12663043: net: separate unix pollster initialization from network...",
+	"created": "2013-08-08 13:35:02.467290",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		13001
+	],
+	"modified": "2013-08-09 00:03:31.897820",
+	"closed": true,
+	"issue": 12663043
+}

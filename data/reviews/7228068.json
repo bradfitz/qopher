@@ -1,0 +1,198 @@
+{
+	"description": "net: Plan 9: open data file and set remote-addr properly\n\nThe data file should be opened when a Conn is first\nestablished, rather than waiting for the first Read or\nWrite.\n\nUpon Close, we now make sure to try to close both, the\nctl as well as data files and set both to nil, even in\nthe face of errors, instead of returning early.\n\nThe Accept call was not setting the remote address\nof the connection properly. Now, we read the correct\nfile.\n\nMake functions that establish Conn use newTCPConn\nor newUDPConn.",
+	"cc": [
+		"rsc@golang.org",
+		"rminnich@gmail.com",
+		"ality@pbrane.org",
+		"dave@cheney.net",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, rminnich@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-01-31 06:14:06.296610",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Akshat Kumar <seed@mail.nanosouffle.net> once said:\r\n> Updated this CL - fixed a blunder in acceptPlan9, made sure\r\n> to close the data file where appropriate, and reverted the\r\n> declaration for ListenUDP.\r\n\r\nCan you add a netDir function in fd_plan9.go:\r\n\r\nfunc netDir(proto, name string) string {\r\n\treturn \"/net/\" + proto + \"/\" + name\r\n}\r\n\r\nand then use that everywhere. All the noise\r\nalmost made me overlook the l.dir change in\r\nacceptPlan9.\r\n\r\nThanks,\r\n  Anthony\r\n",
+			"disapproval": false,
+			"date": "2013-02-01 15:43:23.831100",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Updated this CL - fixed a blunder in acceptPlan9, made sure\r\nto close the data file where appropriate, and reverted the\r\ndeclaration for ListenUDP.\r\n\r\nOn 31 January 2013 06:14,  <seed@mail.nanosouffle.net> wrote:\r\n> Reviewers: rsc, rminnich,\r\n>\r\n> Message:\r\n> Hello rsc@golang.org, rminnich@gmail.com (cc:\r\n> golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> net: Plan 9: open data file and set remote-addr properly\r\n>\r\n> The data file should be opened when a Conn is first\r\n> established, rather than waiting for the first Read or\r\n> Write.\r\n>\r\n> The Accept call was not setting the remote address\r\n> of the connection properly. Now, we read the correct\r\n> file.\r\n>\r\n> Make functions that establish Conn use newTCPConn\r\n> or newUDPConn.\r\n>\r\n> Please review this at https://codereview.appspot.com/7228068/\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/fd_plan9.go\r\n>   M src/pkg/net/ipsock_plan9.go\r\n>   M src/pkg/net/tcpsock_plan9.go\r\n>   M src/pkg/net/udpsock_plan9.go\r\n>\r\n>\r\n> Index: src/pkg/net/fd_plan9.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/fd_plan9.go\r\n> +++ b/src/pkg/net/fd_plan9.go\r\n> @@ -29,22 +29,16 @@\r\n>         return dialTimeoutRace(net, addr, timeout)\r\n>  }\r\n>\r\n> -func newFD(proto, name string, ctl *os.File, laddr, raddr Addr) *netFD {\r\n> -       return &netFD{proto, name, \"/net/\" + proto + \"/\" + name, ctl, nil,\r\n> laddr, raddr}\r\n> +func newFD(proto, name string, ctl, data *os.File, laddr, raddr Addr)\r\n> *netFD {\r\n> +       return &netFD{proto, name, \"/net/\" + proto + \"/\" + name, ctl, data,\r\n> laddr, raddr}\r\n>  }\r\n>\r\n>  func (fd *netFD) ok() bool { return fd != nil && fd.ctl != nil }\r\n>\r\n>  func (fd *netFD) Read(b []byte) (n int, err error) {\r\n> -       if !fd.ok() {\r\n> +       if !fd.ok() || fd.data == nil {\r\n>                 return 0, syscall.EINVAL\r\n>         }\r\n> -       if fd.data == nil {\r\n> -               fd.data, err = os.OpenFile(fd.dir+\"/data\", os.O_RDWR, 0)\r\n> -               if err != nil {\r\n> -                       return 0, err\r\n> -               }\r\n> -       }\r\n>         n, err = fd.data.Read(b)\r\n>         if fd.proto == \"udp\" && err == io.EOF {\r\n>                 n = 0\r\n> @@ -54,15 +48,9 @@\r\n>  }\r\n>\r\n>  func (fd *netFD) Write(b []byte) (n int, err error) {\r\n> -       if !fd.ok() {\r\n> +       if !fd.ok() || fd.data == nil {\r\n>                 return 0, syscall.EINVAL\r\n>         }\r\n> -       if fd.data == nil {\r\n> -               fd.data, err = os.OpenFile(fd.dir+\"/data\", os.O_RDWR, 0)\r\n> -               if err != nil {\r\n> -                       return 0, err\r\n> -               }\r\n> -       }\r\n>         return fd.data.Write(b)\r\n>  }\r\n>\r\n> Index: src/pkg/net/ipsock_plan9.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/ipsock_plan9.go\r\n> +++ b/src/pkg/net/ipsock_plan9.go\r\n> @@ -114,6 +114,11 @@\r\n>                 f.Close()\r\n>                 return nil, err\r\n>         }\r\n> +       data, err := os.OpenFile(\"/net/\"+proto+\"/\"+name+\"/data\", os.O_RDWR,\r\n> 0)\r\n> +       if err != nil {\r\n> +               f.Close()\r\n> +               return nil, err\r\n> +       }\r\n>         laddr, err = readPlan9Addr(proto, \"/net/\"+proto+\"/\"+name+\"/local\")\r\n>         if err != nil {\r\n>                 f.Close()\r\n> @@ -124,7 +129,7 @@\r\n>                 f.Close()\r\n>                 return nil, err\r\n>         }\r\n> -       return newFD(proto, name, f, laddr, raddr), nil\r\n> +       return newFD(proto, name, f, data, laddr, raddr), nil\r\n>  }\r\n>\r\n>  func listenPlan9(net string, laddr Addr) (*netFD, error) {\r\n> @@ -142,34 +147,34 @@\r\n>                 f.Close()\r\n>                 return nil, err\r\n>         }\r\n> -       return &netFD{proto: proto, name: name, dir: \"/net/\" + proto + \"/\" +\r\n> name, ctl: f, laddr: laddr}, nil\r\n> +       return newFD(proto, name, f, nil, laddr, nil), nil\r\n>  }\r\n>\r\n>  func (l *netFD) netFD() *netFD {\r\n> -       return newFD(l.proto, l.name, l.ctl, l.laddr, nil)\r\n> +       return newFD(l.proto, l.name, l.ctl, l.data, l.laddr, l.raddr)\r\n>  }\r\n>\r\n> -func (l *netFD) acceptPlan9() (*netFD, error) {\r\n> -       f, err := os.Open(l.dir + \"/listen\")\r\n> +func (l *netFD) acceptPlan9() (f *netFD, err error) {\r\n> +       l.ctl, err = os.Open(l.dir + \"/listen\")\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n>         var buf [16]byte\r\n> -       n, err := f.Read(buf[:])\r\n> +       n, err := l.ctl.Read(buf[:])\r\n>         if err != nil {\r\n> -               f.Close()\r\n> +               l.ctl.Close()\r\n>                 return nil, err\r\n>         }\r\n> -       name := string(buf[:n])\r\n> -       laddr, err := readPlan9Addr(l.proto, l.dir+\"/local\")\r\n> +       l.name = string(buf[:n])\r\n> +       l.data, err = os.OpenFile(\"/net/\"+l.proto+\"/\"+l.name+\"/data\",\r\n> os.O_RDWR, 0)\r\n>         if err != nil {\r\n> -               f.Close()\r\n> +               l.ctl.Close()\r\n>                 return nil, err\r\n>         }\r\n> -       raddr, err := readPlan9Addr(l.proto, l.dir+\"/remote\")\r\n> +       l.raddr, err = readPlan9Addr(l.proto,\r\n> \"/net/\"+l.proto+\"/\"+l.name+\"/remote\")\r\n>         if err != nil {\r\n> -               f.Close()\r\n> +               l.ctl.Close()\r\n>                 return nil, err\r\n>         }\r\n> -       return newFD(l.proto, name, f, laddr, raddr), nil\r\n> +       return l.netFD(), nil\r\n>  }\r\n> Index: src/pkg/net/tcpsock_plan9.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/tcpsock_plan9.go\r\n> +++ b/src/pkg/net/tcpsock_plan9.go\r\n> @@ -98,7 +98,7 @@\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> -       return &TCPConn{conn{fd}}, nil\r\n> +       return newTCPConn(fd), nil\r\n>  }\r\n>\r\n>  // TCPListener is a TCP network listener.  Clients should typically\r\n> Index: src/pkg/net/udpsock_plan9.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/udpsock_plan9.go\r\n> +++ b/src/pkg/net/udpsock_plan9.go\r\n> @@ -19,6 +19,10 @@\r\n>         conn\r\n>  }\r\n>\r\n> +func newUDPConn(fd *netFD) *UDPConn {\r\n> +       return &UDPConn{conn{fd}}\r\n> +}\r\n> +\r\n>  // ReadFromUDP reads a UDP packet from c, copying the payload into b.\r\n>  // It returns the number of bytes copied into b and the return address\r\n>  // that was on the packet.\r\n> @@ -27,15 +31,9 @@\r\n>  // Timeout() == true after a fixed time limit; see SetDeadline and\r\n>  // SetReadDeadline.\r\n>  func (c *UDPConn) ReadFromUDP(b []byte) (n int, addr *UDPAddr, err error) {\r\n> -       if !c.ok() {\r\n> +       if !c.ok() || c.fd.data == nil {\r\n>                 return 0, nil, syscall.EINVAL\r\n>         }\r\n> -       if c.fd.data == nil {\r\n> -               c.fd.data, err = os.OpenFile(c.fd.dir+\"/data\", os.O_RDWR, 0)\r\n> -               if err != nil {\r\n> -                       return 0, nil, err\r\n> -               }\r\n> -       }\r\n>         buf := make([]byte, udpHeaderSize+len(b))\r\n>         m, err := c.fd.data.Read(buf)\r\n>         if err != nil {\r\n> @@ -76,16 +74,9 @@\r\n>  // SetWriteDeadline.  On packet-oriented connections, write timeouts\r\n>  // are rare.\r\n>  func (c *UDPConn) WriteToUDP(b []byte, addr *UDPAddr) (int, error) {\r\n> -       if !c.ok() {\r\n> +       if !c.ok() || c.fd.data == nil {\r\n>                 return 0, syscall.EINVAL\r\n>         }\r\n> -       if c.fd.data == nil {\r\n> -               f, err := os.OpenFile(c.fd.dir+\"/data\", os.O_RDWR, 0)\r\n> -               if err != nil {\r\n> -                       return 0, err\r\n> -               }\r\n> -               c.fd.data = f\r\n> -       }\r\n>         h := new(udpHeader)\r\n>         h.raddr = addr.IP.To16()\r\n>         h.laddr = c.fd.laddr.(*UDPAddr).IP.To16()\r\n> @@ -141,7 +132,7 @@\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> -       return &UDPConn{conn{fd}}, nil\r\n> +       return newUDPConn(fd), nil\r\n>  }\r\n>\r\n>  const udpHeaderSize = 16*3 + 2*2\r\n> @@ -176,7 +167,7 @@\r\n>  // address laddr.  The returned connection c's ReadFrom and WriteTo\r\n>  // methods can be used to receive and send UDP packets with per-packet\r\n>  // addressing.\r\n> -func ListenUDP(net string, laddr *UDPAddr) (*UDPConn, error) {\r\n> +func ListenUDP(net string, laddr *UDPAddr) (c *UDPConn, err error) {\r\n>         switch net {\r\n>         case \"udp\", \"udp4\", \"udp6\":\r\n>         default:\r\n> @@ -193,7 +184,11 @@\r\n>         if err != nil {\r\n>                 return nil, err\r\n>         }\r\n> -       return &UDPConn{conn{l.netFD()}}, nil\r\n> +       l.data, err = os.OpenFile(l.dir+\"/data\", os.O_RDWR, 0)\r\n> +       if err != nil {\r\n> +               return nil, err\r\n> +       }\r\n> +       return newUDPConn(l.netFD()), nil\r\n>  }\r\n>\r\n>  // ListenMulticastUDP listens for incoming multicast UDP packets\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-01 00:39:55.209990",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "In any case, given the current code (which uses netFD() and\r\nnewFD whenever a *netFD is given as input), whenever name\r\nand proto are being changed, the directory is being changed.\r\nI don't think netDir is going to help any with the detection.\r\n\r\nOn 1 February 2013 15:43, Anthony Martin <ality@pbrane.org> wrote:\r\n> Akshat Kumar <seed@mail.nanosouffle.net> once said:\r\n>> Updated this CL - fixed a blunder in acceptPlan9, made sure\r\n>> to close the data file where appropriate, and reverted the\r\n>> declaration for ListenUDP.\r\n>\r\n> Can you add a netDir function in fd_plan9.go:\r\n>\r\n> func netDir(proto, name string) string {\r\n>         return \"/net/\" + proto + \"/\" + name\r\n> }\r\n>\r\n> and then use that everywhere. All the noise\r\n> almost made me overlook the l.dir change in\r\n> acceptPlan9.\r\n>\r\n> Thanks,\r\n>   Anthony\r\n",
+			"disapproval": false,
+			"date": "2013-02-01 19:42:24.615130",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping? If this is the only thing holding this back, I can put it in.\r\n\r\nOn 1 February 2013 11:42, Akshat Kumar <seed@mail.nanosouffle.net> wrote:\r\n> In any case, given the current code (which uses netFD() and\r\n> newFD whenever a *netFD is given as input), whenever name\r\n> and proto are being changed, the directory is being changed.\r\n> I don't think netDir is going to help any with the detection.\r\n>\r\n> On 1 February 2013 15:43, Anthony Martin <ality@pbrane.org> wrote:\r\n>> Akshat Kumar <seed@mail.nanosouffle.net> once said:\r\n>>> Updated this CL - fixed a blunder in acceptPlan9, made sure\r\n>>> to close the data file where appropriate, and reverted the\r\n>>> declaration for ListenUDP.\r\n>>\r\n>> Can you add a netDir function in fd_plan9.go:\r\n>>\r\n>> func netDir(proto, name string) string {\r\n>>         return \"/net/\" + proto + \"/\" + name\r\n>> }\r\n>>\r\n>> and then use that everywhere. All the noise\r\n>> almost made me overlook the l.dir change in\r\n>> acceptPlan9.\r\n>>\r\n>> Thanks,\r\n>>   Anthony\r\n",
+			"disapproval": false,
+			"date": "2013-02-04 20:05:23.555140",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nAkshat Kumar <seed@mail.nanosouffle.net> once said:\r\n> ping? If this is the only thing holding this back, I can put it in.\r\n\r\nIt's not a big deal.\r\n\r\n  Anthony\r\n",
+			"disapproval": false,
+			"date": "2013-02-04 23:38:52.341910",
+			"approval": true
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping",
+			"disapproval": false,
+			"date": "2013-02-15 18:03:47.146270",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. I'm guessing you've tested this.",
+			"disapproval": false,
+			"date": "2013-02-17 00:23:23.834470",
+			"approval": true
+		},
+		{
+			"sender": "rminnich@gmail.com",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/02/17 00:23:23, dfc wrote:\n> LGTM. I'm guessing you've tested this.\n\nExtensively. We seem to find all the problem cases :-)",
+			"disapproval": false,
+			"date": "2013-02-17 01:20:11.501950",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, with the test-suite programs as well as other applications\r\nusing the net package.\r\n\r\nOn 16 February 2013 16:23,  <dave@cheney.net> wrote:\r\n> LGTM. I'm guessing you've tested this.\r\n>\r\n> https://codereview.appspot.com/7228068/\r\n",
+			"disapproval": false,
+			"date": "2013-02-17 14:35:23.117920",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nplease fix and then hg mail again; leaving for ality or rminnich to submit\n\nhttps://codereview.appspot.com/7228068/diff/12001/src/pkg/net/fd_plan9.go\nFile src/pkg/net/fd_plan9.go (right):\n\nhttps://codereview.appspot.com/7228068/diff/12001/src/pkg/net/fd_plan9.go#newcode75\nsrc/pkg/net/fd_plan9.go:75: err := fd.ctl.Close()\ndo not return early. it's important to clean things up.\n\nerr := fd.ctl.Close()\nif fd.data != nil {\n    if err1 := fd.data.Close(); err1 != nil && err == nil {\n        err = err1\n    }\n}\nfd.ctl = nil\nfd.data = nil\nreturn err",
+			"disapproval": false,
+			"date": "2013-02-19 14:56:06.688010",
+			"approval": true
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nUpdated description to match Russ'\nchange.",
+			"disapproval": false,
+			"date": "2013-02-19 21:47:43.212840",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"ality@pbrane.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=aeeffd25807b ***\n\nnet: Plan 9: open data file and set remote-addr properly\n\nThe data file should be opened when a Conn is first\nestablished, rather than waiting for the first Read or\nWrite.\n\nUpon Close, we now make sure to try to close both, the\nctl as well as data files and set both to nil, even in\nthe face of errors, instead of returning early.\n\nThe Accept call was not setting the remote address\nof the connection properly. Now, we read the correct\nfile.\n\nMake functions that establish Conn use newTCPConn\nor newUDPConn.\n\nR=rsc, rminnich, ality, dave\nCC=golang-dev\nhttps://codereview.appspot.com/7228068\n\nCommitter: Anthony Martin <ality@pbrane.org>",
+			"disapproval": false,
+			"date": "2013-02-20 01:11:37.499630",
+			"approval": false
+		}
+	],
+	"owner_email": "seed@mail.nanosouffle.net",
+	"private": false,
+	"base_url": "",
+	"owner": "akumar",
+	"subject": "code review 7228068: net: Plan 9: open data file and set remote-addr properly",
+	"created": "2013-01-31 06:05:44.875860",
+	"patchsets": [
+		1,
+		2002,
+		5001,
+		12001,
+		24002
+	],
+	"modified": "2013-02-22 21:14:40.245150",
+	"closed": true,
+	"issue": 7228068
+}

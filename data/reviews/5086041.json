@@ -1,0 +1,169 @@
+{
+	"description": "path/filepath: speed up Clean\n\nAm I on crack or is this something fine to do there?\n\nSaves about 14% on a trivial case:\n\nOld: filepath_test.BenchmarkClean 2000000 844 ns/op\nNew: filepath_test.BenchmarkClean 2000000 742 ns/op",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"alex.brainman@gmail.com",
+		"gustavo@niemeyer.net",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5086041/diff/3001/src/pkg/path/filepath/path.go\nFile src/pkg/path/filepath/path.go (right):\n\nhttp://codereview.appspot.com/5086041/diff/3001/src/pkg/path/filepath/path.go#newcode51\nsrc/pkg/path/filepath/path.go:51: rooted := path[0] == Separator\nWindows paths can include both `\\` and `/` as path separators. You proposed change will deal with `\\`, but will ignore `/`.",
+			"disapproval": false,
+			"date": "2011-09-20 01:01:11.075631",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"gustavo@niemeyer.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2011-09-20 04:02:18.270546",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "It's hard for me to see that the new code is\nmuch better than the old code.  It's not easier\nto read, and it is only marginally faster.\n\nIf you're going to do that much rewriting, I'd\nhope for more than 14%.  The most obvious\nwin would be that there are 3 or 4 allocations:\n[]byte(path), FromSlash, string(buf[0:w]), and\nvol + string(buf[0:w]) if vol != \"\".\n\nReal speedups are going to come from cutting\nthose allocations down to 0 in the fast path\n(path already clean) and 2 in the general path\n[]byte(path) and then string(buf[0:w]).\nSee strings.Map for an example.\n\nPlease don't bother replacing os.IsPathSeparator.\nInlining will make those as cheap as they could\npossibly be.  I'm not convinced that rewriting\nFromSlash and ToSlash is very interesting either.\nIf your rewrite makes them significantly faster\nthen maybe strings.Replace needs work.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-20 14:45:15.149604",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-20 00:30:33.686259",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5086041/diff/3001/src/pkg/path/filepath/path.go\nFile src/pkg/path/filepath/path.go (right):\n\nhttp://codereview.appspot.com/5086041/diff/3001/src/pkg/path/filepath/path.go#newcode51\nsrc/pkg/path/filepath/path.go:51: rooted := path[0] == Separator\nSee FromSlash in line 41 which was moved from line 116.",
+			"disapproval": false,
+			"date": "2011-09-20 01:02:36.794386",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I have added another benchmark:\n\nfunc BenchmarkWindowsClean(b *testing.B) {\n        for i := 0; i < b.N; i++ {\n                filepath.Clean(`c:\\home\\\\user\\..\\otheruser\\.`)\n        }\n}\n\nand that is what I am seeing:\n\nOLD:\n\nfilepath_test.BenchmarkClean      200000              6640 ns/op\nfilepath_test.BenchmarkWindowsClean       500000              6156 ns/op\n\nNEW:\n\nfilepath_test.BenchmarkClean      100000             13906 ns/op\nfilepath_test.BenchmarkWindowsClean       500000              5906 ns/op\n\nMy BenchmarkClean results are the opposite of yours.\n\nAlex\n\nhttp://codereview.appspot.com/5086041/diff/3001/src/pkg/path/filepath/path.go\nFile src/pkg/path/filepath/path.go (right):\n\nhttp://codereview.appspot.com/5086041/diff/3001/src/pkg/path/filepath/path.go#newcode51\nsrc/pkg/path/filepath/path.go:51: rooted := path[0] == Separator\nOn 2011/09/20 01:02:37, niemeyer wrote:\n> See FromSlash in line 41 which was moved from line 116.\n\nYou are correct. I didn't look properly.",
+			"disapproval": false,
+			"date": "2011-09-20 01:28:13.059303",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> I have added another benchmark:\n(...)\n> filepath_test.BenchmarkClean \u00a0 \u00a0 \u00a0200000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06640 ns/op\n(...)\n> filepath_test.BenchmarkClean \u00a0 \u00a0 \u00a0100000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 13906 ns/op\n\nThanks! I guess that can only mean that the silly replacement done in\nFromSlash is surprisingly expensive.\n\nThis is mostly a teaser at this point, but would you mind to run the\nsame test with the version just uploaded?  It uses a straightforward\nloop rather than going through strings.Replace.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I never filed a patent.\n",
+			"disapproval": false,
+			"date": "2011-09-20 02:29:20.927096",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"gustavo@niemeyer.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/20 03:51:52, gustavo_niemeyer.net wrote:\n> \n> Curious. I guess the magic comes from the fact that FromSlash is in\n> fact doing absolutely nothing in the original code, because all\n> slashes were already converted to Separator in the logic above.\n> \n\nYou are correct here. Most of the time, final path is already in a form that does not need FromSlash.\n\nI do not want small windows speed regression influence your decision. Windows case is a complicated one. I do not expect every other OS to suffer because of that.\n\nAlex",
+			"disapproval": false,
+			"date": "2011-09-20 04:53:40.965029",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"alex.brainman@gmail.com",
+				"gustavo@niemeyer.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/20 02:29:20, gustavo_niemeyer.net wrote:\n> \n> ... would you mind to run the\n> same test with the version just uploaded?  ...\n\nIt is better then before, but new results are still worse (this is all tested on windows):\n\nold:\nfilepath_test.BenchmarkClean      500000              5937 ns/op\nfilepath_test.BenchmarkWindowsClean       500000              6093 ns/op\n\nnew:\nfilepath_test.BenchmarkClean      200000              7109 ns/op\nfilepath_test.BenchmarkWindowsClean       200000              7031 ns/op\n\nAlex",
+			"disapproval": false,
+			"date": "2011-09-20 03:01:43.833232",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> It is better then before, but new results are still worse (this is all\n> tested on windows):\n\nCurious. I guess the magic comes from the fact that FromSlash is in\nfact doing absolutely nothing in the original code, because all\nslashes were already converted to Separator in the logic above.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I never filed a patent.\n",
+			"disapproval": false,
+			"date": "2011-09-20 03:51:52.146740",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "(...)\n> Real speedups are going to come from cutting\n> those allocations down to 0 in the fast path\n> (path already clean) and 2 in the general path\n> []byte(path) and then string(buf[0:w]).\n> See strings.Map for an example.\n>\n> Please don't bother replacing os.IsPathSeparator.\n> Inlining will make those as cheap as they could\n> possibly be. \u00a0I'm not convinced that rewriting\n\nGood points, thanks.\n\n> FromSlash and ToSlash is very interesting either.\n> If your rewrite makes them significantly faster\n> then maybe strings.Replace needs work.\n\nYeah, it looks like both strings.Replace and bytes.Replace are doing\ntoo much work for that simple case.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I never filed a patent.\n",
+			"disapproval": false,
+			"date": "2011-09-20 14:53:40.777866",
+			"approval": false
+		}
+	],
+	"owner_email": "n13m3y3r@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "niemeyer",
+	"subject": "code review 5086041: path/filepath: speed up Clean",
+	"created": "2011-09-20 00:26:45.504568",
+	"patchsets": [
+		1,
+		1001,
+		3001,
+		10001
+	],
+	"modified": "2011-09-20 14:45:15.185093",
+	"closed": true,
+	"issue": 5086041
+}

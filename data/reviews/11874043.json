@@ -1,0 +1,130 @@
+{
+	"description": "crypto/des: faster block expansion.\n\nOn amd64:\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkEncrypt         6170         3593  -41.77%\nBenchmarkDecrypt         6209         3564  -42.60%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkEncrypt         1.30         2.23    1.72x\nBenchmarkDecrypt         1.29         2.24    1.74x\n\nUpdate issue 4299.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"agl@chromium.org",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@chromium.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, agl@chromium.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-07-25 21:50:49.386730",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@chromium.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "See the 6g assembly for expandBlock:\n\n--- prog list \"expandBlock\" ---\n0284 (block.go:68) TEXT    expandBlock+0(SB),$0-16\n0285 (block.go:68) FUNCDATA $0,gc\u00b75+0(SB)\n0286 (block.go:68) TYPE    src+0(FP){uint32},$4\n0287 (block.go:68) TYPE    block+8(FP){uint64},$8\n0288 (block.go:68) MOVQ    $0,DX\n0289 (block.go:68) MOVQ    DX,block+8(FP)\n0290 (block.go:69) MOVL    src+0(FP),AX\n0291 (block.go:69) ROLL    $5,AX\n0292 (block.go:70) MOVQ    $0,CX\n0293 (block.go:70) JMP     ,295\n0294 (block.go:70) INCQ    ,CX\n0295 (block.go:70) CMPQ    CX,$8\n0296 (block.go:70) JGE     $0,304\n0297 (block.go:71) SHLQ    $6,DX\n0298 (block.go:72) MOVLQZX AX,BX\n0299 (block.go:72) ANDQ    $63,BX\n0300 (block.go:72) ORQ     BX,DX\n0301 (block.go:72) MOVQ    DX,block+8(FP)\n0302 (block.go:73) ROLL    $4,AX\n0303 (block.go:70) JMP     ,294\n0304 (block.go:75) RET     ,",
+			"disapproval": false,
+			"date": "2013-07-25 21:52:33.540980",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nNice.\r\n\r\nVerified the functions produce equivalent output for all inputs, too.\r\n\r\n\r\nOn Thu, Jul 25, 2013 at 2:50 PM, <remyoudompheng@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1, agl,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com, agl@chromium.org (cc:\r\n> golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> crypto/des: faster block expansion.\r\n>\r\n> On amd64:\r\n>\r\n> benchmark           old ns/op    new ns/op    delta\r\n> BenchmarkEncrypt         6170         3593  -41.77%\r\n> BenchmarkDecrypt         6209         3564  -42.60%\r\n>\r\n> benchmark            old MB/s     new MB/s  speedup\r\n> BenchmarkEncrypt         1.30         2.23    1.72x\r\n> BenchmarkDecrypt         1.29         2.24    1.74x\r\n>\r\n> Update issue 4299.\r\n>\r\n> Please review this at https://codereview.appspot.**com/11874043/<https://codereview.appspot.com/11874043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/crypto/des/block.go\r\n>   M src/pkg/crypto/des/const.go\r\n>   M src/pkg/crypto/des/des_test.go\r\n>\r\n>\r\n> Index: src/pkg/crypto/des/block.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/des/block.go\r\n> +++ b/src/pkg/crypto/des/block.go\r\n> @@ -40,7 +40,7 @@\r\n>\r\n>  // DES Feistel function\r\n>  func feistel(right uint32, key uint64) (result uint32) {\r\n> -       sBoxLocations := key ^ permuteBlock(uint64(right),\r\n> expansionFunction[:])\r\n> +       sBoxLocations := key ^ expandBlock(right)\r\n>         var sBoxResult uint32\r\n>         for i := uint8(0); i < 8; i++ {\r\n>                 sBoxLocation := uint8(sBoxLocations>>42) & 0x3f\r\n> @@ -63,6 +63,18 @@\r\n>         return\r\n>  }\r\n>\r\n> +// expandBlock expands an input block of 32 bits,\r\n> +// producing an output block of 48 bits.\r\n> +func expandBlock(src uint32) (block uint64) {\r\n> +       src = (src << 5) | (src >> 27)\r\n> +       for i := 0; i < 8; i++ {\r\n> +               block <<= 6\r\n> +               block |= uint64(src) & (1<<6 - 1)\r\n> +               src = (src << 4) | (src >> 28)\r\n> +       }\r\n> +       return\r\n> +}\r\n> +\r\n>  // creates 16 28-bit blocks rotated according\r\n>  // to the rotation schedule\r\n>  func ksRotate(in uint32) (out []uint32) {\r\n> Index: src/pkg/crypto/des/const.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/des/const.go\r\n> +++ b/src/pkg/crypto/des/const.go\r\n> @@ -32,17 +32,6 @@\r\n>         31, 63, 23, 55, 15, 47, 7, 39,\r\n>  }\r\n>\r\n> -// Used to expand an input block of 32 bits, producing an output block of\r\n> 48\r\n> -// bits.\r\n> -var expansionFunction = [48]byte{\r\n> -       0, 31, 30, 29, 28, 27, 28, 27,\r\n> -       26, 25, 24, 23, 24, 23, 22, 21,\r\n> -       20, 19, 20, 19, 18, 17, 16, 15,\r\n> -       16, 15, 14, 13, 12, 11, 12, 11,\r\n> -       10, 9, 8, 7, 8, 7, 6, 5,\r\n> -       4, 3, 4, 3, 2, 1, 0, 31,\r\n> -}\r\n> -\r\n>  // Yields a 32-bit output from a 32-bit input\r\n>  var permutationFunction = [32]byte{\r\n>         16, 25, 12, 11, 3, 20, 4, 15,\r\n> Index: src/pkg/crypto/des/des_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/des/des_test.**go\r\n> +++ b/src/pkg/crypto/des/des_test.**go\r\n> @@ -1521,3 +1521,31 @@\r\n>         // See crypto/cipher for how to use a cipher.Block for encryption\r\n> and\r\n>         // decryption.\r\n>  }\r\n> +\r\n> +func BenchmarkEncrypt(b *testing.B) {\r\n> +       tt := encryptDESTests[0]\r\n> +       c, err := NewCipher(tt.key)\r\n> +       if err != nil {\r\n> +               b.Fatal(\"NewCipher:\", err)\r\n> +       }\r\n> +       out := make([]byte, len(tt.in))\r\n> +       b.SetBytes(int64(len(out)))\r\n> +       b.ResetTimer()\r\n> +       for i := 0; i < b.N; i++ {\r\n> +               c.Encrypt(out, tt.in)\r\n> +       }\r\n> +}\r\n> +\r\n> +func BenchmarkDecrypt(b *testing.B) {\r\n> +       tt := encryptDESTests[0]\r\n> +       c, err := NewCipher(tt.key)\r\n> +       if err != nil {\r\n> +               b.Fatal(\"NewCipher:\", err)\r\n> +       }\r\n> +       out := make([]byte, len(tt.out))\r\n> +       b.SetBytes(int64(len(out)))\r\n> +       b.ResetTimer()\r\n> +       for i := 0; i < b.N; i++ {\r\n> +               c.Decrypt(out, tt.out)\r\n> +       }\r\n> +}\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-26 00:58:28.498690",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@chromium.org",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-07-26 02:51:34.174780",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@chromium.org",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Do you know why it flushes block to memory so often?",
+			"disapproval": false,
+			"date": "2013-07-26 03:04:31.287730",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@chromium.org",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/26 03:04:31, rsc wrote:\n> Do you know why it flushes block to memory so often?\n\nI think it arranges so that the last instruction in the control flow flushes. Since that instruction is inside the loop, well...\n\nIf you add a \"block = block\" line before the return it becomes like this:\n\n--- prog list \"expandBlock\" ---\n0284 (block.go:68) TEXT    expandBlock+0(SB),$0-16\n0285 (block.go:68) FUNCDATA $0,gc\u00b75+0(SB)\n0286 (block.go:68) TYPE    src+0(FP){uint32},$4\n0287 (block.go:68) TYPE    block+8(FP){uint64},$8\n0288 (block.go:69) MOVL    src+0(FP),CX\n0289 (block.go:68) MOVQ    $0,AX\n0290 (block.go:69) ROLL    $5,CX\n0291 (block.go:70) MOVQ    $0,DX\n0292 (block.go:70) JMP     ,294\n0293 (block.go:70) INCQ    ,DX\n0294 (block.go:70) CMPQ    DX,$8\n0295 (block.go:70) JGE     $0,302\n0296 (block.go:71) SHLQ    $6,AX\n0297 (block.go:72) MOVLQZX CX,BX\n0298 (block.go:72) ANDQ    $63,BX\n0299 (block.go:72) ORQ     BX,AX\n0300 (block.go:73) ROLL    $4,CX\n0301 (block.go:70) JMP     ,293\n0302 (block.go:75) MOVQ    AX,block+8(FP)\n0303 (block.go:76) RET     ,",
+			"disapproval": false,
+			"date": "2013-07-26 07:00:02.571340",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@chromium.org",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=654ca7de0282 ***\n\ncrypto/des: faster block expansion.\n\nOn amd64:\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkEncrypt         6170         3593  -41.77%\nBenchmarkDecrypt         6209         3564  -42.60%\n\nbenchmark            old MB/s     new MB/s  speedup\nBenchmarkEncrypt         1.30         2.23    1.72x\nBenchmarkDecrypt         1.29         2.24    1.74x\n\nUpdate issue 4299.\n\nR=golang-dev, agl, bradfitz, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/11874043",
+			"disapproval": false,
+			"date": "2013-07-26 07:10:52.706560",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 11874043: crypto/des: faster block expansion.",
+	"created": "2013-07-25 21:50:33.506420",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		13001,
+		18001,
+		21001
+	],
+	"modified": "2013-07-26 07:10:54.592730",
+	"closed": true,
+	"issue": 11874043
+}

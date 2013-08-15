@@ -1,0 +1,179 @@
+{
+	"description": "net/http, net/textproto: cache common header values\n\nWe use a small, automatically updated cache of recently\nseen values in order to avoid allocations for values\nlike \"keep-alive\" and \"close\".\n\nbenchmark                          old ns/op    new ns/op    delta\nBenchmarkHeaderWriteSubset              2215         2284   +3.12%\nBenchmarkClientServer                 360168       382181   +6.11%\nBenchmarkClientServerParallel4        382254       371981   -2.69%\nBenchmarkClientServerParallel64       319201       304283   -4.67%\nBenchmarkServer                       336708       327858   -2.63%\n\nbenchmark                         old allocs   new allocs    delta\nBenchmarkHeaderWriteSubset                 2            2    0.00%\nBenchmarkClientServer                    114          105   -7.89%\nBenchmarkClientServerParallel4           114          105   -7.89%\nBenchmarkClientServerParallel64          115          106   -7.83%\nBenchmarkServer                           36           32  -11.11%\n\nBenchmarks in net/textproto:\n\nbenchmark                  old ns/op    new ns/op    delta\nBenchmarkReadMIMEHeader        11302        10785   -4.57%\nBenchmarkUncommon               1851         1777   -4.00%\n\nbenchmark                 old allocs   new allocs    delta\nBenchmarkReadMIMEHeader           25           19  -24.00%\nBenchmarkUncommon                  5            4  -20.00%",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"bradfitz@golang.org",
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Jeff,\n\nThanks for this proposal. I don't think the performance gain here is worth the extra code and extra bookkeeping overhead, so i'm -1 on this proposal.\n\nCheers\n\nDave\n\nhttps://codereview.appspot.com/6843056/diff/13001/src/pkg/net/http/request.go\nFile src/pkg/net/http/request.go (right):\n\nhttps://codereview.appspot.com/6843056/diff/13001/src/pkg/net/http/request.go#newcode453\nsrc/pkg/net/http/request.go:453: defer tpFree.put(tp)\nThe defer costs you an allocation so I don't think this is a net saving.\n\nhttps://codereview.appspot.com/6843056/diff/13001/src/pkg/net/http/response.go\nFile src/pkg/net/http/response.go (right):\n\nhttps://codereview.appspot.com/6843056/diff/13001/src/pkg/net/http/response.go#newcode107\nsrc/pkg/net/http/response.go:107: defer tpFree.put(tp)\nsee previous",
+			"disapproval": false,
+			"date": "2012-11-20 09:18:35.427960",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode595\nsrc/pkg/net/textproto/reader.go:595: str    string\ns is probably enough\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode598\nsrc/pkg/net/textproto/reader.go:598: type stringCache [100]entry\nstringPool\n\ndocument what 100 is.  maybe give it a constant and document its meaning (max cached length).  I might drop down to the length of a date header.  more like 20-40.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode600\nsrc/pkg/net/textproto/reader.go:600: func compare(x []byte, y string) bool {\ncompare generally returns -1, 0, 1.  I'd name this \"equal\" or \"eq\"\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode601\nsrc/pkg/net/textproto/reader.go:601: for i, b := range x {\nredundant, but I'd add:\n\nif len(b) != len(s) {\n   return false\n}\n\n... in case any other place uses this without realizing the lengths must be equal.  I doubt it'd matter for performance to check.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode610\nsrc/pkg/net/textproto/reader.go:610: if len(x) < len(sc) {\nif len(x) >= len(sc) {\n     return string(x)\n}\n// unindent\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode614\nsrc/pkg/net/textproto/reader.go:614: if it.str == \"\" || it.misses > 9 {\nwhere did 9 come from?  just making the microbenchmark fast?  if you have to convert to a string anyway, why wouldn't you just always populate it.str?\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode623\nsrc/pkg/net/textproto/reader.go:623: // this is not threadsafe, but we are only\nno non-threadsafe code will be accepted.  it will break our race builder and other tools.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode630\nsrc/pkg/net/textproto/reader.go:630: var theStringCache = stringCache{}\nvar valuePool stringPool  (no need to assign it a zero value)",
+			"disapproval": false,
+			"date": "2012-11-14 17:13:34.837570",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode595\nsrc/pkg/net/textproto/reader.go:595: str    string\nOn 2012/11/14 17:13:34, bradfitz wrote:\n> s is probably enough\n\nDone.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode598\nsrc/pkg/net/textproto/reader.go:598: type stringCache [100]entry\nI'm going to capture a trace from a webserver and see if there's evidence for a certain cutoff from looking at the length distributions. The downside of accidentally tuning this too high is very small, though.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode600\nsrc/pkg/net/textproto/reader.go:600: func compare(x []byte, y string) bool {\nOn 2012/11/14 17:13:34, bradfitz wrote:\n> compare generally returns -1, 0, 1.  I'd name this \"equal\" or \"eq\"\n\nDone.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode601\nsrc/pkg/net/textproto/reader.go:601: for i, b := range x {\nOn 2012/11/14 17:13:34, bradfitz wrote:\n> redundant, but I'd add:\n> \n> if len(b) != len(s) {\n>    return false\n> }\n> \n> ... in case any other place uses this without realizing the lengths must be\n> equal.  I doubt it'd matter for performance to check.\n\nDone.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode610\nsrc/pkg/net/textproto/reader.go:610: if len(x) < len(sc) {\nOn 2012/11/14 17:13:34, bradfitz wrote:\n> if len(x) >= len(sc) {\n>      return string(x)\n> }\n> // unindent\n\nDone.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode614\nsrc/pkg/net/textproto/reader.go:614: if it.str == \"\" || it.misses > 9 {\nI guessed it. I need to analyze a real webserver trace to find the right number for this.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode623\nsrc/pkg/net/textproto/reader.go:623: // this is not threadsafe, but we are only\nOK, I understand. I'll talk to Dmitry to find out what the correct way is to code this lock-free; this data structure does not need, and should not have a lock in it (part of why I chose it).\n\nI'll send it out to all when I've got the tuning done and this locking problem solved.\n\nhttps://codereview.appspot.com/6843056/diff/1002/src/pkg/net/textproto/reader.go#newcode630\nsrc/pkg/net/textproto/reader.go:630: var theStringCache = stringCache{}\nOn 2012/11/14 17:13:34, bradfitz wrote:\n> var valuePool stringPool  (no need to assign it a zero value)\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-15 10:50:01.346230",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's easy to write a benchmark that makes a particular optimization look\r\ngood.\r\n\r\nI agree with Dave that this is complicated and weird.  Re-using readers\r\nfrom http might be a good idea (which could be its own CL, if that\r\nmatters), but why would each reader have its own valueCache?  Just to avoid\r\nsome locking?  I feel like that should be noise compared to GC costs, if\r\nthis really saves on that.\r\n\r\n\r\nOn Fri, Nov 16, 2012 at 7:21 AM, <jeff.allen@gmail.com> wrote:\r\n\r\n> Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> http://codereview.appspot.com/**6843056/<http://codereview.appspot.com/6843056/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-20 18:01:26.826740",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-11-16 15:21:41.660720",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I agree that it feels like this change is messy.\n\nThe performance improvement from reducing garbage comes long after the function in question is complete. It is hard to measure it, and it is only a win in bulk. So as I work on reducing garbage, I make it a goal that the function should get faster as well. That way, the wins are guaranteed: the function is faster (immediate payoff) AND there's less trash (long-term payoff).\n\nI think I need to build a bit of infrastructure to quantify the GC cost reduction so that I can make better decisions about the justifiable costs increases.\n\nStay tuned. :)",
+			"disapproval": false,
+			"date": "2012-11-21 09:42:19.578990",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6843056/diff/7001/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6843056/diff/7001/src/pkg/net/textproto/reader.go#newcode642\nsrc/pkg/net/textproto/reader.go:642: sc[len(x)].s = s\nThat will crash and corrupt memory.\n\nEven an \"innocent\" race on the miss count can lead to arbitrary behavior, including security exploits (especially with gccgo).\n\nBut this breaks more obviously. String consists of 2 words, that are read/written non atomically. Consider that one goroutine assigns new string to sc[i].s, and another goroutine reads the string on line 634. Imagine that the second goroutine reads len 100, but nil char ptr. Bang!",
+			"disapproval": false,
+			"date": "2012-11-15 11:33:15.466020",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6843056/diff/7001/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6843056/diff/7001/src/pkg/net/textproto/reader.go#newcode650\nsrc/pkg/net/textproto/reader.go:650: sc[len(x)].miss = 0\nYou better not update it if it's already 0, it will cause excessive contention between parallel threads.",
+			"disapproval": false,
+			"date": "2012-11-15 11:53:05.069280",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6843056/diff/7001/src/pkg/net/textproto/reader.go\nFile src/pkg/net/textproto/reader.go (right):\n\nhttps://codereview.appspot.com/6843056/diff/7001/src/pkg/net/textproto/reader.go#newcode642\nsrc/pkg/net/textproto/reader.go:642: sc[len(x)].s = s\nOn 2012/11/15 11:33:15, dvyukov wrote:\n> That will crash and corrupt memory.\n> \n> Even an \"innocent\" race on the miss count can lead to arbitrary behavior,\n> including security exploits (especially with gccgo).\n> \n> But this breaks more obviously. String consists of 2 words, that are\n> read/written non atomically. Consider that one goroutine assigns new string to\n> sc[i].s, and another goroutine reads the string on line 634. Imagine that the\n> second goroutine reads len 100, but nil char ptr. Bang!\n\nYou can do some shortcuts with sync/atomic package. E.g. you can freely manipulate miss counter with atomic.Load/Store(), that will give you roughly the same performance, but prevent security exploits (and make the race detector happy). You can manipulate string in atomic fashion if you use *string (but that will require unsafe).",
+			"disapproval": false,
+			"date": "2012-11-15 11:44:16.447240",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Nov 15, 2012 at 7:54 PM, <jeff.allen@gmail.com> wrote:\r\n\r\n> Cool, my mental model was that a string assign is atomic.\r\n>\r\n>\r\n\r\nIt's not only about atomicity. Even if a word load/store are atomic, there\r\nare also memory access ordering issues. A goroutine can atomically read the\r\ncorrect string pointer, but then read garbage data from it. Consider that\r\nthat garbage data incidentally passes you eq check, and you return that\r\npointer; but then user reads through the pointer and sees completely\r\ndifferent data. Ouch.\r\n\r\nAnd there are also compiler optimization issues (especially with gccgo). It\r\nbasically means that if you have \"innocent\" racy statistics counters, your\r\nprogram can execute arbitrary code.\r\n\r\n\r\n\r\n\r\n> I'm going to play around with simple mutexes first to see the\r\n> performance impact before going for the exotic stuff. But your final\r\n> suggestion (type stringCache [maxCachableLen]*entry) is also quite nice,\r\n> maybe I should skip straight to that.\r\n>\r\n> I try to be really sensitive to performance with these \"use less memory\"\r\n> changes because it seems to me that it is much better to have \"this is\r\n> faster AND causes fewer GCs\" than \"this takes a bit of time but causes\r\n> fewer GCs, so we make it up in the end\".\r\n>\r\n> https://codereview.appspot.**com/6843056/<https://codereview.appspot.com/6843056/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-15 16:13:57.234630",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/15 11:44:16, dvyukov wrote:\n> https://codereview.appspot.com/6843056/diff/7001/src/pkg/net/textproto/reader.go\n> File src/pkg/net/textproto/reader.go (right):\n> \n> https://codereview.appspot.com/6843056/diff/7001/src/pkg/net/textproto/reader.go#newcode642\n> src/pkg/net/textproto/reader.go:642: sc[len(x)].s = s\n> On 2012/11/15 11:33:15, dvyukov wrote:\n> > That will crash and corrupt memory.\n> > \n> > Even an \"innocent\" race on the miss count can lead to arbitrary behavior,\n> > including security exploits (especially with gccgo).\n> > \n> > But this breaks more obviously. String consists of 2 words, that are\n> > read/written non atomically. Consider that one goroutine assigns new string to\n> > sc[i].s, and another goroutine reads the string on line 634. Imagine that the\n> > second goroutine reads len 100, but nil char ptr. Bang!\n> \n> You can do some shortcuts with sync/atomic package. E.g. you can freely\n> manipulate miss counter with atomic.Load/Store(), that will give you roughly the\n> same performance, but prevent security exploits (and make the race detector\n> happy). You can manipulate string in atomic fashion if you use *string (but that\n> will require unsafe).\n\nI think you can make it work if you use\n\ntype stringCache [maxCachableLen]*entry\n\nand then only atomic.Store/Load to manipulate the pointer, and atomic.Store/Load to manipulate the miss count.",
+			"disapproval": false,
+			"date": "2012-11-15 11:50:02.476730",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"bradfitz@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Cool, my mental model was that a string assign is atomic.\n\nI'm going to play around with simple mutexes first to see the performance impact before going for the exotic stuff. But your final suggestion (type stringCache [maxCachableLen]*entry) is also quite nice, maybe I should skip straight to that.\n\nI try to be really sensitive to performance with these \"use less memory\" changes because it seems to me that it is much better to have \"this is faster AND causes fewer GCs\" than \"this takes a bit of time but causes fewer GCs, so we make it up in the end\".",
+			"disapproval": false,
+			"date": "2012-11-15 15:54:54.814160",
+			"approval": false
+		}
+	],
+	"owner_email": "jeff.allen@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jeff.allen",
+	"subject": "code review 6843056: net/http, net/textproto: cache common header values",
+	"created": "2012-11-14 16:16:40.094450",
+	"patchsets": [
+		1,
+		1002,
+		7001,
+		9003,
+		12002,
+		13001
+	],
+	"modified": "2012-11-15 15:54:54.814160",
+	"closed": true,
+	"issue": 6843056
+}

@@ -1,0 +1,607 @@
+{
+	"description": "runtime: release unused memory to the OS.\n\nPeriodically browse MHeap's freelists for long unused spans and release them if any.\n\nCurrent hardcoded settings:\n        - GC is forced if none occured over the last 2 minutes.\n        - spans are handed back after 5 minutes of uselessness.\n\nSysUnused (for Unix) is a wrapper on madvise MADV_DONTNEED on Linux and MADV_FREE on BSDs.",
+	"cc": [
+		"rsc@golang.org",
+		"dvyukov@google.com",
+		"remyoudompheng@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi,\n\nThanks very much for doing this.  Before I look at the code,\nI'd like to talk some about the actual algorithm you are planning\nto use, as per http://golang.org/doc/contribute.html#Design.\n\nCan you summarize the algorithm in text (as opposed to code)?\n\nThanks.\nRuss\n",
+			"disapproval": false,
+			"date": "2011-12-01 00:04:45.249583",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Generally I like the design. It's nice that it's only a once per 10 sec activity. I have only 2 high-level concerns.\n\n1. The algo is guided by the instant heap_idle/heap_inuse values. I think they can be quite misleading. What if the process routinely uses 1GB of memory, but at the very moment when the goroutine awakes it sees heap_inuse=100MB (temporal load decrease + recent GC)? It will over-free memory, something that we want to avoid at least in the first version. I think the algo must be guided by max heap inuse during the period (or min heap idle during period), it is more meaningful. For example, if the process did not used more than 1GB during the whole period and we have something on top of that, then we can free some of that excess.\n\n2. I am not actually sure how important it is... but if it is simple to implement and we agree that it can't hurt, it may be worth trying.\nEven if there is no idle sys memory, there can be a significant amount of non-yet-collected free memory (we just don't do GC since it become unused). A straightforward solution is to trigger GC once per 10 seconds. However, I guess we don't want to do it. So the proposed solution is as follows.\nThe decision is guided by 2 condition:\nA = was there a normal GC during that 10 seconds?\nB = does our release procedure triggered the last GC?\nThen the algo is:\nif A -> do nothing // the process seems to have everything under control\nif B -> do nothing // we've already tried to do GC, and the process had not done enough allocations since that to trigger GC\notherwise -> do GC\nHumm... I am not because we don't actually know when the additional GC worth doing (when the process is done with the memory).",
+			"disapproval": false,
+			"date": "2011-12-03 12:21:27.694683",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "For cross-reference, a more literal variant is available in the thread\nhttp://groups.google.com/group/golang-nuts/browse_thread/thread/5819498d3fb3bbb1/829dbcda0b091314\n(20th msg).\n",
+			"disapproval": false,
+			"date": "2011-12-04 13:14:55.163830",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5451057/diff/8/src/pkg/runtime/mheap.c\nFile src/pkg/runtime/mheap.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/8/src/pkg/runtime/mheap.c#newcode420\nsrc/pkg/runtime/mheap.c:420: k += 1;\nk++\nI like k += 1 myself , but k++ seems to be a convention in the codebase",
+			"disapproval": false,
+			"date": "2011-12-07 10:22:13.649300",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2011-11-30 21:31:22.319386",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Some nitpicks\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c\nFile src/pkg/runtime/mheap.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode328\nsrc/pkg/runtime/mheap.c:328: runtime\u00b7MHeap_Release()\nI think we need a better/longer name. \"Release\" looks like a part of normal operation. Scavenger?\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode349\nsrc/pkg/runtime/mheap.c:349: if (runtime\u00b7MSpanList_IsEmpty(&h->large)) {\nPerhaps straight check (heap_idle < HeapAllocChunk) or some other constant. If there is a negligible amount of memory that we can potentially free, don't bother trying.\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode349\nsrc/pkg/runtime/mheap.c:349: if (runtime\u00b7MSpanList_IsEmpty(&h->large)) {\nDrop excessive curly brackets here and below.\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode357\nsrc/pkg/runtime/mheap.c:357: target = cutRatio * (mstats.heap_idle >> PageShift); cut = 0;\none statement per line please\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode357\nsrc/pkg/runtime/mheap.c:357: target = cutRatio * (mstats.heap_idle >> PageShift); cut = 0;\nI think target can be 0, then don't bother doing anything else.\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode368\nsrc/pkg/runtime/mheap.c:368: for (s = &h->large; s->next != &h->large; s = s->next) {\ncan't we just do something along the lines of \ns = h->large->prev\n?\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode398\nsrc/pkg/runtime/mheap.c:398: prev_idle = mstats.heap_idle;\nidentation",
+			"disapproval": false,
+			"date": "2011-12-03 12:38:09.343311",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c\nFile src/pkg/runtime/mheap.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode344\nsrc/pkg/runtime/mheap.c:344: g->waitreason = \"MHeap_Release pause\";\nIt is user-visible, please provide an end user understandable description.\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode353\nsrc/pkg/runtime/mheap.c:353: if (mstats.heap_inuse > prev_inuse) {\nI think it is a way too restrictive (taking into account that the check is executed once per 10 seconds).\n\nhttp://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode397\nsrc/pkg/runtime/mheap.c:397: NextRound:\nPerhaps a user would like to check how it works for him. What about providing a one-line summary if GOGCTRACE>0? The summary may include the values, how much we've scavenged or why we've scavenged nothing.",
+			"disapproval": false,
+			"date": "2011-12-03 14:20:43.197643",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Functional sketch, roughly targeted toward long running (so just prevent prominent memory waste).\n\nHardcoded/subjective parameters set unused memory half life to ~1mn under steady conditions.",
+			"disapproval": false,
+			"date": "2011-11-30 21:42:57.970081",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello Dmitry, thanks for the review.\n\n> src/pkg/runtime/mheap.c:328: runtime\u00b7MHeap_Release()\n> I think we need a better/longer name. \"Release\" looks like a part of\n> normal operation. Scavenger?\nDone. I have no real preference here, I tried to emphasize the\nparticular point of giving back memory to the OS but the dynamic\naspect was clearly missing.\n\n> src/pkg/runtime/mheap.c:349: if (runtime\u00b7MSpanList_IsEmpty(&h->large))\n> Perhaps straight check (heap_idle < HeapAllocChunk) or some other\n> constant. If there is a negligible amount of memory that we can\n> potentially free, don't bother trying.\nTaken into consideration in the prune loop (can't drop span <\nHeapAllocChunk), so I would rather postpone this kind of fast path\noptim and avoid condition redundancy whenever possible, for now. I\nactually remove that whole statement. One less potential trigger to\nsetup imho.\n\n> src/pkg/runtime/mheap.c:349: if (runtime\u00b7MSpanList_IsEmpty(&h->large)) {\n> Drop excessive curly brackets here and below.\nFixed.\n\n> src/pkg/runtime/mheap.c:357: target = cutRatio * (mstats.heap_idle >>\n> PageShift); cut = 0;\n> one statement per line please\nFixed.\n\n> src/pkg/runtime/mheap.c:357: target = cutRatio * (mstats.heap_idle >>\n> PageShift); cut = 0;\n> I think target can be 0, then don't bother doing anything else.\nIf target is zero, we shouldn't find much candidates for deletion\nanyway (a bit the same to me as the above fast path).\n\n> src/pkg/runtime/mheap.c:368: for (s = &h->large; s->next != &h->large; s\n> = s->next) {\n> can't we just do something along the lines of\n> s = h->large->prev\n> ?\nYou're right. I definitely missed h->large's cyclicity. Thanks.\n\n> src/pkg/runtime/mheap.c:398: prev_idle = mstats.heap_idle;\n> identation\nFixed.\n\n> src/pkg/runtime/mheap.c:344: g->waitreason = \"MHeap_Release pause\";\n> It is user-visible, please provide an end user understandable\n> description.\nI did try;), it's now \"scavenger asleep\". No much better idea however.\n\n> src/pkg/runtime/mheap.c:353: if (mstats.heap_inuse > prev_inuse) {\n> I think it is a way too restrictive (taking into account that the check\n> is executed once per 10 seconds).\nStupid mistake, I'm sorry. The test was meant to be on mheap_sys as a\n(cheap) low water mark proxy for mheap_idle. The point was to try to\nmitigate transient allocations (hence the comment).\nI purposely refrained myself from injecting special purpose / alien\nvariables into the mstats structure (among others) as to keep the\ninitial footprint as small as possible. That's however clearly an\noption, but I'm not sure about the real impact in the end.\n\n> src/pkg/runtime/mheap.c:397: NextRound:\n> Perhaps a user would like to check how it works for him. What about\n> providing a one-line summary if GOGCTRACE>0? The summary may include the\n> values, how much we've scavenged or why we've scavenged nothing.\nDone (more than one line however).\n\nSebastien\n\nOn Sat, Dec 3, 2011 at 3:20 PM,  <dvyukov@google.com> wrote:\n>\n> http://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c\n> File src/pkg/runtime/mheap.c (right):\n>\n> http://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode344\n> src/pkg/runtime/mheap.c:344: g->waitreason = \"MHeap_Release pause\";\n> It is user-visible, please provide an end user understandable\n> description.\n>\n> http://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode353\n> src/pkg/runtime/mheap.c:353: if (mstats.heap_inuse > prev_inuse) {\n> I think it is a way too restrictive (taking into account that the check\n> is executed once per 10 seconds).\n>\n> http://codereview.appspot.com/5451057/diff/1002/src/pkg/runtime/mheap.c#newcode397\n> src/pkg/runtime/mheap.c:397: NextRound:\n> Perhaps a user would like to check how it works for him. What about\n> providing a one-line summary if GOGCTRACE>0? The summary may include the\n> values, how much we've scavenged or why we've scavenged nothing.\n>\n> http://codereview.appspot.com/5451057/\n",
+			"disapproval": false,
+			"date": "2011-12-04 13:12:14.226872",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Dec 3, 2011 at 1:21 PM,  <dvyukov@google.com> wrote:\n\n> 1. The algo is guided by the instant heap_idle/heap_inuse values. I\n> think they can be quite misleading. What if the process routinely uses\n> 1GB of memory, but at the very moment when the goroutine awakes it sees\n> heap_inuse=100MB (temporal load decrease + recent GC)? It will over-free\n> memory, something that we want to avoid at least in the first version. I\n> think the algo must be guided by max heap inuse during the period (or\n> min heap idle during period), it is more meaningful. For example, if the\n> process did not used more than 1GB during the whole period and we have\n> something on top of that, then we can free some of that excess.\n\nYes. If unlucky, more memory than what  will later be needed can be\ngave-back to the OS.\n\nOn the next round however, mheap_sys will have increased because of\nthe newly sys-allocated blocks, we'll then know that we've freed to\nmuch memory and won't make the mistake twice (in a row). That scheme\nalso covers situations where mheap_sys just keep growing, because the\noverall memory need is constantly increasing, without having to pay\nattention to, or rely on, mheap_idle local variations (e.g init\nstages).\n\nA high water mark on mheap_inuse would indeed bear much more precise\ninformation. We however don't have all the room we'd like for the\nexact amount of memory to be released definition (constrained by\nHeapAllocChunk and mainly by what's available in &h->large), so I'm\nnot sure adding too much sharpness here will ultimately improve the\nend result.\n\nA kind of saturating counter could also mitigate mheap_sys' condition\ncorrectness.\n\n> 2. I am not actually sure how important it is... but if it is simple to\n> implement and we agree that it can't hurt, it may be worth trying.\n> Even if there is no idle sys memory, there can be a significant amount\n> of non-yet-collected free memory (we just don't do GC since it become\n> unused). A straightforward solution is to trigger GC once per 10\n> seconds. However, I guess we don't want to do it. So the proposed\n> solution is as follows.\n> The decision is guided by 2 condition:\n> A = was there a normal GC during that 10 seconds?\n> B = does our release procedure triggered the last GC?\n> Then the algo is:\n> if A -> do nothing // the process seems to have everything under control\n> if B -> do nothing // we've already tried to do GC, and the process had\n> not done enough allocations since that to trigger GC\n> otherwise -> do GC\n> Humm... I am not because we don't actually know when the additional GC\n> worth doing (when the process is done with the memory).\n\nI really think we should remain as loosely coupled as possible from\nthe GC and/or other components.\n\nMy initial purpose was just to make sure that unused memory will\neventually tend to ~zero, i.e toward something that is not significant\nin comparison to what the process actually needs. In that regard,\nwaiting few more iterations for non-yet-collected memory to become\nsys-releasable is not an issue to me. But that's just my intended\nuse-case.\n\nSebastien\n",
+			"disapproval": false,
+			"date": "2011-12-04 14:01:08.887589",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'll do that for sure. That's actually what my golang-nuts post\n(~\"Giving back some unused memory to system\" ) was meant to be\nabout... but it somehow diverge from my original intentions.\n\nThanks,\nSebastien\n\nOn Thu, Dec 1, 2011 at 1:04 AM, Russ Cox <rsc@golang.org> wrote:\n> Hi,\n>\n> Thanks very much for doing this. \u00a0Before I look at the code,\n> I'd like to talk some about the actual algorithm you are planning\n> to use, as per http://golang.org/doc/contribute.html#Design.\n>\n> Can you summarize the algorithm in text (as opposed to code)?\n>\n> Thanks.\n> Russ\n",
+			"disapproval": false,
+			"date": "2011-12-01 13:02:51.304316",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, rsc@golang.org, dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-12-04 13:07:25.840178",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2011/12/04 14:01:08, Sebastien Paolacci wrote:\n> On Sat, Dec 3, 2011 at 1:21 PM,  <mailto:dvyukov@google.com> wrote:\n> \n> > 1. The algo is guided by the instant heap_idle/heap_inuse values. I\n> > think they can be quite misleading. What if the process routinely uses\n> > 1GB of memory, but at the very moment when the goroutine awakes it sees\n> > heap_inuse=100MB (temporal load decrease + recent GC)? It will over-free\n> > memory, something that we want to avoid at least in the first version. I\n> > think the algo must be guided by max heap inuse during the period (or\n> > min heap idle during period), it is more meaningful. For example, if the\n> > process did not used more than 1GB during the whole period and we have\n> > something on top of that, then we can free some of that excess.\n> \n> Yes. If unlucky, more memory than what  will later be needed can be\n> gave-back to the OS.\n> \n> On the next round however, mheap_sys will have increased because of\n> the newly sys-allocated blocks, we'll then know that we've freed to\n> much memory and won't make the mistake twice (in a row). That scheme\n> also covers situations where mheap_sys just keep growing, because the\n> overall memory need is constantly increasing, without having to pay\n> attention to, or rely on, mheap_idle local variations (e.g init\n> stages).\n> \n> A high water mark on mheap_inuse would indeed bear much more precise\n> information. We however don't have all the room we'd like for the\n> exact amount of memory to be released definition (constrained by\n> HeapAllocChunk and mainly by what's available in &h->large), so I'm\n> not sure adding too much sharpness here will ultimately improve the\n> end result.\n\nI still would prefer mheap_sys_max, it's just a few additional lines of code I think it will provide much better protection against freeing what is actually actively used by a program (I think the current algo can easily free used memory 2 times in a row).\n\nI see that it works poorly for computation intensive application - the scavenger just does not have a chance to run. But I think it's a part of a bigger problem with non-preemptiveness, and it makes a little sense to solve it here.\n\nI've tested it on test/bench/binary-tree.go with -n=22. And I see a lot (dozens) of consecutive record like:\n\nscvg22: unused: 379 of 710 MB\nscvg22: target: 18 MB+\nscvg22: no candidate span\n\nThe program in a sort of settled state, but the scavenger fails to release any of that 380MB during minutes. I think we need to do something with that.\n\nAlso I see that that boosting logic is quite unstable:\n\nscvg28: unused: 375 of 710 MB\nscvg28: target: 75 MB+\nscvg28: no candidate span\n\nscvg29: unused: 367 of 710 MB\nscvg29: target: 18 MB+\nscvg29: no candidate span\n\nBasically nothing is changed in the application, but target is 4x lower. Not sure whether we want to do something with it, perhaps it is OK as is.\n\nAnd the last concern is about huge idle spans. Consider that all idle memory is coalesced together into a huge idle span and then the scavenger frees it. I think it makes sense to split spans if we are going to exceed the target significantly (like it is done in MHeap_AllocLocked).\n\n> My initial purpose was just to make sure that unused memory will\n> eventually tend to ~zero, i.e toward something that is not significant\n> in comparison to what the process actually needs. In that regard,\n> waiting few more iterations for non-yet-collected memory to become\n> sys-releasable is not an issue to me. But that's just my intended\n> use-case.\n\nMakes sense.",
+			"disapproval": false,
+			"date": "2011-12-07 10:39:55.990888",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I was hoping for the discussion to happen in this thread.\nI see now that it moved back to golang-nuts, although\nthere wasn't much.  Sorry for not jumping in there.\n\nI hope we can make this a little simpler, along these lines:\n\n1. Add 'lastinuse int64' to each MSpan.\n2. At the beginning of a garbage collection (not the end),\n    walk the span list and set m->lastinuse = now\n    for all the spans that are in use (not free),\n    where now is runtime.nanotime() from the beginning\n    of the garbage collection.\n3. Add lastgc int64 somewhere, maybe in MHeap.\n    Set it to now at the beginning of the garbage collection.\n\nOnce a minute or so:\n\n1. Run a garbage collection if there hasn't been one\nin the last two minutes.\n\n2.  Walk the span list.  Any span that was lastinuse\nmore than five minutes ago can be handed back to\nthe OS, but left in the list, by calling SysUnused.\nMark the span 'idle'.  The next allocation from the span\nor merging of the span with an adjacent span should\nclear the idle flag.\n\nCalling SysFree seems like asking for trouble.\nSysUnused is just as effective and much easier.\n\nThe idea here is to wait long enough that even if we\ndid have to page the memory back in, it wouldn't be\na significant time cost compared to how long we held\nit while idle.  I get nervous when I see decisions being\nmade on the basis of heap size.\n\nDoes this seem reasonable, Sebastien and Dmitriy?\n\nWe will also have to update the deadlock check not to\nthink of the scavenger goroutine as something that\nis contributing to the program execution.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-12-07 22:43:09.575417",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello Russ,\n\nSlightly more intrusive but I'm definitely fine with the idea.\n\nWhat about tagging spans with an 'unusedsince' attribute (instead of\n'lastinuse'), walk mheap's freelists at the end of garbage collections\nand stamp spans iif (s->state == MSpanFree && s->usedsince == 0)? That\nattribute would then be reseted when spans' state change from\nMSpanFree to whatever (few occurrencies iirc).\n\nIt preserves the same logic but possibly provides with a more general\nspan aging information. It also does not require any gc/scavanger\ndynamic coupling. Whilst still being an option, the need for forcing\ngarbage collections (under some cicumstances) from the scavenger\nvanishes, as well as few possible sampling considerations.\n\n> Calling SysFree seems like asking for trouble.\n> SysUnused is just as effective and much easier.\nIf it can't work with SysFree I guess we have an issue somewhere, but\nSysUnused has some nice advantages.\n\n> The idea here is to wait long enough that even if we\n> did have to page the memory back in, it wouldn't be\n> a significant time cost compared to how long we held\n> it while idle.\nIn that regard 5 mn should indeed be a large enough buffer. It suits\nmy own use-cases anyway.\n\n> I get nervous when I see decisions being made on\n> the basis of heap size.\nPossibly the best argument;)\n\nThanks,\nSebastien\n",
+			"disapproval": false,
+			"date": "2011-12-08 20:56:35.544057",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If I rotate my brain a little bit, I should indeed find that both\nlastinuse and unusedsince schemes (begin/end of gc passes) provide\nwith the same pros and cons. The only small difference is possibly in\nthe amount of spans to be tagged (used vs unused) but that's a second\norder consideration, so I'm fine there.\n\nSebastien\n",
+			"disapproval": false,
+			"date": "2011-12-11 22:36:48.895241",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 8, 2011 at 2:43 AM, Russ Cox <rsc@golang.org> wrote:\n\n> I was hoping for the discussion to happen in this thread.\n> I see now that it moved back to golang-nuts, although\n> there wasn't much.  Sorry for not jumping in there.\n>\n> I hope we can make this a little simpler, along these lines:\n>\n> 1. Add 'lastinuse int64' to each MSpan.\n> 2. At the beginning of a garbage collection (not the end),\n>    walk the span list and set m->lastinuse = now\n>    for all the spans that are in use (not free),\n>    where now is runtime.nanotime() from the beginning\n>    of the garbage collection.\n> 3. Add lastgc int64 somewhere, maybe in MHeap.\n>    Set it to now at the beginning of the garbage collection.\n>\n> Once a minute or so:\n>\n> 1. Run a garbage collection if there hasn't been one\n> in the last two minutes.\n>\n> 2.  Walk the span list.  Any span that was lastinuse\n> more than five minutes ago can be handed back to\n> the OS, but left in the list, by calling SysUnused.\n> Mark the span 'idle'.  The next allocation from the span\n> or merging of the span with an adjacent span should\n> clear the idle flag.\n>\n> Calling SysFree seems like asking for trouble.\n> SysUnused is just as effective and much easier.\n>\n> The idea here is to wait long enough that even if we\n> did have to page the memory back in, it wouldn't be\n> a significant time cost compared to how long we held\n> it while idle.  I get nervous when I see decisions being\n> made on the basis of heap size.\n>\n> Does this seem reasonable, Sebastien and Dmitriy?\n>\n>\nI think both approaches will work, however the approach based on lastinuse\nlooks better to me. It will also solve all the problem in the current\nimplementation (not freeing small spans, freeing huge spans, guide by\nmomentary values).\nSebastien, if you willing to implement it, it would be great.\n\nCan the memory that is marked as unused participate in OOM score?\n\nHow will it be implemented on Windows? We may introduce\nSysUsed(). SysUsed() is no-op on Linux, but on Windows SysUnused/SysUsed\nwill de-commit/commit memory (while still leaving it as reserved). It seems\nthat the scheme provides a point where one can call SysUsed().\n",
+			"disapproval": false,
+			"date": "2011-12-12 14:20:27.682652",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Dec 12, 2011 at 09:20, Dmitry Vyukov <dvyukov@google.com> wrote:\n> Can the memory that is marked as unused participate in OOM score?\n\nI believe that only resident memory counts for OOM.\nMemory that is unused is the first to go (and then\ndoesn't count as resident) when the OOM handler kicks in.\n\n> How will it be implemented on Windows?\n\nLet's get non-Windows working first and then we can\nreevaluate.  If we have to move to forcible eviction\nthat's fine but I'd like to get the unused stuff working\nfirst.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-12-12 21:51:04.075515",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello,\n\nI'm missing free time right now but I hope to be able to get that done\nin the next few days.\n\nI'll favor the 'unusedsince' scheme, partly because of the concerned\nspan list being eventually smaller, but also because tagging on a\nsteady/initial state looks to me like being potentially less prone to\ntransition corner-case later embarrassments (e.g trimmed spans).\n\nYes, hinting for unused memory is advantageously gratified by the OOM\n(/proc/pid/oom_score, highest score killed first).\n\nSebastien\n",
+			"disapproval": false,
+			"date": "2011-12-14 13:13:30.210612",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, rsc@golang.org, dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-12-19 13:01:16.264751",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "#-- Sorry for the previous ill-formatted mail.\n\nHello Russ, Dmitry,\n\nI've uploaded a new duration based implementation.\n\nMost of the nasty parts come from accounting and mixed (partly\nreleased) spans. I've added a separated entry in mstat such that\nheap_idle common understanding is not altered.\n\nMoving to a SysUsed scheme is doable, operations around `npreleased'\ncan serve as markers for such a modification. Spans might however have\nto be forced to be homegenous when coalescing since injecting an\nadditional free page list in the span structure would probably not\nreally be a good deal.\n\nYou (more especially) want to double-check scheduler's deadlock\ndetection. I can prove, at best, that it works in some circumstances\nbut that's a bit weak for a generalization.\n\nCheers,\nSebastien\n",
+			"disapproval": false,
+			"date": "2011-12-19 13:10:59.715164",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello Russ, Dmitry,\nI've uploaded a new duration based implementation.\nMost of the nasty parts come from accounting and mixed (partly\nreleased) spans. I've added a separated entry in mstat such that\nheap_idle common understanding is not altered.\nMoving to a SysUsed scheme is doable, operations around `npreleased'\ncan serve as markers for such a modification. Spans might however have\nto be forced to be homegenous when coalescing since injecting an\nadditional free page list in the span structure would probably not\nreally be a good deal.\nYou (more especially) want to double-check scheduler's deadlock\ndetection. I can prove, at best, that it works in some circumstances\nbut that's a bit weak for a generalization.\nCheers,Sebastien\n2011/12/14 S\u00e9bastien Paolacci <sebastien.paolacci@gmail.com>:\n> Hello,\n>\n> I'm missing free time right now but I hope to be able to get that done\n> in the next few days.\n>\n> I'll favor the 'unusedsince' scheme, partly because of the concerned\n> span list being eventually smaller, but also because tagging on a\n> steady/initial state looks to me like being potentially less prone to\n> transition corner-case later embarrassments (e.g trimmed spans).\n>\n> Yes, hinting for unused memory is advantageously gratified by the OOM\n> (/proc/pid/oom_score, highest score killed first).\n>\n> Sebastien\n",
+			"disapproval": false,
+			"date": "2011-12-19 13:03:24.960820",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please run all the tests with various values of GOMAXPROCS:\nGOMAXPROCS=N ./run.bach --no-rebuild\n\nhttp://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/malloc.h\nFile src/pkg/runtime/malloc.h (right):\n\nhttp://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/malloc.h#newcode305\nsrc/pkg/runtime/malloc.h:305: MSpanIdle,\nDo we really need a new state? npreleased seems to be enough, especially taking into account that there can be partially released blocks in both MSpanFree and MSpanIdle states depending on how coalescing happens...\n\nhttp://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/mgc0.c#newcode1035\nsrc/pkg/runtime/mgc0.c:1035: for(i=0; i < nelem(h->free)+1; i++) {\nPerhaps it's better to move this to sweep(), it already iterates over all spans and check their states. I've seen as much as 100k spans in test/bench/garbage/parser.go, so just iterating over them can take some time.\n\nhttp://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/mheap.c\nFile src/pkg/runtime/mheap.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/mheap.c#newcode106\nsrc/pkg/runtime/mheap.c:106: mstats.heap_released -= s->npreleased<<PageShift;\nzeroize s->npreleased plz\n\nhttp://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/proc.c#newcode168\nsrc/pkg/runtime/proc.c:168: G *scvg;\nstatic",
+			"disapproval": false,
+			"date": "2011-12-22 12:50:36.970479",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nThe scavenger does not piggyback anymore on timer's proc but uses a\nstandalone idling scheme (enter/exitsyscall as for the timer).\nIt seems to solve a bunch of side issues wrt deadlock detection, the\nthree toy deadlock situations I previously posted now pass without\nnasty timeliness glitches.\n\nThe additional `runtime\u00b7sched.gwait == 0 condition' is here for\ntransient situations where scavenger's proc is just runnable and some\nother proc is being granted with the run opportunity.\n\nSebastien\n",
+			"disapproval": false,
+			"date": "2011-12-30 16:54:42.311584",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2011/12/19 13:10:59, Sebastien Paolacci wrote:\n> #-- Sorry for the previous ill-formatted mail.\n> \n> Hello Russ, Dmitry,\n> \n> I've uploaded a new duration based implementation.\n> \n> Most of the nasty parts come from accounting and mixed (partly\n> released) spans. I've added a separated entry in mstat such that\n> heap_idle common understanding is not altered.\n> \n> Moving to a SysUsed scheme is doable, operations around `npreleased'\n> can serve as markers for such a modification. Spans might however have\n> to be forced to be homegenous when coalescing since injecting an\n> additional free page list in the span structure would probably not\n> really be a good deal.\n> \n> You (more especially) want to double-check scheduler's deadlock\n> detection. I can prove, at best, that it works in some circumstances\n> but that's a bit weak for a generalization.\n\nFor now I may only conclude that it may work in some circumstances :)",
+			"disapproval": false,
+			"date": "2011-12-22 12:52:06.243474",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/proc.c#newcode563\nsrc/pkg/runtime/proc.c:563: if (gp->goid == scvg->goid && runtime\u00b7sched.gwait == 0 && runtime\u00b7sched.grunning == 0)\nDoes it detect deadlocks in trivial cases?\nI need to look more into this, it seems that now we always have at least one either running or waiting goroutine - it's either scavenger or timer goroutine... at least one of them is always runnable... what am I missing?",
+			"disapproval": false,
+			"date": "2011-12-22 12:55:39.428064",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 22, 2011 at 07:55,  <dvyukov@google.com> wrote:\n> I need to look more into this, it seems that now we always have at least\n> one either running or waiting goroutine - it's either scavenger or timer\n> goroutine... at least one of them is always runnable... what am I\n> missing?\n\nThis is definitely a concern.\n",
+			"disapproval": false,
+			"date": "2011-12-22 20:23:31.328239",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 22, 2011 at 1:50 PM,  <dvyukov@google.com> wrote:\n> Please run all the tests with various values of GOMAXPROCS:\n> GOMAXPROCS=N ./run.bach --no-rebuild\nChecked for N in [1..8], they all pass.\n\n> http://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/malloc.h#newcode305\n> src/pkg/runtime/malloc.h:305: MSpanIdle,\n> Do we really need a new state? npreleased seems to be enough, especially\n> taking into account that there can be partially released blocks in both\n> MSpanFree and MSpanIdle states depending on how coalescing happens...\nYou're right, there's some redundancy here. MSpanIdle makes sense in a\nUnused/Used scheme, npreleased in an Unused-only approach. I've\ndropped MSpanIdle.\n\n> http://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/mgc0.c#newcode1035\n> src/pkg/runtime/mgc0.c:1035: for(i=0; i < nelem(h->free)+1; i++) {\n> Perhaps it's better to move this to sweep(), it already iterates over\n> all spans and check their states. I've seen as much as 100k spans in\n> test/bench/garbage/parser.go, so just iterating over them can take some\n> time.\nMoved.\n\n> http://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/mheap.c#newcode106\n> src/pkg/runtime/mheap.c:106: mstats.heap_released -=\n> s->npreleased<<PageShift;\n> zeroize s->npreleased plz\nAdded, not sure however how much you consider it as been a guard (zero\nis a valid value).\nI've kept the {unsedsince, npreleased} pair zeroing in MHeapFreeLocked.\n\n> http://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/proc.c#newcode168\n> src/pkg/runtime/proc.c:168: G *scvg;\n> static\nFixed.\n\n> http://codereview.appspot.com/5451057/diff/14001/src/pkg/runtime/proc.c#newcode563\n> src/pkg/runtime/proc.c:563: if (gp->goid == scvg->goid &&\n> runtime\u00b7sched.gwait == 0 && runtime\u00b7sched.grunning == 0)\n> Does it detect deadlocks in trivial cases?\nYes.\n{\n    go func() {\n        time.AfterFunc(5e9, func() { println(\"timer stopped\") })\n    }()\n    c := make(chan bool)\n    c <- false\n}\nBut it may need up to GOSCVGPERIOD to sort out a simple dummy steady\nsituation like\n{\n    c := make(chan bool)\n    c <- false\n}\nor\n{\n    var lock sync.Mutex\n    lock.Lock()\n    lock.Lock()\n}\nSo there's still some significant issues here.\n\n> I need to look more into this, it seems that now we always have at least\n> one either running or waiting goroutine - it's either scavenger or timer\n> goroutine... at least one of them is always runnable... what am I\n> missing?\nThat's also my understaning. The issue (to me) is however to catch the\nright transition (`haveg()' does not break the global queue loop so\neasily iirc). In that regard, I'm not sure having the scavenger coming\nalong on top of timer's proc is really helpful. I'll give a try to a\nmore standalone note-based version, it may help by sorting things out.\n\nSebastien\n",
+			"disapproval": false,
+			"date": "2011-12-30 15:36:51.766925",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/malloc.h\nFile src/pkg/runtime/malloc.h (right):\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/malloc.h#newcode317\nsrc/pkg/runtime/malloc.h:317: int64   unusedsince;\t// First time spotted by gc in MSpanFree state\nstart the comment with lowercase\ns/gc/GC\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mem.go\nFile src/pkg/runtime/mem.go (right):\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mem.go#newcode39\nsrc/pkg/runtime/mem.go:39: NextGC       uint64 // next run in HeapAlloc (bytes)\nin HeapAlloc *time*\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c\nFile src/pkg/runtime/mheap.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode361\nsrc/pkg/runtime/mheap.c:361: for(;;) {\nperhaps for(k=0;; k++)?\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode362\nsrc/pkg/runtime/mheap.c:362: g->status = Gwaiting;\nremove\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode363\nsrc/pkg/runtime/mheap.c:363: g->waitreason = \"scavenger goroutine (idle)\";\nremove\nthe goroutine will be in syscall status and the waitreason ignored\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode388\nsrc/pkg/runtime/mheap.c:388: if(s->state == MSpanFree && s->unusedsince != 0 && (now - s->unusedsince) > grace) {\nYou seem to carefully iterate over only free spans and then check for MSpanFree anyway. It is confusing. Replace the check with \"assert\" (grep for runtime.throw).\nOr actually I would prefer to just scan through runtime\u00b7mheap.allspans and check for MSpanFree spans.\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode398\nsrc/pkg/runtime/mheap.c:398: k += 1;\nsome messages are output before the line and some - after the line, so they will have different ids...\nI think for(k=0;; k++) is clearer and avoids the problem",
+			"disapproval": false,
+			"date": "2012-01-11 17:08:39.726096",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/proc.c#newcode586\nsrc/pkg/runtime/proc.c:586: if(runtime\u00b7sched.grunning == 1 && runtime\u00b7sched.gwait == 0)\nCan't the scavenger goroutine be in Gwaiting state (when blocked on gcsema)? Then it's accounted neither in grunning nor in gwait, and we can get a spurious deadlock report...",
+			"disapproval": false,
+			"date": "2012-01-11 18:06:19.568771",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c\nFile src/pkg/runtime/mheap.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode327\nsrc/pkg/runtime/mheap.c:327: // TODO(rsc): IncrementalScavenge() to return memory to OS.\nremove",
+			"disapproval": false,
+			"date": "2012-01-12 14:42:44.887328",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\u00a0src/pkg/runtime/malloc.h:317: int64 \u00a0 unusedsince; \u00a0 \u00a0 \u00a0// First time\n> spotted\n> by gc in MSpanFree state\n> start the comment with lowercase\n> s/gc/GC\nDone.\n\n> http://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mem.go\n> File src/pkg/runtime/mem.go (right):\n>\n> http://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mem.go#newcode39\n> src/pkg/runtime/mem.go:39: NextGC \u00a0 \u00a0 \u00a0 uint64 // next run in HeapAlloc\n> (bytes)\n> in HeapAlloc *time*\nDone.\n\n> src/pkg/runtime/mheap.c:361: for(;;) {\n> perhaps for(k=0;; k++)?\nYes, much better.\n\n> http://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode362\n> src/pkg/runtime/mheap.c:362: g->status = Gwaiting;\n> remove\nFixed.\n\n> src/pkg/runtime/mheap.c:363: g->waitreason = \"scavenger goroutine\n> (idle)\";\n> remove\n> the goroutine will be in syscall status and the waitreason ignored\nDone. Timer's proc usage reminiscences...\n\n> http://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode388\n> src/pkg/runtime/mheap.c:388: if(s->state == MSpanFree && s->unusedsince\n> != 0 && (now - s->unusedsince) > grace) {\n> You seem to carefully iterate over only free spans and then check for\n> MSpanFree anyway. It is confusing. Replace the check with \"assert\" (grep\n> for runtime.throw).\n> Or actually I would prefer to just scan through runtime\u00b7mheap.allspans\n> and check for MSpanFree spans.\nExtra check removed, definitely useless since `MSpanIdle' was removed.\nI'm not sure however to see the advantage in scanning the whole `allspans' list:\n\u00a0- it can be quite large as you spotted in scavenger's GC-side\nsection, larger than freelists anyway.\n\u00a0- I don't expect to find free spans anywhere but in those freelists,\nat least I hope...\nDid I miss something?\n\n> http://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode398\n> src/pkg/runtime/mheap.c:398: k += 1;\n> some messages are output before the line and some - after the line, so\n> they will have different ids...\n> I think for(k=0;; k++) is clearer and avoids the problem\nFixed.\n\n> src/pkg/runtime/proc.c:586: if(runtime\u00b7sched.grunning == 1 &&\n> runtime\u00b7sched.gwait == 0)\n> Can't the scavenger goroutine be in Gwaiting state (when blocked on\n> gcsema)? Then it's accounted neither in grunning nor in gwait, and we\n> can get a spurious deadlock report...\nHum... not nice indeed. Thanks for spotting that, false positives are\ndefinitely not affordable here.\nI'm reintroducing the `scvg' identifier to remove the ambiguity on\nthat active g.\n\n> src/pkg/runtime/mheap.c:327: // TODO(rsc): IncrementalScavenge() to\n> return memory to OS.\n> remove\nDone.\n\nSebastien\n",
+			"disapproval": false,
+			"date": "2012-01-14 10:21:22.981527",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, rsc@golang.org, dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-14 10:23:15.775987",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "other than that LGTM\ngenerally it looks like it may work :)\nleaving for rsc\n\nhttp://codereview.appspot.com/5451057/diff/31002/src/pkg/runtime/mem.go\nFile src/pkg/runtime/mem.go (right):\n\nhttp://codereview.appspot.com/5451057/diff/31002/src/pkg/runtime/mem.go#newcode39\nsrc/pkg/runtime/mem.go:39: NextGC       uint64 // next run in HeapAlloc *time* (bytes)\n:)\nplease remove the asterisks, I used them to highlight what needs to be added\nthat's user-visible comments\n\nhttp://codereview.appspot.com/5451057/diff/31002/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/31002/src/pkg/runtime/proc.c#newcode590\nsrc/pkg/runtime/proc.c:590: for(gp = runtime\u00b7allg; gp != nil; gp = gp->alllink) {\nsince we already have the pointer to the scavenger, can't it be just\n&& (scvg->status == Grunning || scvg->status == Gsyscall)\n(no need to scan all g's)?",
+			"disapproval": false,
+			"date": "2012-01-15 13:43:52.970077",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "2012/1/14 S\u00e9bastien Paolacci <sebastien.paolacci@gmail.com>\n\n> >\n> http://codereview.appspot.com/5451057/diff/25006/src/pkg/runtime/mheap.c#newcode388\n> > src/pkg/runtime/mheap.c:388: if(s->state == MSpanFree && s->unusedsince\n> > != 0 && (now - s->unusedsince) > grace) {\n> > You seem to carefully iterate over only free spans and then check for\n> > MSpanFree anyway. It is confusing. Replace the check with \"assert\" (grep\n> > for runtime.throw).\n> > Or actually I would prefer to just scan through runtime\u00b7mheap.allspans\n> > and check for MSpanFree spans.\n> Extra check removed, definitely useless since `MSpanIdle' was removed.\n> I'm not sure however to see the advantage in scanning the whole `allspans'\n> list:\n>  - it can be quite large as you spotted in scavenger's GC-side\n> section, larger than freelists anyway.\n>  - I don't expect to find free spans anywhere but in those freelists,\n> at least I hope...\n> Did I miss something?\n\n\nI think your current code is correct.\n",
+			"disapproval": false,
+			"date": "2012-01-15 13:45:08.720981",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> http://codereview.appspot.com/5451057/diff/31002/src/pkg/runtime/mem.go#newcode39\n> src/pkg/runtime/mem.go:39: NextGC \u00a0 \u00a0 \u00a0 uint64 // next run in HeapAlloc\n> *time* (bytes)\n> :)\n> please remove the asterisks, I used them to highlight what needs to be\n> added\n> that's user-visible comments\nI thought you were actually trying to emphasize the unusual `time'\nmeaning here. Done.\n\n> http://codereview.appspot.com/5451057/diff/31002/src/pkg/runtime/proc.c#newcode590\n> src/pkg/runtime/proc.c:590: for(gp = runtime\u00b7allg; gp != nil; gp =\n> gp->alllink) {\n> since we already have the pointer to the scavenger, can't it be just\n> && (scvg->status == Grunning || scvg->status == Gsyscall)\n> (no need to scan all g's)?\nThat's correct, looking for a pointer I already pinned is a bit...\nthanks. Fixed.\n",
+			"disapproval": false,
+			"date": "2012-01-23 12:43:41.830812",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, rsc@golang.org, dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-23 12:44:14.607671",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for the reminder.  This was on my list but it needed to be bumped up.\nExcept for the new environment variables, it looks great.\n\nhttp://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/malloc.h\nFile src/pkg/runtime/malloc.h (right):\n\nhttp://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/malloc.h#newcode388\nsrc/pkg/runtime/malloc.h:388: void\truntime\u00b7MHeap_Scavenger();\n(void)\n\nhttp://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/mheap.c\nFile src/pkg/runtime/mheap.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/mheap.c#newcode332\nsrc/pkg/runtime/mheap.c:332: runtime\u00b7MHeap_Scavenger()\n(void)\n\nhttp://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/mheap.c#newcode344\nsrc/pkg/runtime/mheap.c:344: env = runtime\u00b7getenv(\"GOSCVGPERIOD\");\nSorry, but we have too many environment variables.  We need fewer, not more.\nLet's just define some good defaults and leave it at that.\n\nuint64 forcegc;\nuint64 limit;\n\n// If we go two minutes without a garbage collection,\n// force one to run.\nforcegc = 2*60*1e9;\n\n// If a span goes unused for 5 minutes after\n// a garbage collection, we hand it back to the operating system.\nlimit = 5*60*1e9;",
+			"disapproval": false,
+			"date": "2012-02-06 18:59:50.821287",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/mheap.c\nFile src/pkg/runtime/mheap.c (right):\n\nhttp://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/mheap.c#newcode398\nsrc/pkg/runtime/mheap.c:398: k, mstats.heap_inuse>>20, mstats.heap_idle>>20, mstats.heap_sys>>20,\nI get \"warning: format mismatch D UINT, arg 3\" from 8c when compiling with GOARCH=386, there might be a cast/conversion missing, %D expects a (u)int64.",
+			"disapproval": false,
+			"date": "2012-02-07 06:50:22.415030",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 6, 2012 at 7:59 PM,  <rsc@golang.org> wrote:\n> Thanks for the reminder. \u00a0This was on my list but it needed to be bumped\n> up.\n> Except for the new environment variables, it looks great.\n>\n>\n>\n> http://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/malloc.h\n> File src/pkg/runtime/malloc.h (right):\n>\n> http://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/malloc.h#newcode388\n> src/pkg/runtime/malloc.h:388: void \u00a0 \u00a0 \u00a0runtime\u00b7MHeap_Scavenger();\n> (void)\nDone.\n\n> http://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/mheap.c#newcode332\n> src/pkg/runtime/mheap.c:332: runtime\u00b7MHeap_Scavenger()\n> (void)\nDone.\n\n> http://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/mheap.c#newcode344\n> src/pkg/runtime/mheap.c:344: env = runtime\u00b7getenv(\"GOSCVGPERIOD\");\n> Sorry, but we have too many environment variables.\nYou don't have to be, they're just here for testing purpose. Let's go\non if \"anyone\" is fine with the now defaults.\n\n> uint64 forcegc;\n> uint64 limit;\n>\n> // If we go two minutes without a garbage collection,\n> // force one to run.\n> forcegc = 2*60*1e9;\n>\n> // If a span goes unused for 5 minutes after\n> // a garbage collection, we hand it back to the operating system.\n> limit = 5*60*1e9;\nDone. CL description updated with that info too.\n\nSebastien\n",
+			"disapproval": false,
+			"date": "2012-02-07 13:20:40.096873",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, dvyukov@google.com, remyoudompheng@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-02-07 13:32:56.760682",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Feb 7, 2012 at 7:50 AM,  <remyoudompheng@gmail.com> wrote:\n>\n> http://codereview.appspot.com/5451057/diff/38001/src/pkg/runtime/mheap.c#newcode398\n> src/pkg/runtime/mheap.c:398: k, mstats.heap_inuse>>20,\n> mstats.heap_idle>>20, mstats.heap_sys>>20,\n> I get \"warning: format mismatch D UINT, arg 3\" from 8c when compiling\n> with GOARCH=386, there might be a cast/conversion missing, %D expects a\n> (u)int64.\nFixed, thanks. Since you gave that deeper look (or just fed your\nnumerical formatting love ;)), any opinion on the now hardcoded\nconstants and overall behavior?\n\nSebastien\n",
+			"disapproval": false,
+			"date": "2012-02-07 13:32:04.944378",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The constants seem a bit large to see an effect when running programs by hand, but they seem OK for use by long-running daemons.\n\nR\u00e9my.",
+			"disapproval": false,
+			"date": "2012-02-09 22:04:55.788131",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI got to play with this last night, and it worked nicely.\nThanks very much.\n",
+			"disapproval": false,
+			"date": "2012-02-16 18:29:54.130356",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=b96e722aad5a ***\n\nruntime: release unused memory to the OS.\n\nPeriodically browse MHeap's freelists for long unused spans and release them if any.\n\nCurrent hardcoded settings:\n        - GC is forced if none occured over the last 2 minutes.\n        - spans are handed back after 5 minutes of uselessness.\n\nSysUnused (for Unix) is a wrapper on madvise MADV_DONTNEED on Linux and MADV_FREE on BSDs.\n\nR=rsc, dvyukov, remyoudompheng\nCC=golang-dev\nhttp://codereview.appspot.com/5451057\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2012-02-16 18:30:09.090516",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-08-06 21:36:34.468830",
+			"approval": false
+		}
+	],
+	"owner_email": "sebastien.paolacci@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Sebastien Paolacci",
+	"subject": "code review 5451057: runtime: release unused memory to the OS.",
+	"created": "2011-11-30 21:24:45.458009",
+	"patchsets": [
+		1,
+		1002,
+		8,
+		14001,
+		19003,
+		25006,
+		31002,
+		38001,
+		46001
+	],
+	"modified": "2012-08-06 21:36:35.931470",
+	"closed": true,
+	"issue": 5451057
+}

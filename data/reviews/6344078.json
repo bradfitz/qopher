@@ -1,0 +1,214 @@
+{
+	"description": "math, runtime: use a NaN that matches gcc's\n        our old choice is not working properly at least on VFPv2 in\nARM1136JF-S (it's not preserved across float64->float32 conversions).\n\n        Fixes issue 3745.",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "still need to test on ARMv6, I can only verify fmt and math test passed,\r\nas kindle doesn't have enough storage and memory to host a gcc toolchain\r\nto do full ./all.bash testing.\r\n\r\nOn Tue, Jul 3, 2012 at 10:17 PM, <dave@cheney.net> wrote:\r\n\r\n> but these two curious improvements when using VFP3\r\n>\r\n> BenchmarkTanh              2301         2168   -5.78%\r\n> BenchmarkY0                2004         1855   -7.44%\r\n>\r\ni think it's placement related, as I only changed a constant for ARM.\r\n\r\n>\r\n> http://codereview.appspot.com/**6344078/diff/8002/src/pkg/**\r\n> math/bits_other.go#newcode5<http://codereview.appspot.com/6344078/diff/8002/src/pkg/math/bits_other.go#newcode5>\r\n> src/pkg/math/bits_other.go:5: // +build !arm\r\n> I'm not sold on the bits_other.go name. There isn't much of a precedent\r\n> in the std library, but maybe bits_x86.go would be better (until we\r\n> support mips :)\r\n>\r\ni think gccgo also uses the math package, so we actually do support mips :)\r\n",
+			"disapproval": false,
+			"date": "2012-07-04 03:03:13.406028",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. Tested on arm5 and arm7. pkg/math benchmarks show no performance regression, but these two curious improvements when using VFP3\n\nBenchmarkTanh              2301         2168   -5.78%\nBenchmarkY0                2004         1855   -7.44%\n\nhttp://codereview.appspot.com/6344078/diff/8002/src/pkg/math/bits_other.go\nFile src/pkg/math/bits_other.go (right):\n\nhttp://codereview.appspot.com/6344078/diff/8002/src/pkg/math/bits_other.go#newcode5\nsrc/pkg/math/bits_other.go:5: // +build !arm\nI'm not sold on the bits_other.go name. There isn't much of a precedent in the std library, but maybe bits_x86.go would be better (until we support mips :)\n\nhttp://codereview.appspot.com/6344078/diff/8002/src/pkg/runtime/float.c\nFile src/pkg/runtime/float.c (right):\n\nhttp://codereview.appspot.com/6344078/diff/8002/src/pkg/runtime/float.c#newcode9\nsrc/pkg/runtime/float.c:9: // ARM1136JF-S, quiet NaNs are not preserved across conversion\nI did not know this was a define, very useful.",
+			"disapproval": false,
+			"date": "2012-07-04 02:17:35.666912",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "added a test for NaN() in math pkg so that we can catch the problem\r\nsooner in the future.\r\n",
+			"disapproval": false,
+			"date": "2012-07-05 19:44:24.456170",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/07/05 19:44:24, minux wrote:\n> added a test for NaN() in math pkg so that we can catch the problem\n> sooner in the future.\n\nLGTM. Tested on a real Pi\n\nraspberrypi(~/go/src) % go test fmt math\nok      fmt     0.882s\nok      math    0.138s",
+			"disapproval": false,
+			"date": "2012-07-11 04:51:37.377280",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "any more comments on this CL?",
+			"disapproval": false,
+			"date": "2012-07-25 21:34:50.276840",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "So you're suggesting to use the same nan bits on all platforms, and\r\njust change what bits we use?\r\nThat sounds fine. I'm much more comfortable with that than with\r\narchitecture-specific bits.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-07-30 00:48:29.774200",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please mention in the comments that we're talking about\nconversion to float32. I had to read the bug comments to \nfigure that out (I notice it's also in the CL description, but\nit should be in the code).\n\nI am not sure this is the right fix. It seems to me that a\nsignaling NaN would, well, cause a signal that the OS would\nneed to handle, maybe even propagating to the user process.\nAlso, the usual behavior of a signaling NaN is that after the\nsignal it turns into a quiet NaN, which suggests that if you \nconvert from a float64 to a float32 and back and then to a float32\nagain you will at some point end up at a quiet NaN and then have\nthe same problem as in the original.\n\nCan we instead try to understand why the Raspberry Pi does \nnot preserve the NaN on the float64 -> float32 conversion.\nAre we using the wrong instruction, or setting an incorrect bit\nin the instruction?\n\nIt feels like we are working around a processor bug by making\nthe code uglier, and worse it does not seem like a complete \nworkaround.",
+			"disapproval": false,
+			"date": "2012-07-29 22:17:47.006130",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.",
+			"disapproval": false,
+			"date": "2012-07-30 01:45:43.468300",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-08-07 01:57:05.260070",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jul 29, 2012 at 3:17 PM, <rsc@golang.org> wrote:\r\n\r\n> I am not sure this is the right fix. It seems to me that a\r\n> signaling NaN would, well, cause a signal that the OS would\r\n> need to handle, maybe even propagating to the user process.\r\n> Also, the usual behavior of a signaling NaN is that after the\r\n> signal it turns into a quiet NaN, which suggests that if you\r\n> convert from a float64 to a float32 and back and then to a float32\r\n> again you will at some point end up at a quiet NaN and then have\r\n> the same problem as in the original.\r\n>\r\nI've tried converting back and forth between float64 and float32, and\r\nit is always NaN.\r\n\r\n>\r\n> Can we instead try to understand why the Raspberry Pi does\r\n> not preserve the NaN on the float64 -> float32 conversion.\r\n> Are we using the wrong instruction, or setting an incorrect bit\r\n> in the instruction?\r\n>\r\nhonestly, i don't understand this behavior of VFPv2 on ARM1136JF-S.\r\nmaybe a hardware bug, maybe it's linux vfp support code's buggy.\r\n\r\ni've googled, but still couldn't get anything helpful on this matter.\r\n\r\nbut, i do find out a way to verify if the NaN i choose is correct,\r\ni fount out that gcc will by default inlining calls to nan() in math.h,\r\nand the value generated for nan(\"1\") is (*):\r\n.L2:\r\n        .word   1\r\n        .word   2146959360\r\nwhich is 0x7ff8000000000001, and it is a signaling NaN.\r\n\r\nI then tested amd64 version of gcc, and the value for nan(\"1\") is\r\nthe same. (note that the amd64 has a different interpretation of\r\nsignaling/quiet NaNs, and this NaN on amd64 is a quiet NaN);\r\nso my guess is that gcc really doesn't differentiate between NaNs\r\non different architectures, and always use this version.\r\nThus, I think we could do the same thing, what do you think?\r\n(I should have mentioned that our NaN for amd64/386 is in fact\r\na signaling NaN)\r\n\r\n*: I've used the gcc-4.6 provided in the Android NDK, version string is:\r\nGCC: (GNU) 4.6.x-google 20120106 (prerelease)\r\n",
+			"disapproval": false,
+			"date": "2012-07-30 00:01:04.533700",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/6344078/diff/18004/src/pkg/math/bits.go\nFile src/pkg/math/bits.go (right):\n\nhttp://codereview.appspot.com/6344078/diff/18004/src/pkg/math/bits.go#newcode8\nsrc/pkg/math/bits.go:8: uvnan    = 0x7ff8000000000001\nplease use capital letters like the surrounding constants. 7FF",
+			"disapproval": false,
+			"date": "2012-08-03 18:03:13.317120",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Update CL description too: drop \"on ARM\".",
+			"disapproval": false,
+			"date": "2012-08-03 18:03:36.131970",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=1f62df249175 ***\n\nmath, runtime: use a NaN that matches gcc's\n        our old choice is not working properly at least on VFPv2 in\nARM1136JF-S (it's not preserved across float64->float32 conversions).\n\n        Fixes issue 3745.\n\nR=dave, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6344078",
+			"disapproval": false,
+			"date": "2012-08-07 01:57:30.078310",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "outstanding.",
+			"disapproval": false,
+			"date": "2012-08-07 01:59:40.188010",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 6344078: math, runtime: use a NaN that matches gcc's",
+	"created": "2012-07-03 21:10:21.532249",
+	"patchsets": [
+		1,
+		2001,
+		4004,
+		6001,
+		8001,
+		8002,
+		7005,
+		17001,
+		18004,
+		21002,
+		15004
+	],
+	"modified": "2012-08-07 01:59:40.267690",
+	"closed": true,
+	"issue": 6344078
+}

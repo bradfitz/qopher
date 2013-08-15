@@ -1,0 +1,707 @@
+{
+	"description": "xml: major Go 1 fixup\n\nThis CL improves the xml package in the following ways:\n\n- makes its interface match established conventions\n- brings Marshal and Unmarshal closer together\n- fixes a large number of bugs and adds tests\n- improves speed significantly\n- organizes and simplifies the code\n\nFixes issue 2426.\nFixes issue 2406.\nFixes issue 1989.\n\nWhat follows is a detailed list of those changes.\n\n- All matching is case sensitive without special processing\n  to the field name or xml tag in an attempt to match them.\n  Customize the field tag as desired to match the correct XML\n  elements.\n\n- Flags are \",flag\" rather than \"flag\". The names \"attr\",\n  \"chardata\", etc, may be used to name actual XML elements.\n\n- Overriding of attribute names is possible with \"name,attr\".\n\n- Attribute fields are marshalled properly if they have\n  non-string types. Previously they were unmarshalled, but were\n  ignored at marshalling time.\n\n- Comment fields tagged with \",comment\" are marshalled properly,\n  rather than being marshalled as normal fields.\n\n- The handling of the Any field has been replaced by the \",any\"\n  flag to avoid unexpected results when using the field name for\n  other purposes, and has also been fixed to interact properly\n  with name paths. Previously the feature would not function\n  if any field in the type had a name path in its tag.\n\n- Embedded struct support fixed and cleaned so it works when\n  marshalling and also when using field paths deeper than one level.\n\n- Conflict reporting on field names have been expanded to cover\n  all fields. Previously it'd catch only conflicts of paths\n  deeper than one level. Also interacts correctly with embedded\n  structs now.\n\n- A trailing '>' is disallowed in xml tags. It used to be\n  supported for removing the ambiguity between \"attr\" and \"attr>\",\n  but the marshalling support for that was broken, and it's now\n  unnecessary. Use \"name\" instead of \"name>\".\n\n- Fixed docs to point out that a XMLName doesn't have to be\n  an xml.Name (e.g. a struct{} is a good fit too). The code was\n  already working like that.\n\n- Fixed asymmetry in the precedence of XML element names between\n  marshalling and unmarshalling. Marshal would consider the XMLName\n  of the field type before the field tag, while unmarshalling would\n  do the opposite. Now both respect the tag of the XMLName field\n  first, and a nice error message is provided in case an attempt\n  is made to name a field with its tag in a way that would\n  conflict with the underlying type's XMLName field.\n\n- Do not marshal broken \"<???>\" tags when in doubt. Use the type\n  name, and error out if that's not possible.\n\n- Do not break down unmarshalling if there's an interface{} field\n  in a struct.\n\n- Significant speed boost due to caching of type metadata and\n  overall allocation clean ups. The following timings reflect\n  processing of the the atom test data:\n\n  Old:\n\n  BenchmarkMarshal           50000             48798 ns/op\n  BenchmarkUnmarshal          5000            357174 ns/op\n\n  New:\n\n  BenchmarkMarshal          100000             19799 ns/op\n  BenchmarkUnmarshal         10000            128525 ns/op",
+	"cc": [
+		"cw@f00f.org",
+		"gustavo@niemeyer.net",
+		"kevlar@google.com",
+		"adg@golang.org",
+		"rogpeppe@gmail.com",
+		"fullung@gmail.com",
+		"christoph@tux21b.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"mt4swm@googlemail.com",
+		"agl@google.com"
+	],
+	"messages": [
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nComment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'\n\nI had to stare at that for awhile before I understood the implications.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go\nFile src/pkg/encoding/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode145\nsrc/pkg/encoding/xml/marshal.go:145: // 1. XMLName field in underlying struct;\n> Historically, and today, Unmarshal uses XMLName as validation rather than as a\n> hint, both in the top level and in all of the internal elements. It won't allow\n> anything to be unmarshalled into an XMLName field that has a tag of a different\n> name than the element being unmarshalled.\n> \n> This behavior is intentional, and being put to good use. If I say I want an\n> <apple>, I don't want my code to take a <cake> silently. The marshalling side\n> was mistakingly allowing cakes and apples to mix up when marshalling, and thus\n> producing data that was impossible to unmarshal back onto to very structure that\n> serialized it.\n> \n> Besides that aspect, it's also ambiguous, and incorrect. An <a> element in HTML\n> is _always_ an <a>, not a <link> not a <table>.. it's an *<a>*, independently\n> from the field it sits under.\n> \n> If you want to marshal a structure with variable naming depending on the field\n> it sits under, though, it couldn't be easier: just provide a type without an\n> XMLName and all works as you wish. If there's an XMLName, it's for validation,\n> and it should match it. Explicit, and unambiguous.\n\nMy only problem with this is that you may not always be marshaling a structure that you control, and someone else may have given it an XMLName that you don't like or which doesn't work in your scenario.  I actually have never liked XMLName in the first place, but the XML schemas that I work with haven't needed anything like that yet.  The only upside I see to them is that it gives you the possibility of registering types to be automatically created and stored in interface values dynamically based on the tag/namespace name somewhere down the line.\n\nBut I digress.  Consistency, I suppose, is the best fallback.",
+			"disapproval": false,
+			"date": "2011-12-30 01:06:44.850363",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I really like the improvements to the API in this CL. It's way better. Thanks for the great work.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go\nFile src/pkg/encoding/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode73\nsrc/pkg/encoding/xml/marshal.go:73: //\t\tId        int      `xml:\"id,attr\"`\nPlease add examples of chardata, innerxml, and comment too.\n\nIn fact, it would be great to have this as a testable example in a test file, as with $GOROOT/src/pkg/sort/example_test.go\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode162\nsrc/pkg/encoding/xml/marshal.go:162: if name == \"\" {\nI'd bring this if block out of the surrounding if block.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode172\nsrc/pkg/encoding/xml/marshal.go:172: Escape(p, []byte(xmlns))\nI wonder if there should be an EscapeString to avoid allocations here and elsewhere in this function. Perhaps in another CL. (Add a TODO?)\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode228\nsrc/pkg/encoding/xml/marshal.go:228: switch finfo.flags & fMode {\nThese nested switches are becoming a bit much. Put the struct handling code into a function?\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode244\nsrc/pkg/encoding/xml/marshal.go:244: comment = []byte(vf.String())\nstring comments could be handled more efficiently (but with more code). You've definitely made the right choice to make []byte the fast path, but maybe in a later CL we should make string comments fast too. Add a TODO?\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode249\nsrc/pkg/encoding/xml/marshal.go:249: if bytes.Index(comment, []byte(\"--\")) >= 0 {\nSet up a global:\nvar ddBytes = []byte(\"--\")\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode256\nsrc/pkg/encoding/xml/marshal.go:256: p.Write([]byte{' '})\np.WriteByte(' ') ?\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go\nFile src/pkg/encoding/xml/read.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode31\nsrc/pkg/encoding/xml/read.go:31: //\t\tWhere string `xml:\",attr\"`\nAs with Marshal, can you please include the other additions in the example?\n\nIn particular, I want to see an example of \",any\"\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode123\nsrc/pkg/encoding/xml/read.go:123: //      a struct field's XMLName tag, and the struct field has no\ns/,//\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode132\nsrc/pkg/encoding/xml/read.go:132: //      the XML element name is not a prefix for the unmarshalling of\nI don't understand this sentence. Can you rewrite it? Split it up? Sorry, maybe I'm just dense.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode235\nsrc/pkg/encoding/xml/read.go:235: // For now, simply ignore the field.\nPlease make this comment a TODO with some hint as to your future plans, if you can.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode489\nsrc/pkg/encoding/xml/read.go:489: for j := 0; j < len(parents); j++ {\nfor j := range parents {\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go\nFile src/pkg/encoding/xml/typeinfo.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode39\nsrc/pkg/encoding/xml/typeinfo.go:39: //fOmitEmpty\nTODO :-)\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode59\nsrc/pkg/encoding/xml/typeinfo.go:59: for i := 0; i != n; i++ {\n\"i < n\" is clearer, no?\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode105\nsrc/pkg/encoding/xml/typeinfo.go:105: func structFieldInfo(typ reflect.Type, tinfo *typeInfo, f *reflect.StructField) (*fieldInfo, error) {\ncomment\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode174\nsrc/pkg/encoding/xml/typeinfo.go:174: } else {\nPut a return above this line and drop the else block\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode248\nsrc/pkg/encoding/xml/typeinfo.go:248: for i, n := 0, typ.NumField(); i != n; i++ {\ni < n",
+			"disapproval": false,
+			"date": "2012-01-02 23:35:36.210399",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ah, you are my hero.\n\nThough I'd like this even better if it also fixed 2626 ;-).\n\nJust a few nits about element name handling and I want omitempty!\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go\nFile src/pkg/encoding/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode50\nsrc/pkg/encoding/xml/marshal.go:50: //     - the name of the marshalled type\nTechnically, I think your code uses the name of the first concrete type it finds within the marshaled value; the distinction is subtle but there.  Thus, if you have:\n\ntype Lecturer interface {\n  Lecture()\n}\n\ntype Instructor struct{Name string}\nfunc (Instructor) Lecture() {}\n\ntype Professor struct{Name string}\nfunc (Professor) Lecture() {}\nfunc (Professor) Research() {}\n\nvar Lecturer x\nx = Instructor{\"Spam\"}\nMarshall(x) -> \"<Instructor><Name>Spam</Name></Instructor>\"\nx = Professor{\"Eggs\"}\nMarshall(x) -> \"<Professor><Name>Eggs</Name></Professor>\"\n\nI think the least surprising behavior would be to have Lecturer in both cases, though it's far from cut-and-dried.\n\nThis may be why rsc wanted me to use ??? in the first place.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode145\nsrc/pkg/encoding/xml/marshal.go:145: // 1. XMLName field in underlying struct;\nThis seems wrong... The documentation above applies to the top-level value's element name selection.  This applies to child elements.  If you have two fields of type X and X has an XMLName, I think they will both me marshaled with the same name instead of the field names.\n\nI think it should be\nTop-level:\n- user-provided\n- XMLName tag\n- XMLName value\n- type name\n\nInner value:\n- field name/tag in the struct field\n- XMLName tag\n- XMLName value\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode252\nsrc/pkg/encoding/xml/marshal.go:252: p.WriteString(\"<!--\")\nis <!--- --> valid?  <!---->?  I can never remember the specifics.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go\nFile src/pkg/encoding/xml/read.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode235\nsrc/pkg/encoding/xml/read.go:235: // For now, simply ignore the field.\nI would skip the field if it has no value; if it does have a value, continue to traverse into it.  This would be analogous to JSON, where you can populate interface values and be able to unmarshal into it properly.  Of course, JSON creates a map[string]interface{} or []interface{} for you if there is no value, but that's JSON.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go\nFile src/pkg/encoding/xml/typeinfo.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode39\nsrc/pkg/encoding/xml/typeinfo.go:39: //fOmitEmpty\naw, I really like omitempty...  it's not that hard, either, and now that we have struct equality it's well-defined.",
+			"disapproval": false,
+			"date": "2011-12-29 23:35:57.073420",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Though I'd like this even better if it also fixed 2626 ;-).\n\nI've looked at it, but it sounds like an independent change that is worth its own debate and CL.\n\nThanks for the review Kyle. Some feedback follows.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go\nFile src/pkg/encoding/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode50\nsrc/pkg/encoding/xml/marshal.go:50: //     - the name of the marshalled type\n> var Lecturer x\n> x = Instructor{\"Spam\"}\n> Marshall(x) -> \"<Instructor><Name>Spam</Name></Instructor>\"\n(...)\n> I think the least surprising behavior would be to have Lecturer in both cases,\n\nThere's no possible way to have Lecturer in the case above, since what's being provided to the function is the real value with its real type under an interface{}. The suggested documentation is correct in this case: it's the name of the _marshalled type_. Lecturer is not being marshalled above. Instructor is.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode145\nsrc/pkg/encoding/xml/marshal.go:145: // 1. XMLName field in underlying struct;\n> This applies to child elements.  If you have two fields\n> of type X and X has an XMLName, I think they will both\n> me marshaled with the\n\nNo, marshal will report the conflict in this case, pointing out which fields are offending.\n\n> I think it should be\n(...)\n> Inner value:\n> - field name/tag in the struct field\n> - XMLName tag\n\nThat's one of the important bugs being fixed in this CL. We can't use the suggested ordering unless we change the meaning of XMLName, and change the unmarshalling side with it, and I don't think we should do that, for reasons explained below.\n\nHistorically, and today, Unmarshal uses XMLName as validation rather than as a hint, both in the top level and in all of the internal elements. It won't allow anything to be unmarshalled into an XMLName field that has a tag of a different name than the element being unmarshalled.\n\nThis behavior is intentional, and being put to good use. If I say I want an <apple>, I don't want my code to take a <cake> silently. The marshalling side was mistakingly allowing cakes and apples to mix up when marshalling, and thus producing data that was impossible to unmarshal back onto to very structure that serialized it.\n\nBesides that aspect, it's also ambiguous, and incorrect. An <a> element in HTML is _always_ an <a>, not a <link> not a <table>.. it's an *<a>*, independently from the field it sits under.\n\nIf you want to marshal a structure with variable naming depending on the field it sits under, though, it couldn't be easier: just provide a type without an XMLName and all works as you wish. If there's an XMLName, it's for validation, and it should match it. Explicit, and unambiguous.\n\nBoth Marshal and Unmarshal agree with the same terms in this CL, and this cleanup means that a very large number of structures marshalled actually unmarshal back onto the same types that serialized them.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode252\nsrc/pkg/encoding/xml/marshal.go:252: p.WriteString(\"<!--\")\n> is <!--- --> valid?  <!---->?  I can never remember the specifics.\n\nhttp://www.w3.org/TR/REC-xml/#sec-comments\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go\nFile src/pkg/encoding/xml/read.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode235\nsrc/pkg/encoding/xml/read.go:235: // For now, simply ignore the field.\n> I would skip the field if it has no value; if it does have \n\nI actually started to go into this direction, but then I've cut back and remained with this just for fixing the explosions that otherwise happen.\n\nThis CL is already gigantic, but it was hard to reduce its size because there was some significant refactoring needed. After I manage to get this in, I have a few CLs in the pipeline implementing things that are improvements on it, rather than fixups.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go\nFile src/pkg/encoding/xml/typeinfo.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode39\nsrc/pkg/encoding/xml/typeinfo.go:39: //fOmitEmpty\n> aw, I really like omitempty...  it's not that hard, either, and now that we have\n> struct equality it's well-defined.\n\nBoth \"-\" and \",omitempty\" are in the pipeline too. Just let me get this in and I'll push the follow ups.",
+			"disapproval": false,
+			"date": "2011-12-30 00:48:00.363616",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> LGTM\n\nCheers!\n\n> Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'\n>\n> I had to stare at that for awhile before I understood the implications.\n\nYeah, it's far from obvious.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go\nFile src/pkg/encoding/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode145\nsrc/pkg/encoding/xml/marshal.go:145: // 1. XMLName field in underlying struct;\n> My only problem with this is that you may not always be marshaling a structure\n> that you control, and someone else may have given it an XMLName that you don't\n> like or which doesn't work in your scenario.\n\nYou can easily handle that by using an anonymous field. This allows you to both use your own XMLName choice there, and also to leave the type without an XMLName at all, thus naming the field itself in any way desired.\n\nThat said, I'd think twice before doing that for the reasons explained before. Using one of your examples, you'd be effectively rendering two precisely matching types incompatible merely for not liking its name. XML is already messy enough as it is without arbitrary element naming, so let's not help it.\n\n> I actually have never liked XMLName in the first place,\n\nI never liked XML in the first place. I'm working on the xml package precisely so I don't have to look at it that often.",
+			"disapproval": false,
+			"date": "2011-12-30 01:23:42.841991",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-12-29 05:49:00.599740",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGMT\n\nAfter fixing some local bugs am now using this without any noticeable problems.",
+			"disapproval": false,
+			"date": "2011-12-29 23:04:28.417171",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "this looks just marvellous, thanks Gustavo. nice to see someone was hacking when i was working on the turkey. :-)\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go\nFile src/pkg/encoding/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode188\nsrc/pkg/encoding/xml/marshal.go:188: if len(str) > 0 {\nif str != \"\" {\nfor consistency\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go\nFile src/pkg/encoding/xml/read.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode489\nsrc/pkg/encoding/xml/read.go:489: for j := 0; j < len(parents); j++ {\nOn 2012/01/02 23:35:36, adg wrote:\n> for j := range parents {\n\nor even\nfor j, parent := range parents {\n    if parent != finfo.parents[j] {\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go\nFile src/pkg/encoding/xml/typeinfo.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode93\nsrc/pkg/encoding/xml/typeinfo.go:93: // Add the field in case it doesn't conflict.\ns/in case/if/ ?\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode191\nsrc/pkg/encoding/xml/typeinfo.go:191: if finfo.flags&fElement != 0 {\nif finfo.flags&fElement == 0 {\n    return finfo, nil\n}\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode193\nsrc/pkg/encoding/xml/typeinfo.go:193: for ftyp.Kind() == reflect.Ptr {\nthis loop can be infinite in some cases (e.g. type A *A)\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode201\nsrc/pkg/encoding/xml/typeinfo.go:201: ftinfo, err := getTypeInfo(ftyp)\nthis can recur infinitely.\nhere's an example: http://paste.ubuntu.com/791615/\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode225\nsrc/pkg/encoding/xml/typeinfo.go:225: for typ.Kind() == reflect.Ptr {\nthis loop can be infinite in some cases (e.g. type A *A)\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode244\nsrc/pkg/encoding/xml/typeinfo.go:244: for typ.Kind() == reflect.Ptr {\ncan run forever (see above)\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode276\nsrc/pkg/encoding/xml/typeinfo.go:276: for i := 0; i < len(tinfo.fields); i++ {\nfor i := range tinfo.fields {\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode287\nsrc/pkg/encoding/xml/typeinfo.go:287: if len(oldf.parents) > len(newf.parents) {\nyou could use a switch instead of successive else ifs.\nperhaps with a bool, e.g.\n\nvar conflicted bool\nswitch {\ncase len(oldf.parents) > len(newd.parents):\n    conflicted = oldf.parents[len(newf.parents) == newf.name\ncase len(oldoldf.parents) < len(newf.parents):\n    conflicted = newf.parents[len(oldf.parents)] == oldf.name\ndefault:\n    conflicted = newf.name == oldf.name\n}\nif conflicted {\n    conflicts = append(conflicts, i)\n}\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode326\nsrc/pkg/encoding/xml/typeinfo.go:326: // so drop the conflicts.\ns/conflicts/conflicting fields./",
+			"disapproval": false,
+			"date": "2012-01-03 13:53:58.103792",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Wow, this is heroic and really great to see.  A quick glance over this right now and it looks great.\n\nI'll patch it locally and test it out on a few things here.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/atom_test.go\nFile src/pkg/encoding/xml/atom_test.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/atom_test.go#newcode28\nsrc/pkg/encoding/xml/atom_test.go:28: `<title>Example Feed</title>` +\nwhy the case change here?\n\ni agree the change makes it seem cleaner and more natural but it isn't necessary and maybe could be a separate future CL?\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go\nFile src/pkg/encoding/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode147\nsrc/pkg/encoding/xml/marshal.go:147: // 3. type name\nwhat about\n\nXMLname ...\nfield tag\nfield name\ntype name\n?\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode249\nsrc/pkg/encoding/xml/marshal.go:249: if bytes.Index(comment, []byte(\"--\")) >= 0 {\nhow strictly does this have to be enforced?\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read_test.go\nFile src/pkg/encoding/xml/read_test.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read_test.go#newcode82\nsrc/pkg/encoding/xml/read_test.go:82: Title   string  `xml:\"title\"`\nif we don't tweak the case of the test data some of this won't be necessary",
+			"disapproval": false,
+			"date": "2011-12-29 06:10:30.448578",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/atom_test.go\nFile src/pkg/encoding/xml/atom_test.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/atom_test.go#newcode28\nsrc/pkg/encoding/xml/atom_test.go:28: `<title>Example Feed</title>` +\n> why the case change here?\n\nBecause the handling of casing is changing in this CL. Tests don't pass if we don't fix them.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go\nFile src/pkg/encoding/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode147\nsrc/pkg/encoding/xml/marshal.go:147: // 3. type name\nOn 2011/12/29 06:10:30, cw wrote:\n> what about\n> \n> XMLname ...\n> field tag\n> field name\n> type name\n> ?\n\nThat's exactly how it is.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode249\nsrc/pkg/encoding/xml/marshal.go:249: if bytes.Index(comment, []byte(\"--\")) >= 0 {\n> how strictly does this have to be enforced?\n\nIt's a MUST in the specification.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read_test.go\nFile src/pkg/encoding/xml/read_test.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read_test.go#newcode82\nsrc/pkg/encoding/xml/read_test.go:82: Title   string  `xml:\"title\"`\n> if we don't tweak the case of the test data some of this won't be necessary\n\nAgain, the handling of casing is changing in this CL. The tests were fixed rather than arbitrarily changed.",
+			"disapproval": false,
+			"date": "2011-12-29 06:19:47.573878",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> LGMT\n>\n> After fixing some local bugs am now using this without any noticeable\n> problems.\n\nSweet. Thanks a lot for putting it to use.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2011-12-29 23:26:31.801261",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello\n\nOn 2011/12/29 05:49:00, niemeyer wrote:\n> Hello mailto:golang-dev@googlegroups.com,\n> \n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n\nJust a general question: what ever happened to xml's MarshalIndent? It is still mentioned in some of the comments and it was added as part of weekly.2011-07-07, but it seems to have disappeared in the mean time.\n\nCheers\n\nAlbert",
+			"disapproval": false,
+			"date": "2012-01-04 12:23:05.149165",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm on holiday and a bit slow this week, but I'll work on the reviews on the plane tomorrow.",
+			"disapproval": false,
+			"date": "2012-01-06 17:26:59.933613",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "(follow up from earlier, this time with a specific detail)\n\nhttp://codereview.appspot.com/5503078/diff/12012/src/pkg/encoding/xml/read.go\nFile src/pkg/encoding/xml/read.go (left):\n\nhttp://codereview.appspot.com/5503078/diff/12012/src/pkg/encoding/xml/read.go#oldcode178\nsrc/pkg/encoding/xml/read.go:178: }\nTagpathError type removed\n\nhttp://codereview.appspot.com/5503078/diff/12012/src/pkg/encoding/xml/read_test.go\nFile src/pkg/encoding/xml/read_test.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/12012/src/pkg/encoding/xml/read_test.go#newcode326\nsrc/pkg/encoding/xml/read_test.go:326: {&BadPathTestA{}, &TagPathError{reflect.TypeOf(BadPathTestA{}), \"First\", \"items>item1\", \"Second\", \"items\"}},\nTagPathError is still used here though",
+			"disapproval": false,
+			"date": "2012-01-09 17:57:05.446913",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go\nFile src/pkg/encoding/xml/read.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode132\nsrc/pkg/encoding/xml/read.go:132: //      the XML element name is not a prefix for the unmarshalling of\nOn 2012/01/08 20:56:56, niemeyer wrote:\n> On 2012/01/02 23:35:36, adg wrote:\n> > I don't understand this sentence. Can you rewrite it? Split it up? Sorry,\n> maybe\n> > I'm just dense.\n> \n> Changed. Please see how you like it.\n\nMuch better, thanks.\n\nhttp://codereview.appspot.com/5503078/diff/16005/src/pkg/encoding/xml/typeinfo.go\nFile src/pkg/encoding/xml/typeinfo.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/16005/src/pkg/encoding/xml/typeinfo.go#newcode208\nsrc/pkg/encoding/xml/typeinfo.go:208: // in case it exists and has a valid xml field tag, otherwise\nOn 2012/01/08 22:47:47, rog wrote:\n> s/in case/if/\n\n+1",
+			"disapproval": false,
+			"date": "2012-01-08 23:25:31.749950",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I have just tested the new package a bit and encountered a problem:\n>\n> type Problem struct {\n> \u00a0Amount string `xml:\"foo>bar>payment\"`\n> \u00a0Currency string `xml:\"foo>bar>payment>currency,attr\"`\n> }\n\nThanks Christoph. Indeed this isn't supported yet and it certainly\nsounds like a good idea.\n\nThat said, I'd prefer to not have it in this CL, since a few people\nalready went over the full (non-trivial) branch and are happy with it.\nRuss told me he'd like to look at this as well, so I'll wait for fixes\ncoming from that review, and will let the other details discussed in\nthis thread to upcoming changes that others can comfortably go over\nagain.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-12 15:44:15.091618",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"christoph@tux21b.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=70e914beb409 ***\n\nxml: major Go 1 fixup\n\nThis CL improves the xml package in the following ways:\n\n- makes its interface match established conventions\n- brings Marshal and Unmarshal closer together\n- fixes a large number of bugs and adds tests\n- improves speed significantly\n- organizes and simplifies the code\n\nFixes issue 2426.\nFixes issue 2406.\nFixes issue 1989.\n\nWhat follows is a detailed list of those changes.\n\n- All matching is case sensitive without special processing\n  to the field name or xml tag in an attempt to match them.\n  Customize the field tag as desired to match the correct XML\n  elements.\n\n- Flags are \",flag\" rather than \"flag\". The names \"attr\",\n  \"chardata\", etc, may be used to name actual XML elements.\n\n- Overriding of attribute names is possible with \"name,attr\".\n\n- Attribute fields are marshalled properly if they have\n  non-string types. Previously they were unmarshalled, but were\n  ignored at marshalling time.\n\n- Comment fields tagged with \",comment\" are marshalled properly,\n  rather than being marshalled as normal fields.\n\n- The handling of the Any field has been replaced by the \",any\"\n  flag to avoid unexpected results when using the field name for\n  other purposes, and has also been fixed to interact properly\n  with name paths. Previously the feature would not function\n  if any field in the type had a name path in its tag.\n\n- Embedded struct support fixed and cleaned so it works when\n  marshalling and also when using field paths deeper than one level.\n\n- Conflict reporting on field names have been expanded to cover\n  all fields. Previously it'd catch only conflicts of paths\n  deeper than one level. Also interacts correctly with embedded\n  structs now.\n\n- A trailing '>' is disallowed in xml tags. It used to be\n  supported for removing the ambiguity between \"attr\" and \"attr>\",\n  but the marshalling support for that was broken, and it's now\n  unnecessary. Use \"name\" instead of \"name>\".\n\n- Fixed docs to point out that a XMLName doesn't have to be\n  an xml.Name (e.g. a struct{} is a good fit too). The code was\n  already working like that.\n\n- Fixed asymmetry in the precedence of XML element names between\n  marshalling and unmarshalling. Marshal would consider the XMLName\n  of the field type before the field tag, while unmarshalling would\n  do the opposite. Now both respect the tag of the XMLName field\n  first, and a nice error message is provided in case an attempt\n  is made to name a field with its tag in a way that would\n  conflict with the underlying type's XMLName field.\n\n- Do not marshal broken \"<???>\" tags when in doubt. Use the type\n  name, and error out if that's not possible.\n\n- Do not break down unmarshalling if there's an interface{} field\n  in a struct.\n\n- Significant speed boost due to caching of type metadata and\n  overall allocation clean ups. The following timings reflect\n  processing of the the atom test data:\n\n  Old:\n\n  BenchmarkMarshal           50000             48798 ns/op\n  BenchmarkUnmarshal          5000            357174 ns/op\n\n  New:\n\n  BenchmarkMarshal          100000             19799 ns/op\n  BenchmarkUnmarshal         10000            128525 ns/op\n\nR=cw, gustavo, kevlar, adg, rogpeppe, fullung, christoph, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5503078",
+			"disapproval": false,
+			"date": "2012-01-13 10:05:26.023961",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 15, 2012 at 13:46, Adam Langley <agl@google.com> wrote:\n> It appear that, when the tag is empty, Bar []byte is still nil,\n> whether the tag is present or not. A *byte[] works in the same way as\n> a *string however.\n\nInteresting, thanks.\nWe should make x.Bar != nil (for []byte) work too.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-15 18:49:14.144307",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Interesting, thanks.\n> We should make x.Bar != nil (for []byte) work too.\n\nSounds good.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-15 20:04:39.427233",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jan 16, 2012 at 18:10, Russ Cox <rsc@golang.org> wrote:\n> On Sun, Jan 15, 2012 at 13:32, Adam Langley <agl@google.com> wrote:\n>> Yes, it was purely to tell whether an element was present. You can\n>> also do that with a *string (and testing for non-nil)\n>\n> FWIW, *struct{} should work too.\n\nThat's a curious way to spell \"bool\".\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-16 20:18:07.947768",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": ">> That's a curious way to spell \"bool\".\n>\n> bool means that the xml body has to be the text true or false.\n> *struct{} is an element with no fields that are worth recording.\n\nYes, I understand where you were coming from. It just feels a bit\nartificial when thinking about the way this is going to be used as an\nAPI, when compared to an actual bool (e.g. post.WasUpdated vs.\npost.Updated != nil).\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-16 20:49:02.517969",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-01-09 22:38:50.202675",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-01-08 23:25:15.685315",
+			"approval": true
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello\n\nOn 2012/01/08 20:56:56, niemeyer wrote:\n> Thanks for the reviews.\n> \n> The code is ready for another look.\n\nThere's still some comments that refer to a non-existant MarshalIndent function. I checked the original CL and it seems MarshalIndent was never implemented. It would be really nice to have, or maybe references to the non-existant function could just be removed.\n\nCheers\n\nAlbert",
+			"disapproval": false,
+			"date": "2012-01-09 04:49:57.588693",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for the reviews.\n\nThe code is ready for another look.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go\nFile src/pkg/encoding/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode73\nsrc/pkg/encoding/xml/marshal.go:73: //\t\tId        int      `xml:\"id,attr\"`\nOn 2012/01/02 23:35:36, adg wrote:\n> Please add examples of chardata, innerxml, and comment too.\n> \n> In fact, it would be great to have this as a testable example in a test file, as\n> with $GOROOT/src/pkg/sort/example_test.go\n\nI agree we need more examples and more documentation for how the xml package works, but if you don't mind I'd rather see that in a separate CL so that we don't extend the review here more than necessary.\n\nThat said, I'll be happy to fix cases where you think I'm making documentation _worse_.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode162\nsrc/pkg/encoding/xml/marshal.go:162: if name == \"\" {\nOn 2012/01/02 23:35:36, adg wrote:\n> I'd bring this if block out of the surrounding if block.\n\nI find the current version a bit more clear/sensible in this specific case. Re-testing only makes sense if the state changed.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode172\nsrc/pkg/encoding/xml/marshal.go:172: Escape(p, []byte(xmlns))\nOn 2012/01/02 23:35:36, adg wrote:\n> I wonder if there should be an EscapeString to avoid allocations here and\n> elsewhere in this function. Perhaps in another CL. (Add a TODO?)\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode188\nsrc/pkg/encoding/xml/marshal.go:188: if len(str) > 0 {\nOn 2012/01/03 13:53:58, rog wrote:\n> if str != \"\" {\n> for consistency\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode228\nsrc/pkg/encoding/xml/marshal.go:228: switch finfo.flags & fMode {\nOn 2012/01/02 23:35:36, adg wrote:\n> These nested switches are becoming a bit much. Put the struct handling code into\n> a function?\n\nGood idea. Done.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode244\nsrc/pkg/encoding/xml/marshal.go:244: comment = []byte(vf.String())\nOn 2012/01/02 23:35:36, adg wrote:\n> string comments could be handled more efficiently (but with more code). You've\n> definitely made the right choice to make []byte the fast path, but maybe in a\n> later CL we should make string comments fast too. Add a TODO?\n\nI feel a bit weird to be optimizing code that inserts comments (if speed is an issue, I'd recommend not adding comments). OTOH, the code isn't really much more complex, so I went ahead and did a better version. Please see what you think.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode249\nsrc/pkg/encoding/xml/marshal.go:249: if bytes.Index(comment, []byte(\"--\")) >= 0 {\nOn 2012/01/02 23:35:36, adg wrote:\n> Set up a global:\n> var ddBytes = []byte(\"--\")\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/marshal.go#newcode256\nsrc/pkg/encoding/xml/marshal.go:256: p.Write([]byte{' '})\nOn 2012/01/02 23:35:36, adg wrote:\n> p.WriteByte(' ') ?\n\nDuh. Done.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go\nFile src/pkg/encoding/xml/read.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode31\nsrc/pkg/encoding/xml/read.go:31: //\t\tWhere string `xml:\",attr\"`\nOn 2012/01/02 23:35:36, adg wrote:\n> As with Marshal, can you please include the other additions in the example?\n> \n> In particular, I want to see an example of \",any\"\n\nI've improved the documentation for \",any\" below, but as per the other point, I'd prefer to have more significant refactorings of documentation and further examples being pushed in separate CLs, to avoid holding back that big CL on points we can easily get through afterwards.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode123\nsrc/pkg/encoding/xml/read.go:123: //      a struct field's XMLName tag, and the struct field has no\nOn 2012/01/02 23:35:36, adg wrote:\n> s/,//\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode132\nsrc/pkg/encoding/xml/read.go:132: //      the XML element name is not a prefix for the unmarshalling of\nOn 2012/01/02 23:35:36, adg wrote:\n> I don't understand this sentence. Can you rewrite it? Split it up? Sorry, maybe\n> I'm just dense.\n\nChanged. Please see how you like it.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode235\nsrc/pkg/encoding/xml/read.go:235: // For now, simply ignore the field.\nOn 2012/01/02 23:35:36, adg wrote:\n> Please make this comment a TODO with some hint as to your future plans, if you\n> can.\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/read.go#newcode489\nsrc/pkg/encoding/xml/read.go:489: for j := 0; j < len(parents); j++ {\nOn 2012/01/02 23:35:36, adg wrote:\n> for j := range parents {\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go\nFile src/pkg/encoding/xml/typeinfo.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode39\nsrc/pkg/encoding/xml/typeinfo.go:39: //fOmitEmpty\nOn 2012/01/02 23:35:36, adg wrote:\n> TODO :-)\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode59\nsrc/pkg/encoding/xml/typeinfo.go:59: for i := 0; i != n; i++ {\nOn 2012/01/02 23:35:36, adg wrote:\n> \"i < n\" is clearer, no?\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode93\nsrc/pkg/encoding/xml/typeinfo.go:93: // Add the field in case it doesn't conflict.\nOn 2012/01/03 13:53:58, rog wrote:\n> s/in case/if/ ?\n\nWhy? Looks fine to me.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode105\nsrc/pkg/encoding/xml/typeinfo.go:105: func structFieldInfo(typ reflect.Type, tinfo *typeInfo, f *reflect.StructField) (*fieldInfo, error) {\nOn 2012/01/02 23:35:36, adg wrote:\n> comment\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode174\nsrc/pkg/encoding/xml/typeinfo.go:174: } else {\nOn 2012/01/02 23:35:36, adg wrote:\n> Put a return above this line and drop the else block\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode191\nsrc/pkg/encoding/xml/typeinfo.go:191: if finfo.flags&fElement != 0 {\nOn 2012/01/03 13:53:58, rog wrote:\n> if finfo.flags&fElement == 0 {\n>     return finfo, nil\n> }\n\nThe block is short and valid for elements only. I'd prefer to not break the flow to consider everything else below as elements.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode193\nsrc/pkg/encoding/xml/typeinfo.go:193: for ftyp.Kind() == reflect.Ptr {\nOn 2012/01/03 13:53:58, rog wrote:\n> this loop can be infinite in some cases (e.g. type A *A)\n\nIs there any valid case for someone to use such a type? We could easily build a cache of seen types, but I'd rather not if the only goal is to prevent people from purposefully building bad types.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode201\nsrc/pkg/encoding/xml/typeinfo.go:201: ftinfo, err := getTypeInfo(ftyp)\nOn 2012/01/03 13:53:58, rog wrote:\n> this can recur infinitely.\n> here's an example: http://paste.ubuntu.com/791615/\n\nGood point, it was naive indeed, thanks. I've changed this part of the code and it's feeling a lot better now. Among other things, there's no recursion anymore. Also added a test.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode225\nsrc/pkg/encoding/xml/typeinfo.go:225: for typ.Kind() == reflect.Ptr {\nOn 2012/01/03 13:53:58, rog wrote:\n> this loop can be infinite in some cases (e.g. type A *A)\n\nSee above.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode244\nsrc/pkg/encoding/xml/typeinfo.go:244: for typ.Kind() == reflect.Ptr {\nOn 2012/01/03 13:53:58, rog wrote:\n> can run forever (see above)\n\nSee above.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode248\nsrc/pkg/encoding/xml/typeinfo.go:248: for i, n := 0, typ.NumField(); i != n; i++ {\nOn 2012/01/02 23:35:36, adg wrote:\n> i < n\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode276\nsrc/pkg/encoding/xml/typeinfo.go:276: for i := 0; i < len(tinfo.fields); i++ {\nOn 2012/01/03 13:53:58, rog wrote:\n> for i := range tinfo.fields {\n\nDone.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode287\nsrc/pkg/encoding/xml/typeinfo.go:287: if len(oldf.parents) > len(newf.parents) {\nOn 2012/01/03 13:53:58, rog wrote:\n> you could use a switch instead of successive else ifs.\n> perhaps with a bool, e.g.\n\nThe current version looks a lot more readable to me.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode326\nsrc/pkg/encoding/xml/typeinfo.go:326: // so drop the conflicts.\nOn 2012/01/03 13:53:58, rog wrote:\n> s/conflicts/conflicting fields./\n\nDone and improved further.",
+			"disapproval": false,
+			"date": "2012-01-08 20:56:56.455501",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go\nFile src/pkg/encoding/xml/typeinfo.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode93\nsrc/pkg/encoding/xml/typeinfo.go:93: // Add the field in case it doesn't conflict.\nOn 2012/01/08 22:47:47, rog wrote:\n> i don't quite understand your comment which is why i made the suggestion. \"in\n\nI hadn't noticed the second meaning, thanks for explaining. I've changed both instances.",
+			"disapproval": false,
+			"date": "2012-01-08 23:33:55.918513",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> There's still some comments that refer to a non-existant MarshalIndent\n> function. I checked the original CL and it seems MarshalIndent was never\n> implemented. It would be really nice to have, or maybe references to the\n> non-existant function could just be removed.\n\niirc it was implemented about patch set #4 or so then taken out as the\ninterfaces changed\n\ni think it's reasonable to have an implementaiton of this but clearly\nuntil there is one the documentation should be updated\n",
+			"disapproval": false,
+			"date": "2012-01-09 05:08:07.979766",
+			"approval": false
+		},
+		{
+			"sender": "christoph@tux21b.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"christoph@tux21b.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have just tested the new package a bit and encountered a problem:\n\ntype Problem struct {\n  Amount string `xml:\"foo>bar>payment\"`\n  Currency string `xml:\"foo>bar>payment>currency,attr\"`\n}\n\nThe result is at the moment something like \"<Problem currency=\"EUR\">...</Problem>\" but I expected to get:\n\n<Problem><foo><bar><payment currency=\"EUR\">100.0</payment></bar></foo></Problem>\n\nRegards,\nChristoph",
+			"disapproval": false,
+			"date": "2012-01-12 15:11:54.289260",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> TagpathError type removed\n(...)\n> TagPathError is still used here though\n\nSorry, the last patch set (10) had a missing file somehow\n(typeinfo.go). I've pushed again.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-09 21:46:09.158600",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go\nFile src/pkg/encoding/xml/typeinfo.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode93\nsrc/pkg/encoding/xml/typeinfo.go:93: // Add the field in case it doesn't conflict.\nOn 2012/01/08 20:56:56, niemeyer wrote:\n> On 2012/01/03 13:53:58, rog wrote:\n> > s/in case/if/ ?\n> \n> Why? Looks fine to me.\n\ni don't quite understand your comment which is why i made the suggestion. \"in case\" usually implies guarding against something; for instance \"i lock the door in case there are thieves around\". are we adding the field here to guard against the case where it doesn't conflict? or are we adding the field only when it doesn't conflict?\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode191\nsrc/pkg/encoding/xml/typeinfo.go:191: if finfo.flags&fElement != 0 {\nOn 2012/01/08 20:56:56, niemeyer wrote:\n> On 2012/01/03 13:53:58, rog wrote:\n> > if finfo.flags&fElement == 0 {\n> >     return finfo, nil\n> > }\n> \n> The block is short and valid for elements only. I'd prefer to not break the flow\n> to consider everything else below as elements.\n\nmuch better with the new shorter block.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode193\nsrc/pkg/encoding/xml/typeinfo.go:193: for ftyp.Kind() == reflect.Ptr {\nOn 2012/01/08 20:56:56, niemeyer wrote:\n> On 2012/01/03 13:53:58, rog wrote:\n> > this loop can be infinite in some cases (e.g. type A *A)\n> \n> Is there any valid case for someone to use such a type? We could easily build a\n> cache of seen types, but I'd rather not if the only goal is to prevent people\n> from purposefully building bad types.\n\nit's possible it might be accidental. i'd prefer it if there was no type that could cause an infinite loop at run time. that's only my opinion though - others' might differ.\nalso, it's entirely possible to do the loop without needing a cache - fmt has an example AFAIR.\n\nhttp://codereview.appspot.com/5503078/diff/2009/src/pkg/encoding/xml/typeinfo.go#newcode287\nsrc/pkg/encoding/xml/typeinfo.go:287: if len(oldf.parents) > len(newf.parents) {\nOn 2012/01/08 20:56:56, niemeyer wrote:\n> On 2012/01/03 13:53:58, rog wrote:\n> > you could use a switch instead of successive else ifs.\n> > perhaps with a bool, e.g.\n> \n> The current version looks a lot more readable to me.\n\nbeg to differ - i think my version makes it obvious at a glance that a single index is added when there's a conflict, and switch is conventional for else-if chains with no declarations. but i don't feel too strongly. *shrug*\n\nhttp://codereview.appspot.com/5503078/diff/16005/src/pkg/encoding/xml/typeinfo.go\nFile src/pkg/encoding/xml/typeinfo.go (right):\n\nhttp://codereview.appspot.com/5503078/diff/16005/src/pkg/encoding/xml/typeinfo.go#newcode107\nsrc/pkg/encoding/xml/typeinfo.go:107: // structFieldInfo builds and returns a fieldInfo for f.\nthat doesn't seem very informative to me.\n\nperhaps something like this?\n\nstructFieldInfo returns information on the given field of the given type (typ is used only for error generation).\n\nhttp://codereview.appspot.com/5503078/diff/16005/src/pkg/encoding/xml/typeinfo.go#newcode149\nsrc/pkg/encoding/xml/typeinfo.go:149: return nil, fmt.Errorf(\"xml: invalid tag in field %s of type %s: %q\",\nperhaps for consistency and conciseness, all the errors could be of the same form as the last one in this function, for example: \nreturn nil, fmt.Errorf(\"xml: invalid tag in %s.%s: %q\", typ, f.Name, f.Tag.Get(\"xml\"))\n\nalternatively, change the \"conflicts with name\" error message to be consistent with the others.\n\nhttp://codereview.appspot.com/5503078/diff/16005/src/pkg/encoding/xml/typeinfo.go#newcode208\nsrc/pkg/encoding/xml/typeinfo.go:208: // in case it exists and has a valid xml field tag, otherwise\ns/in case/if/",
+			"disapproval": false,
+			"date": "2012-01-08 22:47:47.124161",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"christoph@tux21b.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks very much.",
+			"disapproval": false,
+			"date": "2012-01-12 19:47:50.304537",
+			"approval": true
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Are you suggesting an API change? \u00a0I wasn't.\n\nI already did, and was pondering out loud since I'm not sure the use\ncase guarantees it. Anyway, I'll focus on the growing to-do.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-16 22:05:11.797433",
+			"approval": false
+		},
+		{
+			"sender": "mt4swm@googlemail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"mt4swm@googlemail.com",
+				"cw@f00f.org",
+				"gustavo@niemeyer.net",
+				"kevlar@google.com",
+				"adg@golang.org",
+				"rogpeppe@gmail.com",
+				"fullung@gmail.com",
+				"christoph@tux21b.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Perhaps read.go needs to be slightly adjusted: It still says, matching between XML element names and Go struct fields is case-insensitive.\n\n--- a/src/pkg/encoding/xml/read.go\n+++ b/src/pkg/encoding/xml/read.go\n@@ -78,8 +78,7 @@\n // field tag.\n //\n // Because Unmarshal uses the reflect package, it can only assign\n-// to exported (upper case) fields.  Unmarshal uses a case-insensitive\n-// comparison to match XML element names to struct field names.\n+// to exported (upper case) fields.\n //\n // Unmarshal maps an XML element to a struct using the following rules.\n // In the rules, the tag of a field refers to the value associated with the",
+			"disapproval": false,
+			"date": "2012-01-13 20:23:04.658031",
+			"approval": false
+		},
+		{
+			"sender": "agl@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 15, 2012 at 3:37 AM, Gustavo Niemeyer <gustavo@niemeyer.net> wrote:\n> If your need is to be able to tell if a given sub-element is present,\n> I suggest we add an explicit \",exists\" flag or similar, that must\n> necessarily be a bool. It will be less redundant, and more comfortable\n> to use.\n\nYes, it was purely to tell whether an element was present. You can\nalso do that with a *string (and testing for non-nil) so it's your\ncall whether you think \",exists\" would be generally useful.\n\n\nCheers\n\nAGL\n",
+			"disapproval": false,
+			"date": "2012-01-15 18:32:24.655542",
+			"approval": false
+		},
+		{
+			"sender": "agl@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 15, 2012 at 1:41 PM, Russ Cox <rsc@golang.org> wrote:\n> Sorry, crossed in the mail. \u00a0I think in the current code you should\n> be able to define Bar []byte, which will get the inner XML of the tag,\n> and thus have x.Bar != nil only if the tag was present.\n\nIt appear that, when the tag is empty, Bar []byte is still nil,\nwhether the tag is present or not. A *byte[] works in the same way as\na *string however.\n\n\nCheers\n\nAGL\n",
+			"disapproval": false,
+			"date": "2012-01-15 18:46:54.356839",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 15, 2012 at 15:05, Gustavo Niemeyer <gustavo@niemeyer.net> wrote:\n> The point is precisely that it doesn't have to be used in this\n> circumstance, so it doesn't have to take up space either.\n\nThat's different.  If there's another way for Adam to get what\nhe wants, great.  But regardless of that, if xml is given a struct\nwith an xml.Name and decodes into it, it should fill in the name.\nThere is no reason not to.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-15 20:25:29.291147",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jan 16, 2012 at 15:48, Gustavo Niemeyer <gustavo@niemeyer.net> wrote:\n> Yes, I understand where you were coming from. It just feels a bit\n> artificial when thinking about the way this is going to be used as an\n> API, when compared to an actual bool (e.g. post.WasUpdated vs.\n> post.Updated != nil).\n\nAre you suggesting an API change?  I wasn't.\n",
+			"disapproval": false,
+			"date": "2012-01-16 20:52:16.452555",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> -// to exported (upper case) fields.  Unmarshal uses a case-insensitive\n> -// comparison to match XML element names to struct field names.\n> +// to exported (upper case) fields.\n\nTitlecase would be fine as well surely?\n",
+			"disapproval": false,
+			"date": "2012-01-13 20:30:07.927040",
+			"approval": false
+		},
+		{
+			"sender": "agl@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Jan 13, 2012 at 4:11 PM, Russ Cox <rsc@golang.org> wrote:\n> There is not supposed to be any case changes anymore.\n> It's just ==, like in json.\n\nThe documentation still says:\n\n\"Unmarshal uses a case-insensitive comparison to match XML element\nnames to struct field names.\"\n\nWhich doesn't appear to be true and, from this thread, I think the\ncode is working as intended?\n\n\nCheers\n\nAGL\n",
+			"disapproval": false,
+			"date": "2012-01-14 16:53:22.408025",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 15, 2012 at 13:32, Adam Langley <agl@google.com> wrote:\n> Yes, it was purely to tell whether an element was present. You can\n> also do that with a *string (and testing for non-nil)\n\nFWIW, *struct{} should work too.\n",
+			"disapproval": false,
+			"date": "2012-01-16 20:10:49.975344",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "There is not supposed to be any case changes anymore.\nIt's just ==, like in json.\n",
+			"disapproval": false,
+			"date": "2012-01-13 21:11:29.108906",
+			"approval": false
+		},
+		{
+			"sender": "agl@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Jan 14, 2012 at 4:10 PM, Adam Langley <agl@google.com> wrote:\n> Cool, no worries if you're aware. Next up: \u00a0:)\n\np.s. I'm happy to fix these if you don't have the code up in the air\nat yourself.\n\n\nCheers\n\nAGL\n",
+			"disapproval": false,
+			"date": "2012-01-14 21:10:59.882467",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I would have expected the following program to set out.Bar.Local to\n> \"bar\", while it doesn't appear to be set at all. Previously I believe\n> that it was in accordance with:\n\nI apologize. I see I've missed that one in the description, and also\nin the documentation. I'll definitely include the documentation fix,\nand can easily add the logic back and test it (it was uncovered by\ntests) in case we decide to.\n\nThat said, I'd appreciate understanding the use case first, if you\ndon't mind. It feels like a pretty awkward feature in principle, which\nis why I dropped. In your example, you're explicitly naming Bar as\n\"bar\", so why do you care to know what bar.Local is?  It can only be\n\"bar\".\n\nIf your need is to be able to tell if a given sub-element is present,\nI suggest we add an explicit \",exists\" flag or similar, that must\nnecessarily be a bool. It will be less redundant, and more comfortable\nto use.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-15 08:37:39.971811",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Let's just fill in the xml.Name always.\n> There's no reason _not_ to fill it in.\n> It's already sitting in memory taking up space.\n\nThe point is precisely that it doesn't have to be used in this\ncircumstance, so it doesn't have to take up space either.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-15 20:05:25.314827",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> That's different. \u00a0If there's another way for Adam to get what\n> he wants, great. \u00a0But regardless of that, if xml is given a struct\n> with an xml.Name and decodes into it, it should fill in the name.\n> There is no reason not to.\n\nThat's true. I'll fix it and test appropriately.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-15 21:47:03.612991",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jan 16, 2012 at 15:17, Gustavo Niemeyer <gustavo@niemeyer.net> wrote:\n>> FWIW, *struct{} should work too.\n>\n> That's a curious way to spell \"bool\".\n\nbool means that the xml body has to be the text true or false.\n*struct{} is an element with no fields that are worth recording.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-16 20:35:28.805930",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> The documentation still says:\n>\n> \"Unmarshal uses a case-insensitive comparison to match XML element\n> names to struct field names.\"\n>\n> Which doesn't appear to be true and, from this thread, I think the\n> code is working as intended?\n\nYeah, sorry about that. I'll be pushing this and a few additional\nincremental improvements/fixes in the coming days.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I'm not absolutely sure of anything.\n",
+			"disapproval": false,
+			"date": "2012-01-14 17:06:50.354969",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Let's just fill in the xml.Name always.\nThere's no reason _not_ to fill it in.\nIt's already sitting in memory taking up space.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-15 18:36:48.214077",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 15, 2012 at 13:32, Adam Langley <agl@google.com> wrote:\n> Yes, it was purely to tell whether an element was present. You can\n> also do that with a *string (and testing for non-nil) so it's your\n> call whether you think \",exists\" would be generally useful.\n\nSorry, crossed in the mail.  I think in the current code you should\nbe able to define Bar []byte, which will get the inner XML of the tag,\nand thus have x.Bar != nil only if the tag was present.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-15 18:41:53.804592",
+			"approval": false
+		},
+		{
+			"sender": "agl@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Jan 14, 2012 at 12:06 PM, Gustavo Niemeyer <gustavo@niemeyer.net> wrote:\n> Yeah, sorry about that. I'll be pushing this and a few additional\n> incremental improvements/fixes in the coming days.\n\nCool, no worries if you're aware. Next up:  :)\n\nI would have expected the following program to set out.Bar.Local to\n\"bar\", while it doesn't appear to be set at all. Previously I believe\nthat it was in accordance with:\n\n\"Unmarshal maps an XML element to an xml.Name by recording the element name.\"\n\n\nCheers\n\nAGL\n\npackage main\n\nimport (\n\t\"bytes\"\n\t\"encoding/xml\"\n\t\"fmt\"\n)\n\ntype foo struct {\n\tXMLName xml.Name `xml:\"foo\"`\n\tBar     xml.Name `xml:\"bar\"`\n}\n\nfunc main() {\n\tinput := \"<foo><bar/></foo>\"\n\n\tvar out foo\n\txml.Unmarshal(bytes.NewBufferString(input), &out)\n\tfmt.Printf(\"%#v\\n\", out)\n}\n",
+			"disapproval": false,
+			"date": "2012-01-14 21:10:04.150155",
+			"approval": false
+		}
+	],
+	"owner_email": "n13m3y3r@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "niemeyer",
+	"subject": "code review 5503078: xml: major Go 1 fixup",
+	"created": "2011-12-29 05:30:08.381249",
+	"patchsets": [
+		1,
+		2001,
+		3,
+		1002,
+		5008,
+		2009,
+		11001,
+		11002,
+		16005,
+		12012,
+		16020,
+		20001
+	],
+	"modified": "2012-01-14 16:53:22.478966",
+	"closed": true,
+	"issue": 5503078
+}

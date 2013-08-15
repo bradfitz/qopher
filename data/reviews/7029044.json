@@ -1,0 +1,327 @@
+{
+	"description": "runtime: less aggressive per-thread stack segment caching\nIntroduce global stack segment cache and limit per-thread cache size.\nThis greatly reduces StackSys memory on workloads that create lots of threads.\n\nbenchmark                      old ns/op    new ns/op    delta\nBenchmarkStackGrowth                 665          656   -1.35%\nBenchmarkStackGrowth-2               333          328   -1.50%\nBenchmarkStackGrowth-4               224          172  -23.21%\nBenchmarkStackGrowth-8               124           91  -26.13%\nBenchmarkStackGrowth-16               82           47  -41.94%\nBenchmarkStackGrowth-32               73           40  -44.79%\n\nBenchmarkStackGrowthDeep           97231        94391   -2.92%\nBenchmarkStackGrowthDeep-2         47230        58562  +23.99%\nBenchmarkStackGrowthDeep-4         24993        49356  +97.48%\nBenchmarkStackGrowthDeep-8         15105        30072  +99.09%\nBenchmarkStackGrowthDeep-16        10005        15623  +56.15%\nBenchmarkStackGrowthDeep-32        12517        13069   +4.41%\n\nTestStackMem#1,MB                  310          12       -96.13%\nTestStackMem#2,MB                  296          14       -95.27%\nTestStackMem#3,MB                  479          14       -97.08%\n\nTestStackMem#1,sec                 3.22         2.26     -29.81%\nTestStackMem#2,sec                 2.43         2.15     -11.52%\nTestStackMem#3,sec                 2.50         2.38      -4.80%",
+	"cc": [
+		"sougou@google.com",
+		"no.smile.face@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com",
+		"msolomon@google.com"
+	],
+	"reviewers": [
+		"fullung@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"msolomon@google.com",
+				"no.smile.face@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/03 15:29:31, dvyukov wrote:\n> Hello mailto:golang-dev@googlegroups.com,\n> \n> I'd like you to review this change to\n> https://dvyukov%2540google.com%40code.google.com/p/go/\n\n+some people in CC",
+			"disapproval": false,
+			"date": "2013-01-03 17:45:38.919050",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"msolomon@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/04 07:19:15, nsf wrote:\n> On 2013/01/03 15:29:31, dvyukov wrote:\n> > Hello mailto:golang-dev@googlegroups.com,\n> > \n> > I'd like you to review this change to\n> > https://dvyukov%252540google.com%2540code.google.com/p/go/\n> \n> For my ray tracer stuff the behaviour is very similar to what I had with\n> previous patch.\n> \n> Machine: amd64/linux on i5-3470 CPU.\n> \n> Before (tip d0d76b7fb219):\n>   Rendering took 2m 34.5s\n>   Sys: 85928184\n>   StackInuse: 102400\n>   StackSys: 31981568\n> After (tip d0d76b7fb219 + issue7029044_6007.diff):\n>   Rendering took 2m 35.2s\n>   Sys: 55128064\n>   StackInuse: 12885004288\n>   StackSys: 2621440\n> \n> This time the actual runtime.MemStats numbers instead of staring at process' RES\n> (resident memory size). Rendering time is similar (less than 1% difference is\n> not statistically significant). Oh and this time I was using 50 rays per pixel\n> instead of 100, just to make tests quicker. Also note the anomally high\n> StackInuse number in your patch. Is it a miscalculation?\n\nThanks! This is actually a bug. Fixed:\nhttps://codereview.appspot.com/7029044/diff2/6007:13007/src/pkg/runtime/runtime.h\nhttps://codereview.appspot.com/7029044/diff2/6007:13007/src/pkg/runtime/stack_test.go",
+			"disapproval": false,
+			"date": "2013-01-04 07:36:59.882700",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"msolomon@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/04 06:04:59, dvyukov wrote:\n> On 2013/01/03 23:55:50, sougou wrote:\n> > Reran vtocc benchmars, around 10M queries using 100 clients.\n> > \n> > Run 1: go version currently used on production 0a3866d6cc6b (Sep 24):\n> > qps: 5832 StackSys: 86MB\n> > \n> > Run 2: go @tip d0d76b7fb219 (Jan 3):\n> > qps: 5543 StackSys: 77MB\n> > \n> > Run 3: Using CL 6997052:\n> > qps: 5673 StackSys: 3MB\n> > \n> > Run 4: Using CL 7029044:\n> > qps: 5699 StackSys: 15MB\n> > \n> > Conclusion: Marginal difference in performance between the two CLs. The older\n> CL\n> > uses less memory. Maybe it will be more pronounced if you passed large objects\n> > by value to functions?\n> > The runtime @tip is slower than the one from September, an unrelated\n> > observation.\n> > \n> > This is just a summary. I can send you more detailed stats and pprof captures\n> if\n> > needed.\n> \n> Can you please test with varying values for StackCacheSize/StackCacheBatch in\n> src/pkg/runtime/runtime.h?\n> Currently they are set to 128/32. The CL/6997052 is using 16/8. I am inclined\n> towards 32/16 for now (my synthetic tests show still minimal memory consumption\n> and good performance). Another possible point is 64/32.\n\nOr perhaps it's already fine?\n15 vs 79-80MB is a good win already. More importantly StackSys must not grow over time now, it's bounded by 512kb per thread (while currently it slowly grows to infinity).\n\nWell, actually not that slowly. I've run the following funny test -- each line is StackSys *increase*.\n\nCurrent behavior:\n$ go test -run=StackMem -v -cpu=1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 2>&1 | grep \"for stack mem\"\nstack_test.go:1569: \tConsumed 106MB for stack mem\nstack_test.go:1569: \tConsumed 48MB for stack mem\nstack_test.go:1569: \tConsumed 52MB for stack mem\nstack_test.go:1569: \tConsumed 71MB for stack mem\nstack_test.go:1569: \tConsumed 71MB for stack mem\nstack_test.go:1569: \tConsumed 53MB for stack mem\nstack_test.go:1569: \tConsumed 35MB for stack mem\nstack_test.go:1569: \tConsumed 27MB for stack mem\nstack_test.go:1569: \tConsumed 39MB for stack mem\nstack_test.go:1569: \tConsumed 43MB for stack mem\nstack_test.go:1569: \tConsumed 49MB for stack mem\nstack_test.go:1569: \tConsumed 54MB for stack mem\nstack_test.go:1569: \tConsumed 44MB for stack mem\nstack_test.go:1569: \tConsumed 35MB for stack mem\nstack_test.go:1569: \tConsumed 41MB for stack mem\nstack_test.go:1569: \tConsumed 32MB for stack mem\nstack_test.go:1569: \tConsumed 27MB for stack mem\nstack_test.go:1569: \tConsumed 20MB for stack mem\nstack_test.go:1569: \tConsumed 36MB for stack mem\nstack_test.go:1569: \tConsumed 33MB for stack mem\nstack_test.go:1569: \tConsumed 31MB for stack mem\nstack_test.go:1569: \tConsumed 45MB for stack mem\nstack_test.go:1569: \tConsumed 40MB for stack mem\nstack_test.go:1569: \tConsumed 30MB for stack mem\nstack_test.go:1569: \tConsumed 39MB for stack mem\nstack_test.go:1569: \tConsumed 27MB for stack mem\nstack_test.go:1569: \tConsumed 27MB for stack mem\nstack_test.go:1569: \tConsumed 37MB for stack mem\nstack_test.go:1569: \tConsumed 33MB for stack mem\nstack_test.go:1569: \tConsumed 36MB for stack mem\nstack_test.go:1569: \tConsumed 34MB for stack mem\nstack_test.go:1569: \tConsumed 42MB for stack mem\nstack_test.go:1569: \tConsumed 29MB for stack mem\nstack_test.go:1569: \tConsumed 29MB for stack mem\nstack_test.go:1569: \tConsumed 44MB for stack mem\nstack_test.go:1569: \tConsumed 20MB for stack mem\nstack_test.go:1569: \tConsumed 31MB for stack mem\nstack_test.go:1569: \tConsumed 31MB for stack mem\nstack_test.go:1569: \tConsumed 19MB for stack mem\nstack_test.go:1569: \tConsumed 25MB for stack mem\n\n\nNew behavior:\n$ go test -run=StackMem -v -cpu=1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 2>&1 | grep \"for stack mem\"\nstack_test.go:1569: \tConsumed 13MB for stack mem\nstack_test.go:1569: \tConsumed 0MB for stack mem\nstack_test.go:1569: \tConsumed 0MB for stack mem\nstack_test.go:1569: \tConsumed 0MB for stack mem\nstack_test.go:1569: \tConsumed 0MB for stack mem\nstack_test.go:1569: \tConsumed 0MB for stack mem\nstack_test.go:1569: \tConsumed 0MB for stack mem\nstack_test.go:1569: \tConsumed 0MB for stack mem\nstack_test.go:1569: \tConsumed 0MB for stack mem\nstack_test.go:1569: \tConsumed 0MB for stack mem\n...\n\n\n\nEither somebody must come up with a good tuning methodology, or let's commit it as-is and tune later.",
+			"disapproval": false,
+			"date": "2013-01-04 07:48:43.453840",
+			"approval": false
+		},
+		{
+			"sender": "no.smile.face@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"msolomon@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/03 15:29:31, dvyukov wrote:\n> Hello mailto:golang-dev@googlegroups.com,\n> \n> I'd like you to review this change to\n> https://dvyukov%2540google.com%40code.google.com/p/go/\n\nFor my ray tracer stuff the behaviour is very similar to what I had with previous patch.\n\nMachine: amd64/linux on i5-3470 CPU.\n\nBefore (tip d0d76b7fb219):\n  Rendering took 2m 34.5s\n  Sys: 85928184\n  StackInuse: 102400\n  StackSys: 31981568\nAfter (tip d0d76b7fb219 + issue7029044_6007.diff):\n  Rendering took 2m 35.2s\n  Sys: 55128064\n  StackInuse: 12885004288\n  StackSys: 2621440\n\nThis time the actual runtime.MemStats numbers instead of staring at process' RES (resident memory size). Rendering time is similar (less than 1% difference is not statistically significant). Oh and this time I was using 50 rays per pixel instead of 100, just to make tests quicker. Also note the anomally high StackInuse number in your patch. Is it a miscalculation?",
+			"disapproval": false,
+			"date": "2013-01-04 07:19:15.998180",
+			"approval": false
+		},
+		{
+			"sender": "msolomon@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "From our perspective, capping the growth is a big win and the\r\nperformance tradeoff is worth it.  I'll let Sugu confirm that with a\r\nproduction test. Once we can reason about good sizes, we can run a few\r\nmore tests, but I suspect it may be workload dependent. In the future\r\nit might be worth considering an environment variable, but I tend to\r\ndislike tunables.\r\n\r\nEither way, thanks for putting so much time into this.\r\n\r\nOn Thu, Jan 3, 2013 at 11:48 PM,  <dvyukov@google.com> wrote:\r\n> On 2013/01/04 06:04:59, dvyukov wrote:\r\n>>\r\n>> On 2013/01/03 23:55:50, sougou wrote:\r\n>> > Reran vtocc benchmars, around 10M queries using 100 clients.\r\n>> >\r\n>> > Run 1: go version currently used on production 0a3866d6cc6b (Sep\r\n>\r\n> 24):\r\n>>\r\n>> > qps: 5832 StackSys: 86MB\r\n>> >\r\n>> > Run 2: go @tip d0d76b7fb219 (Jan 3):\r\n>> > qps: 5543 StackSys: 77MB\r\n>> >\r\n>> > Run 3: Using CL 6997052:\r\n>> > qps: 5673 StackSys: 3MB\r\n>> >\r\n>> > Run 4: Using CL 7029044:\r\n>> > qps: 5699 StackSys: 15MB\r\n>> >\r\n>> > Conclusion: Marginal difference in performance between the two CLs.\r\n>\r\n> The older\r\n>>\r\n>> CL\r\n>> > uses less memory. Maybe it will be more pronounced if you passed\r\n>\r\n> large objects\r\n>>\r\n>> > by value to functions?\r\n>> > The runtime @tip is slower than the one from September, an unrelated\r\n>> > observation.\r\n>> >\r\n>> > This is just a summary. I can send you more detailed stats and pprof\r\n>\r\n> captures\r\n>>\r\n>> if\r\n>> > needed.\r\n>\r\n>\r\n>> Can you please test with varying values for\r\n>\r\n> StackCacheSize/StackCacheBatch in\r\n>>\r\n>> src/pkg/runtime/runtime.h?\r\n>> Currently they are set to 128/32. The CL/6997052 is using 16/8. I am\r\n>\r\n> inclined\r\n>>\r\n>> towards 32/16 for now (my synthetic tests show still minimal memory\r\n>\r\n> consumption\r\n>>\r\n>> and good performance). Another possible point is 64/32.\r\n>\r\n>\r\n> Or perhaps it's already fine?\r\n> 15 vs 79-80MB is a good win already. More importantly StackSys must not\r\n> grow over time now, it's bounded by 512kb per thread (while currently it\r\n> slowly grows to infinity).\r\n>\r\n> Well, actually not that slowly. I've run the following funny test --\r\n> each line is StackSys *increase*.\r\n>\r\n> Current behavior:\r\n> $ go test -run=StackMem -v\r\n> -cpu=1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1\r\n> 2>&1 | grep \"for stack mem\"\r\n> stack_test.go:1569:     Consumed 106MB for stack mem\r\n> stack_test.go:1569:     Consumed 48MB for stack mem\r\n> stack_test.go:1569:     Consumed 52MB for stack mem\r\n> stack_test.go:1569:     Consumed 71MB for stack mem\r\n> stack_test.go:1569:     Consumed 71MB for stack mem\r\n> stack_test.go:1569:     Consumed 53MB for stack mem\r\n> stack_test.go:1569:     Consumed 35MB for stack mem\r\n> stack_test.go:1569:     Consumed 27MB for stack mem\r\n> stack_test.go:1569:     Consumed 39MB for stack mem\r\n> stack_test.go:1569:     Consumed 43MB for stack mem\r\n> stack_test.go:1569:     Consumed 49MB for stack mem\r\n> stack_test.go:1569:     Consumed 54MB for stack mem\r\n> stack_test.go:1569:     Consumed 44MB for stack mem\r\n> stack_test.go:1569:     Consumed 35MB for stack mem\r\n> stack_test.go:1569:     Consumed 41MB for stack mem\r\n> stack_test.go:1569:     Consumed 32MB for stack mem\r\n> stack_test.go:1569:     Consumed 27MB for stack mem\r\n> stack_test.go:1569:     Consumed 20MB for stack mem\r\n> stack_test.go:1569:     Consumed 36MB for stack mem\r\n> stack_test.go:1569:     Consumed 33MB for stack mem\r\n> stack_test.go:1569:     Consumed 31MB for stack mem\r\n> stack_test.go:1569:     Consumed 45MB for stack mem\r\n> stack_test.go:1569:     Consumed 40MB for stack mem\r\n> stack_test.go:1569:     Consumed 30MB for stack mem\r\n> stack_test.go:1569:     Consumed 39MB for stack mem\r\n> stack_test.go:1569:     Consumed 27MB for stack mem\r\n> stack_test.go:1569:     Consumed 27MB for stack mem\r\n> stack_test.go:1569:     Consumed 37MB for stack mem\r\n> stack_test.go:1569:     Consumed 33MB for stack mem\r\n> stack_test.go:1569:     Consumed 36MB for stack mem\r\n> stack_test.go:1569:     Consumed 34MB for stack mem\r\n> stack_test.go:1569:     Consumed 42MB for stack mem\r\n> stack_test.go:1569:     Consumed 29MB for stack mem\r\n> stack_test.go:1569:     Consumed 29MB for stack mem\r\n> stack_test.go:1569:     Consumed 44MB for stack mem\r\n> stack_test.go:1569:     Consumed 20MB for stack mem\r\n> stack_test.go:1569:     Consumed 31MB for stack mem\r\n> stack_test.go:1569:     Consumed 31MB for stack mem\r\n> stack_test.go:1569:     Consumed 19MB for stack mem\r\n> stack_test.go:1569:     Consumed 25MB for stack mem\r\n>\r\n>\r\n> New behavior:\r\n> $ go test -run=StackMem -v\r\n> -cpu=1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1\r\n> 2>&1 | grep \"for stack mem\"\r\n> stack_test.go:1569:     Consumed 13MB for stack mem\r\n> stack_test.go:1569:     Consumed 0MB for stack mem\r\n> stack_test.go:1569:     Consumed 0MB for stack mem\r\n> stack_test.go:1569:     Consumed 0MB for stack mem\r\n> stack_test.go:1569:     Consumed 0MB for stack mem\r\n> stack_test.go:1569:     Consumed 0MB for stack mem\r\n> stack_test.go:1569:     Consumed 0MB for stack mem\r\n> stack_test.go:1569:     Consumed 0MB for stack mem\r\n> stack_test.go:1569:     Consumed 0MB for stack mem\r\n> stack_test.go:1569:     Consumed 0MB for stack mem\r\n> ...\r\n>\r\n>\r\n>\r\n> Either somebody must come up with a good tuning methodology, or let's\r\n> commit it as-is and tune later.\r\n>\r\n> https://codereview.appspot.com/7029044/\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 07:55:36.500540",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-01-03 15:29:31.665130",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"msolomon@google.com",
+				"no.smile.face@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/03 23:55:50, sougou wrote:\n> Reran vtocc benchmars, around 10M queries using 100 clients.\n> \n> Run 1: go version currently used on production 0a3866d6cc6b (Sep 24):\n> qps: 5832 StackSys: 86MB\n> \n> Run 2: go @tip d0d76b7fb219 (Jan 3):\n> qps: 5543 StackSys: 77MB\n> \n> Run 3: Using CL 6997052:\n> qps: 5673 StackSys: 3MB\n> \n> Run 4: Using CL 7029044:\n> qps: 5699 StackSys: 15MB\n> \n> Conclusion: Marginal difference in performance between the two CLs. The older CL\n> uses less memory. Maybe it will be more pronounced if you passed large objects\n> by value to functions?\n> The runtime @tip is slower than the one from September, an unrelated\n> observation.\n> \n> This is just a summary. I can send you more detailed stats and pprof captures if\n> needed.\n\nCan you please test with varying values for StackCacheSize/StackCacheBatch in src/pkg/runtime/runtime.h?\nCurrently they are set to 128/32. The CL/6997052 is using 16/8. I am inclined towards 32/16 for now (my synthetic tests show still minimal memory consumption and good performance). Another possible point is 64/32.",
+			"disapproval": false,
+			"date": "2013-01-04 06:04:59.504330",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"msolomon@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/04 07:36:59, dvyukov wrote:\n> On 2013/01/04 07:19:15, nsf wrote:\n> > On 2013/01/03 15:29:31, dvyukov wrote:\n> > > Hello mailto:golang-dev@googlegroups.com,\n> > > \n> > > I'd like you to review this change to\n> > > https://dvyukov%25252540google.com%252540code.google.com/p/go/\n> > \n> > For my ray tracer stuff the behaviour is very similar to what I had with\n> > previous patch.\n> > \n> > Machine: amd64/linux on i5-3470 CPU.\n> > \n> > Before (tip d0d76b7fb219):\n> >   Rendering took 2m 34.5s\n> >   Sys: 85928184\n> >   StackInuse: 102400\n> >   StackSys: 31981568\n> > After (tip d0d76b7fb219 + issue7029044_6007.diff):\n> >   Rendering took 2m 35.2s\n> >   Sys: 55128064\n> >   StackInuse: 12885004288\n> >   StackSys: 2621440\n> > \n> > This time the actual runtime.MemStats numbers instead of staring at process'\n> RES\n> > (resident memory size).\n\nDo you miss a part of the sentence?\n\n> >  Rendering time is similar (less than 1% difference is\n> > not statistically significant). \n\nThe results look fine, right?\n\n> > Oh and this time I was using 50 rays per pixel\n> > instead of 100, just to make tests quicker. Also note the anomally high\n> > StackInuse number in your patch. Is it a miscalculation?\n> \n> Thanks! This is actually a bug. Fixed:\n> https://codereview.appspot.com/7029044/diff2/6007:13007/src/pkg/runtime/runtime.h\n> https://codereview.appspot.com/7029044/diff2/6007:13007/src/pkg/runtime/stack_test.go",
+			"disapproval": false,
+			"date": "2013-01-04 07:39:15.249970",
+			"approval": false
+		},
+		{
+			"sender": "no.smile.face@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"msolomon@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/04 07:39:15, dvyukov wrote:\n> Do you miss a part of the sentence?\n\nNot really.\n\n> The results look fine, right?\n\nYes, everything is fine. :)",
+			"disapproval": false,
+			"date": "2013-01-04 12:59:28.834460",
+			"approval": false
+		},
+		{
+			"sender": "sougou@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"msolomon@google.com",
+				"no.smile.face@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Reran vtocc benchmars, around 10M queries using 100 clients.\n\nRun 1: go version currently used on production 0a3866d6cc6b (Sep 24):\nqps: 5832 StackSys: 86MB\n\nRun 2: go @tip d0d76b7fb219 (Jan 3):\nqps: 5543 StackSys: 77MB\n\nRun 3: Using CL 6997052:\nqps: 5673 StackSys: 3MB\n\nRun 4: Using CL 7029044:\nqps: 5699 StackSys: 15MB\n\nConclusion: Marginal difference in performance between the two CLs. The older CL uses less memory. Maybe it will be more pronounced if you passed large objects by value to functions?\nThe runtime @tip is slower than the one from September, an unrelated observation.\n\nThis is just a summary. I can send you more detailed stats and pprof captures if needed.",
+			"disapproval": false,
+			"date": "2013-01-03 23:55:50.958660",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Jan 4, 2013 at 11:55 AM, Mike Solomon <msolomon@google.com> wrote:\r\n> From our perspective, capping the growth is a big win and the\r\n> performance tradeoff is worth it.  I'll let Sugu confirm that with a\r\n> production test. Once we can reason about good sizes, we can run a few\r\n> more tests, but I suspect it may be workload dependent. In the future\r\n> it might be worth considering an environment variable, but I tend to\r\n> dislike tunables.\r\n\r\n\r\nWhen/if I finally submit the improved scheduler, it will allow for\r\nper-processor (per-GOMAXPROC) state. And stack caches along with other\r\nstuff will move there. That will decrease stack mem further, and I\r\nbelieve eliminate any need in tunables (e.g. now you have say 200\r\nthreads each with own cache, and then you will have only 8 procs with\r\ncaches).\r\n\r\n\r\n> Either way, thanks for putting so much time into this.\r\n\r\nYou are welcome.\r\n\r\n\r\n> On Thu, Jan 3, 2013 at 11:48 PM,  <dvyukov@google.com> wrote:\r\n>> On 2013/01/04 06:04:59, dvyukov wrote:\r\n>>>\r\n>>> On 2013/01/03 23:55:50, sougou wrote:\r\n>>> > Reran vtocc benchmars, around 10M queries using 100 clients.\r\n>>> >\r\n>>> > Run 1: go version currently used on production 0a3866d6cc6b (Sep\r\n>>\r\n>> 24):\r\n>>>\r\n>>> > qps: 5832 StackSys: 86MB\r\n>>> >\r\n>>> > Run 2: go @tip d0d76b7fb219 (Jan 3):\r\n>>> > qps: 5543 StackSys: 77MB\r\n>>> >\r\n>>> > Run 3: Using CL 6997052:\r\n>>> > qps: 5673 StackSys: 3MB\r\n>>> >\r\n>>> > Run 4: Using CL 7029044:\r\n>>> > qps: 5699 StackSys: 15MB\r\n>>> >\r\n>>> > Conclusion: Marginal difference in performance between the two CLs.\r\n>>\r\n>> The older\r\n>>>\r\n>>> CL\r\n>>> > uses less memory. Maybe it will be more pronounced if you passed\r\n>>\r\n>> large objects\r\n>>>\r\n>>> > by value to functions?\r\n>>> > The runtime @tip is slower than the one from September, an unrelated\r\n>>> > observation.\r\n>>> >\r\n>>> > This is just a summary. I can send you more detailed stats and pprof\r\n>>\r\n>> captures\r\n>>>\r\n>>> if\r\n>>> > needed.\r\n>>\r\n>>\r\n>>> Can you please test with varying values for\r\n>>\r\n>> StackCacheSize/StackCacheBatch in\r\n>>>\r\n>>> src/pkg/runtime/runtime.h?\r\n>>> Currently they are set to 128/32. The CL/6997052 is using 16/8. I am\r\n>>\r\n>> inclined\r\n>>>\r\n>>> towards 32/16 for now (my synthetic tests show still minimal memory\r\n>>\r\n>> consumption\r\n>>>\r\n>>> and good performance). Another possible point is 64/32.\r\n>>\r\n>>\r\n>> Or perhaps it's already fine?\r\n>> 15 vs 79-80MB is a good win already. More importantly StackSys must not\r\n>> grow over time now, it's bounded by 512kb per thread (while currently it\r\n>> slowly grows to infinity).\r\n>>\r\n>> Well, actually not that slowly. I've run the following funny test --\r\n>> each line is StackSys *increase*.\r\n>>\r\n>> Current behavior:\r\n>> $ go test -run=StackMem -v\r\n>> -cpu=1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1\r\n>> 2>&1 | grep \"for stack mem\"\r\n>> stack_test.go:1569:     Consumed 106MB for stack mem\r\n>> stack_test.go:1569:     Consumed 48MB for stack mem\r\n>> stack_test.go:1569:     Consumed 52MB for stack mem\r\n>> stack_test.go:1569:     Consumed 71MB for stack mem\r\n>> stack_test.go:1569:     Consumed 71MB for stack mem\r\n>> stack_test.go:1569:     Consumed 53MB for stack mem\r\n>> stack_test.go:1569:     Consumed 35MB for stack mem\r\n>> stack_test.go:1569:     Consumed 27MB for stack mem\r\n>> stack_test.go:1569:     Consumed 39MB for stack mem\r\n>> stack_test.go:1569:     Consumed 43MB for stack mem\r\n>> stack_test.go:1569:     Consumed 49MB for stack mem\r\n>> stack_test.go:1569:     Consumed 54MB for stack mem\r\n>> stack_test.go:1569:     Consumed 44MB for stack mem\r\n>> stack_test.go:1569:     Consumed 35MB for stack mem\r\n>> stack_test.go:1569:     Consumed 41MB for stack mem\r\n>> stack_test.go:1569:     Consumed 32MB for stack mem\r\n>> stack_test.go:1569:     Consumed 27MB for stack mem\r\n>> stack_test.go:1569:     Consumed 20MB for stack mem\r\n>> stack_test.go:1569:     Consumed 36MB for stack mem\r\n>> stack_test.go:1569:     Consumed 33MB for stack mem\r\n>> stack_test.go:1569:     Consumed 31MB for stack mem\r\n>> stack_test.go:1569:     Consumed 45MB for stack mem\r\n>> stack_test.go:1569:     Consumed 40MB for stack mem\r\n>> stack_test.go:1569:     Consumed 30MB for stack mem\r\n>> stack_test.go:1569:     Consumed 39MB for stack mem\r\n>> stack_test.go:1569:     Consumed 27MB for stack mem\r\n>> stack_test.go:1569:     Consumed 27MB for stack mem\r\n>> stack_test.go:1569:     Consumed 37MB for stack mem\r\n>> stack_test.go:1569:     Consumed 33MB for stack mem\r\n>> stack_test.go:1569:     Consumed 36MB for stack mem\r\n>> stack_test.go:1569:     Consumed 34MB for stack mem\r\n>> stack_test.go:1569:     Consumed 42MB for stack mem\r\n>> stack_test.go:1569:     Consumed 29MB for stack mem\r\n>> stack_test.go:1569:     Consumed 29MB for stack mem\r\n>> stack_test.go:1569:     Consumed 44MB for stack mem\r\n>> stack_test.go:1569:     Consumed 20MB for stack mem\r\n>> stack_test.go:1569:     Consumed 31MB for stack mem\r\n>> stack_test.go:1569:     Consumed 31MB for stack mem\r\n>> stack_test.go:1569:     Consumed 19MB for stack mem\r\n>> stack_test.go:1569:     Consumed 25MB for stack mem\r\n>>\r\n>>\r\n>> New behavior:\r\n>> $ go test -run=StackMem -v\r\n>> -cpu=1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1\r\n>> 2>&1 | grep \"for stack mem\"\r\n>> stack_test.go:1569:     Consumed 13MB for stack mem\r\n>> stack_test.go:1569:     Consumed 0MB for stack mem\r\n>> stack_test.go:1569:     Consumed 0MB for stack mem\r\n>> stack_test.go:1569:     Consumed 0MB for stack mem\r\n>> stack_test.go:1569:     Consumed 0MB for stack mem\r\n>> stack_test.go:1569:     Consumed 0MB for stack mem\r\n>> stack_test.go:1569:     Consumed 0MB for stack mem\r\n>> stack_test.go:1569:     Consumed 0MB for stack mem\r\n>> stack_test.go:1569:     Consumed 0MB for stack mem\r\n>> stack_test.go:1569:     Consumed 0MB for stack mem\r\n>> ...\r\n>>\r\n>>\r\n>>\r\n>> Either somebody must come up with a good tuning methodology, or let's\r\n>> commit it as-is and tune later.\r\n>>\r\n>> https://codereview.appspot.com/7029044/\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 08:05:25.540800",
+			"approval": false
+		},
+		{
+			"sender": "sougou@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry, I forgot to mention that StackSys was indefinitely growing in the\r\nfirst two runs (without the CLs).\r\nFor run 3 (old CL), it started off at 3MB and stayed there.\r\nFor run 4 (new CL), it started at 14MB and inched up to 15.\r\n\r\nSo, both CLs are good enough. I would personally lean towards the old CL,\r\nbut the new CL should also be fine if it offers more balanced performance.\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 08:05:45.940650",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Jan 4, 2013 at 12:05 PM, Sugu Sougoumarane <sougou@google.com> wrote:\r\n> Sorry, I forgot to mention that StackSys was indefinitely growing in the\r\n> first two runs (without the CLs).\r\n> For run 3 (old CL), it started off at 3MB and stayed there.\r\n> For run 4 (new CL), it started at 14MB and inched up to 15.\r\n>\r\n> So, both CLs are good enough. I would personally lean towards the old CL,\r\n> but the new CL should also be fine if it offers more balanced performance.\r\n\r\nI just afraid that I can badly penalize some other workloads that I\r\ndon't know about.\r\nYou may try new CL with e.g. StackCacheSize=32, StackCacheBatch=16 or\r\n64/32. On the synthetic tests 32/16 is still good enough, so if it\r\nreduces StackSys for you, I am happy to change it to 32/16.\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 08:11:35.104810",
+			"approval": false
+		},
+		{
+			"sender": "sougou@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"msolomon@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "5M rows using 100 connections:\n\n128/32:\nqps: 5885 StackSys: 14.7MB\n\n64/32:\nqps: 5876 StackSys: 8.4MB\n\n32/16:\nqps: 5850 StackSys: 4.9MB\n\n16/8:\nqps: 5892 StackSys: 3.15MB\n\nAll other stats were comparable.\n\nConclusion. No significant change in performance for different values of StackCacheSize/StackCacheBatch, except for the StackSys footprint, but there are diminishing returns below 32/16.",
+			"disapproval": false,
+			"date": "2013-01-04 20:15:38.355030",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "OK, I will replace the constants with 32/16.\r\n\r\nAnd let's wait for Russ' blessing.\r\n\r\n\r\nOn Sat, Jan 5, 2013 at 12:15 AM,  <sougou@google.com> wrote:\r\n> 5M rows using 100 connections:\r\n>\r\n> 128/32:\r\n> qps: 5885 StackSys: 14.7MB\r\n>\r\n> 64/32:\r\n> qps: 5876 StackSys: 8.4MB\r\n>\r\n> 32/16:\r\n> qps: 5850 StackSys: 4.9MB\r\n>\r\n> 16/8:\r\n> qps: 5892 StackSys: 3.15MB\r\n>\r\n> All other stats were comparable.\r\n>\r\n> Conclusion. No significant change in performance for different values of\r\n> StackCacheSize/StackCacheBatch, except for the StackSys footprint, but\r\n> there are diminishing returns below 32/16.\r\n>\r\n> https://codereview.appspot.com/7029044/\r\n",
+			"disapproval": false,
+			"date": "2013-01-04 20:36:32.288320",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"rsc@golang.org",
+				"msolomon@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc\nFile src/pkg/runtime/malloc.goc (right):\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode754\nsrc/pkg/runtime/malloc.goc:754: StackCacheNode *next;\nOn 2013/01/07 04:18:57, rsc wrote:\n> The stack itself is way bigger than this struct. Listing all StackCacheBatch\n> elements in batch will make the code significantly simpler, and a comment would\n> help too:\n> \n> // A StackCacheNode is a group of StackCacheBatch fixed-size stacks that\n> // can be transferred between a goroutine and a central cache (stackcache).\n> // The StackCacheNode contents are stored in one of the stacks, so they can\n> // only be used when the stacks are free.\n> typedef struct StackCacheNode StackCacheNode;\n> struct StackCacheNode\n> {\n>     StackCacheNode *next;\n>     void *batch[StackCacheBatch];\n> }\n> \n> refill() {\n>     ...\n>     if(n == nil) {\n>         ...\n>         for(i = 0; i < StackCacheBatch; i++)\n>             n->batch[i] = (byte*)n + i*FixedStack;\n>     }\n>     pos = m->stackcachepos;\n>     for(i = 0; i < StackCacheBatch; i++) {\n>         m->stackcache[pos++] = n->batch[i];\n>         pos %= StackCacheSize;\n>     }\n>     ...\n> }\n> \n> release() {\n>     ...\n>     n = (StackCacheNode*)m->stackcache[pos];\n>     for(i = 0; i < StackCacheBatch; i++) {\n>         n->batch[i] = m->stackcache[pos++];\n>         pos %= StackCacheSize;\n>     }\n\nDone.\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode758\nsrc/pkg/runtime/malloc.goc:758: static StackCacheNode *stackcache;\nOn 2013/01/07 04:18:57, rsc wrote:\n> static struct {\n>     Lock;\n>     StackCacheNode *top;\n> } stackcache;\n> \n> And then\n> \n> runtime.lock(&stackcache);\n> n = stackcache.top;\n> etc.\n\nDone.\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode793\nsrc/pkg/runtime/malloc.goc:793: static void\nOn 2013/01/07 04:18:57, rsc wrote:\n> // Release oldest StackCacheBatch stack segments to central free list.\n\nDone.\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode799\nsrc/pkg/runtime/malloc.goc:799: pos = (m->stackcachepos - m->stackcachecnt) % StackCacheSize;\nOn 2013/01/07 04:18:57, rsc wrote:\n> This only works because (a) the left hand side of the % is an unsigned type, and\n> (b) StackCacheSize is a power of two. Please use\n> \n> pos = (m->stackcachepos - m->stackcachecnt + StackCacheSize) % StackCacheSize\n> \n> which does not rely on either assumption.\n\nDone.\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode840\nsrc/pkg/runtime/malloc.goc:840: pos = (pos - 1) % StackCacheSize;\nOn 2013/01/07 04:18:57, rsc wrote:\n> pos = (pos - 1 + StackCacheSize) % StackCacheSize;\n\nDone.",
+			"disapproval": false,
+			"date": "2013-01-08 12:33:47.619940",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"msolomon@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Updated the constants to 32/16",
+			"disapproval": false,
+			"date": "2013-01-05 10:25:55.421880",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"rsc@golang.org",
+				"msolomon@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc\nFile src/pkg/runtime/malloc.goc (right):\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode754\nsrc/pkg/runtime/malloc.goc:754: StackCacheNode *next;\nThe stack itself is way bigger than this struct. Listing all StackCacheBatch elements in batch will make the code significantly simpler, and a comment would help too:\n\n// A StackCacheNode is a group of StackCacheBatch fixed-size stacks that\n// can be transferred between a goroutine and a central cache (stackcache).\n// The StackCacheNode contents are stored in one of the stacks, so they can\n// only be used when the stacks are free.\ntypedef struct StackCacheNode StackCacheNode;\nstruct StackCacheNode\n{\n    StackCacheNode *next;\n    void *batch[StackCacheBatch];\n}\n\nrefill() {\n    ...\n    if(n == nil) {\n        ...\n        for(i = 0; i < StackCacheBatch; i++)\n            n->batch[i] = (byte*)n + i*FixedStack;\n    }\n    pos = m->stackcachepos;\n    for(i = 0; i < StackCacheBatch; i++) {\n        m->stackcache[pos++] = n->batch[i];\n        pos %= StackCacheSize;\n    }\n    ...\n}\n\nrelease() {\n    ...\n    n = (StackCacheNode*)m->stackcache[pos];\n    for(i = 0; i < StackCacheBatch; i++) {\n        n->batch[i] = m->stackcache[pos++];\n        pos %= StackCacheSize;\n    }\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode758\nsrc/pkg/runtime/malloc.goc:758: static StackCacheNode *stackcache;\nstatic struct {\n    Lock;\n    StackCacheNode *top;\n} stackcache;\n\nAnd then\n\nruntime.lock(&stackcache);\nn = stackcache.top;\netc.\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode793\nsrc/pkg/runtime/malloc.goc:793: static void\n// Release oldest StackCacheBatch stack segments to central free list.\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode799\nsrc/pkg/runtime/malloc.goc:799: pos = (m->stackcachepos - m->stackcachecnt) % StackCacheSize;\nThis only works because (a) the left hand side of the % is an unsigned type, and (b) StackCacheSize is a power of two. Please use\n\npos = (m->stackcachepos - m->stackcachecnt + StackCacheSize) % StackCacheSize\n\nwhich does not rely on either assumption.\n\nhttps://codereview.appspot.com/7029044/diff/22001/src/pkg/runtime/malloc.goc#newcode840\nsrc/pkg/runtime/malloc.goc:840: pos = (pos - 1) % StackCacheSize;\npos = (pos - 1 + StackCacheSize) % StackCacheSize;",
+			"disapproval": false,
+			"date": "2013-01-07 04:18:57.521700",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2013-01-09 19:08:26.623560",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"msolomon@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=88d31369e105 ***\n\nruntime: less aggressive per-thread stack segment caching\nIntroduce global stack segment cache and limit per-thread cache size.\nThis greatly reduces StackSys memory on workloads that create lots of threads.\n\nbenchmark                      old ns/op    new ns/op    delta\nBenchmarkStackGrowth                 665          656   -1.35%\nBenchmarkStackGrowth-2               333          328   -1.50%\nBenchmarkStackGrowth-4               224          172  -23.21%\nBenchmarkStackGrowth-8               124           91  -26.13%\nBenchmarkStackGrowth-16               82           47  -41.94%\nBenchmarkStackGrowth-32               73           40  -44.79%\n\nBenchmarkStackGrowthDeep           97231        94391   -2.92%\nBenchmarkStackGrowthDeep-2         47230        58562  +23.99%\nBenchmarkStackGrowthDeep-4         24993        49356  +97.48%\nBenchmarkStackGrowthDeep-8         15105        30072  +99.09%\nBenchmarkStackGrowthDeep-16        10005        15623  +56.15%\nBenchmarkStackGrowthDeep-32        12517        13069   +4.41%\n\nTestStackMem#1,MB                  310          12       -96.13%\nTestStackMem#2,MB                  296          14       -95.27%\nTestStackMem#3,MB                  479          14       -97.08%\n\nTestStackMem#1,sec                 3.22         2.26     -29.81%\nTestStackMem#2,sec                 2.43         2.15     -11.52%\nTestStackMem#3,sec                 2.50         2.38      -4.80%\n\nR=sougou, no.smile.face, rsc\nCC=golang-dev, msolomon\nhttps://codereview.appspot.com/7029044",
+			"disapproval": false,
+			"date": "2013-01-10 05:59:56.377750",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"fullung@gmail.com",
+				"sougou@google.com",
+				"no.smile.face@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"msolomon@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://code.google.com/p/go/issues/detail?id=4698",
+			"disapproval": false,
+			"date": "2013-01-24 11:02:33.241270",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 7029044: runtime: less aggressive per-thread stack segment caching",
+	"created": "2012-12-30 12:00:25.826770",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		7001,
+		7002,
+		5007,
+		2008,
+		6007,
+		14002,
+		13007,
+		22001,
+		26003,
+		30001,
+		23008
+	],
+	"modified": "2013-01-24 11:02:33.420560",
+	"closed": true,
+	"issue": 7029044
+}

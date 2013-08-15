@@ -1,0 +1,70 @@
+{
+	"description": "runtime: disable preemption\n\nThere are various problems, and both Dmitriy and I\nwill be away for the next week. Make the runtime a bit\nmore stable while we're gone.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-07-01 21:51:08.959570",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "no, fixed.\r\n\r\ng% hg diff @10848043\r\ndiff -r 0f6938710930 src/pkg/runtime/proc.c\r\n--- a/src/pkg/runtime/proc.c Mon Jul 01 17:36:08 2013 -0400\r\n+++ b/src/pkg/runtime/proc.c Mon Jul 01 17:56:40 2013 -0400\r\n@@ -2149,6 +2149,12 @@\r\n  M *mp;\r\n  G *gp;\r\n\r\n+// Preemption requires more robust traceback routines.\r\n+// For now, disable.\r\n+// The if(1) silences a compiler warning about the rest of the\r\n+// function being unreachable.\r\n+if(1) return;\r\n+\r\n  mp = p->m;\r\n  if(mp == nil || mp == m)\r\n  return;\r\ng%\r\n",
+			"disapproval": false,
+			"date": "2013-07-01 21:56:55.091270",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=634e588d6e96 ***\n\nruntime: disable preemption\n\nThere are various problems, and both Dmitriy and I\nwill be away for the next week. Make the runtime a bit\nmore stable while we're gone.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/10848043",
+			"disapproval": false,
+			"date": "2013-07-01 21:57:13.808470",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM but did you mean to have all those runtime printf in this CL?\r\n\r\n\r\n\r\nOn Mon, Jul 1, 2013 at 2:51 PM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: disable preemption\r\n>\r\n> There are various problems, and both Dmitriy and I\r\n> will be away for the next week. Make the runtime a bit\r\n> more stable while we're gone.\r\n>\r\n> Please review this at https://codereview.appspot.**com/10848043/<https://codereview.appspot.com/10848043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/proc.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/proc.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/proc.c\r\n> +++ b/src/pkg/runtime/proc.c\r\n> @@ -359,33 +359,40 @@\r\n>         int32 i;\r\n>         uint32 s;\r\n>         P *p;\r\n> -       bool wait;\r\n> +       int32 wait;\r\n>\r\n>         runtime\u00b7lock(&runtime\u00b7sched);\r\n>         runtime\u00b7sched.stopwait = runtime\u00b7gomaxprocs;\r\n>         runtime\u00b7atomicstore((uint32*)&**runtime\u00b7gcwaiting, 1);\r\n> +runtime\u00b7printf(\"stoptheworld %d\\n\", runtime\u00b7gomaxprocs);\r\n>         preemptall();\r\n>         // stop current P\r\n>         m->p->status = Pgcstop;\r\n>         runtime\u00b7sched.stopwait--;\r\n> +runtime\u00b7printf(\"1 current\\n\");\r\n>         // try to retake all P's in Psyscall status\r\n>         for(i = 0; i < runtime\u00b7gomaxprocs; i++) {\r\n>                 p = runtime\u00b7allp[i];\r\n>                 s = p->status;\r\n> -               if(s == Psyscall && runtime\u00b7cas(&p->status, s, Pgcstop))\r\n> +               if(s == Psyscall && runtime\u00b7cas(&p->status, s, Pgcstop)) {\r\n> +runtime\u00b7printf(\"#%d in syscall\\n\", i);\r\n>                         runtime\u00b7sched.stopwait--;\r\n> +               }\r\n>         }\r\n>         // stop idle P's\r\n>         while(p = pidleget()) {\r\n>                 p->status = Pgcstop;\r\n>                 runtime\u00b7sched.stopwait--;\r\n> +runtime\u00b7printf(\"1 idle\\n\");\r\n>         }\r\n> -       wait = runtime\u00b7sched.stopwait > 0;\r\n> +       wait = runtime\u00b7sched.stopwait;\r\n> +runtime\u00b7printf(\"%d left\\n\", runtime\u00b7sched.stopwait);\r\n>         runtime\u00b7unlock(&runtime\u00b7sched)**;\r\n>\r\n>         // wait for remaining P's to stop voluntarily\r\n>         if(wait) {\r\n>                 for(;;) {\r\n> +runtime\u00b7printf(\"wait for %d %d of %d\\n\", wait, runtime\u00b7sched.stopwait,\r\n> runtime\u00b7gomaxprocs);\r\n>                         // wait for 100us, then try to re-preempt in case\r\n> of any races\r\n>                         if(runtime\u00b7notetsleep(&**runtime\u00b7sched.stopnote,\r\n> 100*1000)) {\r\n>                                 runtime\u00b7noteclear(&runtime\u00b7**\r\n> sched.stopnote);\r\n> @@ -876,6 +883,7 @@\r\n>                 runtime\u00b7throw(\"startm: m has p\");\r\n>         mp->spinning = spinning;\r\n>         mp->nextp = p;\r\n> +runtime\u00b7printf(\"wakem %p\\n\", mp);\r\n>         runtime\u00b7notewakeup(&mp->park);\r\n>  }\r\n>\r\n> @@ -1954,6 +1962,7 @@\r\n>                 pidleput(p);\r\n>         }\r\n>         runtime\u00b7singleproc = new == 1;\r\n> +runtime\u00b7printf(\"gomaxprocs=%**d\\n\", new);\r\n>         runtime\u00b7atomicstore((uint32*)&**runtime\u00b7gomaxprocs, new);\r\n>  }\r\n>\r\n> @@ -2149,6 +2158,10 @@\r\n>         M *mp;\r\n>         G *gp;\r\n>\r\n> +// Preemption requires more robust traceback routines.\r\n> +// For now, disable.\r\n> +return;\r\n> +\r\n>         mp = p->m;\r\n>         if(mp == nil || mp == m)\r\n>                 return;\r\n> @@ -2231,6 +2244,7 @@\r\n>  static void\r\n>  pidleput(P *p)\r\n>  {\r\n> +runtime\u00b7printf(\"pidleput\\n\");\r\n>         p->link = runtime\u00b7sched.pidle;\r\n>         runtime\u00b7sched.pidle = p;\r\n>         runtime\u00b7xadd(&runtime\u00b7sched.**npidle, 1);  // TODO: fast atomic\r\n> @@ -2245,6 +2259,7 @@\r\n>\r\n>         p = runtime\u00b7sched.pidle;\r\n>         if(p) {\r\n> +runtime\u00b7printf(\"pidleget\\n\");\r\n>                 runtime\u00b7sched.pidle = p->link;\r\n>                 runtime\u00b7xadd(&runtime\u00b7sched.**npidle, -1);  // TODO: fast\r\n> atomic\r\n>         }\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-01 21:52:34.135830",
+			"approval": true
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 10848043: runtime: disable preemption",
+	"created": "2013-07-01 21:45:27.661830",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		10001
+	],
+	"modified": "2013-07-01 21:57:15.770420",
+	"closed": true,
+	"issue": 10848043
+}

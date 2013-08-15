@@ -1,0 +1,217 @@
+{
+	"description": "net: fix flaky test\nThe test failed on one of the builders with:\ntimeout_test.go:594: \tln.Accept: accept tcp 127.0.0.1:19373: use of closed network connection\nhttp://build.golang.org/log/e83f4a152b37071b9d079096e15913811ad296b5",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"dave@cheney.net",
+		"mikioh.mikioh@gmail.com",
+		"remyoudompheng@gmail.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 1:53 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> > Do that mean there's a possible series of packets I can throw at a Linux\r\n> Go\r\n> > server to make syscall.Accept return an error and end its\r\n> > http.ListenAndServe remotely?\r\n>\r\n> Yes, but that's not what is happening here and should already be fixed\r\n> (see Remy's link).\r\n>\r\n\r\nYeah, I was just going on a tangent.   Issue 3395 only fixed ECONNABORTED.\r\n The manpage suggests there are more?  But I guess most servers would have\r\nbigger problems if ENETDOWN or ENONET.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 22:03:54.785900",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I believe Dial can return before the Accept executes. On most systems\r\nI believe that the completion of the TCP 3-way handshake is what\r\nplaces the socket on the queue of connections that can be returned by\r\naccept(2) and also what makes the connect(2) on the client side\r\nfinish. It is easy to believe that a fast client might close the\r\nconnection (send a FIN) before the accept(2) happens.\r\n\r\nOf course implementations differ on whether a closed connection turns\r\ninto a failed accept(2).\r\nhttp://www.cl.cam.ac.uk/cgi-bin/manpage?2+accept says:\r\n\r\nERROR HANDLING\r\n\r\n       Linux  accept() passes already-pending network errors on the new socket\r\n       as an error code from accept().  This behaviour differs from other  BSD\r\n       socket  implementations.  For reliable operation the application should\r\n       detect the network errors defined for the protocol after  accept()  and\r\n       treat  them  like EAGAIN by retrying. In case of TCP/IP these are ENET-\r\n       DOWN, EPROTO, ENOPROTOOPT, EHOSTDOWN, ENONET, EHOSTUNREACH, EOPNOTSUPP,\r\n       and ENETUNREACH.\r\n\r\nbut of course you are on BSD so maybe the characterization is wrong,\r\noutdated, or backward.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 21:09:46.871510",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM assuming the other comments are addressed.\r\n\r\nSorry for being a stick in the mud about this. I can see how, if nagel\r\nwas in effect, then those 1024 writes would be coalesced into a single\r\nwrite, which could piggy back on the 3rd packet in the handshake (TCP\r\nallows data on the 3rd ACK, assuming there is window size available,\r\nright?) then follow up with a FIN before the server even saw the\r\npacket.\r\n\r\nOn Tue, Nov 27, 2012 at 8:09 AM, Russ Cox <rsc@golang.org> wrote:\r\n> I believe Dial can return before the Accept executes. On most systems\r\n> I believe that the completion of the TCP 3-way handshake is what\r\n> places the socket on the queue of connections that can be returned by\r\n> accept(2) and also what makes the connect(2) on the client side\r\n> finish. It is easy to believe that a fast client might close the\r\n> connection (send a FIN) before the accept(2) happens.\r\n>\r\n> Of course implementations differ on whether a closed connection turns\r\n> into a failed accept(2).\r\n> http://www.cl.cam.ac.uk/cgi-bin/manpage?2+accept says:\r\n>\r\n> ERROR HANDLING\r\n>\r\n>        Linux  accept() passes already-pending network errors on the new socket\r\n>        as an error code from accept().  This behaviour differs from other  BSD\r\n>        socket  implementations.  For reliable operation the application should\r\n>        detect the network errors defined for the protocol after  accept()  and\r\n>        treat  them  like EAGAIN by retrying. In case of TCP/IP these are ENET-\r\n>        DOWN, EPROTO, ENOPROTOOPT, EHOSTDOWN, ENONET, EHOSTUNREACH, EOPNOTSUPP,\r\n>        and ENETUNREACH.\r\n>\r\n> but of course you are on BSD so maybe the characterization is wrong,\r\n> outdated, or backward.\r\n>\r\n> Russ\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 21:20:58.221610",
+			"approval": true
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI couldn't repro the issue on freebsd/386 9.0-release\nbut let's see what happens.",
+			"disapproval": false,
+			"date": "2012-11-27 06:39:23.239710",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Mon, Nov 26, 2012 at 11:15 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> net: fix flaky test\r\n> The test failed on one of the builders with:\r\n> timeout_test.go:594:    ln.Accept: accept tcp 127.0.0.1:19373: use of\r\n> closed network connection\r\n> http://build.golang.org/log/**e83f4a152b37071b9d079096e15913**811ad296b5<http://build.golang.org/log/e83f4a152b37071b9d079096e15913811ad296b5>\r\n>\r\n> Please review this at http://codereview.appspot.com/**6859043/<http://codereview.appspot.com/6859043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/timeout_test.go\r\n>\r\n>\r\n> Index: src/pkg/net/timeout_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/timeout_test.go\r\n> +++ b/src/pkg/net/timeout_test.go\r\n> @@ -588,8 +588,10 @@\r\n>\r\n>         ln := newLocalListener(t)\r\n>         defer ln.Close()\r\n> +       connected := make(chan bool)\r\n>         go func() {\r\n>                 s, err := ln.Accept()\r\n> +               connected <- true\r\n>                 if err != nil {\r\n>                         t.Fatalf(\"ln.Accept: %v\", err)\r\n>                 }\r\n> @@ -619,6 +621,7 @@\r\n>                 t.Fatalf(\"DialTCP: %v\", err)\r\n>         }\r\n>         defer c.Close()\r\n> +       <-connected\r\n>         for i := 0; i < 1024; i++ {\r\n>                 var buf [1]byte\r\n>                 c.Write(buf[:])\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 20:29:40.457060",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/27 05:49:41, dvyukov wrote:\n> So, is this change LGTM?\n>\n\nYes.",
+			"disapproval": false,
+			"date": "2012-11-27 06:10:01.392000",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=34e54cf71fed ***\n\nnet: fix flaky test\nThe test failed on one of the builders with:\ntimeout_test.go:594: \tln.Accept: accept tcp 127.0.0.1:19373: use of closed network connection\nhttp://build.golang.org/log/e83f4a152b37071b9d079096e15913811ad296b5\n\nR=golang-dev, bradfitz, dave, mikioh.mikioh, remyoudompheng, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6859043",
+			"disapproval": false,
+			"date": "2012-11-27 08:24:20.380160",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 1:09 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> I believe Dial can return before the Accept executes. On most systems\r\n> I believe that the completion of the TCP 3-way handshake is what\r\n> places the socket on the queue of connections that can be returned by\r\n> accept(2) and also what makes the connect(2) on the client side\r\n> finish. It is easy to believe that a fast client might close the\r\n> connection (send a FIN) before the accept(2) happens.\r\n>\r\n> Of course implementations differ on whether a closed connection turns\r\n> into a failed accept(2).\r\n> http://www.cl.cam.ac.uk/cgi-bin/manpage?2+accept says:\r\n>\r\n> ERROR HANDLING\r\n>\r\n>        Linux  accept() passes already-pending network errors on the new\r\n> socket\r\n>        as an error code from accept().  This behaviour differs from other\r\n>  BSD\r\n>        socket  implementations.  For reliable operation the application\r\n> should\r\n>        detect the network errors defined for the protocol after  accept()\r\n>  and\r\n>        treat  them  like EAGAIN by retrying. In case of TCP/IP these are\r\n> ENET-\r\n>        DOWN, EPROTO, ENOPROTOOPT, EHOSTDOWN, ENONET, EHOSTUNREACH,\r\n> EOPNOTSUPP,\r\n>        and ENETUNREACH.\r\n>\r\n\r\nDo that mean there's a possible series of packets I can throw at a Linux Go\r\nserver to make syscall.Accept return an error and end its\r\nhttp.ListenAndServe remotely?\r\n\r\nDo we need to change the net package on Linux to treat all those EFOO\r\nerrors as Temporary in our accept?\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 21:21:06.099420",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-11-26 19:15:07.809030",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "+mikioh\n\nI'm not sure why this works, Dial should not return until the connection has been Accept'd, right ? We use the same pattern in the test immediately above this one.\n\nWhat looks like is happening is the client is connecting, pumping out 1024 x 1 byte writes, then shutting the connection before the Accept has completed.\n\nAlso, why is this only failing on FreeBSD/386? Then again most of the other *BSD builders are flaky at the same time so we don't have the best coverage.\n\nhttps://codereview.appspot.com/6859043/diff/4001/src/pkg/net/timeout_test.go\nFile src/pkg/net/timeout_test.go (right):\n\nhttps://codereview.appspot.com/6859043/diff/4001/src/pkg/net/timeout_test.go#newcode596\nsrc/pkg/net/timeout_test.go:596: t.Fatalf(\"ln.Accept: %v\", err)\nMust use t.Errorf here\n\nhttps://codereview.appspot.com/6859043/diff/4001/src/pkg/net/timeout_test.go#newcode604\nsrc/pkg/net/timeout_test.go:604: if err != nil {\nCan this be tightened up a bit here, the expect errors are EOF and timeout, right ?\n\nhttps://codereview.appspot.com/6859043/diff/4001/src/pkg/net/timeout_test.go#newcode627\nsrc/pkg/net/timeout_test.go:627: c.Write(buf[:])\nPlease add a check for the err value here.",
+			"disapproval": false,
+			"date": "2012-11-26 20:51:40.260350",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/26  <dave@cheney.net> wrote:\r\n> +mikioh\r\n>\r\n> I'm not sure why this works, Dial should not return until the connection\r\n> has been Accept'd, right ? We use the same pattern in the test\r\n> immediately above this one.\r\n\r\nI suppose it should return when the connection is established at the\r\nTCP level, but being accepted by a process is a different thing.\r\n\r\nR\u00e9my.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 21:08:13.858490",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/26 Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> On Mon, Nov 26, 2012 at 1:09 PM, Russ Cox <rsc@golang.org> wrote:\r\n>>\r\n>> I believe Dial can return before the Accept executes. On most systems\r\n>> I believe that the completion of the TCP 3-way handshake is what\r\n>> places the socket on the queue of connections that can be returned by\r\n>> accept(2) and also what makes the connect(2) on the client side\r\n>> finish. It is easy to believe that a fast client might close the\r\n>> connection (send a FIN) before the accept(2) happens.\r\n>>\r\n>> Of course implementations differ on whether a closed connection turns\r\n>> into a failed accept(2).\r\n>> http://www.cl.cam.ac.uk/cgi-bin/manpage?2+accept says:\r\n>>\r\n>> ERROR HANDLING\r\n>>\r\n>>        Linux  accept() passes already-pending network errors on the new\r\n>> socket\r\n>>        as an error code from accept().  This behaviour differs from other\r\n>> BSD\r\n>>        socket  implementations.  For reliable operation the application\r\n>> should\r\n>>        detect the network errors defined for the protocol after  accept()\r\n>> and\r\n>>        treat  them  like EAGAIN by retrying. In case of TCP/IP these are\r\n>> ENET-\r\n>>        DOWN, EPROTO, ENOPROTOOPT, EHOSTDOWN, ENONET, EHOSTUNREACH,\r\n>> EOPNOTSUPP,\r\n>>        and ENETUNREACH.\r\n>\r\n>\r\n> Do that mean there's a possible series of packets I can throw at a Linux Go\r\n> server to make syscall.Accept return an error and end its\r\n> http.ListenAndServe remotely?\r\n>\r\n> Do we need to change the net package on Linux to treat all those EFOO errors\r\n> as Temporary in our accept?\r\n\r\nWe already fixed issue 3395 but indeed more may be hidden.\r\n\r\n http://code.google.com/p/go/issues/detail?id=3395\r\n\r\nR\u00e9my.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 21:25:51.284280",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Sorry for being a stick in the mud about this. I can see how, if nagel\r\n> was in effect, then those 1024 writes would be coalesced into a single\r\n> write, which could piggy back on the 3rd packet in the handshake (TCP\r\n> allows data on the 3rd ACK, assuming there is window size available,\r\n> right?) then follow up with a FIN before the server even saw the\r\n> packet.\r\n\r\nYou don't need any packet coalescing. The kernel is running the TCP\r\nprotocol independently of the accept(2) system call finishing. You\r\njust need enough delay on the machine that all the 1024 writes and the\r\nfinal FIN get processed by the server half of the kernel before the\r\nuser-level Go program gets around to calling accept(2) to retrieve an\r\nfd for the connection. And by then the function has returned and done\r\nthe deferred ln.Close, so the ln.Accept fails.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 21:50:01.212970",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Do that mean there's a possible series of packets I can throw at a Linux Go\r\n> server to make syscall.Accept return an error and end its\r\n> http.ListenAndServe remotely?\r\n\r\nYes, but that's not what is happening here and should already be fixed\r\n(see Remy's link).\r\n\r\nWhat's happening here is that after a Listen, one goroutine does c :=\r\nDial, c.Write c.Write c.Write, c.Close, ln.Close while another\r\ngoroutine does ln.Accept. In some cases the first goroutine can do its\r\nwhole sequence (including ln.Close) before the other goroutine does\r\nln.Accept. That is, the one goroutine is closing the *listener* out\r\nfrom under the other.\r\n\r\nDave suggested that perhaps the Dial would not return until the\r\nln.Accept had completed; if so the ln.Close could not possibly run\r\nbefore the ln.Accept finished, but I was explaining why that's not the\r\ncase.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 21:53:46.770880",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Yeah, I was just going on a tangent.   Issue 3395 only fixed ECONNABORTED.\r\n> The manpage suggests there are more?  But I guess most servers would have\r\n> bigger problems if ENETDOWN or ENONET.\r\n\r\nNo idea. Linux man pages are somewhere below Wikipedia on the reliability scale.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 22:10:43.313020",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "So, is this change LGTM?\r\n\r\n\r\nOn Tue, Nov 27, 2012 at 2:10 AM, Russ Cox <rsc@golang.org> wrote:\r\n>> Yeah, I was just going on a tangent.   Issue 3395 only fixed ECONNABORTED.\r\n>> The manpage suggests there are more?  But I guess most servers would have\r\n>> bigger problems if ENETDOWN or ENONET.\r\n>\r\n> No idea. Linux man pages are somewhere below Wikipedia on the reliability scale.\r\n>\r\n> Russ\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 05:49:41.286150",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 6859043: net: fix flaky test",
+	"created": "2012-11-26 19:14:34.818540",
+	"patchsets": [
+		1,
+		1001,
+		4001,
+		5003
+	],
+	"modified": "2012-11-27 08:24:21.886430",
+	"closed": true,
+	"issue": 6859043
+}

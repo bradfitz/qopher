@@ -1,0 +1,60 @@
+{
+	"description": "cmd/go: fix directory->import path conversion\n\nFixes issue 3306.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-03-14 18:55:17.413847",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=aea57cb8c227 ***\n\ncmd/go: fix directory->import path conversion\n\nFixes issue 3306.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5821048",
+			"disapproval": false,
+			"date": "2012-03-14 19:13:00.722078",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nOn Wed, Mar 14, 2012 at 11:55 AM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> cmd/go: fix directory->import path conversion\n>\n> Fixes issue 3306.\n>\n> Please review this at http://codereview.appspot.com/**5821048/<http://codereview.appspot.com/5821048/>\n>\n> Affected files:\n>  M src/cmd/go/pkg.go\n>  M src/cmd/go/test.bash\n>\n>\n> Index: src/cmd/go/pkg.go\n> ==============================**==============================**=======\n> --- a/src/cmd/go/pkg.go\n> +++ b/src/cmd/go/pkg.go\n> @@ -17,6 +17,7 @@\n>        \"sort\"\n>        \"strings\"\n>        \"time\"\n> +       \"unicode\"\n>  )\n>\n>  // A Package describes a single package found in a directory.\n> @@ -174,7 +175,16 @@\n>  // a special case, so that all the code to deal with ordinary imports\n> works\n>  // automatically.\n>  func dirToImportPath(dir string) string {\n> -       return pathpkg.Join(\"_\", strings.Replace(filepath.**ToSlash(dir),\n> \":\", \"_\", -1))\n> +       return pathpkg.Join(\"_\", strings.Map(makeImportValid,\n> filepath.ToSlash(dir)))\n> +}\n> +\n> +func makeImportValid(r rune) rune {\n> +       // Should match Go spec, compilers, and\n> ../../pkg/go/parser/parser.go:**/isValidImport.\n> +       const illegalChars = `!\"#$%&'()*,:;<=>?[\\]^{|}` + \"`\\uFFFD\"\n> +       if !unicode.IsGraphic(r) || unicode.IsSpace(r) ||\n> strings.ContainsRune(**illegalChars, r) {\n> +               return '_'\n> +       }\n> +       return r\n>  }\n>\n>  // loadImport scans the directory named by path, which must be an import\n> path,\n> Index: src/cmd/go/test.bash\n> ==============================**==============================**=======\n> --- a/src/cmd/go/test.bash\n> +++ b/src/cmd/go/test.bash\n> @@ -22,37 +22,50 @@\n>  done\n>\n>  # Test local (./) imports.\n> -./testgo build -o hello testdata/local/easy.go\n> -./hello >hello.out\n> -if ! grep -q '^easysub\\.Hello' hello.out; then\n> -       echo \"testdata/local/easy.go did not generate expected output\"\n> -       cat hello.out\n> -       ok=false\n> -fi\n> +testlocal() {\n> +       local=\"$1\"\n> +       ./testgo build -o hello \"testdata/$local/easy.go\"\n> +       ./hello >hello.out\n> +       if ! grep -q '^easysub\\.Hello' hello.out; then\n> +               echo \"testdata/$local/easy.go did not generate expected\n> output\"\n> +               cat hello.out\n> +               ok=false\n> +       fi\n> +\n> +       ./testgo build -o hello \"testdata/$local/easysub/main.**go\"\n> +       ./hello >hello.out\n> +       if ! grep -q '^easysub\\.Hello' hello.out; then\n> +               echo \"testdata/$local/easysub/main.**go did not generate\n> expected output\"\n> +               cat hello.out\n> +               ok=false\n> +       fi\n> +\n> +       ./testgo build -o hello \"testdata/$local/hard.go\"\n> +       ./hello >hello.out\n> +       if ! grep -q '^sub\\.Hello' hello.out || ! grep -q '^subsub\\.Hello'\n> hello.out ; then\n> +               echo \"testdata/$local/hard.go did not generate expected\n> output\"\n> +               cat hello.out\n> +               ok=false\n> +       fi\n> +\n> +       rm -f err.out hello.out hello\n> +\n> +       # Test that go install x.go fails.\n> +       if ./testgo install \"testdata/$local/easy.go\" >/dev/null 2>&1; then\n> +               echo \"go install testdata/$local/easy.go succeeded\"\n> +               ok=false\n> +       fi\n> +}\n>\n> -./testgo build -o hello testdata/local/easysub/main.go\n> -./hello >hello.out\n> -if ! grep -q '^easysub\\.Hello' hello.out; then\n> -       echo \"testdata/local/easysub/main.**go did not generate expected\n> output\"\n> -       cat hello.out\n> -       ok=false\n> -fi\n> +# Test local imports\n> +testlocal local\n>\n> -./testgo build -o hello testdata/local/hard.go\n> -./hello >hello.out\n> -if ! grep -q '^sub\\.Hello' hello.out || ! grep -q '^subsub\\.Hello'\n> hello.out ; then\n> -       echo \"testdata/local/hard.go did not generate expected output\"\n> -       cat hello.out\n> -       ok=false\n> -fi\n> -\n> -rm -f err.out hello.out hello\n> -\n> -# Test that go install x.go fails.\n> -if ./testgo install testdata/local/easy.go >/dev/null 2>&1; then\n> -       echo \"go install testdata/local/easy.go succeeded\"\n> -       ok=false\n> -fi\n> +# Test local imports again, with bad characters in the directory name.\n> +bad='#$%:, &()*;<=>?\\^{}'\n> +rm -rf \"testdata/$bad\"\n> +cp -R testdata/local \"testdata/$bad\"\n> +testlocal \"$bad\"\n> +rm -rf \"testdata/$bad\"\n>\n>  # Test tests with relative imports.\n>  if ! ./testgo test ./testdata/testimport; then\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-03-14 19:05:10.284518",
+			"approval": true
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5821048: cmd/go: fix directory->import path conversion",
+	"created": "2012-03-14 18:54:50.301176",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		6001
+	],
+	"modified": "2012-03-15 18:05:59.914108",
+	"closed": true,
+	"issue": 5821048
+}

@@ -1,0 +1,150 @@
+{
+	"description": "runtime: increase stack frame during cgo call on windows/amd64\n\nFixes issue 3945.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"minux.ma@gmail.com",
+		"vcc.163@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"vcc.163@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "While debugging:\n\npackage main\n\n// #include <stdio.h>\n//\n// void say() {\n//    printf(\"%s from C\\n\", \"hello\");\n// }\n//\nimport \"C\"\n\nfunc main() {\n\tC.say()\n}\n\non windows/amd64, I have discovered that stack is getting smashed during cgo call.\n\nWhat I see is:\n- we allocate 16 bytes on stack before calling gcc compiled say function;\n- say function is in-lined and does not use stack, just fiddles with some registers and makes couple of jumps;\n- then we end-up in printf msvcrt.dll;\n- first thing ms printf does is saves 4 \"fast-call\" registers in the stack-backed area that printf caller is supposed to reserve for it:\n\n(gdb) x/10i $rip\n=> 0x7fefe6a79b8 <printf>:      mov    %rsp,%rax\n   0x7fefe6a79bb <printf+3>:    mov    %rcx,0x8(%rax)\n   0x7fefe6a79bf <printf+7>:    mov    %rdx,0x10(%rax)\n   0x7fefe6a79c3 <printf+11>:   mov    %r8,0x18(%rax)\n   0x7fefe6a79c7 <printf+15>:   mov    %r9,0x20(%rax)\n   0x7fefe6a79cb <printf+19>:   push   %rbx\n   0x7fefe6a79cc <printf+20>:   push   %rsi\n   0x7fefe6a79cd <printf+21>:   sub    $0x38,%rsp\n   0x7fefe6a79d1 <printf+25>:   xor    %eax,%eax\n   0x7fefe6a79d3 <printf+27>:   test   %rcx,%rcx\n(gdb)\n\n- we reserved room for 2 registers only, so printf overwrites our stack where return SP is stored, so that is the end of road for our process.\n\nI am not sure what is the right way to fix it. I suppose, since printf is called by say function, it should be up to gcc to arrange stack. On the other hand I do not know what call convention is for gcc compiled functions. So, perhaps our call into that is wrong too. Looking at our runtime.asmcgocall, I do not understand why we reserve 16 bytes (http://codereview.appspot.com/4826041/), not more, not less.\n\nMeanwhile, I have decided to increase this stack space to fit all 4 registers. This solves printf issue. I can't see it hurt anywhere.\n\nLooking for comments.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-08-30 05:14:25.819210",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Aug 30, 2012 at 1:14 PM, <alex.brainman@gmail.com> wrote:\r\n>\r\n> What I see is:\r\n> - we allocate 16 bytes on stack before calling gcc compiled say\r\n> function;\r\n> - say function is in-lined and does not use stack, just fiddles with\r\n> some registers and makes couple of jumps;\r\n> - then we end-up in printf msvcrt.dll;\r\n> - first thing ms printf does is saves 4 \"fast-call\" registers in the\r\n> stack-backed area that printf caller is supposed to reserve for it:\r\n> - we reserved room for 2 registers only, so printf overwrites our stack\r\n> where return SP is stored, so that is the end of road for our process.\r\n>\r\n> I am not sure what is the right way to fix it. I suppose, since printf\r\n> is called by say function, it should be up to gcc to arrange stack. On\r\n>\r\nthis is the correct fix.\r\nwindows amd64 calling convention demands that caller leave 4*8 byte\r\nof space (no need to initialize them however) on stack for callee to save\r\nthe 4 arguments passed in registers.\r\n\r\n> the other hand I do not know what call convention is for gcc compiled\r\n>\r\nmingw gcc should use native windows amd64 calling convention.\r\n\r\n> functions. So, perhaps our call into that is wrong too. Looking at our\r\n> runtime.asmcgocall, I do not understand why we reserve 16 bytes\r\n> (http://codereview.appspot.**com/4826041/<http://codereview.appspot.com/4826041/>),\r\n> not more, not less.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-08-30 09:41:27.994140",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"vcc.163@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: minux.ma@gmail.com, vcc.163@gmail.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-08-30 05:11:23.178710",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"vcc.163@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, minux.ma@gmail.com (cc: golang-dev@googlegroups.com, vcc.163@gmail.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-31 02:36:08.659570",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"vcc.163@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for comments.\n\nhttp://codereview.appspot.com/6490056/diff/3/misc/cgo/test/issue3945.go\nFile misc/cgo/test/issue3945.go (right):\n\nhttp://codereview.appspot.com/6490056/diff/3/misc/cgo/test/issue3945.go#newcode5\nmisc/cgo/test/issue3945.go:5: package cgotest\nOn 2012/08/30 09:36:24, minux wrote:\n> add a comment mention issue 3945?\n\nDone.\n\nhttp://codereview.appspot.com/6490056/diff/3/src/pkg/runtime/asm_amd64.s\nFile src/pkg/runtime/asm_amd64.s (right):\n\nhttp://codereview.appspot.com/6490056/diff/3/src/pkg/runtime/asm_amd64.s#newcode487\nsrc/pkg/runtime/asm_amd64.s:487: // Now on a scheduling stack (a pthread-created stack).\nOn 2012/08/30 09:36:24, minux wrote:\n> add a comment explaining the stack layout?\n\nDone.",
+			"disapproval": false,
+			"date": "2012-08-31 02:36:15.100090",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"vcc.163@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6490056/diff/3/misc/cgo/test/issue3945.go\nFile misc/cgo/test/issue3945.go (right):\n\nhttp://codereview.appspot.com/6490056/diff/3/misc/cgo/test/issue3945.go#newcode5\nmisc/cgo/test/issue3945.go:5: package cgotest\nadd a comment mention issue 3945?\n\nhttp://codereview.appspot.com/6490056/diff/3/src/pkg/runtime/asm_amd64.s\nFile src/pkg/runtime/asm_amd64.s (right):\n\nhttp://codereview.appspot.com/6490056/diff/3/src/pkg/runtime/asm_amd64.s#newcode487\nsrc/pkg/runtime/asm_amd64.s:487: // Now on a scheduling stack (a pthread-created stack).\nadd a comment explaining the stack layout?",
+			"disapproval": false,
+			"date": "2012-08-30 09:36:24.208320",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"vcc.163@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\nstrangely, i can't find official document on this issue\n(x64 convention page only mentions the so-called shadow space once,)\n\nbut it seems our code does have mentioned this fact:\nhttp://code.google.com/p/go/source/browse/src/pkg/runtime/windows/amd64/sys.s?spec=svnb539ac52c3fd80fc29b7379531ba578a76e10b22&r=b539ac52c3fd80fc29b7379531ba578a76e10b22#153\n\nhttp://codereview.appspot.com/6490056/diff/9001/misc/cgo/test/issue3945.go\nFile misc/cgo/test/issue3945.go (right):\n\nhttp://codereview.appspot.com/6490056/diff/9001/misc/cgo/test/issue3945.go#newcode8\nmisc/cgo/test/issue3945.go:8: // See http://code.google.com/p/go/issues/detail?id=3945 for details.\nwe can just use http://golang.org/issue/3945",
+			"disapproval": false,
+			"date": "2012-08-31 07:15:50.785490",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"vcc.163@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/31 07:15:50, minux wrote:\n> \n> strangely, i can't find official document on this issue\n> (x64 convention page only mentions the so-called shadow space once,)\n> \n\nSome of my bookmarks on these:\n\nhttp://blogs.msdn.com/b/oldnewthing/archive/2004/01/14/58579.aspx\n\nhttp://blogs.msdn.com/b/freik/archive/2005/03/17/398200.aspx\n\nhttp://www.ntcore.com/files/vista_x64.htm\n\nhttp://msdn.microsoft.com/en-us/magazine/cc300794.aspx\n\nAlex",
+			"disapproval": false,
+			"date": "2012-09-03 00:50:56.761600",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"vcc.163@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=5c4859bc123f ***\n\nruntime: increase stack frame during cgo call on windows/amd64\n\nFixes issue 3945.\n\nR=golang-dev, minux.ma\nCC=golang-dev, vcc.163\nhttp://codereview.appspot.com/6490056\n\nhttp://codereview.appspot.com/6490056/diff/9001/misc/cgo/test/issue3945.go\nFile misc/cgo/test/issue3945.go (right):\n\nhttp://codereview.appspot.com/6490056/diff/9001/misc/cgo/test/issue3945.go#newcode8\nmisc/cgo/test/issue3945.go:8: // See http://code.google.com/p/go/issues/detail?id=3945 for details.\nOn 2012/08/31 07:15:50, minux wrote:\n> we can just use http://golang.org/issue/3945\n\nDone.",
+			"disapproval": false,
+			"date": "2012-09-03 02:12:58.105860",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 6490056: runtime: increase stack frame during cgo call on window...",
+	"created": "2012-08-30 05:02:55.567860",
+	"patchsets": [
+		1,
+		2001,
+		3,
+		9001,
+		7002
+	],
+	"modified": "2012-09-03 02:13:00.242570",
+	"closed": true,
+	"issue": 6490056
+}

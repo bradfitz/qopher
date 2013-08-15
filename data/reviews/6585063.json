@@ -1,0 +1,63 @@
+{
+	"description": "go/ast: track position of <- for channel types\n\nThis is a backward-compatible API change.\n\nWithout the correct <- position information,\ncertain channel types have incorrect position\ninformation.",
+	"cc": [
+		"iant@golang.org",
+		"iant@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Tue, Oct 2, 2012 at 5:38 PM,  <gri@golang.org> wrote:\r\n> Reviewers: iant,\r\n>\r\n> Message:\r\n> Hello iant@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> go/ast: track position of <- for channel types\r\n>\r\n> This is a backward-compatible API change.\r\n>\r\n> Without the correct <- position information,\r\n> certain channel types have incorrect position\r\n> information.\r\n>\r\n> Please review this at http://codereview.appspot.com/6585063/\r\n>\r\n> Affected files:\r\n>   M src/pkg/go/ast/ast.go\r\n>   M src/pkg/go/parser/parser.go\r\n>   M src/pkg/go/parser/short_test.go\r\n>   M src/pkg/go/printer/nodes.go\r\n>\r\n>\r\n> Index: src/pkg/go/ast/ast.go\r\n> ===================================================================\r\n> --- a/src/pkg/go/ast/ast.go\r\n> +++ b/src/pkg/go/ast/ast.go\r\n> @@ -407,6 +407,7 @@\r\n>         // A ChanType node represents a channel type.\r\n>         ChanType struct {\r\n>                 Begin token.Pos // position of \"chan\" keyword or \"<-\"\r\n> (whichever comes first)\r\n> +               Arrow token.Pos // position of \"<-\" (noPos if there is no\r\n> \"<-\")\r\n>                 Dir   ChanDir   // channel direction\r\n>                 Value Expr      // value type\r\n>         }\r\n> Index: src/pkg/go/parser/parser.go\r\n> ===================================================================\r\n> --- a/src/pkg/go/parser/parser.go\r\n> +++ b/src/pkg/go/parser/parser.go\r\n> @@ -924,20 +924,22 @@\r\n>\r\n>         pos := p.pos\r\n>         dir := ast.SEND | ast.RECV\r\n> +       var arrow token.Pos\r\n>         if p.tok == token.CHAN {\r\n>                 p.next()\r\n>                 if p.tok == token.ARROW {\r\n> +                       arrow = p.pos\r\n>                         p.next()\r\n>                         dir = ast.SEND\r\n>                 }\r\n>         } else {\r\n> -               p.expect(token.ARROW)\r\n> +               arrow = p.expect(token.ARROW)\r\n>                 p.expect(token.CHAN)\r\n>                 dir = ast.RECV\r\n>         }\r\n>         value := p.parseType()\r\n>\r\n> -       return &ast.ChanType{Begin: pos, Dir: dir, Value: value}\r\n> +       return &ast.ChanType{Begin: pos, Arrow: arrow, Dir: dir, Value:\r\n> value}\r\n>  }\r\n>\r\n>  // If the result is an identifier, it is not resolved.\r\n> @@ -1397,7 +1399,7 @@\r\n>\r\n>         case token.ARROW:\r\n>                 // channel type or receive expression\r\n> -               pos := p.pos\r\n> +               arrow := p.pos\r\n>                 p.next()\r\n>\r\n>                 // If the next token is token.CHAN we still don't know if it\r\n> @@ -1421,29 +1423,25 @@\r\n>                         // (<-type)\r\n>\r\n>                         // re-associate position info and <-\r\n> -                       arrow := true\r\n> -                       for ok && arrow {\r\n> -                               begin := typ.Begin\r\n> +                       dir := ast.SEND\r\n> +                       for ok && dir == ast.SEND {\r\n>                                 if typ.Dir == ast.RECV {\r\n>                                         // error: (<-type) is (<-(<-chan T))\r\n> -                                       p.errorExpected(begin, \"'chan'\")\r\n> +                                       p.errorExpected(typ.Arrow, \"'chan'\")\r\n>                                 }\r\n> -                               arrow = typ.Dir == ast.SEND\r\n> -                               typ.Begin = pos\r\n> -                               typ.Dir = ast.RECV\r\n> +                               arrow, typ.Begin, typ.Arrow = typ.Arrow,\r\n> arrow, arrow\r\n> +                               dir, typ.Dir = typ.Dir, ast.RECV\r\n>                                 typ, ok = typ.Value.(*ast.ChanType)\r\n> -                               // TODO(gri) ast.ChanType should store exact\r\n> <- position\r\n> -                               pos = begin // estimate (we don't have the\r\n> exact position of <- for send channels)\r\n>                         }\r\n> -                       if arrow {\r\n> -                               p.errorExpected(pos, \"'chan'\")\r\n> +                       if dir == ast.SEND {\r\n> +                               p.errorExpected(arrow, \"channel type\")\r\n>                         }\r\n>\r\n>                         return x\r\n>                 }\r\n>\r\n>                 // <-(expr)\r\n> -               return &ast.UnaryExpr{OpPos: pos, Op: token.ARROW, X:\r\n> p.checkExpr(x)}\r\n> +               return &ast.UnaryExpr{OpPos: arrow, Op: token.ARROW, X:\r\n> p.checkExpr(x)}\r\n>\r\n>         case token.MUL:\r\n>                 // pointer type or unary \"*\" expression\r\n> Index: src/pkg/go/parser/short_test.go\r\n> ===================================================================\r\n> --- a/src/pkg/go/parser/short_test.go\r\n> +++ b/src/pkg/go/parser/short_test.go\r\n> @@ -69,7 +69,7 @@\r\n>         `package p; var a = <- /* ERROR \"expected expression\" */ chan int;`,\r\n>         `package p; func f() { select { case _ <- chan /* ERROR \"expected\r\n> expression\" */ int: } };`,\r\n>         `package p; func f() { _ = (<-<- /* ERROR \"expected 'chan'\" */ chan\r\n> int)(nil) };`,\r\n> -       `package p; func f() { _ = (<-chan<-chan<-chan<-chan<-chan /* ERROR\r\n> \"expected 'chan'\" */ <-int)(nil) };`,\r\n> +       `package p; func f() { _ = (<-chan<-chan<-chan<-chan<-chan<- /*\r\n> ERROR \"expected channel type\" */ int)(nil) };`,\r\n>  }\r\n>\r\n>  func TestInvalid(t *testing.T) {\r\n> Index: src/pkg/go/printer/nodes.go\r\n> ===================================================================\r\n> --- a/src/pkg/go/printer/nodes.go\r\n> +++ b/src/pkg/go/printer/nodes.go\r\n> @@ -853,9 +853,9 @@\r\n>                 case ast.SEND | ast.RECV:\r\n>                         p.print(token.CHAN)\r\n>                 case ast.RECV:\r\n> -                       p.print(token.ARROW, token.CHAN)\r\n> +                       p.print(token.ARROW, token.CHAN) // x.Arrow and\r\n> x.Pos() are the same\r\n>                 case ast.SEND:\r\n> -                       p.print(token.CHAN, token.ARROW)\r\n> +                       p.print(token.CHAN, x.Arrow, token.ARROW)\r\n>                 }\r\n>                 p.print(blank)\r\n>                 p.expr(x.Value)\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-03 00:47:34.272150",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"iant@golang.org",
+				"iant@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=3ae6c87de7f2 ***\n\ngo/ast: track position of <- for channel types\n\nThis is a backward-compatible API change.\n\nWithout the correct <- position information,\ncertain channel types have incorrect position\ninformation.\n\nR=iant, iant\nCC=golang-dev\nhttp://codereview.appspot.com/6585063",
+			"disapproval": false,
+			"date": "2012-10-03 00:50:43.235210",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello iant@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-10-03 00:38:59.003840",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 6585063: go/ast: track position of <- for channel types",
+	"created": "2012-10-03 00:36:04.796180",
+	"patchsets": [
+		1,
+		1002,
+		4001,
+		4007
+	],
+	"modified": "2012-10-03 00:50:44.776800",
+	"closed": true,
+	"issue": 6585063
+}

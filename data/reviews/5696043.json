@@ -1,0 +1,142 @@
+{
+	"description": "runtime: linux signal masking\n\nFixes issue 3101 (Linux).",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"minux.ma@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Feb 22, 2012 at 23:55, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> Isn't the whole point of this CL to make the arm build more stable? \u00a0:-)\n\nIf it gets more stable, I will have succeeded.  :-)\n\n> I though that was the only builder where we're suspecting this is biting us.\n\nIt can theoretically happen on all systems with signals.  We've seen it on\nthree builders - freebsd/* and linux/arm - so I'm fixing it everywhere.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-23 04:56:45.582281",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-23 04:26:16.415977",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\ndon't care about the return value of sigprocmask?\n\nOn Thu, Feb 23, 2012 at 3:26 PM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> runtime: linux signal masking\n>\n> The Linux half of issue 3101.\n>\n> Please review this at http://codereview.appspot.com/**5696043/<http://codereview.appspot.com/5696043/>\n>\n> Affected files:\n>  M src/pkg/runtime/os_linux.h\n>  M src/pkg/runtime/sys_linux_386.**s\n>  M src/pkg/runtime/sys_linux_**amd64.s\n>  M src/pkg/runtime/sys_linux_arm.**s\n>  M src/pkg/runtime/thread_linux.c\n>\n>\n> Index: src/pkg/runtime/os_linux.h\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/os_linux.h\n> +++ b/src/pkg/runtime/os_linux.h\n> @@ -22,3 +22,14 @@\n>\n>  #define        NSIG    65\n>  #define        SI_USER 0\n> +\n> +// It's hard to tease out exactly how big a Sigset is, but\n> +// rt_sigprocmask crashes if we get it wrong, so if binaries\n> +// are running, this is right.\n> +typedef struct Sigset Sigset;\n> +struct Sigset\n> +{\n> +       uint32 mask[2];\n> +};\n> +void   runtime\u00b7rtsigprocmask(int32, Sigset*, Sigset*, int32);\n> +#define SIG_SETMASK 2\n> Index: src/pkg/runtime/sys_linux_386.**s\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/sys_linux_**386.s\n> +++ b/src/pkg/runtime/sys_linux_**386.s\n> @@ -136,6 +136,18 @@\n>        MOVL    DX, 4(DI)\n>        RET\n>\n> +TEXT runtime\u00b7rtsigprocmask(SB),7,$0\n> +       MOVL    $175, AX                // syscall entry\n> +       MOVL    4(SP), BX\n> +       MOVL    8(SP), CX\n> +       MOVL    12(SP), DX\n> +       MOVL    16(SP), SI\n> +       CALL    *runtime\u00b7_vdso(SB)\n> +       CMPL    AX, $0xfffff001\n> +       JLS     2(PC)\n> +       INT $3\n> +       RET\n> +\n>  TEXT runtime\u00b7rt_sigaction(SB),7,$0\n>        MOVL    $174, AX                // syscall - rt_sigaction\n>        MOVL    4(SP), BX\n> Index: src/pkg/runtime/sys_linux_**amd64.s\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/sys_linux_**amd64.s\n> +++ b/src/pkg/runtime/sys_linux_**amd64.s\n> @@ -123,6 +123,18 @@\n>        ADDQ    DX, AX\n>        RET\n>\n> +TEXT runtime\u00b7rtsigprocmask(SB),7,$**0-32\n> +       MOVL    8(SP), DI\n> +       MOVQ    16(SP), SI\n> +       MOVQ    24(SP), DX\n> +       MOVL    32(SP), R10\n> +       MOVL    $14, AX                 // syscall entry\n> +       SYSCALL\n> +       CMPQ    AX, $0xfffffffffffff001\n> +       JLS     2(PC)\n> +       CALL    runtime\u00b7notok(SB)\n> +       RET\n> +\n>  TEXT runtime\u00b7rt_sigaction(SB),7,$0-**32\n>        MOVL    8(SP), DI\n>        MOVQ    16(SP), SI\n> Index: src/pkg/runtime/sys_linux_arm.**s\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/sys_linux_**arm.s\n> +++ b/src/pkg/runtime/sys_linux_**arm.s\n> @@ -23,6 +23,7 @@\n>  #define SYS_clone (SYS_BASE + 120)\n>  #define SYS_rt_sigreturn (SYS_BASE + 173)\n>  #define SYS_rt_sigaction (SYS_BASE + 174)\n> +#define SYS_rt_sigprocmask (SYS_BASE + 175)\n>  #define SYS_sigaltstack (SYS_BASE + 186)\n>  #define SYS_mmap2 (SYS_BASE + 192)\n>  #define SYS_futex (SYS_BASE + 240)\n> @@ -292,6 +293,15 @@\n>\n>        RET\n>\n> +TEXT runtime\u00b7rtsigprocmask(SB),7,$0\n> +       MOVW    0(FP), R0\n> +       MOVW    4(FP), R1\n> +       MOVW    8(FP), R2\n> +       MOVW    12(FP), R3\n> +       MOVW    $SYS_rt_sigprocmask, R7\n> +       SWI     $0\n> +       RET\n> +\n>  TEXT runtime\u00b7rt_sigaction(SB),7,$0\n>        MOVW    0(FP), R0\n>        MOVW    4(FP), R1\n> Index: src/pkg/runtime/thread_linux.c\n> ==============================**==============================**=======\n> --- a/src/pkg/runtime/thread_**linux.c\n> +++ b/src/pkg/runtime/thread_**linux.c\n> @@ -13,6 +13,9 @@\n>  int32 runtime\u00b7close(int32);\n>  int32 runtime\u00b7read(int32, void*, int32);\n>\n> +static Sigset sigset_all = { ~(uint32)0, ~(uint32)0 };\n> +static Sigset sigset_none;\n> +\n>  // Linux futex.\n>  //\n>  //     futexsleep(uint32 *addr, uint32 val)\n> @@ -135,6 +138,7 @@\n>  {\n>        int32 ret;\n>        int32 flags;\n> +       Sigset oset;\n>\n>        /*\n>         * note: strace gets confused if we use CLONE_PTRACE here.\n> @@ -152,7 +156,13 @@\n>                        stk, m, g, fn, runtime\u00b7clone, m->id, m->tls[0], &m);\n>        }\n>\n> -       if((ret = runtime\u00b7clone(flags, stk, m, g, fn)) < 0) {\n> +       // Disable signals during clone, so that the new thread starts\n> +       // with signals disabled.  It will enable them in minit.\n> +       runtime\u00b7rtsigprocmask(SIG_**SETMASK, &sigset_all, &oset, sizeof\n> oset);\n> +       ret = runtime\u00b7clone(flags, stk, m, g, fn);\n> +       runtime\u00b7rtsigprocmask(SIG_**SETMASK, &oset, nil, sizeof oset);\n> +\n> +       if(ret < 0) {\n>                runtime\u00b7printf(\"runtime: failed to create new OS thread\n> (have %d already; errno=%d)\\n\", runtime\u00b7mcount(), -ret);\n>                runtime\u00b7throw(\"runtime.**newosproc\");\n>        }\n> @@ -177,6 +187,7 @@\n>        // Initialize signal handling.\n>        m->gsignal = runtime\u00b7malg(32*1024);     // OS X wants >=8K, Linux\n> >=2K\n>        runtime\u00b7signalstack(m->**gsignal->stackguard - StackGuard,\n> 32*1024);\n> +       runtime\u00b7rtsigprocmask(SIG_**SETMASK, &sigset_none, nil, sizeof\n> sigset_none);\n>  }\n>\n>  void\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-23 04:32:02.521592",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Feb 23, 2012 at 3:32 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\n\n> LGTM\n>\n> don't care about the return value of sigprocmask?\n>\n\noh, nevermind, it only fails if `how' is wrong.\n",
+			"disapproval": false,
+			"date": "2012-02-23 04:32:39.088120",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Feb 23, 2012 at 3:48 PM, Russ Cox <rsc@golang.org> wrote:\n\n> On Wed, Feb 22, 2012 at 23:41, Brad Fitzpatrick <bradfitz@golang.org>\n> wrote:\n> > I don't see how/where arm does it, though.\n>\n> It is true - arm doesn't do it.  The other architectures\n> have always had that 'crash on unexpected syscall failure'\n> but for whatever reason arm never has.  Rather than try to\n> write one from scratch (I could just copy the others) I left\n> this one like all the others on arm.\n>\n\nLGTM\n\nCould be done as a separate CL but honestly I am happy\n> to just back slowly away from the arm.\n\n\nIsn't the whole point of this CL to make the arm build more stable?  :-)\n\nI though that was the only builder where we're suspecting this is biting us.\n",
+			"disapproval": false,
+			"date": "2012-02-23 04:55:13.388632",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Feb 23, 2012 at 12:48 PM, Russ Cox <rsc@golang.org> wrote:\n\n> On Wed, Feb 22, 2012 at 23:41, Brad Fitzpatrick <bradfitz@golang.org>\n> wrote:\n> > I don't see how/where arm does it, though.\n>\n> It is true - arm doesn't do it.  The other architectures\n> have always had that 'crash on unexpected syscall failure'\n> but for whatever reason arm never has.  Rather than try to\n> write one from scratch (I could just copy the others) I left\n> this one like all the others on arm.\n>\n> Could be done as a separate CL but honestly I am happy\n> to just back slowly away from the arm.\n\nDo you mind me submitting a CL for this? Adding all the guard code will\nmake us discover\nunexpected syscall failure earlier, which is a good thing.\n",
+			"disapproval": false,
+			"date": "2012-02-23 09:58:30.446908",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Do you mind me submitting a CL for this? Adding all the guard code will make\n> us discover\n> unexpected syscall failure earlier, which is a good thing.\n\nSure, but since you have the builder, please test it there\nbefore sending it to us.  :-)\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-23 16:51:10.339599",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=0a066e2b5836 ***\n\nruntime: linux signal masking\n\nFixes issue 3101 (Linux).\n\nR=golang-dev, bradfitz, minux.ma\nCC=golang-dev\nhttp://codereview.appspot.com/5696043",
+			"disapproval": false,
+			"date": "2012-02-23 19:44:00.558586",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Feb 23, 2012 at 3:34 PM, Russ Cox <rsc@golang.org> wrote:\n\n> On Wed, Feb 22, 2012 at 23:32, Brad Fitzpatrick <bradfitz@golang.org>\n> wrote:\n> > don't care about the return value of sigprocmask?\n>\n> i do care.\n> if sigprocmask retruns an error the assembly\n> jumps to notok, which crashes the program.\n>\n\nAh, I saw that for amd64 but not 386 or arm, so I assumed it was some\namd64-specific calling convention thing, just skimming those parts.\n\nI don't see how/where arm does it, though.\n",
+			"disapproval": false,
+			"date": "2012-02-23 04:41:03.036883",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Feb 22, 2012 at 23:41, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> I don't see how/where arm does it, though.\n\nIt is true - arm doesn't do it.  The other architectures\nhave always had that 'crash on unexpected syscall failure'\nbut for whatever reason arm never has.  Rather than try to\nwrite one from scratch (I could just copy the others) I left\nthis one like all the others on arm.\n\nCould be done as a separate CL but honestly I am happy\nto just back slowly away from the arm.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-23 04:48:11.582416",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Feb 22, 2012 at 23:32, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> don't care about the return value of\u00a0sigprocmask?\n\ni do care.\nif sigprocmask retruns an error the assembly\njumps to notok, which crashes the program.\n",
+			"disapproval": false,
+			"date": "2012-02-23 04:34:32.524832",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5696043: runtime: linux signal masking",
+	"created": "2012-02-23 04:25:51.232017",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		4008
+	],
+	"modified": "2012-02-23 19:44:01.341639",
+	"closed": true,
+	"issue": 5696043
+}

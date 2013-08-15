@@ -1,0 +1,224 @@
+{
+	"description": "net: make IP address selection work correctly on IPv6-only kernel\n\nUpdate issue 3610\nUpdate issue 5267\nUpdate issue 5707",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"dave@cheney.net",
+		"fvbommel@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-07-27 07:48:27.103690",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you update the CL description with an explanation of what this is doing?\r\n\r\nWhat was inaccurate before that is accurate now, and why? What is changing?\r\n\r\n\r\n\r\n\r\nOn Sat, Jul 27, 2013 at 12:48 AM, <mikioh.mikioh@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> net: more accurate IP address selection on single, dual stack kernels\r\n>\r\n> Update issue 3610\r\n> Update issue 5267\r\n> Update issue 5707\r\n>\r\n> Please review this at https://codereview.appspot.**com/11958043/<https://codereview.appspot.com/11958043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/ipsock.go\r\n>   M src/pkg/net/ipsock_plan9.go\r\n>   M src/pkg/net/ipsock_posix.go\r\n>\r\n>\r\n> Index: src/pkg/net/ipsock.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ipsock.go\r\n> +++ b/src/pkg/net/ipsock.go\r\n> @@ -8,10 +8,11 @@\r\n>\r\n>  import \"time\"\r\n>\r\n> -var supportsIPv6, supportsIPv4map bool\r\n> +var supportsIPv4, supportsIPv6, supportsIPv4map bool\r\n>\r\n>  func init() {\r\n>         sysInit()\r\n> +       supportsIPv4 = probeIPv4Stack()\r\n>         supportsIPv6, supportsIPv4map = probeIPv6Stack()\r\n>  }\r\n>\r\n> @@ -41,23 +42,27 @@\r\n>         return nil\r\n>  }\r\n>\r\n> -func anyaddr(x IP) IP {\r\n> -       if x4 := x.To4(); x4 != nil {\r\n> -               return x4\r\n> -       }\r\n> -       if supportsIPv6 {\r\n> -               return x\r\n> +func anyaddr(ip IP) IP {\r\n> +       if ip4 := ip.To4(); ip4 != nil && supportsIPv4 {\r\n> +               return ip4\r\n> +       } else if len(ip) == IPv6len && supportsIPv6 {\r\n> +               return ip\r\n>         }\r\n>         return nil\r\n>  }\r\n>\r\n> -func ipv4only(x IP) IP { return x.To4() }\r\n> +func ipv4only(ip IP) IP {\r\n> +       if ip.To4() != nil && supportsIPv4 {\r\n> +               return ip\r\n> +       }\r\n> +       return nil\r\n> +}\r\n>\r\n> -func ipv6only(x IP) IP {\r\n> +func ipv6only(ip IP) IP {\r\n>         // Only return addresses that we can use\r\n>         // with the kernel's IPv6 addressing modes.\r\n> -       if len(x) == IPv6len && x.To4() == nil && supportsIPv6 {\r\n> -               return x\r\n> +       if len(ip) == IPv6len && ip.To4() == nil && supportsIPv6 {\r\n> +               return ip\r\n>         }\r\n>         return nil\r\n>  }\r\n> Index: src/pkg/net/ipsock_plan9.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ipsock_plan9.go\r\n> +++ b/src/pkg/net/ipsock_plan9.go\r\n> @@ -12,6 +12,10 @@\r\n>         \"syscall\"\r\n>  )\r\n>\r\n> +func probeIPv4Stack() bool {\r\n> +       return true\r\n> +}\r\n> +\r\n>  // probeIPv6Stack returns two boolean values.  If the first boolean\r\n>  // value is true, kernel supports basic IPv6 functionality.  If the\r\n>  // second boolean value is true, kernel supports IPv6 IPv4-mapping.\r\n> Index: src/pkg/net/ipsock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ipsock_posix.go\r\n> +++ b/src/pkg/net/ipsock_posix.go\r\n> @@ -13,6 +13,15 @@\r\n>         \"time\"\r\n>  )\r\n>\r\n> +func probeIPv4Stack() bool {\r\n> +       s, err := syscall.Socket(syscall.AF_**INET, syscall.SOCK_STREAM,\r\n> syscall.IPPROTO_TCP)\r\n> +       if err != nil {\r\n> +               return false\r\n> +       }\r\n> +       closesocket(s)\r\n> +       return true\r\n> +}\r\n> +\r\n>  // Should we try to use the IPv4 socket interface if we're\r\n>  // only dealing with IPv4 sockets?  As long as the host system\r\n>  // understands IPv6, it's okay to pass IPv4 addresses to the IPv6\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-27 16:21:17.992920",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for this proposal, here are some comments.\n\nI agree with Brad that the description might be better written as\n\nnet: check if the host has a functioning IPv4 stack.\n\nhttps://codereview.appspot.com/11958043/diff/6001/src/pkg/net/ipsock.go\nFile src/pkg/net/ipsock.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/6001/src/pkg/net/ipsock.go#newcode10\nsrc/pkg/net/ipsock.go:10: \ni'd like to see a small comment about each of these, ie\n\nvar (\n    // supportsIPv4 indicates the host has a functioning IPv4 network stack.\n    supportsIPv4 bool\n\n    // supportsIPv4map indicates the host transparently maps IPv4 address space\n    // into iPV6 space at [magic prefix]\n    supportsIPv4map\n\n    // supportsIPv6 ...\n...\n)\n\nhttps://codereview.appspot.com/11958043/diff/6001/src/pkg/net/ipsock.go#newcode46\nsrc/pkg/net/ipsock.go:46: if ip4 := ip.To4(); ip4 != nil && supportsIPv4 {\nshouldn't the supportsIPv4 condition com before ? ie, there is no point in seeing if ip is an ipv4 address if this system cannot use it?\n\nif supportsIPv4 {\n   if ip := ip.To4(); ip != nil {\n      return ip\n   }\n}\nif supportsIPv6 {\n   ...\n}\nreturn nil\n\nhttps://codereview.appspot.com/11958043/diff/6001/src/pkg/net/ipsock.go#newcode56\nsrc/pkg/net/ipsock.go:56: return ip\nplease add a comment similar to the ipv6only below\n\nalso consider rearranging the order of the check.",
+			"disapproval": false,
+			"date": "2013-07-28 00:37:44.565370",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-07-28 04:49:43.085010",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "thanks both for the comments, ptal.\n\nhttps://codereview.appspot.com/11958043/diff/6001/src/pkg/net/ipsock.go\nFile src/pkg/net/ipsock.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/6001/src/pkg/net/ipsock.go#newcode10\nsrc/pkg/net/ipsock.go:10: \nOn 2013/07/28 00:37:44, dfc wrote:\n> i'd like to see a small comment about each of these, ie\n> \n> var (\n>     // supportsIPv4 indicates the host has a functioning IPv4 network stack.\n>     supportsIPv4 bool\n> \n>     // supportsIPv4map indicates the host transparently maps IPv4 address space\n>     // into iPV6 space at [magic prefix]\n>     supportsIPv4map\n> \n>     // supportsIPv6 ...\n> ...\n> )\n\nDone.\n\nhttps://codereview.appspot.com/11958043/diff/6001/src/pkg/net/ipsock.go#newcode46\nsrc/pkg/net/ipsock.go:46: if ip4 := ip.To4(); ip4 != nil && supportsIPv4 {\nOn 2013/07/28 00:37:44, dfc wrote:\n> shouldn't the supportsIPv4 condition com before ? ie, there is no point in\n> seeing if ip is an ipv4 address if this system cannot use it?\n> \n> if supportsIPv4 {\n>    if ip := ip.To4(); ip != nil {\n>       return ip\n>    }\n> }\n> if supportsIPv6 {\n>    ...\n> }\n> return nil\n\nDone.\n\nhttps://codereview.appspot.com/11958043/diff/6001/src/pkg/net/ipsock.go#newcode56\nsrc/pkg/net/ipsock.go:56: return ip\nOn 2013/07/28 00:37:44, dfc wrote:\n> please add a comment similar to the ipv6only below\n> \n> also consider rearranging the order of the check.\n\nDone.\n\nhttps://codereview.appspot.com/11958043/diff/6001/src/pkg/net/ipsock.go#newcode56\nsrc/pkg/net/ipsock.go:56: return ip\nAlso this should return a surely 4-byte stuff.",
+			"disapproval": false,
+			"date": "2013-07-28 04:51:08.240920",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM. Please wait for bradfitz.",
+			"disapproval": false,
+			"date": "2013-07-28 04:59:28.649610",
+			"approval": true
+		},
+		{
+			"sender": "fvbommel@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"fvbommel@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11958043/diff/13001/src/pkg/net/ipsock.go\nFile src/pkg/net/ipsock.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/13001/src/pkg/net/ipsock.go#newcode16\nsrc/pkg/net/ipsock.go:16: // supportsIPv6 reports whether the plaffrom supports IPv6\ns/plaffrom/platform/\n\nhttps://codereview.appspot.com/11958043/diff/13001/src/pkg/net/ipsock.go#newcode20\nsrc/pkg/net/ipsock.go:20: // supportsIPv4map reports whether the plafform supports\ns/plaffrom/platform/\n\nhttps://codereview.appspot.com/11958043/diff/13001/src/pkg/net/ipsock.go#newcode21\nsrc/pkg/net/ipsock.go:21: // tranport layer interoperations between IPv4 and IPv6 using\ns/tranport/transport/",
+			"disapproval": false,
+			"date": "2013-07-28 07:35:41.550950",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"fvbommel@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks.\n\nhttps://codereview.appspot.com/11958043/diff/13001/src/pkg/net/ipsock.go\nFile src/pkg/net/ipsock.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/13001/src/pkg/net/ipsock.go#newcode16\nsrc/pkg/net/ipsock.go:16: // supportsIPv6 reports whether the plaffrom supports IPv6\nOn 2013/07/28 07:35:41, fvb wrote:\n> s/plaffrom/platform/\n\nDone.\n\nhttps://codereview.appspot.com/11958043/diff/13001/src/pkg/net/ipsock.go#newcode20\nsrc/pkg/net/ipsock.go:20: // supportsIPv4map reports whether the plafform supports\nOn 2013/07/28 07:35:41, fvb wrote:\n> s/plaffrom/platform/\n\nDone.\n\nhttps://codereview.appspot.com/11958043/diff/13001/src/pkg/net/ipsock.go#newcode21\nsrc/pkg/net/ipsock.go:21: // tranport layer interoperations between IPv4 and IPv6 using\nOn 2013/07/28 07:35:41, fvb wrote:\n> s/tranport/transport/\n\nDone.",
+			"disapproval": false,
+			"date": "2013-07-28 07:41:28.344300",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"fvbommel@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping",
+			"disapproval": false,
+			"date": "2013-07-31 03:32:32.911520",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"fvbommel@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock.go\nFile src/pkg/net/ipsock.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock.go#newcode20\nsrc/pkg/net/ipsock.go:20: // supportsIPv4map reports whether the platform supports\nthis comment is somewhat ambiguous about whether it's mapping IPv4 into IPv6 or IPv6 into IPv4.\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock.go#newcode21\nsrc/pkg/net/ipsock.go:21: // transport layer interoperations between IPv4 and IPv6 using\ninteroperability\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock.go#newcode58\nsrc/pkg/net/ipsock.go:58: func anyaddr(ip IP) IP {\ncan you document what this is supposed to be doing?\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock_plan9.go\nFile src/pkg/net/ipsock_plan9.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock_plan9.go#newcode16\nsrc/pkg/net/ipsock_plan9.go:16: return true\nadd a TODO in here and probeIPv6Stack to implement this on plan9?\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock_posix.go\nFile src/pkg/net/ipsock_posix.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock_posix.go#newcode18\nsrc/pkg/net/ipsock_posix.go:18: if err != nil {\nI suppose the error could be something like EMFILE instead of EPROTONOSUPPORT or EAFNOSUPPORT, but seems unlikely in init.",
+			"disapproval": false,
+			"date": "2013-08-01 21:44:12.446860",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"fvbommel@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock.go\nFile src/pkg/net/ipsock.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock.go#newcode20\nsrc/pkg/net/ipsock.go:20: // supportsIPv4map reports whether the platform supports\nOn 2013/08/01 21:44:12, bradfitz wrote:\n> this comment is somewhat ambiguous about whether it's mapping IPv4 into IPv6 or\n> IPv6 into IPv4.\n\nadd references.\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock.go#newcode21\nsrc/pkg/net/ipsock.go:21: // transport layer interoperations between IPv4 and IPv6 using\nOn 2013/08/01 21:44:12, bradfitz wrote:\n> interoperability\n\nDone.\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock.go#newcode58\nsrc/pkg/net/ipsock.go:58: func anyaddr(ip IP) IP {\nOn 2013/08/01 21:44:12, bradfitz wrote:\n> can you document what this is supposed to be doing?\n\nDone.\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock_plan9.go\nFile src/pkg/net/ipsock_plan9.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock_plan9.go#newcode16\nsrc/pkg/net/ipsock_plan9.go:16: return true\nOn 2013/08/01 21:44:12, bradfitz wrote:\n> add a TODO in here and probeIPv6Stack to implement this on plan9?\n\nDone.\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock_posix.go\nFile src/pkg/net/ipsock_posix.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/21001/src/pkg/net/ipsock_posix.go#newcode18\nsrc/pkg/net/ipsock_posix.go:18: if err != nil {\nOn 2013/08/01 21:44:12, bradfitz wrote:\n> I suppose the error could be something like EMFILE instead of EPROTONOSUPPORT or\n> EAFNOSUPPORT, but seems unlikely in init.\n> \n\nunlikely but perhaps other error happens and still IPv4 is kinda lifeline.\nfor now i\"ll take either EPROTONOSUPPORT or EAFNOSUPPORT as a signal\nof the lack of IPv4 functionality.",
+			"disapproval": false,
+			"date": "2013-08-02 08:46:46.634270",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"fvbommel@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nbut see comments on comments\n\nhttps://codereview.appspot.com/11958043/diff/30001/src/pkg/net/ipsock.go\nFile src/pkg/net/ipsock.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/30001/src/pkg/net/ipsock.go#newcode25\nsrc/pkg/net/ipsock.go:25: // See RFC 4291, RFC 4038 and RFC 3493 for more inforamtion\ntypo: information.\n\nBut all those words don't add anything.  You can just say:\n\n\"See RFC 4291, 4038 and 3493.\"\n\nActually the whole comment is long.  You can probably just say:\n\n// supportsIPv4map reports whether the platform supports\n// mapping an IPv4 address inside an IPv6 address.\n// See RFC 4291, 4038 and 3493.\n\nAt least, those sound the same to me, but one has fewer words.\n\nhttps://codereview.appspot.com/11958043/diff/30001/src/pkg/net/ipsock.go#newcode64\nsrc/pkg/net/ipsock.go:64: // kernel configuraiton.\ntypo: configuration\n\nBut this comment doesn't say much.  It just says \"anyaddr returns a thing\".  I'd say something about whether this ever returns nil.",
+			"disapproval": false,
+			"date": "2013-08-02 17:32:40.011590",
+			"approval": true
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"fvbommel@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7c06f390d1ad ***\n\nnet: make IP address selection work correctly on IPv6-only kernel\n\nUpdate issue 3610\nUpdate issue 5267\nUpdate issue 5707\n\nR=golang-dev, bradfitz, dave, fvbommel\nCC=golang-dev\nhttps://codereview.appspot.com/11958043\n\nhttps://codereview.appspot.com/11958043/diff/30001/src/pkg/net/ipsock.go\nFile src/pkg/net/ipsock.go (right):\n\nhttps://codereview.appspot.com/11958043/diff/30001/src/pkg/net/ipsock.go#newcode25\nsrc/pkg/net/ipsock.go:25: // See RFC 4291, RFC 4038 and RFC 3493 for more inforamtion\nOn 2013/08/02 17:32:40, bradfitz wrote:\n> Actually the whole comment is long.  You can probably just say:\n> \n> // supportsIPv4map reports whether the platform supports\n> // mapping an IPv4 address inside an IPv6 address.\n> // See RFC 4291, 4038 and 3493.\n> \n> At least, those sound the same to me, but one has fewer words.\n\nThanks, will go w/ yours + \"mapping ... at transport layer protocols\".\n\nhttps://codereview.appspot.com/11958043/diff/30001/src/pkg/net/ipsock.go#newcode64\nsrc/pkg/net/ipsock.go:64: // kernel configuraiton.\nOn 2013/08/02 17:32:40, bradfitz wrote:\n> typo: configuration\n> \n> But this comment doesn't say much.  It just says \"anyaddr returns a thing\".  I'd\n> say something about whether this ever returns nil.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-08-03 03:17:13.323380",
+			"approval": false
+		}
+	],
+	"owner_email": "mikioh.mikioh@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "mikio",
+	"subject": "code review 11958043: net: make IP address selection work correctly on IPv6-o...",
+	"created": "2013-07-27 05:01:59.618760",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		13001,
+		21001,
+		30001,
+		36001
+	],
+	"modified": "2013-08-03 03:17:17.397740",
+	"closed": true,
+	"issue": 11958043
+}

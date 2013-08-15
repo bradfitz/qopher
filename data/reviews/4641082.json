@@ -1,0 +1,228 @@
+{
+	"description": "runtime: parallelize garbage collector mark + sweep\n\nRunning test/garbage/parser.out.\n\nOn a 4-core Lenovo X201s (Linux):\n31.12u 0.60s 31.74r \t 1 cpu, no atomics\n32.27u 0.58s 32.86r \t 1 cpu, atomic instructions\n33.04u 0.83s 27.47r \t 2 cpu\n\nOn a 16-core Xeon (Linux):\n33.08u 0.65s 33.80r \t 1 cpu, no atomics\n34.87u 1.12s 29.60r \t 2 cpu\n36.00u 1.87s 28.43r \t 3 cpu\n36.46u 2.34s 27.10r \t 4 cpu\n38.28u 3.85s 26.92r \t 5 cpu\n37.72u 5.25s 26.73r\t 6 cpu\n39.63u 7.11s 26.95r\t 7 cpu\n39.67u 8.10s 26.68r\t 8 cpu\n\nOn a 2-core MacBook Pro Core 2 Duo 2.26 (circa 2009, MacBookPro5,5):\n39.43u 1.45s 41.27r \t 1 cpu, no atomics\n43.98u 2.95s 38.69r \t 2 cpu\n\nOn a 2-core Mac Mini Core 2 Duo 1.83 (circa 2008; Macmini2,1):\n48.81u 2.12s 51.76r \t 1 cpu, no atomics\n57.15u 4.72s 51.54r \t 2 cpu\n\nThe handoff algorithm is really only good for two cores.\nBeyond that we will need to so something more sophisticated,\nlike have each core hand off to the next one, around a circle.\nEven so, the code is a good checkpoint; for now we'll limit the\nnumber of gc procs to at most 2.",
+	"cc": [
+		"dvyukov@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello dvyukov (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg",
+			"disapproval": false,
+			"date": "2011-09-06 18:01:59.900224",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c#newcode54\nsrc/pkg/runtime/mgc0.c:54: static uint64 nlookup;\nUltimately we want the statistics to be distributed (M local). However, it may easily go into a separate CL. Whatever way you prefer.\nIf you prefer to not do it here, please add a TODO so it don't lost if we don't do it in a near future.\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c#newcode421\nsrc/pkg/runtime/mgc0.c:421: runtime\u00b7printf(\"found unmarked block %p in %p\\n\", obj, vp+i);\nremove trailing tabs\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c#newcode531\nsrc/pkg/runtime/mgc0.c:531: if(runtime\u00b7casp(&work.full, b1, b1->next)) {\nI think it is a subject to ABA problem.\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c#newcode694\nsrc/pkg/runtime/mgc0.c:694: scan(nil, 0);\nWhy is it placed before markfin? Don't we want it to be after markfin?\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c#newcode772\nsrc/pkg/runtime/mgc0.c:772: finq = f;\nfinq must be protected by a mutex or something.\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c#newcode946\nsrc/pkg/runtime/mgc0.c:946: if(work.ndone == work.nproc-1)\nI think a better way to do the wait is as follows.\nCreate a dedicated semaphore. A helper thread that sets ndone==nproc-1 releases the semaphore. Main thread waits on the semaphore (if nprocs!=1).\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/proc.c#newcode624\nsrc/pkg/runtime/proc.c:624: while(n+1 < max && (m = mget(nil)) != nil) {\nif we set max to 2, after max-- it's 1\nn is initially 0\nso condition \"n+1 < max\" seem to be always false\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/proc.c#newcode625\nsrc/pkg/runtime/proc.c:625: runtime\u00b7sched.mhead = m->schedlink;\nWhat does it mean? mhead is already updated by mget()\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/proc.c#newcode626\nsrc/pkg/runtime/proc.c:626: runtime\u00b7sched.mwait--;\nmwait is also already updated by mget()\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/runtime.h#newcode491\nsrc/pkg/runtime/runtime.h:491: void\truntime\u00b7startm(void);\nThis seems to be unnecessary here.",
+			"disapproval": false,
+			"date": "2011-09-07 11:10:50.410042",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I would appreciate some advice about the spinning\nalgorithm.  It's obviously just a giant hack right now.\n",
+			"disapproval": false,
+			"date": "2011-09-06 18:02:27.997275",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c#newcode242\nsrc/pkg/runtime/mgc0.c:242: if(nobj > 0 && (localneed = work.need) != nil && runtime\u00b7casp(&work.need, localneed, nil)) {\nThe sufficient condition to fall to slow path is just:\nif(work.need != nil)\n  handoffwork();\nPlease, move everything else to a separate function.\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c#newcode245\nsrc/pkg/runtime/mgc0.c:245: *localneed = *bp;\nI think we need to hand off more work here. One block is a way to small to \"bootstrap\" another worker thread. The block can be a 8-byte block w/o any pointers.\n\nhttp://codereview.appspot.com/4641082/diff/35003/src/pkg/runtime/mgc0.c#newcode547\nsrc/pkg/runtime/mgc0.c:547: for(i=900;; i++) {  // spin loop\nWhat I don't like in the work-requesting scheme is that in includes two consecutive spin waits, it increases latency and especially untolerant to more than one helper thread. Moreover, while a thread waits for his work request to be satisfied, another thread can offload a whole full block to the global work queue.\nI think a better scheme is as follows.\nIdle thread increments nwait and then spins on (nwait!=nproc && work.full==0). If it notices that work.full!=0, it decrements nwait and tries to pop work.full.\nOn fast path in scanblock threads check nwait!=0, if it's the case and work.full==nil, split current block and put half to work.full.",
+			"disapproval": false,
+			"date": "2011-09-07 13:58:23.624559",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Wed, Sep 7, 2011 at 09:58,  <dvyukov@google.com> wrote:\n> I think we need to hand off more work here. One block is a way to small\n> to \"bootstrap\" another worker thread. The block can be a 8-byte block\n> w/o any pointers.\n\nIf it's on the list, it has pointers.\n",
+			"disapproval": false,
+			"date": "2011-09-23 14:35:09.511849",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/23 14:35:09, rsc wrote:\n> On Wed, Sep 7, 2011 at 09:58,  <mailto:dvyukov@google.com> wrote:\n> > I think we need to hand off more work here. One block is a way to small\n> > to \"bootstrap\" another worker thread. The block can be a 8-byte block\n> > w/o any pointers.\n> \n> If it's on the list, it has pointers.\n\nDo you mean FlagNoPointers? It is not set for things like struct { x, y, z, int }.\nAnyway, in work-stealing/requesting schedulers you generally want to steal/request 1/2 (or at least 1/something) of the available work.",
+			"disapproval": false,
+			"date": "2011-09-23 21:00:57.673022",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-09-26 16:46:04.233485",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/mgc0.c#newcode707\nsrc/pkg/runtime/mgc0.c:707: scan(nil, 0);\nSo, why it is before walkfintab?\nAs far as I understand, main thread will scan everything else except finalizers with help of parallel helper threads, and then will scan finalizers alone. I think scna(nil, 0) must be placed after walkfintab.\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/mgc0.c#newcode785\nsrc/pkg/runtime/mgc0.c:785: finq = f;\nfinq accesses must be thread-safe.\nA nice way to do it as follows:\nprev = runtime.xchgp(&finq, f);\nprev->next = f;\nWe don't have xchgp yet, though.\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/mgc0.c#newcode956\nsrc/pkg/runtime/mgc0.c:956: if(work.ndone == work.nproc-1)\nI think a better way to do the wait is as follows.\nCreate a dedicated semaphore. A helper thread that sets ndone==nproc-1 releases\nthe semaphore. Main thread waits on the semaphore (if nprocs!=1).\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/proc.c#newcode627\nsrc/pkg/runtime/proc.c:627: runtime\u00b7sched.mwait--;\nmget() already updated mwait and mhead\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/runtime.h\nFile src/pkg/runtime/runtime.h (right):\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/runtime.h#newcode500\nsrc/pkg/runtime/runtime.h:500: void\truntime\u00b7startm(void);\nRemove",
+			"disapproval": false,
+			"date": "2011-09-27 20:32:17.726678",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/malloc.h\nFile src/pkg/runtime/malloc.h (right):\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/malloc.h#newcode129\nsrc/pkg/runtime/malloc.h:129: MaxGcproc = 64,\nDon't we want to still limit it to 2/4?",
+			"disapproval": false,
+			"date": "2011-09-27 17:57:32.224513",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/mgc0.c#newcode66\nsrc/pkg/runtime/mgc0.c:66: byte **bp;\nWhy we need the bp pointer at all? It seems to be a LIFO stack, so isn't it enough to have just nobj?\n\nhttp://codereview.appspot.com/4641082/diff/59001/src/pkg/runtime/mgc0.c#newcode245\nsrc/pkg/runtime/mgc0.c:245: if(nobj > 4 && work.nwait > 0) {\nadd\n&& work.full == nil\nI think Ideally we want work.nwait < work.nfull. And now with mutex-protected queues it's quite easy to implement.",
+			"disapproval": false,
+			"date": "2011-09-27 18:17:16.906168",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Tue, Sep 27, 2011 at 14:17, <dvyukov@google.com> wrote:\n\n> Why we need the bp pointer at all? It seems to be a LIFO stack, so isn't\n> it enough to have just nobj?\n>\n\nThe work stealing steals from the bottom, which is\nusually a better way to steal.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-28 17:57:07.546701",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/28 17:57:07, rsc wrote:\n> On Tue, Sep 27, 2011 at 14:17, <mailto:dvyukov@google.com> wrote:\n> \n> > Why we need the bp pointer at all? It seems to be a LIFO stack, so isn't\n> > it enough to have just nobj?\n> >\n> \n> The work stealing steals from the bottom, which is\n> usually a better way to steal.\n\nThen, I think a better way to do it (simplify all other code) is as follows.\nhandoff() allocates a new Workbuf and copies second half (last in) of elements into it.\nThen, puts it's *current* buffer into full queue, and continues with the *new* buffer.\nThis way we provide FIFO stealing w/o bp pointer.",
+			"disapproval": false,
+			"date": "2011-09-28 18:45:18.729530",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM after the fix\n\nhttp://codereview.appspot.com/4641082/diff/70001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/4641082/diff/70001/src/pkg/runtime/proc.c#newcode626\nsrc/pkg/runtime/proc.c:626: runtime\u00b7sched.mhead = m->schedlink;\nremove",
+			"disapproval": false,
+			"date": "2011-09-29 21:21:11.683167",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-09-28 23:59:15.550358",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=22fd0c4f58c1 ***\n\nruntime: parallelize garbage collector mark + sweep\n\nRunning test/garbage/parser.out.\n\nOn a 4-core Lenovo X201s (Linux):\n31.12u 0.60s 31.74r \t 1 cpu, no atomics\n32.27u 0.58s 32.86r \t 1 cpu, atomic instructions\n33.04u 0.83s 27.47r \t 2 cpu\n\nOn a 16-core Xeon (Linux):\n33.08u 0.65s 33.80r \t 1 cpu, no atomics\n34.87u 1.12s 29.60r \t 2 cpu\n36.00u 1.87s 28.43r \t 3 cpu\n36.46u 2.34s 27.10r \t 4 cpu\n38.28u 3.85s 26.92r \t 5 cpu\n37.72u 5.25s 26.73r\t 6 cpu\n39.63u 7.11s 26.95r\t 7 cpu\n39.67u 8.10s 26.68r\t 8 cpu\n\nOn a 2-core MacBook Pro Core 2 Duo 2.26 (circa 2009, MacBookPro5,5):\n39.43u 1.45s 41.27r \t 1 cpu, no atomics\n43.98u 2.95s 38.69r \t 2 cpu\n\nOn a 2-core Mac Mini Core 2 Duo 1.83 (circa 2008; Macmini2,1):\n48.81u 2.12s 51.76r \t 1 cpu, no atomics\n57.15u 4.72s 51.54r \t 2 cpu\n\nThe handoff algorithm is really only good for two cores.\nBeyond that we will need to so something more sophisticated,\nlike have each core hand off to the next one, around a circle.\nEven so, the code is a good checkpoint; for now we'll limit the\nnumber of gc procs to at most 2.\n\nR=dvyukov\nCC=golang-dev\nhttp://codereview.appspot.com/4641082",
+			"disapproval": false,
+			"date": "2011-09-30 13:40:13.332508",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 4641082: runtime: parallelize garbage collector mark + sweep",
+	"created": "2011-06-29 03:14:28.139837",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		5001,
+		7001,
+		14001,
+		17001,
+		20001,
+		39001,
+		26002,
+		41001,
+		35003,
+		50001,
+		52001,
+		54001,
+		52003,
+		58001,
+		59001,
+		70001,
+		75001,
+		77001
+	],
+	"modified": "2011-09-30 13:40:20.024454",
+	"closed": true,
+	"issue": 4641082
+}

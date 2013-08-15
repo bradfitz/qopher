@@ -1,0 +1,359 @@
+{
+	"description": "cgo: enable cgo on openbsd\n\nEnable cgo on OpenBSD.\n\nThe OpenBSD ld.so(1) does not currently support PT_TLS sections. Work\naround this by fixing up the TCB that has been provided by librthread\nand reallocating a TCB with additional space for TLS. Also provide a\nwrapper for pthread_create, allowing zeroed TLS to be allocated for\nthreads created externally to Go.\n\nJoint work with Shenghou Ma (minux).\n\nRequires change 6846064.\n\nFixes issue 3205.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"minux.ma@gmail.com",
+		"iant@google.com",
+		"rsc@golang.org",
+		"iant@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Nov 17, 2012 at 10:33 PM, Joel Sing <jsing@google.com> wrote:\r\n\r\n> On 17 November 2012 04:38, minux <minux.ma@gmail.com> wrote:\r\n> > what if extern c code creates a thread, and a signal is\r\n> > accidentally delivered to that thread?\r\n>\r\n> Good catch. Obviously we cannot rely on m being 0, which is what the\r\n> current test is sigtramp checks. I should be able to add a canary to\r\n> the cgo allocated TLS and we can look for that in the sigtramp - if\r\n> cgo is enabled and the canary does not exist then we can assume Go did\r\n> not create the thread.\r\n>\r\nmy proposed solution is that we wrap and override pthread_create so that\r\nwe can always allocate our own TLS when creating new threads. WDYT?\r\n",
+			"disapproval": false,
+			"date": "2012-11-17 17:06:27.039250",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 27, 2012 at 9:15 AM, Joel Sing <jsing@google.com> wrote:\r\n>\r\n> So it would appear that \"#pragma dynexport pthread_create\r\n> pthread_create\" is resulting in the wrong symbol type. Is there\r\n> something else that we should be adding/doing, or is this a bug in the\r\n> Go linker?\r\n\r\nI think this is something that has to be changed in the Go linker\r\nitself, yes.  Offhand I'm not sure what is involved.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 18:45:03.351000",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I like what Ian said. If for some reason that doesn't work let's just\r\nmake ld strcmp(name, \"pthread_create\") == 0 to make its decision for\r\nnow. We still haven't actually seen this work, and it's pretty\r\ndisgusting already.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 21:07:51.063230",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Nov 22, 2012 at 8:37 PM, Joel Sing <jsing@google.com> wrote:\r\n\r\n> On 18 November 2012 04:06, minux <minux.ma@gmail.com> wrote:\r\n> > On Sat, Nov 17, 2012 at 10:33 PM, Joel Sing <jsing@google.com> wrote:\r\n> > my proposed solution is that we wrap and override pthread_create so that\r\n> > we can always allocate our own TLS when creating new threads. WDYT?\r\n>\r\n> That would be an option, however I cannot see how this would provide\r\n> any advantage over what has been implemented in this change. In the\r\n> case of a non-cgo thread, we still cannot assign a g/m even if we\r\n> allocated TLS to store it. Or am I overlooking something?\r\n>\r\nmy proposal is this:\r\nwe define and export a pthread_create in runtime/cgo that calls the real\r\npthread_create\r\nin libpthread, and then allocate two more slots for TLS for the new thread\r\nso that\r\nthe signal handler will read zero m & g and correctly detect the signal is\r\nreceived\r\non a foreign thread.\r\n\r\nthe question is, can we override symbols this way (i think so)?\r\n",
+			"disapproval": false,
+			"date": "2012-11-23 19:03:45.650360",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 27, 2012 at 1:02 AM, Ian Lance Taylor <iant@google.com> wrote:\r\n\r\n> On Mon, Nov 26, 2012 at 8:40 AM, Joel Sing <jsing@google.com> wrote:\r\n> > Hrmmm... bad news - while this works correctly for Go created threads,\r\n> > the use of pthread_create in an external library is still resulting in\r\n> > the system libpthread version being used directly.\r\n>\r\nThis is pretty strange.\r\n\r\n>\r\n> Does pthread_create appear in the dynamic symbol table of the Go\r\n> binary?  You can dump the dynamic symbol table using readelf -s and\r\n> looking at the .dynsym section, or by using nm --dynamic.\r\n>\r\nit does.\r\nSymbol table '.dynsym' contains 31 entries:\r\n   Num:    Value          Size Type    Bind   Vis      Ndx Name\r\n     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND\r\n     1: 000000000060144f     0 OBJECT  GLOBAL DEFAULT   11 crosscall2\r\n     2: 0000000000600f10     0 FUNC    GLOBAL DEFAULT   11 _cgo_allocate\r\n     3: 0000000000600fc0     0 FUNC    GLOBAL DEFAULT   11 _cgo_panic\r\n     4: 000000000099ab60     0 OBJECT  GLOBAL DEFAULT   14 environ\r\n     5: 000000000099aa88     0 OBJECT  GLOBAL DEFAULT   14 __progname\r\n     6: 000000000099aa44     0 OBJECT  GLOBAL DEFAULT   14 __guard_local\r\n     7: 0000000000601220     0 OBJECT  GLOBAL DEFAULT   11 pthread_create\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 17:10:29.673310",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Nov 28, 2012 at 5:06 AM, Ian Lance Taylor <iant@google.com> wrote:\r\n\r\n> On Tue, Nov 27, 2012 at 12:53 PM, minux <minux.ma@gmail.com> wrote:\r\n> > I propose we extent format of #pragma dynexport to something like this:\r\n> > #pragma dynexport pthread_create pthread_create func\r\n> > this is a backward compatible change.\r\n> > If this sounds good to you, I will prepare a CL.\r\n> I'm not opposed to that but I wonder if it is necessary.  We know\r\n> whether the internal symbol is TEXT or not, don't we?  Could we just\r\n> base the decision on that?\r\n>\r\nSilly me. It should be a bug in 6l. CL in a moment.\r\nPossibly related to issue 4267?\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 21:45:31.310870",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 28 November 2012 08:50, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Wed, Nov 28, 2012 at 5:45 AM, minux <minux.ma@gmail.com> wrote:\r\n>>\r\n>> On Wed, Nov 28, 2012 at 5:06 AM, Ian Lance Taylor <iant@google.com> wrote:\r\n>>>\r\n>>> On Tue, Nov 27, 2012 at 12:53 PM, minux <minux.ma@gmail.com> wrote:\r\n>>> > I propose we extent format of #pragma dynexport to something like this:\r\n>>> > #pragma dynexport pthread_create pthread_create func\r\n>>> > this is a backward compatible change.\r\n>>> > If this sounds good to you, I will prepare a CL.\r\n>>> I'm not opposed to that but I wonder if it is necessary.  We know\r\n>>> whether the internal symbol is TEXT or not, don't we?  Could we just\r\n>>> base the decision on that?\r\n>>\r\n>> Silly me. It should be a bug in 6l. CL in a moment.\r\n>> Possibly related to issue 4267?\r\n>\r\n> This should fix the 6l for this issue, 8l could be similarly be fixed.\r\n> I still need to audit other part of the linker for this same problem.\r\n>\r\n> diff -r ffd1e075c260 src/cmd/6l/asm.c\r\n> --- a/src/cmd/6l/asm.c  Fri Nov 23 22:15:26 2012 -0800\r\n> +++ b/src/cmd/6l/asm.c  Wed Nov 28 09:35:05 2012 +0800\r\n> @@ -455,7 +455,7 @@\r\n>                 adduint32(d, addstring(lookup(\".dynstr\", 0), name));\r\n>                 /* type */\r\n>                 t = STB_GLOBAL << 4;\r\n> -               if(s->dynexport && s->type == STEXT)\r\n> +               if(s->dynexport && (s->type&SMASK) == STEXT)\r\n>                         t |= STT_FUNC;\r\n>                 else\r\n>                         t |= STT_OBJECT;\r\n>\r\n\r\nYes, this fixes the issue:\r\n\r\nSymbol table '.dynsym' contains 29 entries:\r\n   Num:    Value          Size Type    Bind   Vis      Ndx Name\r\n     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND\r\n     1: 000000000041b81f     0 FUNC    GLOBAL DEFAULT   11 crosscall2\r\n     2: 000000000041b2d0     0 FUNC    GLOBAL DEFAULT   11 _cgo_allocate\r\n     3: 000000000041b380     0 FUNC    GLOBAL DEFAULT   11 _cgo_panic\r\n     4: 0000000000520400     0 OBJECT  GLOBAL DEFAULT   14 environ\r\n     5: 00000000005203b8     0 OBJECT  GLOBAL DEFAULT   14 __progname\r\n     6: 0000000000520374     0 OBJECT  GLOBAL DEFAULT   14 __guard_local\r\n     7: 000000000041b6c0     0 FUNC    GLOBAL DEFAULT   11 pthread_create\r\n\r\nFrom a quick glance there appear to be a lot of comparisons without masking...\r\n",
+			"disapproval": false,
+			"date": "2012-11-28 00:30:34.434350",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 18 November 2012 04:06, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Sat, Nov 17, 2012 at 10:33 PM, Joel Sing <jsing@google.com> wrote:\r\n>>\r\n>> On 17 November 2012 04:38, minux <minux.ma@gmail.com> wrote:\r\n>> > what if extern c code creates a thread, and a signal is\r\n>> > accidentally delivered to that thread?\r\n>>\r\n>> Good catch. Obviously we cannot rely on m being 0, which is what the\r\n>> current test is sigtramp checks. I should be able to add a canary to\r\n>> the cgo allocated TLS and we can look for that in the sigtramp - if\r\n>> cgo is enabled and the canary does not exist then we can assume Go did\r\n>> not create the thread.\r\n>\r\n> my proposed solution is that we wrap and override pthread_create so that\r\n> we can always allocate our own TLS when creating new threads. WDYT?\r\n\r\nThat would be an option, however I cannot see how this would provide\r\nany advantage over what has been implemented in this change. In the\r\ncase of a non-cgo thread, we still cannot assign a g/m even if we\r\nallocated TLS to store it. Or am I overlooking something?\r\n",
+			"disapproval": false,
+			"date": "2012-11-22 12:37:47.440260",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 17 November 2012 04:38, minux <minux.ma@gmail.com> wrote:\r\n> what if extern c code creates a thread, and a signal is\r\n> accidentally delivered to that thread?\r\n\r\nGood catch. Obviously we cannot rely on m being 0, which is what the\r\ncurrent test is sigtramp checks. I should be able to add a canary to\r\nthe cgo allocated TLS and we can look for that in the sigtramp - if\r\ncgo is enabled and the canary does not exist then we can assume Go did\r\nnot create the thread.\r\n",
+			"disapproval": false,
+			"date": "2012-11-17 14:33:18.162750",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 26, 2012 at 8:40 AM, Joel Sing <jsing@google.com> wrote:\r\n> On 27 November 2012 02:31, Joel Sing <jsing@google.com> wrote:\r\n>> On 25 November 2012 08:02, minux <minux.ma@gmail.com> wrote:\r\n>>> my proposal: https://codereview.appspot.com/6855086/\r\n>>> (only tested on openbsd/amd64).\r\n>>>\r\n>>> My CL doesn't need to store a special TLS_CANARY in TLS and it can also\r\n>>> handle the case where the tls slot used to store the canary can't be read\r\n>>> (for threads not created by Go runtime).\r\n>>\r\n>> Thanks!\r\n>>\r\n>> I understood what you were proposing, however I could not see the\r\n>> benefit in doing this over what I had suggested - as you point out, it\r\n>> is possible that the memory above the TCB is inaccessible and trying\r\n>> to read it could result in a fault inside the signal trampoline. On\r\n>> one hand we would be about to terminate with a \"bad signal\" anyway,\r\n>> however this could result in programs that just hang, which would be\r\n>> poor form.\r\n>>\r\n>> I have merged your changes into my change, with a couple of minor\r\n>> differences and one key difference - when we create a thread for the\r\n>> Go runtime we do not need to use the pthread_create wrapper, hence we\r\n>> can call the system pthread_create directly and avoid the additional\r\n>> overhead. I have specifically created a library to test the external\r\n>> pthread_create and signalling of the externally created threads. This\r\n>> has been tested successfully on OpenBSD/amd64 -current, OpenBSD/amd64\r\n>> 5.2 and OpenBSD/i386 5.2.\r\n>>\r\n>> This also ponders the question - since we are wrapping the\r\n>> pthread_create we could potentially use sigprocmask to prevent signals\r\n>> being delivered to the thread, although this may lead to some weird\r\n>> failures if the C code was signalling itself and expecting the signal\r\n>> to be delivered (if the C library is messing with signal handlers then\r\n>> we probably already have bigger problems though).\r\n>>\r\n>> PTAL.\r\n>\r\n> Hrmmm... bad news - while this works correctly for Go created threads,\r\n> the use of pthread_create in an external library is still resulting in\r\n> the system libpthread version being used directly.\r\n\r\nDoes pthread_create appear in the dynamic symbol table of the Go\r\nbinary?  You can dump the dynamic symbol table using readelf -s and\r\nlooking at the .dynsym section, or by using nm --dynamic.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 17:02:02.703710",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Nov 25, 2012 at 2:49 AM, Ian Lance Taylor <iant@google.com> wrote:\r\n\r\n> > my proposal is this:\r\n> > we define and export a pthread_create in runtime/cgo that calls the real\r\n> > pthread_create\r\n> > in libpthread, and then allocate two more slots for TLS for the new\r\n> thread\r\n> > so that\r\n> > the signal handler will read zero m & g and correctly detect the signal\r\n> is\r\n> > received\r\n> > on a foreign thread.\r\n> >\r\n> > the question is, can we override symbols this way (i think so)?\r\n>\r\n> If the executable defines a function named pthread_create, then any\r\n> code linked into the executable, or any code in shared libraries\r\n> dynamically linked in, should call the pthread_create defined in the\r\n> executable.  The harder part is calling the pthread_create defined in\r\n>\r\ngreat. that's also my understanding of ELF. thank you for the confirmation.\r\n\r\n> libpthread.  If it has an alias, e.g., __pthread_create, then it is\r\n> easy.  Otherwise the code needs to explicitly dlopen libpthread.so and\r\n> then use dlsym.\r\n>\r\ni think this is acceptable, and i will try to write a proof of concept\r\nimplementation.\r\n\r\n>\r\n> I assume that the problem is that OpenBSD doesn't actually support\r\n> __thread variables?\r\n>\r\nno, it doesn't support __thread storage class.\r\n",
+			"disapproval": false,
+			"date": "2012-11-24 19:32:29.751440",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 27, 2012 at 8:18 AM, Joel Sing <jsing@google.com> wrote:\r\n>\r\n> The pthread_create entry in the .dynsym table generated by Go has a\r\n> size of 0. The libpthread entry has an actual size (currently 603\r\n> bytes). This is also referenced in the external library. When the\r\n> binding occurs ld.so loads compares the sizes and if they are not the\r\n> same, it generates a warning. This means that any external code that\r\n> calls pthread_create will result in:\r\n>\r\n>   WARNING: symbol(pthread_create) size mismatch, relink your program\r\n\r\nThat warning would be appropriate for a variable, but it makes no\r\nsense for a function.  Make sure that pthread_create has type STT_FUNC\r\nin your entry in the dynamic symbol table.\r\n\r\nIf your dynamic linker is really issuing a warning about a size change\r\nin an STT_FUNC symbol, fix the dynamic linker.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 16:48:43.062790",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "what if extern c code creates a thread, and a signal is\r\naccidentally delivered to that thread?\r\n",
+			"disapproval": false,
+			"date": "2012-11-16 17:38:11.780110",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 28 November 2012 03:48, Ian Lance Taylor <iant@google.com> wrote:\r\n> On Tue, Nov 27, 2012 at 8:18 AM, Joel Sing <jsing@google.com> wrote:\r\n>>\r\n>> The pthread_create entry in the .dynsym table generated by Go has a\r\n>> size of 0. The libpthread entry has an actual size (currently 603\r\n>> bytes). This is also referenced in the external library. When the\r\n>> binding occurs ld.so loads compares the sizes and if they are not the\r\n>> same, it generates a warning. This means that any external code that\r\n>> calls pthread_create will result in:\r\n>>\r\n>>   WARNING: symbol(pthread_create) size mismatch, relink your program\r\n>\r\n> That warning would be appropriate for a variable, but it makes no\r\n> sense for a function.  Make sure that pthread_create has type STT_FUNC\r\n> in your entry in the dynamic symbol table.\r\n\r\nIndeed - thanks for the pointer. The Go generated binary has\r\npthread_create as STT_OBJECT rather than STT_FUNC:\r\n\r\n7: 0000000000601220     0 OBJECT  GLOBAL DEFAULT   11 pthread_create\r\n\r\nSo it would appear that \"#pragma dynexport pthread_create\r\npthread_create\" is resulting in the wrong symbol type. Is there\r\nsomething else that we should be adding/doing, or is this a bug in the\r\nGo linker?\r\n\r\n> If your dynamic linker is really issuing a warning about a size change\r\n> in an STT_FUNC symbol, fix the dynamic linker.\r\n\r\nThe ld.so code appears correct - it only warns for\r\nELF_ST_TYPE(*this)->st_info) != STT_FUNC.\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 17:15:34.245110",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-16 16:00:37.175610",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 25 November 2012 08:02, minux <minux.ma@gmail.com> wrote:\r\n> my proposal: https://codereview.appspot.com/6855086/\r\n> (only tested on openbsd/amd64).\r\n>\r\n> My CL doesn't need to store a special TLS_CANARY in TLS and it can also\r\n> handle the case where the tls slot used to store the canary can't be read\r\n> (for threads not created by Go runtime).\r\n\r\nThanks!\r\n\r\nI understood what you were proposing, however I could not see the\r\nbenefit in doing this over what I had suggested - as you point out, it\r\nis possible that the memory above the TCB is inaccessible and trying\r\nto read it could result in a fault inside the signal trampoline. On\r\none hand we would be about to terminate with a \"bad signal\" anyway,\r\nhowever this could result in programs that just hang, which would be\r\npoor form.\r\n\r\nI have merged your changes into my change, with a couple of minor\r\ndifferences and one key difference - when we create a thread for the\r\nGo runtime we do not need to use the pthread_create wrapper, hence we\r\ncan call the system pthread_create directly and avoid the additional\r\noverhead. I have specifically created a library to test the external\r\npthread_create and signalling of the externally created threads. This\r\nhas been tested successfully on OpenBSD/amd64 -current, OpenBSD/amd64\r\n5.2 and OpenBSD/i386 5.2.\r\n\r\nThis also ponders the question - since we are wrapping the\r\npthread_create we could potentially use sigprocmask to prevent signals\r\nbeing delivered to the thread, although this may lead to some weird\r\nfailures if the C code was signalling itself and expecting the signal\r\nto be delivered (if the C library is messing with signal handlers then\r\nwe probably already have bigger problems though).\r\n\r\nPTAL.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 15:31:53.356850",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Nov 23, 2012 at 11:03 AM, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Thu, Nov 22, 2012 at 8:37 PM, Joel Sing <jsing@google.com> wrote:\r\n>>\r\n>> On 18 November 2012 04:06, minux <minux.ma@gmail.com> wrote:\r\n>> > On Sat, Nov 17, 2012 at 10:33 PM, Joel Sing <jsing@google.com> wrote:\r\n>> > my proposed solution is that we wrap and override pthread_create so that\r\n>> > we can always allocate our own TLS when creating new threads. WDYT?\r\n>>\r\n>> That would be an option, however I cannot see how this would provide\r\n>> any advantage over what has been implemented in this change. In the\r\n>> case of a non-cgo thread, we still cannot assign a g/m even if we\r\n>> allocated TLS to store it. Or am I overlooking something?\r\n>\r\n> my proposal is this:\r\n> we define and export a pthread_create in runtime/cgo that calls the real\r\n> pthread_create\r\n> in libpthread, and then allocate two more slots for TLS for the new thread\r\n> so that\r\n> the signal handler will read zero m & g and correctly detect the signal is\r\n> received\r\n> on a foreign thread.\r\n>\r\n> the question is, can we override symbols this way (i think so)?\r\n\r\nIf the executable defines a function named pthread_create, then any\r\ncode linked into the executable, or any code in shared libraries\r\ndynamically linked in, should call the pthread_create defined in the\r\nexecutable.  The harder part is calling the pthread_create defined in\r\nlibpthread.  If it has an alias, e.g., __pthread_create, then it is\r\neasy.  Otherwise the code needs to explicitly dlopen libpthread.so and\r\nthen use dlsym.\r\n\r\nI assume that the problem is that OpenBSD doesn't actually support\r\n__thread variables?\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-11-24 18:49:49.464510",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 27, 2012 at 12:53 PM, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Wed, Nov 28, 2012 at 2:45 AM, Ian Lance Taylor <iant@google.com> wrote:\r\n>>\r\n>> On Tue, Nov 27, 2012 at 9:15 AM, Joel Sing <jsing@google.com> wrote:\r\n>> > So it would appear that \"#pragma dynexport pthread_create\r\n>> > pthread_create\" is resulting in the wrong symbol type. Is there\r\n>> > something else that we should be adding/doing, or is this a bug in the\r\n>> > Go linker?\r\n>>\r\n>> I think this is something that has to be changed in the Go linker\r\n>> itself, yes.  Offhand I'm not sure what is involved.\r\n>\r\n> I propose we extent format of #pragma dynexport to something like this:\r\n> #pragma dynexport pthread_create pthread_create func\r\n> this is a backward compatible change.\r\n>\r\n> If this sounds good to you, I will prepare a CL.\r\n\r\nI'm not opposed to that but I wonder if it is necessary.  We know\r\nwhether the internal symbol is TEXT or not, don't we?  Could we just\r\nbase the decision on that?\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 21:06:29.094510",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "my proposal: https://codereview.appspot.com/6855086/\r\n(only tested on openbsd/amd64).\r\n\r\nMy CL doesn't need to store a special TLS_CANARY in TLS and it can also\r\nhandle the case where the tls slot used to store the canary can't be read\r\n(for threads not created by Go runtime).\r\n",
+			"disapproval": false,
+			"date": "2012-11-24 21:03:05.179260",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 27 November 2012 02:31, Joel Sing <jsing@google.com> wrote:\r\n> On 25 November 2012 08:02, minux <minux.ma@gmail.com> wrote:\r\n>> my proposal: https://codereview.appspot.com/6855086/\r\n>> (only tested on openbsd/amd64).\r\n>>\r\n>> My CL doesn't need to store a special TLS_CANARY in TLS and it can also\r\n>> handle the case where the tls slot used to store the canary can't be read\r\n>> (for threads not created by Go runtime).\r\n>\r\n> Thanks!\r\n>\r\n> I understood what you were proposing, however I could not see the\r\n> benefit in doing this over what I had suggested - as you point out, it\r\n> is possible that the memory above the TCB is inaccessible and trying\r\n> to read it could result in a fault inside the signal trampoline. On\r\n> one hand we would be about to terminate with a \"bad signal\" anyway,\r\n> however this could result in programs that just hang, which would be\r\n> poor form.\r\n>\r\n> I have merged your changes into my change, with a couple of minor\r\n> differences and one key difference - when we create a thread for the\r\n> Go runtime we do not need to use the pthread_create wrapper, hence we\r\n> can call the system pthread_create directly and avoid the additional\r\n> overhead. I have specifically created a library to test the external\r\n> pthread_create and signalling of the externally created threads. This\r\n> has been tested successfully on OpenBSD/amd64 -current, OpenBSD/amd64\r\n> 5.2 and OpenBSD/i386 5.2.\r\n>\r\n> This also ponders the question - since we are wrapping the\r\n> pthread_create we could potentially use sigprocmask to prevent signals\r\n> being delivered to the thread, although this may lead to some weird\r\n> failures if the C code was signalling itself and expecting the signal\r\n> to be delivered (if the C library is messing with signal handlers then\r\n> we probably already have bigger problems though).\r\n>\r\n> PTAL.\r\n\r\nHrmmm... bad news - while this works correctly for Go created threads,\r\nthe use of pthread_create in an external library is still resulting in\r\nthe system libpthread version being used directly.\r\n",
+			"disapproval": false,
+			"date": "2012-11-26 16:40:49.439840",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 27 November 2012 04:10, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Tue, Nov 27, 2012 at 1:02 AM, Ian Lance Taylor <iant@google.com> wrote:\r\n>>\r\n>> On Mon, Nov 26, 2012 at 8:40 AM, Joel Sing <jsing@google.com> wrote:\r\n>> > Hrmmm... bad news - while this works correctly for Go created threads,\r\n>> > the use of pthread_create in an external library is still resulting in\r\n>> > the system libpthread version being used directly.\r\n>\r\n> This is pretty strange.\r\n>>\r\n>>\r\n>> Does pthread_create appear in the dynamic symbol table of the Go\r\n>> binary?  You can dump the dynamic symbol table using readelf -s and\r\n>> looking at the .dynsym section, or by using nm --dynamic.\r\n>\r\n> it does.\r\n> Symbol table '.dynsym' contains 31 entries:\r\n>    Num:    Value          Size Type    Bind   Vis      Ndx Name\r\n>      0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND\r\n>      1: 000000000060144f     0 OBJECT  GLOBAL DEFAULT   11 crosscall2\r\n>      2: 0000000000600f10     0 FUNC    GLOBAL DEFAULT   11 _cgo_allocate\r\n>      3: 0000000000600fc0     0 FUNC    GLOBAL DEFAULT   11 _cgo_panic\r\n>      4: 000000000099ab60     0 OBJECT  GLOBAL DEFAULT   14 environ\r\n>      5: 000000000099aa88     0 OBJECT  GLOBAL DEFAULT   14 __progname\r\n>      6: 000000000099aa44     0 OBJECT  GLOBAL DEFAULT   14 __guard_local\r\n>      7: 0000000000601220     0 OBJECT  GLOBAL DEFAULT   11 pthread_create\r\n>\r\n\r\nUgh, so I missed an important part in the merge (the dynsym export).\r\nHaving fixed this I now get the pthread_create symbol in the .dynsym\r\ntable and the external library is using the correct pthread_create\r\nfunction. However, we now have another issue...\r\n\r\nThe pthread_create entry in the .dynsym table generated by Go has a\r\nsize of 0. The libpthread entry has an actual size (currently 603\r\nbytes). This is also referenced in the external library. When the\r\nbinding occurs ld.so loads compares the sizes and if they are not the\r\nsame, it generates a warning. This means that any external code that\r\ncalls pthread_create will result in:\r\n\r\n  WARNING: symbol(pthread_create) size mismatch, relink your program\r\n\r\nThe only real solution would be to make the .dynsym pthread_create\r\nentry generated by Go match the size up with the libpthread .dynsym\r\nentry, which is a pretty large hack.\r\n\r\nSo I guess we either put up with this, or we return to the idea of a\r\nTLS canary slot and run the risk of faulting on read...\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 16:19:00.578510",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Nov 28, 2012 at 2:45 AM, Ian Lance Taylor <iant@google.com> wrote:\r\n\r\n> On Tue, Nov 27, 2012 at 9:15 AM, Joel Sing <jsing@google.com> wrote:\r\n> > So it would appear that \"#pragma dynexport pthread_create\r\n> > pthread_create\" is resulting in the wrong symbol type. Is there\r\n> > something else that we should be adding/doing, or is this a bug in the\r\n> > Go linker?\r\n>\r\n> I think this is something that has to be changed in the Go linker\r\n> itself, yes.  Offhand I'm not sure what is involved.\r\n>\r\nI propose we extent format of #pragma dynexport to something like this:\r\n#pragma dynexport pthread_create pthread_create func\r\nthis is a backward compatible change.\r\n\r\nIf this sounds good to you, I will prepare a CL.\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 20:54:19.135120",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Nov 28, 2012 at 5:45 AM, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Wed, Nov 28, 2012 at 5:06 AM, Ian Lance Taylor <iant@google.com> wrote:\r\n>\r\n>> On Tue, Nov 27, 2012 at 12:53 PM, minux <minux.ma@gmail.com> wrote:\r\n>> > I propose we extent format of #pragma dynexport to something like this:\r\n>> > #pragma dynexport pthread_create pthread_create func\r\n>> > this is a backward compatible change.\r\n>> > If this sounds good to you, I will prepare a CL.\r\n>> I'm not opposed to that but I wonder if it is necessary.  We know\r\n>> whether the internal symbol is TEXT or not, don't we?  Could we just\r\n>> base the decision on that?\r\n>>\r\n> Silly me. It should be a bug in 6l. CL in a moment.\r\n> Possibly related to issue 4267?\r\n>\r\nThis should fix the 6l for this issue, 8l could be similarly be fixed.\r\nI still need to audit other part of the linker for this same problem.\r\n\r\ndiff -r ffd1e075c260 src/cmd/6l/asm.c\r\n--- a/src/cmd/6l/asm.c  Fri Nov 23 22:15:26 2012 -0800\r\n+++ b/src/cmd/6l/asm.c  Wed Nov 28 09:35:05 2012 +0800\r\n@@ -455,7 +455,7 @@\r\n                adduint32(d, addstring(lookup(\".dynstr\", 0), name));\r\n                /* type */\r\n                t = STB_GLOBAL << 4;\r\n-               if(s->dynexport && s->type == STEXT)\r\n+               if(s->dynexport && (s->type&SMASK) == STEXT)\r\n                        t |= STT_FUNC;\r\n                else\r\n                        t |= STT_OBJECT;\r\n",
+			"disapproval": false,
+			"date": "2012-11-27 21:51:04.744790",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "do you want to fix various docs in this CL or in a subsequent CL?",
+			"disapproval": false,
+			"date": "2012-12-18 15:06:08.594770",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This CL is ready to go!\nLGTM assuming you will fix docs and related things in a subsequent CL.\n\na partial list of things need to be updated:\ndoc/install.html: please add an entry for OpenBSD\ndoc/debugging_with_gdb.html\nmisc/dist/bindist.go: OpenBSD binary dist. supprt",
+			"disapproval": false,
+			"date": "2012-12-18 15:28:29.976970",
+			"approval": true
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6853059/diff/13003/src/pkg/runtime/cgo/gcc_openbsd_386.c\nFile src/pkg/runtime/cgo/gcc_openbsd_386.c (right):\n\nhttps://codereview.appspot.com/6853059/diff/13003/src/pkg/runtime/cgo/gcc_openbsd_386.c#newcode61\nsrc/pkg/runtime/cgo/gcc_openbsd_386.c:61: free(arg);\nI think it would be a lot cleaner if you fetched args.func and args.arg into local variables before you free arg.  Right now you are assuming that free will not change the contents of the memory block.\n\nhttps://codereview.appspot.com/6853059/diff/13003/src/pkg/runtime/cgo/gcc_openbsd_amd64.c\nFile src/pkg/runtime/cgo/gcc_openbsd_amd64.c (right):\n\nhttps://codereview.appspot.com/6853059/diff/13003/src/pkg/runtime/cgo/gcc_openbsd_amd64.c#newcode61\nsrc/pkg/runtime/cgo/gcc_openbsd_amd64.c:61: free(arg);\nFetch args.func and args.arg before freeing arg.",
+			"disapproval": false,
+			"date": "2012-12-19 20:19:33.452570",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6853059/diff/13003/src/pkg/runtime/cgo/gcc_openbsd_386.c\nFile src/pkg/runtime/cgo/gcc_openbsd_386.c (right):\n\nhttps://codereview.appspot.com/6853059/diff/13003/src/pkg/runtime/cgo/gcc_openbsd_386.c#newcode61\nsrc/pkg/runtime/cgo/gcc_openbsd_386.c:61: free(arg);\nOn 2012/12/19 20:19:33, iant wrote:\n> I think it would be a lot cleaner if you fetched args.func and args.arg into\n> local variables before you free arg.  Right now you are assuming that free will\n> not change the contents of the memory block.\nthe code dereferences the arg pointer so it actually creates a copy\non the stack.",
+			"disapproval": false,
+			"date": "2012-12-19 20:21:11.145130",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6853059/diff/13003/src/pkg/runtime/cgo/gcc_openbsd_386.c\nFile src/pkg/runtime/cgo/gcc_openbsd_386.c (right):\n\nhttps://codereview.appspot.com/6853059/diff/13003/src/pkg/runtime/cgo/gcc_openbsd_386.c#newcode61\nsrc/pkg/runtime/cgo/gcc_openbsd_386.c:61: free(arg);\nOn 2012/12/19 20:21:11, minux wrote:\n> On 2012/12/19 20:19:33, iant wrote:\n> > I think it would be a lot cleaner if you fetched args.func and args.arg into\n> > local variables before you free arg.  Right now you are assuming that free\n> will\n> > not change the contents of the memory block.\n> the code dereferences the arg pointer so it actually creates a copy\n> on the stack.\n\nOh, sorry.  My mistake.\n\nLGTM",
+			"disapproval": false,
+			"date": "2012-12-19 20:27:32.377830",
+			"approval": true
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"minux.ma@gmail.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=220ddfb20066 ***\n\ncgo: enable cgo on openbsd\n\nEnable cgo on OpenBSD.\n\nThe OpenBSD ld.so(1) does not currently support PT_TLS sections. Work\naround this by fixing up the TCB that has been provided by librthread\nand reallocating a TCB with additional space for TLS. Also provide a\nwrapper for pthread_create, allowing zeroed TLS to be allocated for\nthreads created externally to Go.\n\nJoint work with Shenghou Ma (minux).\n\nRequires change 6846064.\n\nFixes issue 3205.\n\nR=golang-dev, minux.ma, iant, rsc, iant\nCC=golang-dev\nhttps://codereview.appspot.com/6853059",
+			"disapproval": false,
+			"date": "2012-12-20 14:43:28.676980",
+			"approval": false
+		}
+	],
+	"owner_email": "jsing@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jsing",
+	"subject": "code review 6853059: cgo: enable cgo on openbsd",
+	"created": "2012-11-16 13:53:40.476000",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		7001,
+		2003,
+		11001,
+		11002,
+		13003,
+		22001
+	],
+	"modified": "2012-12-20 14:43:31.551600",
+	"closed": true,
+	"issue": 6853059
+}

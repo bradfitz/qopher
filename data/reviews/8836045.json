@@ -1,0 +1,308 @@
+{
+	"description": "database/sql: fix driver Conn refcounting with prepared statements\n\nThe refcounting of driver Conns was completedly busted and\nwould leak (be held open forever) with any reasonable\nload. This was a significant regression from Go 1.0.\n\nThe core of this patch is removing one line:\n\n     s.db.addDep(dc, s)\n\nA database conn (dc) is a resource that be re-created any time\n(but cached for speed) should not be held open forever with a\ndependency refcount just because the Stmt (s) is alive (which\ntypically last for long periods of time, like forever).\n\nThe meat of the patch is new tests. In fixing the real issue,\na lot of tests then failed due to the fakedb_test.go's paranoia\nabout closing a fakeConn while it has open fakeStmts on it. I\ncould've ignored that, but that's been a problem in the past for\nother bugs.\n\nInstead, I now track per-Conn open statements and close them\nwhen the the conn closes.  The proper way to do this would've\nbeen making *driverStmt a finalCloser and using the dep mechanism,\nbut it was much more invasive. Added a TODO instead.\n\nI'd like to give a way for drivers to opt-out of caring about\ndriver.Stmt closes before a driver.Conn close, but that's a TODO\nfor the future, and that TODO is added in this CL.\n\nI know this is very late for Go 1.1, but database/sql is\ncurrently nearly useless without this.\n\nI'd like to believe all these database/sql bugs in the past\nrelease cycle are the result of increased usage, number of\ndrivers, and good feedback from increasingly-capable Go\ndevelopers, and not the result of me sucking.  It's also hard\nwith all the real drivers being out-of-tree, so I'm having to\nadd more and more hooks to fakedb_test.go to simulate things\nwhich real drivers end up doing.\n\nFixes Issue 5323",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"snaury@gmail.com",
+		"gwenn.kahz@gmail.com",
+		"google@julienschmidt.com",
+		"r@golang.org"
+	],
+	"reviewers": [
+		"alex.brainman@gmail.com",
+		"mtnngw@gmail.com",
+		"kardianos@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yeah, I was debating consistency vs. performance (not tracking them) on\r\nthose ephemeral prepareLocked/closeStatement calls.  I'll revert those\r\ncases and rethink it later, if/when I move more into driverStatement.\r\n\r\nOne sec.\r\n\r\n\r\n\r\nOn Thu, Apr 25, 2013 at 12:01 PM, <snaury@gmail.com> wrote:\r\n\r\n> LGTM, but see comments\r\n>\r\n>\r\n> https://codereview.appspot.**com/8836045/diff/20001/src/**\r\n> pkg/database/sql/sql.go<https://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go>\r\n> File src/pkg/database/sql/sql.go (right):\r\n>\r\n> https://codereview.appspot.**com/8836045/diff/20001/src/**\r\n> pkg/database/sql/sql.go#**newcode695<https://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go#newcode695>\r\n> src/pkg/database/sql/sql.go:**695: si, err := dc.prepareLocked(query)\r\n> I didn't notice this before, but isn't this redundant? Since these\r\n> prepared statements are temporary they will always be gone before\r\n> driverConn is closed, so no need to track them in driverConn. I may be\r\n> wrong though...\r\n>\r\n> https://codereview.appspot.**com/8836045/diff/20001/src/**\r\n> pkg/database/sql/sql.go#**newcode759<https://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go#newcode759>\r\n> src/pkg/database/sql/sql.go:**759: si, err := dc.prepareLocked(query)\r\n> Same here\r\n>\r\n> https://codereview.appspot.**com/8836045/diff/20001/src/**\r\n> pkg/database/sql/sql.go#**newcode999<https://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go#newcode999>\r\n> src/pkg/database/sql/sql.go:**999: si, err := dc.prepareLocked(query)\r\n> Same here\r\n>\r\n> https://codereview.appspot.**com/8836045/<https://codereview.appspot.com/8836045/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-25 19:09:05.603380",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/24 19:45:40, bradfitz wrote:\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n\nLooks good, though what's missing is css cleanup (marked TODO). As it stands, driver connections will be closed, but pointers to them will linger in Stmt.css. And depending on the rate of requests it may amount to something significant: even if we don't count sizes of driver.Conn and driver.Stmt the size of css alone is connStmt+driverConn=8+16+8+8+16+~16 = at least 72 bytes per entry on amd64, which at 1000 qps will cause 72kb/s leak. Do you plan to fix it after Go 1.1, or is it maybe better to include in the patch sooner?",
+			"disapproval": false,
+			"date": "2013-04-24 20:34:42.158450",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-04-24 19:45:40.414720",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, snaury@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-04-24 23:17:23.899590",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Apr 24, 2013 at 1:34 PM, <snaury@gmail.com> wrote:\r\n\r\n> On 2013/04/24 19:45:40, bradfitz wrote:\r\n>\r\n>> I'd like you to review this change to\r\n>> https://go.googlecode.com/hg/\r\n>>\r\n>\r\n> Looks good, though what's missing is css cleanup (marked TODO). As it\r\n> stands, driver connections will be closed, but pointers to them will\r\n> linger in Stmt.css. And depending on the rate of requests it may amount\r\n> to something significant: even if we don't count sizes of driver.Conn\r\n> and driver.Stmt the size of css alone is\r\n> connStmt+driverConn=8+16+8+8+**16+~16 = at least 72 bytes per entry on\r\n> amd64, which at 1000 qps will cause 72kb/s leak. Do you plan to fix it\r\n> after Go 1.1, or is it maybe better to include in the patch sooner?\r\n>\r\n\r\nDone. PTAL.\r\n\r\nCould you also load test it, if you have time?  I'll try to tonight as well.\r\n",
+			"disapproval": false,
+			"date": "2013-04-24 23:17:53.097460",
+			"approval": false
+		},
+		{
+			"sender": "kardianos@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Matt N,\r\n\r\nIs it possible to show your code? I'd be interested to see it. \r\n\r\nThanks,\r\n-Daniel\r\n\r\n\r\nOn Friday, April 26, 2013 2:49:21 PM UTC-7, Matt N wrote:\r\n>\r\n> With Tip and with just before the change:\r\n>\r\n> $ go version\r\n> go version devel +5e23075b0970 Fri Apr 26 11:42:58 2013 -0700 darwin/amd64\r\n>\r\n> //*sql.DB connection pool size = 20\r\n> BenchmarkCreate        1000        609021 ns/op\r\n> BenchmarkRead        2000        379022 ns/op\r\n> BenchmarkDelete        5000        296088 ns/op\r\n>\r\n> // no connection pool\r\n> BenchmarkCreate         100       6199264 ns/op\r\n> BenchmarkRead         200       4424808 ns/op\r\n> BenchmarkDelete         500       3396262 ns/op\r\n>\r\n>\r\n> $ go version\r\n> go version devel +1d079908dd84 Thu Apr 25 18:47:12 2013 +0200 darwin/amd64\r\n>\r\n> //*sql.DB connection pool size = 20\r\n> BenchmarkCreate        1000        609492 ns/op\r\n> BenchmarkRead        2000        386040 ns/op\r\n> BenchmarkDelete        5000        299545 ns/op\r\n>\r\n>\r\n> This is a rMBP, SSD, 2.6 Ghz Intel Core i7, 16 GB memory.\r\n> PostgreSQL 9.2.4\r\n> github.com/lib/pq\r\n>\r\n> With a home brewed connection pool, I get basically the same performance.  \r\n> If I don't recycle my sql.DB pointers, I get 10x worse.\r\n>\r\n> With *sql.DB connection pool size set to 50, I get \"pq: sorry, too many \r\n> clients already.\" in both versions.\r\n>\r\n> For me, it seems that w/ respect to postgres, (and the github/lib/pq \r\n> driver) everything is the same...\r\n>\r\n>",
+			"disapproval": false,
+			"date": "2013-04-26 23:43:33.591290",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "[+julienschmidt, golang-nuts]\r\n\r\nCould database/sql users please test with this patch and report back?\r\n\r\nI'd like to get as much testing and visibility on this before Go 1.1.\r\n\r\n\r\n\r\nOn Wed, Apr 24, 2013 at 4:17 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> On Wed, Apr 24, 2013 at 1:34 PM, <snaury@gmail.com> wrote:\r\n>\r\n>> On 2013/04/24 19:45:40, bradfitz wrote:\r\n>>\r\n>>> I'd like you to review this change to\r\n>>> https://go.googlecode.com/hg/\r\n>>>\r\n>>\r\n>> Looks good, though what's missing is css cleanup (marked TODO). As it\r\n>> stands, driver connections will be closed, but pointers to them will\r\n>> linger in Stmt.css. And depending on the rate of requests it may amount\r\n>> to something significant: even if we don't count sizes of driver.Conn\r\n>> and driver.Stmt the size of css alone is\r\n>> connStmt+driverConn=8+16+8+8+**16+~16 = at least 72 bytes per entry on\r\n>> amd64, which at 1000 qps will cause 72kb/s leak. Do you plan to fix it\r\n>> after Go 1.1, or is it maybe better to include in the patch sooner?\r\n>>\r\n>\r\n> Done. PTAL.\r\n>\r\n> Could you also load test it, if you have time?  I'll try to tonight as\r\n> well.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-25 02:23:14.943970",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Needs some changes. For example, under load with concurrency 50 (I added a goroutine in database/sql which shows css behavior every second):\n\nBefore changes: Stmt: css = 14895 elements (14895 cap)\nAfter css shrink: Stmt: css = 12123 elements (14895 cap)\nAfter errConnClosed: Stmt: css = 49 elements (64 cap)\n\nhttps://codereview.appspot.com/8836045/diff/8001/src/pkg/database/sql/sql.go\nFile src/pkg/database/sql/sql.go (right):\n\nhttps://codereview.appspot.com/8836045/diff/8001/src/pkg/database/sql/sql.go#newcode518\nsrc/pkg/database/sql/sql.go:518: return nil, errConnBusy\nShould return errConnClosed here!\n\nhttps://codereview.appspot.com/8836045/diff/8001/src/pkg/database/sql/sql.go#newcode1127\nsrc/pkg/database/sql/sql.go:1127: s.css[i] = s.css[len(s.css)-1]\nPlease add s.css = s.css[:len(s.css)-1], without which it doesn't actually shrink.",
+			"disapproval": false,
+			"date": "2013-04-25 05:56:36.565630",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/25 05:56:36, snaury wrote:\n> Before changes: Stmt: css = 14895 elements (14895 cap)\n> After css shrink: Stmt: css = 12123 elements (14895 cap)\n> After errConnClosed: Stmt: css = 49 elements (64 cap)\n\nOops, too much editing, numbers got really screwed up:\n\nBefore changes: Stmt: css = 12123 elements (14895 cap)\nAfter errConnClosed: Stmt: css = 12123 elements (14895 cap)\nAfter css shrink: Stmt: css = 49 elements (64 cap)",
+			"disapproval": false,
+			"date": "2013-04-25 05:58:36.249790",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Wow, embarrassing.\r\n\r\nAs penance, I've added more tests and fixed a couple other bugs (openStmt\r\nleaks introduced in this CL), for which there are now also new tests.\r\n\r\nI also fixed a text flakiness issue found during long runs of various\r\nGOMAXPROCS settings.  And things still pass with go test -race.\r\n\r\nPTAL\r\n\r\n\r\n\r\nOn Wed, Apr 24, 2013 at 10:58 PM, <snaury@gmail.com> wrote:\r\n\r\n> On 2013/04/25 05:56:36, snaury wrote:\r\n>\r\n>> Before changes: Stmt: css = 14895 elements (14895 cap)\r\n>> After css shrink: Stmt: css = 12123 elements (14895 cap)\r\n>> After errConnClosed: Stmt: css = 49 elements (64 cap)\r\n>>\r\n>\r\n> Oops, too much editing, numbers got really screwed up:\r\n>\r\n> Before changes: Stmt: css = 12123 elements (14895 cap)\r\n> After errConnClosed: Stmt: css = 12123 elements (14895 cap)\r\n> After css shrink: Stmt: css = 49 elements (64 cap)\r\n>\r\n> https://codereview.appspot.**com/8836045/<https://codereview.appspot.com/8836045/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-25 07:17:06.886530",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, snaury@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-04-25 07:17:14.670830",
+			"approval": false
+		},
+		{
+			"sender": "gwenn.kahz@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Seems good to me (with sqlite driver).\r\n\r\nOn Thursday, April 25, 2013 4:23:14 AM UTC+2, bradfitz wrote:\r\n>\r\n> [+julienschmidt, golang-nuts]\r\n>\r\n> Could database/sql users please test with this patch and report back?\r\n>\r\n> I'd like to get as much testing and visibility on this before Go 1.1.\r\n>\r\n>\r\n>\r\n> On Wed, Apr 24, 2013 at 4:17 PM, Brad Fitzpatrick <brad...@golang.org<javascript:>\r\n> > wrote:\r\n>\r\n>> On Wed, Apr 24, 2013 at 1:34 PM, <sna...@gmail.com <javascript:>> wrote:\r\n>>\r\n>>> On 2013/04/24 19:45:40, bradfitz wrote:\r\n>>>\r\n>>>> I'd like you to review this change to\r\n>>>> https://go.googlecode.com/hg/\r\n>>>>\r\n>>>\r\n>>> Looks good, though what's missing is css cleanup (marked TODO). As it\r\n>>> stands, driver connections will be closed, but pointers to them will\r\n>>> linger in Stmt.css. And depending on the rate of requests it may amount\r\n>>> to something significant: even if we don't count sizes of driver.Conn\r\n>>> and driver.Stmt the size of css alone is\r\n>>> connStmt+driverConn=8+16+8+8+**16+~16 = at least 72 bytes per entry on\r\n>>> amd64, which at 1000 qps will cause 72kb/s leak. Do you plan to fix it\r\n>>> after Go 1.1, or is it maybe better to include in the patch sooner?\r\n>>>\r\n>>\r\n>> Done. PTAL.\r\n>>\r\n>> Could you also load test it, if you have time?  I'll try to tonight as \r\n>> well.\r\n>>\r\n>>\r\n>",
+			"disapproval": false,
+			"date": "2013-04-25 17:55:29.299350",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"gwenn.kahz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM, but see comments\n\nhttps://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go\nFile src/pkg/database/sql/sql.go (right):\n\nhttps://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go#newcode695\nsrc/pkg/database/sql/sql.go:695: si, err := dc.prepareLocked(query)\nI didn't notice this before, but isn't this redundant? Since these prepared statements are temporary they will always be gone before driverConn is closed, so no need to track them in driverConn. I may be wrong though...\n\nhttps://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go#newcode759\nsrc/pkg/database/sql/sql.go:759: si, err := dc.prepareLocked(query)\nSame here\n\nhttps://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go#newcode999\nsrc/pkg/database/sql/sql.go:999: si, err := dc.prepareLocked(query)\nSame here",
+			"disapproval": false,
+			"date": "2013-04-25 19:01:34.258200",
+			"approval": true
+		},
+		{
+			"sender": "mtnngw@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "With Tip and with just before the change:\r\n\r\n$ go version\r\ngo version devel +5e23075b0970 Fri Apr 26 11:42:58 2013 -0700 darwin/amd64\r\n\r\n//*sql.DB connection pool size = 20\r\nBenchmarkCreate        1000        609021 ns/op\r\nBenchmarkRead        2000        379022 ns/op\r\nBenchmarkDelete        5000        296088 ns/op\r\n\r\n// no connection pool\r\nBenchmarkCreate         100       6199264 ns/op\r\nBenchmarkRead         200       4424808 ns/op\r\nBenchmarkDelete         500       3396262 ns/op\r\n\r\n\r\n$ go version\r\ngo version devel +1d079908dd84 Thu Apr 25 18:47:12 2013 +0200 darwin/amd64\r\n\r\n//*sql.DB connection pool size = 20\r\nBenchmarkCreate        1000        609492 ns/op\r\nBenchmarkRead        2000        386040 ns/op\r\nBenchmarkDelete        5000        299545 ns/op\r\n\r\n\r\nThis is a rMBP, SSD, 2.6 Ghz Intel Core i7, 16 GB memory.\r\nPostgreSQL 9.2.4\r\ngithub.com/lib/pq\r\n\r\nWith a home brewed connection pool, I get basically the same performance.  \r\nIf I don't recycle my sql.DB pointers, I get 10x worse.\r\n\r\nWith *sql.DB connection pool size set to 50, I get \"pq: sorry, too many \r\nclients already.\" in both versions.\r\n\r\nFor me, it seems that w/ respect to postgres, (and the github/lib/pq \r\ndriver) everything is the same...\r\n\r\n",
+			"disapproval": false,
+			"date": "2013-04-26 21:49:22.055850",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"gwenn.kahz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, snaury@gmail.com, gwenn.kahz@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-04-25 19:19:35.632030",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"gwenn.kahz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/25 19:19:35, bradfitz wrote:\n> Please take another look.\n\nLGTM",
+			"disapproval": false,
+			"date": "2013-04-25 19:23:05.224830",
+			"approval": true
+		},
+		{
+			"sender": "google@julienschmidt.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"gwenn.kahz@gmail.com",
+				"google@julienschmidt.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "As far as I can tell, this SGTM\nAll my tests pass and the performance seems to be okay, too.\n\n\nOn 2013/04/25 19:19:35, bradfitz wrote:\n> Hello mailto:golang-dev@googlegroups.com, mailto:snaury@gmail.com, mailto:gwenn.kahz@gmail.com (cc:\n> mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.",
+			"disapproval": false,
+			"date": "2013-04-25 19:26:59.785750",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"gwenn.kahz@gmail.com",
+				"google@julienschmidt.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\nfingers crossed\n\nhttps://codereview.appspot.com/8836045/diff/8001/src/pkg/database/sql/fakedb_test.go\nFile src/pkg/database/sql/fakedb_test.go (right):\n\nhttps://codereview.appspot.com/8836045/diff/8001/src/pkg/database/sql/fakedb_test.go#newcode38\nsrc/pkg/database/sql/fakedb_test.go:38: mu         sync.Mutex // guards all 4 fields\n\"3 following fields\"?\n\nhttps://codereview.appspot.com/8836045/diff/20002/src/pkg/database/sql/sql.go\nFile src/pkg/database/sql/sql.go (right):\n\nhttps://codereview.appspot.com/8836045/diff/20002/src/pkg/database/sql/sql.go#newcode234\nsrc/pkg/database/sql/sql.go:234: // TODO(bradfitz): let drivers opt-out of caring about\ns/-/ / (it's a verb not an adjective)\n\nhttps://codereview.appspot.com/8836045/diff/20002/src/pkg/database/sql/sql_test.go\nFile src/pkg/database/sql/sql_test.go (right):\n\nhttps://codereview.appspot.com/8836045/diff/20002/src/pkg/database/sql/sql_test.go#newcode917\nsrc/pkg/database/sql/sql_test.go:917: // the batch of 50 queries above to finish in\ns/ in$//",
+			"disapproval": false,
+			"date": "2013-04-25 20:09:16.846370",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=r\r\n\r\n\r\n\r\nOn Thu, Apr 25, 2013 at 12:23 PM, <snaury@gmail.com> wrote:\r\n\r\n> On 2013/04/25 19:19:35, bradfitz wrote:\r\n>\r\n>> Please take another look.\r\n>>\r\n>\r\n> LGTM\r\n>\r\n> https://codereview.appspot.**com/8836045/<https://codereview.appspot.com/8836045/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-25 19:25:56.918000",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"gwenn.kahz@gmail.com",
+				"google@julienschmidt.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=45c12efb4635 ***\n\ndatabase/sql: fix driver Conn refcounting with prepared statements\n\nThe refcounting of driver Conns was completedly busted and\nwould leak (be held open forever) with any reasonable\nload. This was a significant regression from Go 1.0.\n\nThe core of this patch is removing one line:\n\n     s.db.addDep(dc, s)\n\nA database conn (dc) is a resource that be re-created any time\n(but cached for speed) should not be held open forever with a\ndependency refcount just because the Stmt (s) is alive (which\ntypically last for long periods of time, like forever).\n\nThe meat of the patch is new tests. In fixing the real issue,\na lot of tests then failed due to the fakedb_test.go's paranoia\nabout closing a fakeConn while it has open fakeStmts on it. I\ncould've ignored that, but that's been a problem in the past for\nother bugs.\n\nInstead, I now track per-Conn open statements and close them\nwhen the the conn closes.  The proper way to do this would've\nbeen making *driverStmt a finalCloser and using the dep mechanism,\nbut it was much more invasive. Added a TODO instead.\n\nI'd like to give a way for drivers to opt-out of caring about\ndriver.Stmt closes before a driver.Conn close, but that's a TODO\nfor the future, and that TODO is added in this CL.\n\nI know this is very late for Go 1.1, but database/sql is\ncurrently nearly useless without this.\n\nI'd like to believe all these database/sql bugs in the past\nrelease cycle are the result of increased usage, number of\ndrivers, and good feedback from increasingly-capable Go\ndevelopers, and not the result of me sucking.  It's also hard\nwith all the real drivers being out-of-tree, so I'm having to\nadd more and more hooks to fakedb_test.go to simulate things\nwhich real drivers end up doing.\n\nFixes Issue 5323\n\nR=golang-dev, snaury, gwenn.kahz, google, r\nCC=golang-dev\nhttps://codereview.appspot.com/8836045\n\nhttps://codereview.appspot.com/8836045/diff/8001/src/pkg/database/sql/fakedb_test.go\nFile src/pkg/database/sql/fakedb_test.go (right):\n\nhttps://codereview.appspot.com/8836045/diff/8001/src/pkg/database/sql/fakedb_test.go#newcode38\nsrc/pkg/database/sql/fakedb_test.go:38: mu         sync.Mutex // guards all 4 fields\nOn 2013/04/25 20:09:16, r wrote:\n> \"3 following fields\"?\n\nDone.\n\nhttps://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go\nFile src/pkg/database/sql/sql.go (right):\n\nhttps://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go#newcode695\nsrc/pkg/database/sql/sql.go:695: si, err := dc.prepareLocked(query)\nOn 2013/04/25 19:01:34, snaury wrote:\n> I didn't notice this before, but isn't this redundant? Since these prepared\n> statements are temporary they will always be gone before driverConn is closed,\n> so no need to track them in driverConn. I may be wrong though...\n\nDone.\n\nhttps://codereview.appspot.com/8836045/diff/20001/src/pkg/database/sql/sql.go#newcode759\nsrc/pkg/database/sql/sql.go:759: si, err := dc.prepareLocked(query)\nOn 2013/04/25 19:01:34, snaury wrote:\n> Same here\n\nDone.\n\nhttps://codereview.appspot.com/8836045/diff/20002/src/pkg/database/sql/sql.go\nFile src/pkg/database/sql/sql.go (right):\n\nhttps://codereview.appspot.com/8836045/diff/20002/src/pkg/database/sql/sql.go#newcode234\nsrc/pkg/database/sql/sql.go:234: // TODO(bradfitz): let drivers opt-out of caring about\nOn 2013/04/25 20:09:17, r wrote:\n> s/-/ / (it's a verb not an adjective)\n\nDone.\n\nhttps://codereview.appspot.com/8836045/diff/20002/src/pkg/database/sql/sql_test.go\nFile src/pkg/database/sql/sql_test.go (right):\n\nhttps://codereview.appspot.com/8836045/diff/20002/src/pkg/database/sql/sql_test.go#newcode917\nsrc/pkg/database/sql/sql_test.go:917: // the batch of 50 queries above to finish in\nOn 2013/04/25 20:09:17, r wrote:\n> s/ in$//\n\nDone.",
+			"disapproval": false,
+			"date": "2013-04-25 21:46:10.188790",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"snaury@gmail.com",
+				"gwenn.kahz@gmail.com",
+				"google@julienschmidt.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Cannot see any problems with http://code.google.com/p/odbc/\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-26 02:07:29.937080",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 8836045: database/sql: fix driver Conn refcounting with prepared...",
+	"created": "2013-04-24 19:44:29.688740",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		20001,
+		20002,
+		34001,
+		36001
+	],
+	"modified": "2013-04-26 23:43:33.643030",
+	"closed": true,
+	"issue": 8836045
+}

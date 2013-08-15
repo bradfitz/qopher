@@ -1,0 +1,189 @@
+{
+	"description": "time: add Round and Truncate\n\nNew in Go 1 will be nanosecond precision in the result of time.Now on Linux.\nThis will break code that stores time in external formats at microsecond\nprecision, reads it back, and expects to get exactly the same time.\n\nCode like that can be fixed by using time.Now().Round(time.Microsecond)\ninstead of time.Now() in those contexts.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"iant@golang.org",
+		"remyoudompheng@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "s/precision/resolution/g?\r\n\r\nOn Fri, Dec 7, 2012 at 10:35 AM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> time: add Round and Truncate\r\n>\r\n> New in Go 1 will be nanosecond precision in the result of time.Now on\r\n> Linux.\r\n> This will break code that stores time in external formats at microsecond\r\n> precision, reads it back, and expects to get exactly the same time.\r\n>\r\n> Code like that can be fixed by using time.Now().Round(time.**Microsecond)\r\n> instead of time.Now() in those contexts.\r\n>\r\n> Please review this at https://codereview.appspot.**com/6903050/<https://codereview.appspot.com/6903050/>\r\n>\r\n> Affected files:\r\n>   M doc/go1.1.html\r\n>   M src/pkg/time/example_test.go\r\n>   M src/pkg/time/time.go\r\n>   M src/pkg/time/time_test.go\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 22:36:00.771110",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"iant@golang.org",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "@bradfitz: we use precision elsewhere in the package instead of resolution\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go\nFile src/pkg/time/time.go (right):\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1037\nsrc/pkg/time/time.go:1037: // Truncate returns the result of rounding t down to a multiple of d.\nOn 2012/12/08 09:51:50, remyoudompheng wrote:\n> (see below: \"Time t is a multiple of Duration d\" doesn't mean anything to me).\n\nI understand what you're saying, but I don't have a good way to\ndescribe it that doesn't cause more confusion than it resolves. \nFor cases people will use it for - like Truncate(time.Millisecond),\nthe choice of zero is irrelevant, and I want to avoid making people\nthink zero matters more than it does.\n\nChanged to:\n\n// Truncate returns the result of rounding t down to a multiple of d (since the zero time).\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1065\nsrc/pkg/time/time.go:1065: return int(t.nsec/int32(d)) & 1, Duration(t.nsec % int32(d))\nOn 2012/12/08 09:51:50, remyoudompheng wrote:\n> this is not correct, for example if d == Second. In this case I would expect to\n> see t.sec&1 affect qmod2, but the code only mentions t.nsec.\n> \n> This code is correct if 2*d divides Second.\n\nNice catch, thanks. Made that the condition.\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1071\nsrc/pkg/time/time.go:1071: return int(t.sec/d1) & 1, Duration(t.sec%d1)*Second + Duration(t.nsec)\nOn 2012/12/08 09:51:50, remyoudompheng wrote:\n> I think t.sec/d1 is not what you want in case t.sec < 0 (which is highly\n> unlikely anyway). The comment for div should explain whether the returned r is\n> always >= 0.\n\nYou're right. I forgot we allowed t.sec >= 0. Fixed this whole routine to handle that.\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1078\nsrc/pkg/time/time.go:1078: \nOn 2012/12/08 09:51:50, remyoudompheng wrote:\n> I think rounding time for a duration which is not a divisor of 86400*time.Second\n> or of time.Hour doesn't make sense because the result will depend on which day\n> is chosen as origin of time, so it would be essentially unspecified.\n\nAgreed until the last word. We've defined where 0 (the zero Time) is, so it's all specified. I agree it's a useless thing to do, but it's all specified, and if asked to round to 3 nanoseconds or 3 days, I'd rather give a consistent result than panic.\n\n> Rounding a time.Time to 7 seconds (t.Truncate(7*time.Second)) and a Unix time to\n> 7 seconds (for example, u := t.Unix(); t = time.Unix(u-u%7, 0)) will give\n> different results even for reasonable values of t, and this looks very\n> confusing.\n\nIt depends. If you actually notice that it's not where you think it is, you're looking _very_ close and will probably figure out where 0 is. On the other hand, if you just want to do something every 7 seconds and want a consistent way to generate times 7 seconds apart, this works fine.\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1080\nsrc/pkg/time/time.go:1080: tmp := (uint64(t.sec) >> 32) * 1e9\nOn 2012/12/08 09:51:50, remyoudompheng wrote:\n> I'm not sure this makes any sense if t.sec < 0.\n\nFixed.\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1082\nsrc/pkg/time/time.go:1082: u0 := tmp << 32\nOn 2012/12/08 09:51:50, remyoudompheng wrote:\n> if the goal is u1<<64|u0 = (tmp&^0xffffffff)*1e9 here, I think u0 should be\n> (tmp&0xffffffff) << 32.\n\ntmp<<32 and (tmp&0xffffffff)<<32 are the same thing, no?\n\n> I'm not yet in shape to look at the things below.\n\nNo worries. Thanks. The test against math/big makes me pretty confident.",
+			"disapproval": false,
+			"date": "2012-12-09 06:59:09.937870",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Rob signed off on the API but I'd like someone to review the code,\r\nespecially the math. Maybe R\u00e9my or Robert?\r\n\r\nThanks.\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 22:26:09.740850",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-12-07 18:35:19.724470",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"iant@golang.org",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go\nFile src/pkg/time/time.go (right):\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1037\nsrc/pkg/time/time.go:1037: // Truncate returns the result of rounding t down to a multiple of d.\n(see below: \"Time t is a multiple of Duration d\" doesn't mean anything to me).\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1065\nsrc/pkg/time/time.go:1065: return int(t.nsec/int32(d)) & 1, Duration(t.nsec % int32(d))\nthis is not correct, for example if d == Second. In this case I would expect to see t.sec&1 affect qmod2, but the code only mentions t.nsec.\n\nThis code is correct if 2*d divides Second.\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1071\nsrc/pkg/time/time.go:1071: return int(t.sec/d1) & 1, Duration(t.sec%d1)*Second + Duration(t.nsec)\nI think t.sec/d1 is not what you want in case t.sec < 0 (which is highly unlikely anyway). The comment for div should explain whether the returned r is always >= 0.\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1078\nsrc/pkg/time/time.go:1078: \nI think rounding time for a duration which is not a divisor of 86400*time.Second or of time.Hour doesn't make sense because the result will depend on which day is chosen as origin of time, so it would be essentially unspecified.\n\nBut rounding to 360ms (which is time.Hour / 10000) can make sense, and is not is the previous easy cases.\n\nRounding a time.Time to 7 seconds (t.Truncate(7*time.Second)) and a Unix time to 7 seconds (for example, u := t.Unix(); t = time.Unix(u-u%7, 0)) will give different results even for reasonable values of t, and this looks very confusing.\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1080\nsrc/pkg/time/time.go:1080: tmp := (uint64(t.sec) >> 32) * 1e9\nI'm not sure this makes any sense if t.sec < 0.\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/time.go#newcode1082\nsrc/pkg/time/time.go:1082: u0 := tmp << 32\nif the goal is u1<<64|u0 = (tmp&^0xffffffff)*1e9 here, I think u0 should be (tmp&0xffffffff) << 32.\n\nI'm not yet in shape to look at the things below.",
+			"disapproval": false,
+			"date": "2012-12-08 09:51:50.174820",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"iant@golang.org",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6903050/diff/3/src/pkg/time/example_test.go\nFile src/pkg/time/example_test.go (right):\n\nhttps://codereview.appspot.com/6903050/diff/3/src/pkg/time/example_test.go#newcode60\nsrc/pkg/time/example_test.go:60: func ExampleTime_Round() {\nthere should be a test demonstrating the round-to-even behaviour in very simple cases (which I think are broken, see previuos comment).\n\nParse(\"2012 Dec 07 12:15:30.5\").Round(time.Second) -> 12:15:30\nParse(\"2012 Dec 07 12:15:31.5\").Round(time.Second) -> 12:15:32",
+			"disapproval": false,
+			"date": "2012-12-08 09:56:07.859450",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-12-08 08:35:52.353260",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"iant@golang.org",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/08 23:01:16, remyoudompheng wrote:\n> Another example of how \"round-even\" may have an unclear meaning. Suppose I am\n> calling t.Round(time.Hour). I expect to get an even number of hours if I'm\n> halfway. But:\n> \n> - if t is 16:30:00 UTC, it gives 16:00:00 UTC\n> - if t is 16:30:00 CET (UTC+1), it gives 17:00:00 CET ?\n> - if t is 16:30:00 CEST (UTC+2), it gives 16:00:00 CEST ?\n> \n> Is it something a sane user can expect?\n\nYeah, that's annoying. It's probably better to round up always, which I've done now.\nNote that if you are in a fractional time zone that is n hours + 30 minutes off from UTC,\nrounding to hour produces times ending in :30 in the local zone.\nSimilarly, in any non-UTC local zone, rounding to 1*Day does not produce 00:00:00.\n\nThese are all implications of using the zero time instant as zero.\nI think it is better to live with them than to make the computation location-dependent.",
+			"disapproval": false,
+			"date": "2012-12-09 06:58:34.903090",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"iant@golang.org",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Another example of how \"round-even\" may have an unclear meaning. Suppose I am calling t.Round(time.Hour). I expect to get an even number of hours if I'm halfway. But:\n\n- if t is 16:30:00 UTC, it gives 16:00:00 UTC\n- if t is 16:30:00 CET (UTC+1), it gives 17:00:00 CET ?\n- if t is 16:30:00 CEST (UTC+2), it gives 16:00:00 CEST ?\n\nIs it something a sane user can expect?\n\nR\u00e9my.",
+			"disapproval": false,
+			"date": "2012-12-08 23:01:16.208290",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL r\u00e9my\r\n",
+			"disapproval": false,
+			"date": "2012-12-09 07:00:06.097660",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"iant@golang.org",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM after the test fix\n\nhttps://codereview.appspot.com/6903050/diff/4/src/pkg/time/time_test.go\nFile src/pkg/time/time_test.go (right):\n\nhttps://codereview.appspot.com/6903050/diff/4/src/pkg/time/time_test.go#newcode340\nsrc/pkg/time/time_test.go:340: for Second%d == 0 {\ni think your condition is reversed. You want to stop when Second%d == 0. But if d was 500000001 you are really, really screwed, and even more on ARM. I suggest:\n\n      // divisors of Second\n      f1 := func(ti int64, tns int32, logdi uint32) bool {\n            d := Duration(1)\n            a, b := logdi%9, (logdi>>16)%9\n            d <<= a\n            for i := 0; i < int(b); i++ {\n                  d *= 5\n            }\n            return testOne(ti, int64(tns), int64(d))\n      }\n      quick.Check(f1, cfg)",
+			"disapproval": false,
+			"date": "2012-12-09 08:24:07.771320",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"iant@golang.org",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=ea15e7ed6d72 ***\n\ntime: add Round and Truncate\n\nNew in Go 1 will be nanosecond precision in the result of time.Now on Linux.\nThis will break code that stores time in external formats at microsecond\nprecision, reads it back, and expects to get exactly the same time.\n\nCode like that can be fixed by using time.Now().Round(time.Microsecond)\ninstead of time.Now() in those contexts.\n\nR=golang-dev, bradfitz, iant, remyoudompheng\nCC=golang-dev\nhttps://codereview.appspot.com/6903050",
+			"disapproval": false,
+			"date": "2012-12-09 08:59:41.741550",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6903050: time: add Round and Truncate",
+	"created": "2012-12-07 18:31:50.710980",
+	"patchsets": [
+		1,
+		3,
+		4,
+		6003,
+		11005
+	],
+	"modified": "2012-12-09 08:59:41.741550",
+	"closed": true,
+	"issue": 6903050
+}

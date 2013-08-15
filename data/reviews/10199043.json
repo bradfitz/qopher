@@ -1,0 +1,110 @@
+{
+	"description": "runtime: round spans_size up to page boundary\nin case we have weird (not page aligned) memory limit.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [
+		"dvyukov@google.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "why is the fix not to round the limit properly instead?\r\n",
+			"disapproval": false,
+			"date": "2013-06-11 20:50:22.782270",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-06-11 20:39:36.597950",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I found this while debugging a crash on the iOS port, here is the trace of\nmemory related syscalls:\n\nruntime: SysAlloc(0x40000) = 0x361000\nruntime: SysReserve(0x400000, 0x28e8b540) = 0x3a1000\nruntime: SysMap(0x4cdc540, 0x100000) = 0x16\nruntime: mmap(0x4cdc540, 0x100000) failure (0x16)\nSegmentation fault: 11\n\nobviously, the address parameter to SysMap is not aligned to page boundary,\nso it gets EINVAL (0x16), the easiest and safest fix is to round the spans_size.\n\nMore background:\non iOS, we can't reserve more virtual memory than available, so i must enable\nthe runtime.memlimit, and that limit gives some not aligned memory limit\nleading to this weird 0x28e8b540 reservation size.",
+			"disapproval": false,
+			"date": "2013-06-11 20:45:06.027390",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/11 20:50:22, rsc wrote:\n> why is the fix not to round the limit properly instead?\nbecause the code lays out the memory allocated as follows spans, bitmap, arena,\nbitmap is aligned to pages, so if we don't align spans_size to pages, the arena\nmight be misaligned. thus i think the safest fix is to align spans_size (besides,\nit seems to waste less memory than enforcing a large alignment to memory\nlimits)\n\n    runtime\u00b7mheap.spans = (MSpan**)p;\n    runtime\u00b7mheap.bitmap = p + spans_size;\n    runtime\u00b7mheap.arena_start = p + spans_size + bitmap_size;\n    runtime\u00b7mheap.arena_used = runtime\u00b7mheap.arena_start;\n    runtime\u00b7mheap.arena_end = runtime\u00b7mheap.arena_start + arena_size;",
+			"disapproval": false,
+			"date": "2013-06-11 21:03:33.811720",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2013-06-11 21:14:17.615200",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=a3545f2fb0a2 ***\n\nruntime: round spans_size up to page boundary\nin case we have weird (not page aligned) memory limit.\n\nR=golang-dev, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/10199043",
+			"disapproval": false,
+			"date": "2013-06-11 21:23:02.275670",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "We now have ROUND macro for this.\r\nSending https://codereview.appspot.com/10256043\r\n\r\nOn Wed, Jun 12, 2013 at 12:39 AM,  <minux.ma@gmail.com> wrote:\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: round spans_size up to page boundary\r\n> in case we have weird (not page aligned) memory limit.\r\n>\r\n> Please review this at https://codereview.appspot.com/10199043/\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/malloc.goc\r\n>\r\n>\r\n> Index: src/pkg/runtime/malloc.goc\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/malloc.goc\r\n> +++ b/src/pkg/runtime/malloc.goc\r\n> @@ -351,6 +351,8 @@\r\n>                 arena_size = MaxMem;\r\n>                 bitmap_size = arena_size / (sizeof(void*)*8/4);\r\n>                 spans_size = arena_size / PageSize *\r\n> sizeof(runtime\u00b7mheap.spans[0]);\r\n> +               // round spans_size to pages\r\n> +               spans_size = (spans_size + ((1<<PageShift) - 1)) &\r\n> ~((1<<PageShift) - 1);\r\n>                 p = runtime\u00b7SysReserve((void*)(0x00c0ULL<<32), bitmap_size +\r\n> spans_size + arena_size);\r\n>         }\r\n>         if (p == nil) {\r\n> @@ -379,6 +381,8 @@\r\n>                         arena_size = bitmap_size * 8;\r\n>                         spans_size = arena_size / PageSize *\r\n> sizeof(runtime\u00b7mheap.spans[0]);\r\n>                 }\r\n> +               // round spans_size to pages\r\n> +               spans_size = (spans_size + ((1<<PageShift) - 1)) &\r\n> ~((1<<PageShift) - 1);\r\n>\r\n>                 // SysReserve treats the address we ask for, end, as a hint,\r\n>                 // not as an absolute requirement.  If we ask for the end\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-13 08:51:01.882480",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 10199043: runtime: round spans_size up to page boundary",
+	"created": "2013-06-11 20:38:59.709890",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		7002
+	],
+	"modified": "2013-06-13 08:51:01.962220",
+	"closed": true,
+	"issue": 10199043
+}

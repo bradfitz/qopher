@@ -1,0 +1,129 @@
+{
+	"description": "cmd/gc, runtime: pass PC directly to racefuncenter.\n\ngo test -race -run none -bench . encoding/json\nbenchmark                      old ns/op    new ns/op    delta\nBenchmarkCodeEncoder          3207689000   1716149000  -46.50%\nBenchmarkCodeMarshal          3206761000   1715677000  -46.50%\nBenchmarkCodeDecoder          8647304000   4482709000  -48.16%\nBenchmarkCodeUnmarshal        8032217000   3451248000  -57.03%\nBenchmarkCodeUnmarshalReuse   8016722000   3480502000  -56.58%\nBenchmarkSkipValue           10340453000   4560313000  -55.90%\n\nbenchmark                       old MB/s     new MB/s  speedup\nBenchmarkCodeEncoder                0.60         1.13    1.88x\nBenchmarkCodeMarshal                0.61         1.13    1.85x\nBenchmarkCodeDecoder                0.22         0.43    1.95x\nBenchmarkCodeUnmarshal              0.24         0.56    2.33x\nBenchmarkCodeUnmarshalReuse         0.24         0.56    2.33x\nBenchmarkSkipValue                  0.19         0.44    2.32x\n\nFixes issue 4248.",
+	"cc": [
+		"dvyukov@google.com",
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThis is definitely an improvement but it doesn't work across stack splits. I think that's rare enough that we can just fall back to the old code in that case.\n\nhttps://codereview.appspot.com/6815066/diff/5001/src/pkg/runtime/race.c\nFile src/pkg/runtime/race.c (right):\n\nhttps://codereview.appspot.com/6815066/diff/5001/src/pkg/runtime/race.c#newcode74\nsrc/pkg/runtime/race.c:74: {\nadd\n\n// If the caller PC is lessstack, use runtime.callers\n// to walk across the stack split to find the real caller.\nif(pc == runtime.lessstack)\n    runtime.callers(2, (uintptr*)&pc, 1);\n\nMaybe change byte* pc to uintptr pc to avoid the cast.",
+			"disapproval": false,
+			"date": "2012-11-01 16:09:05.990670",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I am looking at this new report:\r\n\r\n  ??()\r\n      -:0 +0x401038a1\r\n\r\n\r\nCan it be related to closures? The frame above ?? is a closure.\r\n\r\n\r\nhttp://build.golang.org/log/bf2017abd5123b784f65272a7cc3eb8f1ccf3e13\r\n\r\nWARNING: DATA RACE\r\nRead by goroutine 142:\r\n  net.sendFile()\r\n      /usr/local/go/src/pkg/net/sendfile_linux.go:47 +0x5da\r\n  net.(*TCPConn).ReadFrom()\r\n      /usr/local/go/src/pkg/net/tcpsock_posix.go:80 +0x49\r\n  net/http.(*response).ReadFrom()\r\n      /usr/local/go/src/pkg/net/http/server.go:161 +0x11c\r\n  io.CopyN()\r\n      /usr/local/go/src/pkg/io/io.go:305 +0x1a0\r\n  net/http.serveContent()\r\n      /usr/local/go/src/pkg/net/http/fs.go:236 +0xaa0\r\n  net/http.ServeContent()\r\n      /usr/local/go/src/pkg/net/http/fs.go:118 +0x184\r\n  net/http_test.func\u00b7024()\r\n      /usr/local/go/src/pkg/net/http/fs_test.go:551 +0x19f\r\n  ??()\r\n      -:0 +0x401038a1\r\n  net/http/httptest.(*waitGroupHandler).ServeHTTP()\r\n      /usr/local/go/src/pkg/net/http/httptest/server.go:180 +0xcb\r\n  net/http.(*conn).serve()\r\n      /usr/local/go/src/pkg/net/http/server.go:681 +0x7a7\r\n\r\nPrevious write by goroutine 15:\r\n  os.(*file).close()\r\n      /usr/local/go/src/pkg/os/file_unix.go:110 +0x15e\r\n  os.(*File).Close()\r\n      /usr/local/go/src/pkg/os/file_unix.go:99 +0x43\r\n  net/http_test.TestServeContent()\r\n      /usr/local/go/src/pkg/net/http/fs_test.go:626 +0x1710\r\n  testing.tRunner()\r\n      /usr/local/go/src/pkg/testing/testing.go:301 +0x8f\r\n\r\nGoroutine 142 (running) created at:\r\n  net/http.(*Server).Serve()\r\n      /usr/local/go/src/pkg/net/http/server.go:1116 +0x45e\r\n\r\nGoroutine 15 (running) created at:\r\n  testing.RunTests()\r\n      /usr/local/go/src/pkg/testing/testing.go:377 +0xa8b\r\n  testing.Main()\r\n      /usr/local/go/src/pkg/testing/testing.go:313 +0xcd\r\n  main.main()\r\n      net/http/_test/_testmain.go:301 +0xda\r\n  runtime.main()\r\n      /usr/local/go/src/pkg/runtime/proc.c:248 +0x91\r\n\r\n\r\n\r\n\r\n\r\nOn Thu, Nov 1, 2012 at 10:43 PM, <remyoudompheng@gmail.com> wrote:\r\n\r\n> *** Submitted as\r\n> http://code.google.com/p/go/**source/detail?r=ce1d30df8595<http://code.google.com/p/go/source/detail?r=ce1d30df8595>***\r\n>\r\n>\r\n> cmd/gc, runtime: pass PC directly to racefuncenter.\r\n>\r\n> go test -race -run none -bench . encoding/json\r\n> benchmark                      old ns/op    new ns/op    delta\r\n> BenchmarkCodeEncoder          3207689000   1716149000  -46.50%\r\n> BenchmarkCodeMarshal          3206761000   1715677000  -46.50%\r\n> BenchmarkCodeDecoder          8647304000   4482709000  -48.16%\r\n> BenchmarkCodeUnmarshal        8032217000   3451248000  -57.03%\r\n> BenchmarkCodeUnmarshalReuse   8016722000   3480502000  -56.58%\r\n> BenchmarkSkipValue           10340453000   4560313000  -55.90%\r\n>\r\n>\r\n> benchmark                       old MB/s     new MB/s  speedup\r\n> BenchmarkCodeEncoder                0.60         1.13    1.88x\r\n> BenchmarkCodeMarshal                0.61         1.13    1.85x\r\n> BenchmarkCodeDecoder                0.22         0.43    1.95x\r\n> BenchmarkCodeUnmarshal              0.24         0.56    2.33x\r\n> BenchmarkCodeUnmarshalReuse         0.24         0.56    2.33x\r\n> BenchmarkSkipValue                  0.19         0.44    2.32x\r\n>\r\n> Fixes issue 4248.\r\n>\r\n> R=dvyukov, golang-dev, rsc\r\n> CC=golang-dev\r\n> http://codereview.appspot.com/**6815066<http://codereview.appspot.com/6815066>\r\n>\r\n>\r\n>\r\n> http://codereview.appspot.com/**6815066/diff/2001/src/cmd/gc/**racewalk.c<http://codereview.appspot.com/6815066/diff/2001/src/cmd/gc/racewalk.c>\r\n> File src/cmd/gc/racewalk.c (right):\r\n>\r\n> http://codereview.appspot.com/**6815066/diff/2001/src/cmd/gc/**\r\n> racewalk.c#newcode46<http://codereview.appspot.com/6815066/diff/2001/src/cmd/gc/racewalk.c#newcode46>\r\n>\r\n> src/cmd/gc/racewalk.c:46: nodpc = nod(OXXX, nil, nil);\r\n> On 2012/11/01 14:33:50, dvyukov wrote:\r\n>\r\n>> please add a comment that it is inlined runtime\u00b7getcallerpc() for\r\n>>\r\n> performance\r\n>\r\n>> and that it's only x86 (arm will require different code, but I have to\r\n>>\r\n> plans\r\n>\r\n>> about porting it to arm).\r\n>>\r\n>\r\n> Done.\r\n>\r\n> http://codereview.appspot.com/**6815066/diff/5001/src/pkg/**runtime/race.c<http://codereview.appspot.com/6815066/diff/5001/src/pkg/runtime/race.c>\r\n> File src/pkg/runtime/race.c (right):\r\n>\r\n> http://codereview.appspot.com/**6815066/diff/5001/src/pkg/**\r\n> runtime/race.c#newcode74<http://codereview.appspot.com/6815066/diff/5001/src/pkg/runtime/race.c#newcode74>\r\n> src/pkg/runtime/race.c:74: {\r\n>\r\n> On 2012/11/01 16:09:06, rsc wrote:\r\n>\r\n>> add\r\n>>\r\n>\r\n>  // If the caller PC is lessstack, use runtime.callers\r\n>> // to walk across the stack split to find the real caller.\r\n>> if(pc == runtime.lessstack)\r\n>>      runtime.callers(2, (uintptr*)&pc, 1);\r\n>>\r\n>\r\n>  Maybe change byte* pc to uintptr pc to avoid the cast.\r\n>>\r\n>\r\n> Done.\r\n>\r\n> http://codereview.appspot.com/**6815066/<http://codereview.appspot.com/6815066/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-01 19:43:55.738340",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Instead, stack splits happen quite often: the report was broken:\n\nWARNING: DATA RACE\nRead by goroutine 2:\n  reflect.Value.MapKeys()\n      /opt/remy/go/src/pkg/reflect/value.go:1081 +0x115\n  runtime.cgocall()\n      /opt/remy/go/src/pkg/runtime/cgocall.c:105 +0x43\n  ??()\n      -:0 +0xffffffffffffffff\n  ??()\n      -:0 +0x4a93f7\n  runtime.new()\n      /opt/remy/go/src/pkg/runtime/zmalloc_linux_amd64.c:619 +0x8f\n  ??()\n      -:0 +0xffffffffffffffff\n\nNow it's better:\n\nWARNING: DATA RACE\nRead by goroutine 2:\n  reflect.Value.MapKeys()\n      /opt/remy/go.pristine3/src/pkg/reflect/value.go:1081 +0x121\n  encoding/json.(*encodeState).reflectValueQuoted()\n      /opt/remy/go.pristine3/src/pkg/encoding/json/encode.go:371 +0xe75\n  encoding/json.(*encodeState).reflectValue()\n      /opt/remy/go.pristine3/src/pkg/encoding/json/encode.go:252 +0x47\n  encoding/json.(*encodeState).marshal()\n      /opt/remy/go.pristine3/src/pkg/encoding/json/encode.go:223 +0x98\n  encoding/json.Marshal()\n      /opt/remy/go.pristine3/src/pkg/encoding/json/encode.go:117 +0x73\n  main.func\u00b7001()\n      /opt/remy/go.pristine3/machin.go:15 +0x3f",
+			"disapproval": false,
+			"date": "2012-11-01 18:36:48.085870",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Nov 1, 2012 at 11:51 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> I'm not sure. Maybe. 0x401038a1 looks like it should be in the text\r\n> segment, so it should have a name.\r\n>\r\n\r\n\r\nAddresses in binaries has 6 digits, this has 8.\r\nTsan corrupts in this way addresses from heap. It does it for data, but I\r\nam not sure why it does it for pc. but anyway it's not 4xxxxx.\r\n",
+			"disapproval": false,
+			"date": "2012-11-01 19:57:41.896620",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com, golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-01 14:10:36.546130",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI've checked that reports look correctly. No changes, except different pc offsets inside functions, which is expected.\nBinary size increase is negligible: 7975148 vs 8068233 bytes for encoding/json test. Performance improvement is impressive.\n\nhttps://codereview.appspot.com/6815066/diff/2001/src/cmd/gc/racewalk.c\nFile src/cmd/gc/racewalk.c (right):\n\nhttps://codereview.appspot.com/6815066/diff/2001/src/cmd/gc/racewalk.c#newcode46\nsrc/cmd/gc/racewalk.c:46: nodpc = nod(OXXX, nil, nil);\nplease add a comment that it is inlined runtime\u00b7getcallerpc() for performance\nand that it's only x86 (arm will require different code, but I have to plans about porting it to arm).",
+			"disapproval": false,
+			"date": "2012-11-01 14:33:49.920300",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=ce1d30df8595 ***\n\ncmd/gc, runtime: pass PC directly to racefuncenter.\n\ngo test -race -run none -bench . encoding/json\nbenchmark                      old ns/op    new ns/op    delta\nBenchmarkCodeEncoder          3207689000   1716149000  -46.50%\nBenchmarkCodeMarshal          3206761000   1715677000  -46.50%\nBenchmarkCodeDecoder          8647304000   4482709000  -48.16%\nBenchmarkCodeUnmarshal        8032217000   3451248000  -57.03%\nBenchmarkCodeUnmarshalReuse   8016722000   3480502000  -56.58%\nBenchmarkSkipValue           10340453000   4560313000  -55.90%\n\nbenchmark                       old MB/s     new MB/s  speedup\nBenchmarkCodeEncoder                0.60         1.13    1.88x\nBenchmarkCodeMarshal                0.61         1.13    1.85x\nBenchmarkCodeDecoder                0.22         0.43    1.95x\nBenchmarkCodeUnmarshal              0.24         0.56    2.33x\nBenchmarkCodeUnmarshalReuse         0.24         0.56    2.33x\nBenchmarkSkipValue                  0.19         0.44    2.32x\n\nFixes issue 4248.\n\nR=dvyukov, golang-dev, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6815066\n\nhttp://codereview.appspot.com/6815066/diff/2001/src/cmd/gc/racewalk.c\nFile src/cmd/gc/racewalk.c (right):\n\nhttp://codereview.appspot.com/6815066/diff/2001/src/cmd/gc/racewalk.c#newcode46\nsrc/cmd/gc/racewalk.c:46: nodpc = nod(OXXX, nil, nil);\nOn 2012/11/01 14:33:50, dvyukov wrote:\n> please add a comment that it is inlined runtime\u00b7getcallerpc() for performance\n> and that it's only x86 (arm will require different code, but I have to plans\n> about porting it to arm).\n\nDone.\n\nhttp://codereview.appspot.com/6815066/diff/5001/src/pkg/runtime/race.c\nFile src/pkg/runtime/race.c (right):\n\nhttp://codereview.appspot.com/6815066/diff/5001/src/pkg/runtime/race.c#newcode74\nsrc/pkg/runtime/race.c:74: {\nOn 2012/11/01 16:09:06, rsc wrote:\n> add\n> \n> // If the caller PC is lessstack, use runtime.callers\n> // to walk across the stack split to find the real caller.\n> if(pc == runtime.lessstack)\n>     runtime.callers(2, (uintptr*)&pc, 1);\n> \n> Maybe change byte* pc to uintptr pc to avoid the cast.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-01 18:43:33.911330",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm not sure. Maybe. 0x401038a1 looks like it should be in the text\r\nsegment, so it should have a name.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-01 19:51:12.148030",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 6815066: cmd/gc, runtime: pass PC directly to racefuncenter.",
+	"created": "2012-11-01 12:54:22.738630",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9002,
+		1002
+	],
+	"modified": "2012-11-01 18:43:35.566050",
+	"closed": true,
+	"issue": 6815066
+}

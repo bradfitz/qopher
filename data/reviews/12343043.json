@@ -1,0 +1,113 @@
+{
+	"description": "cmd/go: Fix go get when the fetched XML uses ASCII encoding\n\nAlso, add a meaningful error message when an encoding which\ncan't be parsed is found.\n\nFixes Issue 5801.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please just add a comment.\r\n\r\nI agree that rejecting >=0x80 would be the proper treatment of docs that\r\ndeclare themselves ASCII, but it will just lead to more bug reports. Let's\r\nbe permissive.\r\n",
+			"disapproval": false,
+			"date": "2013-08-02 17:26:23.100020",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-08-02 10:50:40.366490",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "[+cmang as FYI, for sync with go.tools version]\r\n\r\nThe CL description should say \"Fixes Issue 5801\", not \"Fixes #5801\".  The\r\nformer is what tools look for to close and link issues.\r\n\r\n\r\n\r\nOn Fri, Aug 2, 2013 at 3:50 AM, <alberto.garcia.hierro@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> cmd/go: Fix go get when the fetched xml uses ascii encoding\r\n>\r\n> Also, add a meaningful error message when an encoding which\r\n> can't be parsed is found.\r\n>\r\n> Fixes #5801.\r\n>\r\n> Please review this at https://codereview.appspot.**com/12343043/<https://codereview.appspot.com/12343043/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/go/discovery.go\r\n>   M src/cmd/go/vcs.go\r\n>\r\n>\r\n> Index: src/cmd/go/discovery.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/go/discovery.go\r\n> +++ b/src/cmd/go/discovery.go\r\n> @@ -13,17 +13,32 @@\r\n>\r\n>  import (\r\n>         \"encoding/xml\"\r\n> +       \"fmt\"\r\n>         \"io\"\r\n>         \"strings\"\r\n>  )\r\n>\r\n> +// charsetReader returns a reader for the given charset. Currently\r\n> +// it returns the same reader for ascii, since it's a subset of utf-8,\r\n> +// or a meaningful error for any other encoding.\r\n> +func charsetReader(charset string, input io.Reader) (io.Reader, error) {\r\n> +       switch strings.ToLower(charset) {\r\n> +       case \"ascii\":\r\n> +               return input, nil\r\n> +       default:\r\n> +               return nil, fmt.Errorf(\"can't decode XML document using\r\n> charset %q\", charset)\r\n> +       }\r\n> +}\r\n> +\r\n>  // parseMetaGoImports returns meta imports from the HTML in r.\r\n>  // Parsing ends at the end of the <head> section or the beginning of the\r\n> <body>.\r\n> -func parseMetaGoImports(r io.Reader) (imports []metaImport) {\r\n> +func parseMetaGoImports(r io.Reader) (imports []metaImport, err error) {\r\n>         d := xml.NewDecoder(r)\r\n> +       d.CharsetReader = charsetReader\r\n>         d.Strict = false\r\n> +       var t xml.Token\r\n>         for {\r\n> -               t, err := d.Token()\r\n> +               t, err = d.Token()\r\n>                 if err != nil {\r\n>                         return\r\n>                 }\r\n> Index: src/cmd/go/vcs.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/go/vcs.go\r\n> +++ b/src/cmd/go/vcs.go\r\n> @@ -442,7 +442,11 @@\r\n>                 return nil, fmt.Errorf(\"http/https fetch: %v\", err)\r\n>         }\r\n>         defer body.Close()\r\n> -       metaImport, err := matchGoImport(**parseMetaGoImports(body),\r\n> importPath)\r\n> +       imports, err := parseMetaGoImports(body)\r\n> +       if err != nil {\r\n> +               return nil, fmt.Errorf(\"parsing %s: %v\", importPath, err)\r\n> +       }\r\n> +       metaImport, err := matchGoImport(imports, importPath)\r\n>         if err != nil {\r\n>                 if err != errNoMatch {\r\n>                         return nil, fmt.Errorf(\"parse %s: %v\", urlStr, err)\r\n> @@ -467,7 +471,10 @@\r\n>                 if err != nil {\r\n>                         return nil, fmt.Errorf(\"fetch %s: %v\", urlStr, err)\r\n>                 }\r\n> -               imports := parseMetaGoImports(body)\r\n> +               imports, err := parseMetaGoImports(body)\r\n> +               if err != nil {\r\n> +                       return nil, fmt.Errorf(\"parsing %s: %v\",\r\n> importPath, err)\r\n> +               }\r\n>                 if len(imports) == 0 {\r\n>                         return nil, fmt.Errorf(\"fetch %s: no go-import\r\n> meta tag\", urlStr)\r\n>                 }\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-02 16:20:03.502560",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12343043/diff/1002/src/cmd/go/discovery.go\nFile src/cmd/go/discovery.go (right):\n\nhttps://codereview.appspot.com/12343043/diff/1002/src/cmd/go/discovery.go#newcode27\nsrc/cmd/go/discovery.go:27: return input, nil\nThis isn't entirely correct.  You might want to instead return asciiReader{input}, nil.\n\ntype asciiReader struct {\n\tr io.Reader\n}\n\nfunc (a asciiReader) Read(p []byte) (n int, err error) {\n\tn, err = a.r.Read(p)\n\tfor i := 0; i < n; i++ {\n\t\tif p[i] > 0x7f {\n\t\t\treturn i, fmt.Errorf(\"uninvalid ASCII byte %q\", p[i])\n\t\t}\n\t}\n\treturn\n}\n\nBut maybe it doesn't matter.  At least add a comment.",
+			"disapproval": false,
+			"date": "2013-08-02 16:26:29.139320",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks Brad and Russ for the feedback. I agree with Russ' suggestion, in this case is better to be permissive. I've modified the comment to make clear that documents declared as encoding with ASCII will be interpreted as UTF-8.\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-08-02 21:04:32.770970",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-08-02 21:15:03.953140",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=c3b45d0dc5c0 ***\n\ncmd/go: Fix go get when the fetched XML uses ASCII encoding\n\nAlso, add a meaningful error message when an encoding which\ncan't be parsed is found.\n\nFixes Issue 5801.\n\nR=golang-dev, bradfitz, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/12343043\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2013-08-02 21:15:41.042370",
+			"approval": false
+		}
+	],
+	"owner_email": "alberto.garcia.hierro@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Hierro",
+	"subject": "code review 12343043: cmd/go: Fix go get when the fetched XML uses ASCII encoding",
+	"created": "2013-08-02 10:50:12.626500",
+	"patchsets": [
+		1,
+		3001,
+		1002,
+		11001
+	],
+	"modified": "2013-08-02 21:19:18.932060",
+	"closed": true,
+	"issue": 12343043
+}

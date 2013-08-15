@@ -1,0 +1,99 @@
+{
+	"description": "runtime: introduce helper persistentalloc() function\nIt is a caching wrapper around SysAlloc() that can allocate small chunks.\nUse it for symtab allocations. Reduces number of symtab walks from 4 to 3\n(reduces buildfuncs time from 10ms to 7.5ms on a large binary,\nreduces initial heap size by 680K on the same binary).\nAlso can be used for type info allocation, itab allocation.\nThere are also several places in GC where we do the same thing,\nthey can be changed to use persistentalloc().\nAlso can be used in FixAlloc, because each instance of FixAlloc allocates\nin 128K regions, which is too eager.\nReincarnation of committed and rolled back https://codereview.appspot.com/9805043\nThe latent bugs that it revealed are fixed:\nhttps://codereview.appspot.com/9837049\nhttps://codereview.appspot.com/9778048",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"khr@google.com"
+	],
+	"reviewers": [
+		"iant@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/30 19:48:16, khr1 wrote:\n> LGTM\n> \n> Do you have bug #s / CL #s for the latent bugs that were fixed?\n\n\nUpdated CL description with CL numbers.",
+			"disapproval": false,
+			"date": "2013-05-31 06:38:24.240880",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-30 17:32:04.328330",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nDo you have bug #s / CL #s for the latent bugs that were fixed?\r\n\r\n\r\nOn Thu, May 30, 2013 at 10:32 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: introduce helper persistentalloc() function\r\n> It is a caching wrapper around SysAlloc() that can allocate small\r\n> chunks.\r\n> Use it for symtab allocations. Reduces number of symtab walks from 4 to\r\n> 3\r\n> (reduces buildfuncs time from 10ms to 7.5ms on a large binary,\r\n> reduces initial heap size by 680K on the same binary).\r\n> Also can be used for type info allocation, itab allocation.\r\n> There are also several places in GC where we do the same thing,\r\n> they can be changed to use persistentalloc().\r\n> Also can be used in FixAlloc, because each instance of FixAlloc\r\n> allocates\r\n> in 128K regions, which is too eager.\r\n> Reincarnation of committed and rolled back\r\n> https://codereview.appspot.**com/9805043<https://codereview.appspot.com/9805043>\r\n> The latent bugs that it revealed are fixed.\r\n>\r\n> Please review this at https://codereview.appspot.**com/9778049/<https://codereview.appspot.com/9778049/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/malloc.goc\r\n>   M src/pkg/runtime/malloc.h\r\n>   M src/pkg/runtime/symtab.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/malloc.goc\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/malloc.goc\r\n> +++ b/src/pkg/runtime/malloc.goc\r\n> @@ -502,6 +502,53 @@\r\n>         return p;\r\n>  }\r\n>\r\n> +static struct\r\n> +{\r\n> +       Lock;\r\n> +       byte*   pos;\r\n> +       byte*   end;\r\n> +} persistent;\r\n> +\r\n> +enum\r\n> +{\r\n> +       PersistentAllocChunk    = 256<<10,\r\n> +       PersistentAllocMaxBlock = 64<<10,  // VM reservation granularity\r\n> is 64K on windows\r\n> +};\r\n> +\r\n> +// Wrapper around SysAlloc that can allocate small chunks.\r\n> +// There is no associated free operation.\r\n> +// Intended for things like function/type/debug-related persistent data.\r\n> +// If align is 0, uses default align (currently 8).\r\n> +void*\r\n> +runtime\u00b7persistentalloc(**uintptr size, uintptr align)\r\n> +{\r\n> +       byte *p;\r\n> +\r\n> +       if(align) {\r\n> +               if(align&(align-1))\r\n> +                       runtime\u00b7throw(\"**persistentalloc: align is now a\r\n> power of 2\");\r\n> +               if(align > PageSize)\r\n> +                       runtime\u00b7throw(\"**persistentalloc: align is too\r\n> large\");\r\n> +       } else\r\n> +               align = 8;\r\n> +       if(size >= PersistentAllocMaxBlock)\r\n> +               return runtime\u00b7SysAlloc(size);\r\n> +       runtime\u00b7lock(&persistent);\r\n> +       persistent.pos = (byte*)ROUND((uintptr)**persistent.pos, align);\r\n> +       if(persistent.pos + size > persistent.end) {\r\n> +               persistent.pos = runtime\u00b7SysAlloc(**PersistentAllocChunk);\r\n> +               if(persistent.pos == nil) {\r\n> +                       runtime\u00b7unlock(&persistent);\r\n> +                       runtime\u00b7throw(\"runtime: cannot allocate memory\");\r\n> +               }\r\n> +               persistent.end = persistent.pos + PersistentAllocChunk;\r\n> +       }\r\n> +       p = persistent.pos;\r\n> +       persistent.pos += size;\r\n> +       runtime\u00b7unlock(&persistent);\r\n> +       return p;\r\n> +}\r\n> +\r\n>  static Lock settype_lock;\r\n>\r\n>  void\r\n> Index: src/pkg/runtime/malloc.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/malloc.h\r\n> +++ b/src/pkg/runtime/malloc.h\r\n> @@ -447,6 +447,7 @@\r\n>  void   runtime\u00b7MHeap_Scavenger(void);\r\n>\r\n>  void*  runtime\u00b7mallocgc(uintptr size, uint32 flag, int32 dogc, int32\r\n> zeroed);\r\n> +void*  runtime\u00b7persistentalloc(**uintptr size, uintptr align);\r\n>  int32  runtime\u00b7mlookup(void *v, byte **base, uintptr *size, MSpan **s);\r\n>  void   runtime\u00b7gc(int32 force);\r\n>  void   runtime\u00b7markallocated(void *v, uintptr n, bool noptr);\r\n> Index: src/pkg/runtime/symtab.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/symtab.c\r\n> +++ b/src/pkg/runtime/symtab.c\r\n> @@ -69,11 +69,6 @@\r\n>\r\n>  static uintptr mainoffset;\r\n>\r\n> -// A dynamically allocated string containing multiple substrings.\r\n> -// Individual strings are slices of hugestring.\r\n> -static String hugestring;\r\n> -static int32 hugestring_len;\r\n> -\r\n>  extern void main\u00b7main(void);\r\n>\r\n>  static uintptr\r\n> @@ -303,7 +298,6 @@\r\n>         return p - buf;\r\n>  }\r\n>\r\n> -// appends p to hugestring\r\n>  static String\r\n>  gostringn(byte *p, int32 l)\r\n>  {\r\n> @@ -311,13 +305,8 @@\r\n>\r\n>         if(l == 0)\r\n>                 return runtime\u00b7emptystring;\r\n> -       if(hugestring.str == nil) {\r\n> -               hugestring_len += l;\r\n> -               return runtime\u00b7emptystring;\r\n> -       }\r\n> -       s.str = hugestring.str + hugestring.len;\r\n>         s.len = l;\r\n> -       hugestring.len += s.len;\r\n> +       s.str = runtime\u00b7persistentalloc(l, 1);\r\n>         runtime\u00b7memmove(s.str, p, l);\r\n>         return s;\r\n>  }\r\n> @@ -348,8 +337,6 @@\r\n>         switch(sym->symtype) {\r\n>         case 't':\r\n>         case 'T':\r\n> -               if(hugestring.str == nil)\r\n> -                       break;\r\n>                 if(runtime\u00b7strcmp(sym->name, (byte*)\"etext\") == 0)\r\n>                         break;\r\n>                 f = &func[nfunc++];\r\n> @@ -574,11 +561,12 @@\r\n>         walksymtab(dofunc);\r\n>\r\n>         // Initialize tables.\r\n> -       // Can use FlagNoPointers - all pointers either point into\r\n> sections of the executable\r\n> -       // or point into hugestring.\r\n> -       func = runtime\u00b7mallocgc((nfunc+1)***sizeof func[0],\r\n> FlagNoPointers, 0, 1);\r\n> +       // Memory obtained from runtime\u00b7persistentalloc() is not scanned\r\n> by GC,\r\n> +       // this is fine because all pointers either point into sections of\r\n> the executable\r\n> +       // or also obtained from persistentmalloc().\r\n> +       func = runtime\u00b7persistentalloc((**nfunc+1)*sizeof func[0], 0);\r\n>         func[nfunc].entry = (uint64)etext;\r\n> -       fname = runtime\u00b7mallocgc(nfname*sizeof fname[0], FlagNoPointers,\r\n> 0, 1);\r\n> +       fname = runtime\u00b7persistentalloc(**nfname*sizeof fname[0], 0);\r\n>         nfunc = 0;\r\n>         lastvalue = 0;\r\n>         walksymtab(dofunc);\r\n> @@ -588,15 +576,9 @@\r\n>\r\n>         // record src file and line info for each func\r\n>         files = runtime\u00b7malloc(maxfiles * sizeof(files[0]));\r\n> -       walksymtab(dosrcline);  // pass 1: determine hugestring_len\r\n> -       hugestring.str = runtime\u00b7mallocgc(hugestring_**len,\r\n> FlagNoPointers, 0, 0);\r\n> -       hugestring.len = 0;\r\n> -       walksymtab(dosrcline);  // pass 2: fill and use hugestring\r\n> +       walksymtab(dosrcline);\r\n>         files = nil;\r\n>\r\n> -       if(hugestring.len != hugestring_len)\r\n> -               runtime\u00b7throw(\"buildfunc: problem in initialization\r\n> procedure\");\r\n> -\r\n>         m->nomemprof--;\r\n>  }\r\n>\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-30 19:48:16.493530",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=2c4de577b1ae ***\n\nruntime: introduce helper persistentalloc() function\nIt is a caching wrapper around SysAlloc() that can allocate small chunks.\nUse it for symtab allocations. Reduces number of symtab walks from 4 to 3\n(reduces buildfuncs time from 10ms to 7.5ms on a large binary,\nreduces initial heap size by 680K on the same binary).\nAlso can be used for type info allocation, itab allocation.\nThere are also several places in GC where we do the same thing,\nthey can be changed to use persistentalloc().\nAlso can be used in FixAlloc, because each instance of FixAlloc allocates\nin 128K regions, which is too eager.\nReincarnation of committed and rolled back https://codereview.appspot.com/9805043\nThe latent bugs that it revealed are fixed:\nhttps://codereview.appspot.com/9837049\nhttps://codereview.appspot.com/9778048\n\nR=golang-dev, khr\nCC=golang-dev\nhttps://codereview.appspot.com/9778049",
+			"disapproval": false,
+			"date": "2013-05-31 06:43:04.861230",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"khr@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9778049/diff/10001/src/pkg/runtime/malloc.goc\nFile src/pkg/runtime/malloc.goc (right):\n\nhttps://codereview.appspot.com/9778049/diff/10001/src/pkg/runtime/malloc.goc#newcode523\nsrc/pkg/runtime/malloc.goc:523: if(align) {\nWrite if(align != 0) { or if(align > 0) {\n\nhttps://codereview.appspot.com/9778049/diff/10001/src/pkg/runtime/symtab.c\nFile src/pkg/runtime/symtab.c (right):\n\nhttps://codereview.appspot.com/9778049/diff/10001/src/pkg/runtime/symtab.c#newcode566\nsrc/pkg/runtime/symtab.c:566: // or also obtained from persistentmalloc().\ns/persistentmalloc/persistentalloc/",
+			"disapproval": false,
+			"date": "2013-05-31 13:33:58.507790",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sent https://codereview.appspot.com/9693044\r\n\r\nOn Fri, May 31, 2013 at 5:33 PM,  <iant@golang.org> wrote:\r\n>\r\n> https://codereview.appspot.com/9778049/diff/10001/src/pkg/runtime/malloc.goc\r\n> File src/pkg/runtime/malloc.goc (right):\r\n>\r\n> https://codereview.appspot.com/9778049/diff/10001/src/pkg/runtime/malloc.goc#newcode523\r\n> src/pkg/runtime/malloc.goc:523: if(align) {\r\n> Write if(align != 0) { or if(align > 0) {\r\n>\r\n> https://codereview.appspot.com/9778049/diff/10001/src/pkg/runtime/symtab.c\r\n> File src/pkg/runtime/symtab.c (right):\r\n>\r\n> https://codereview.appspot.com/9778049/diff/10001/src/pkg/runtime/symtab.c#newcode566\r\n> src/pkg/runtime/symtab.c:566: // or also obtained from\r\n> persistentmalloc().\r\n> s/persistentmalloc/persistentalloc/\r\n>\r\n> https://codereview.appspot.com/9778049/\r\n",
+			"disapproval": false,
+			"date": "2013-06-01 21:35:30.194480",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 9778049: runtime: introduce helper persistentalloc() function",
+	"created": "2013-05-28 17:53:09.125950",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		10001
+	],
+	"modified": "2013-06-01 21:35:30.236410",
+	"closed": true,
+	"issue": 9778049
+}

@@ -1,0 +1,229 @@
+{
+	"description": "runtime: fix FreeBSD signal handling around thread creation\nIgnore signals while we are spawning a new thread. Previously, a\nsignal arriving just before runtime.minit setting up the signal\nhandler triggers a \"double fault\" in signal trampolining.\nFixes issue 3017.",
+	"cc": [
+		"rsc@golang.org",
+		"mikioh.mikioh@gmail.com",
+		"minux.ma@gmail.com",
+		"adg@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux <minux.ma@gmail.com>",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/22 02:26:23, dho wrote:\n> Hello mailto:rsc@golang.org, mailto:mikioh.mikioh@gmail.com, minux <mailto:minux.ma@gmail.com>,\n> mailto:adg@golang.org (cc: mailto:golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n\nI need someone to please test this on FreeBSD/386. I can't do this with my hardware, and I'm not at all sure my sigprocmask implementation is correct on 386 since I haven't done the syscall trampolining on 386 since the initial port. Seems to fix the issue for me on amd64. Takes care around native go threads as well as cgo threads.",
+			"disapproval": false,
+			"date": "2012-02-22 02:28:50.319817",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Fun. freebsd-386:\n\n$ ./all.bash\n# Building C bootstrap tool.\ncmd/dist\n\n# Building compilers and Go bootstrap tool for host, freebsd/386.\nlib9\nlibbio\nlibmach\nmisc/pprof\ncmd/cov\ncmd/nm\ncmd/pack\ncmd/prof\ncmd/cc\ncmd/gc\ncmd/8l\ncmd/8a\ncmd/8c\ncmd/8g\npkg/runtime\npkg/errors\npkg/sync/atomic\npkg/sync\npkg/io\npkg/unicode\npkg/unicode/utf8\npkg/unicode/utf16\npkg/bytes\npkg/math\npkg/strings\npkg/strconv\npkg/bufio\npkg/sort\npkg/container/heap\npkg/encoding/base64\npkg/syscall\npkg/time\npkg/os\npkg/reflect\npkg/fmt\npkg/encoding/json\npkg/flag\npkg/path/filepath\npkg/path\npkg/io/ioutil\npkg/log\npkg/regexp/syntax\npkg/regexp\npkg/go/token\npkg/go/scanner\npkg/go/ast\npkg/go/parser\npkg/go/build\npkg/os/exec\npkg/net/url\npkg/text/template/parse\npkg/text/template\npkg/go/doc\ncmd/go\npanic: runtime error: invalid memory address or nil pointer dereference\n[signal 0xb code=0x1 addr=0xf1 pc=0x807d37e]\n\ngoroutine 1 [runnable]:\n\ngoroutine 2 [runnable]:\ncreated by _rt0_386\n\t/home/adg/go/src/pkg/runtime/asm_386.s:80 +0xbe\n",
+			"disapproval": false,
+			"date": "2012-02-22 02:37:27.700675",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Op 21 februari 2012 21:36 heeft Andrew Gerrand <adg@golang.org> het\nvolgende geschreven:\n> Fun. freebsd-386:\n\nTaking a look, thanks\n",
+			"disapproval": false,
+			"date": "2012-02-22 02:51:00.439359",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux <minux.ma@gmail.com>",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, mikioh.mikioh@gmail.com, minux <minux.ma@gmail.com>, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-02-22 04:09:23.426677",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux <minux.ma@gmail.com>",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/sys_freebsd_amd64.s\nFile src/pkg/runtime/sys_freebsd_amd64.s (right):\n\nhttp://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/sys_freebsd_amd64.s#newcode239\nsrc/pkg/runtime/sys_freebsd_amd64.s:239: LEAQ\t8(SP), SI\t\t// arg 2 - set\nMOVQ\nnext line too\n\nhttp://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/thread_freebsd.c\nFile src/pkg/runtime/thread_freebsd.c (right):\n\nhttp://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/thread_freebsd.c#newcode16\nsrc/pkg/runtime/thread_freebsd.c:16: Sigset sigset_all = { ~0, ~0, ~0, ~0, };\nUse ~(uint32)0 or whatever the type is.\n\nstatic Sigset please\n\nhttp://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/thread_freebsd.c#newcode131\nsrc/pkg/runtime/thread_freebsd.c:131: runtime\u00b7sigprocmask(&sigset_none, &oset);\nYou should be able to pass nil instead of &oset.",
+			"disapproval": false,
+			"date": "2012-02-22 04:22:29.113349",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI also double-checked that FreeBSD sigprocmask is per-thread, not per-process.\n",
+			"disapproval": false,
+			"date": "2012-02-22 04:38:07.562640",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux.ma@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d1c35c41fb2a ***\n\nruntime: fix FreeBSD signal handling around thread creation\nIgnore signals while we are spawning a new thread. Previously, a\nsignal arriving just before runtime.minit setting up the signal\nhandler triggers a \"double fault\" in signal trampolining.\nFixes issue 3017.\n\nR=rsc, mikioh.mikioh, minux.ma, adg\nCC=golang-dev\nhttp://codereview.appspot.com/5684060\n\nCommitter: Andrew Gerrand <adg@golang.org>",
+			"disapproval": false,
+			"date": "2012-02-22 04:44:16.123571",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux <minux.ma@gmail.com>",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This seems to do the trick. PTAL!",
+			"disapproval": false,
+			"date": "2012-02-22 04:09:42.958219",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux <minux.ma@gmail.com>",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, mikioh.mikioh@gmail.com, minux <minux.ma@gmail.com>, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-22 02:26:23.983106",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux <minux.ma@gmail.com>",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\nThanks.\n\nAlthough for the assembly I'll have to take your word for it. (Russ?)",
+			"disapproval": false,
+			"date": "2012-02-22 04:15:45.439870",
+			"approval": true
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux.ma@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, mikioh.mikioh@gmail.com, minux.ma@gmail.com, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-02-22 04:34:46.422463",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux.ma@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/22 04:22:29, rsc wrote:\n> http://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/sys_freebsd_amd64.s\n> File src/pkg/runtime/sys_freebsd_amd64.s (right):\n> \n> http://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/sys_freebsd_amd64.s#newcode239\n> src/pkg/runtime/sys_freebsd_amd64.s:239: LEAQ\t8(SP), SI\t\t// arg 2 - set\n> MOVQ\n> next line too\n\nHa, tyvm. Done\n\n> http://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/thread_freebsd.c\n> File src/pkg/runtime/thread_freebsd.c (right):\n> \n> http://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/thread_freebsd.c#newcode16\n> src/pkg/runtime/thread_freebsd.c:16: Sigset sigset_all = { ~0, ~0, ~0, ~0, };\n> Use ~(uint32)0 or whatever the type is.\n> \n> static Sigset please\n\nDone and done.\n\n> http://codereview.appspot.com/5684060/diff/6/src/pkg/runtime/thread_freebsd.c#newcode131\n> src/pkg/runtime/thread_freebsd.c:131: runtime\u00b7sigprocmask(&sigset_none, &oset);\n> You should be able to pass nil instead of &oset.\n\nDone. Was trying to be clever in an earlier incantation. Oops!\n\nPTAL",
+			"disapproval": false,
+			"date": "2012-02-22 04:41:59.663658",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On it.\n\nOn 22 February 2012 13:28,  <devon.odell@gmail.com> wrote:\n> On 2012/02/22 02:26:23, dho wrote:\n>>\n>> Hello mailto:rsc@golang.org, mailto:mikioh.mikioh@gmail.com, minux\n>\n> <mailto:minux.ma@gmail.com>,\n>>\n>> mailto:adg@golang.org (cc: mailto:golang-dev@googlegroups.com),\n>\n>\n>> I'd like you to review this change to\n>> https://go.googlecode.com/hg/\n>\n>\n> I need someone to please test this on FreeBSD/386. I can't do this with\n> my hardware, and I'm not at all sure my sigprocmask implementation is\n> correct on 386 since I haven't done the syscall trampolining on 386\n> since the initial port. Seems to fix the issue for me on amd64. Takes\n> care around native go threads as well as cgo threads.\n>\n> http://codereview.appspot.com/5684060/\n",
+			"disapproval": false,
+			"date": "2012-02-22 02:30:09.830027",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"minux.ma@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "fixing reviewer list",
+			"disapproval": false,
+			"date": "2012-02-22 04:22:57.224663",
+			"approval": false
+		}
+	],
+	"owner_email": "devon.odell@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dho",
+	"subject": "code review 5684060: runtime: fix FreeBSD signal handling around thread creation",
+	"created": "2012-02-22 02:26:08.177924",
+	"patchsets": [
+		1,
+		2001,
+		3006,
+		6,
+		7003
+	],
+	"modified": "2012-02-22 05:14:14.118392",
+	"closed": true,
+	"issue": 5684060
+}

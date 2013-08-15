@@ -1,0 +1,141 @@
+{
+	"description": "syscall: fix fork-exec/wait inconsistencies for Plan 9\n\nFixes the fork-exec/wait race condition for ForkExec\nas well, by making it use startProcess. This makes the\ncomment for StartProcess consistent as well.\n\nFurther, the passing of Waitmsg data in startProcess\nand WaitProcess is protected against possible forks\nfrom outside of ForkExec and StartProcess, which might\ncause interference with the Await call.",
+	"cc": [
+		"rsc@golang.org",
+		"rminnich@gmail.com",
+		"npe@plan9.bell-labs.com",
+		"ality@pbrane.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, rminnich@gmail.com, npe@plan9.bell-labs.com (cc: ality@pbrane.org, golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-01-18 23:05:33.555300",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7128059/diff/3002/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/7128059/diff/3002/src/pkg/syscall/exec_plan9.go#newcode550\nsrc/pkg/syscall/exec_plan9.go:550: if procs.waits[w.Pid] != nil {\nI don't understand why this is necessary.\nWe are the parent of a single child. How\ncan w.Pid ever be different from ret.pid?\n\nThe only way is if someone does a RawSyscall\namounting to rfork(RFPROC) in whatever g last\nran on this m. That is a really bad idea and\nthey deserve the consequences. :P\n\nWe should simply document that you must use\nForkExec instead. This should be familiar to\nPlan 9 users since it's exactly the same for\nthe thread(2) library.\n\nhttps://codereview.appspot.com/7128059/diff/3002/src/pkg/syscall/exec_plan9.go#newcode628\nsrc/pkg/syscall/exec_plan9.go:628: if procs.waits[wmsg.Pid] == ch {\nIf pid != wmsg.Pid we'll return a Waitmsg that doesn't\ncorrespond to pid. That breaks the (*os.Process).Wait\ncontract.",
+			"disapproval": false,
+			"date": "2013-01-20 09:56:53.818820",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nIf the feeling is still that the for-loop is unnecessary, I'll withdraw it in another update.\n\nhttps://codereview.appspot.com/7128059/diff/3002/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/7128059/diff/3002/src/pkg/syscall/exec_plan9.go#newcode550\nsrc/pkg/syscall/exec_plan9.go:550: if procs.waits[w.Pid] != nil {\nOn 2013/01/20 09:56:53, ality wrote:\n> I don't understand why this is necessary.\n> We are the parent of a single child. How\n> can w.Pid ever be different from ret.pid?\n> \n> The only way is if someone does a RawSyscall\n> amounting to rfork(RFPROC) in whatever g last\n> ran on this m. That is a really bad idea and\n> they deserve the consequences. :P\n> \n> We should simply document that you must use\n> ForkExec instead. This should be familiar to\n> Plan 9 users since it's exactly the same for\n> the thread(2) library.\n\nIndeed, it should be documented that ForkExec is preferred, and with the changes to ForkExec and Exec proposed here, this change becomes unnecessary. However, I think that in the case that proper and improper methods occur, the proper usage should be robust and not be vulnerable to interference (upholding the (*os.Process).Wait contract, as you mention below). So I've updated this to instead wait for the Waitmsg for ret.pid and drop anything else until then.\n\nhttps://codereview.appspot.com/7128059/diff/3002/src/pkg/syscall/exec_plan9.go#newcode628\nsrc/pkg/syscall/exec_plan9.go:628: if procs.waits[wmsg.Pid] == ch {\nOn 2013/01/20 09:56:53, ality wrote:\n> If pid != wmsg.Pid we'll return a Waitmsg that doesn't\n> correspond to pid. That breaks the (*os.Process).Wait\n> contract.\n\nAs long as startProcess is making sure that the Waitmsg data is being directed properly, we don't have to worry here, since all the data is going over channels as far as WaitProcess is concerned.\n\nAlso, on second thought, this change and the one on the next line are not needed.",
+			"disapproval": false,
+			"date": "2013-01-22 03:47:19.136520",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nAlso updated the description.\n\nhttps://codereview.appspot.com/7128059/diff/9001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/7128059/diff/9001/src/pkg/syscall/exec_plan9.go#newcode549\nsrc/pkg/syscall/exec_plan9.go:549: for w.Pid != ret.pid {\nOn 2013/01/23 03:25:22, rsc wrote:\n> for w.err == nil && w.Pid != ret.pid {\n\nDone.\n\nhttps://codereview.appspot.com/7128059/diff/9001/src/pkg/syscall/exec_plan9.go#newcode573\nsrc/pkg/syscall/exec_plan9.go:573: r1, _, _ := RawSyscall(SYS_RFORK, RFCENVG|RFNOWAIT, 0, 0)\nOn 2013/01/23 03:25:22, rsc wrote:\n> RFNOWAIT is meaningless here, since RFPROC has not been specified. There's no\n> new process, so nothing to wait for.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-01-23 03:40:54.492370",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The loop is not really necessary anymore with ForkExec calling startProcess, but you can keep it if you want. It would only guard against people calling syscall.RawSyscall directly.\n\nhttps://codereview.appspot.com/7128059/diff/9001/src/pkg/syscall/exec_plan9.go\nFile src/pkg/syscall/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/7128059/diff/9001/src/pkg/syscall/exec_plan9.go#newcode549\nsrc/pkg/syscall/exec_plan9.go:549: for w.Pid != ret.pid {\nfor w.err == nil && w.Pid != ret.pid {\n\nhttps://codereview.appspot.com/7128059/diff/9001/src/pkg/syscall/exec_plan9.go#newcode573\nsrc/pkg/syscall/exec_plan9.go:573: r1, _, _ := RawSyscall(SYS_RFORK, RFCENVG|RFNOWAIT, 0, 0)\nRFNOWAIT is meaningless here, since RFPROC has not been specified. There's no new process, so nothing to wait for.",
+			"disapproval": false,
+			"date": "2013-01-23 03:25:22.629950",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-01-23 03:41:40.472780",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"rminnich@gmail.com",
+				"npe@plan9.bell-labs.com",
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=5b5399bc3335 ***\n\nsyscall: fix fork-exec/wait inconsistencies for Plan 9\n\nFixes the fork-exec/wait race condition for ForkExec\nas well, by making it use startProcess. This makes the\ncomment for StartProcess consistent as well.\n\nFurther, the passing of Waitmsg data in startProcess\nand WaitProcess is protected against possible forks\nfrom outside of ForkExec and StartProcess, which might\ncause interference with the Await call.\n\nR=rsc, rminnich, npe, ality\nCC=golang-dev\nhttps://codereview.appspot.com/7128059\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2013-01-23 03:42:49.018590",
+			"approval": false
+		}
+	],
+	"owner_email": "seed@mail.nanosouffle.net",
+	"private": false,
+	"base_url": "",
+	"owner": "akumar",
+	"subject": "code review 7128059: syscall: fix fork-exec/wait inconsistencies for Plan 9",
+	"created": "2013-01-18 23:01:58.521910",
+	"patchsets": [
+		1,
+		2001,
+		3002,
+		9001,
+		14001
+	],
+	"modified": "2013-01-23 03:44:58.748160",
+	"closed": true,
+	"issue": 7128059
+}

@@ -1,0 +1,110 @@
+{
+	"description": "cmd/gc: zero pointers on entry to function\n\nOn entry to a function, zero the results and zero the pointer\nsection of the local variables.\n\nThis is an intermediate step on the way to precise collection\nof Go frames.\n\nThis can incur a significant (up to 30%) slowdown, but it also ensures\nthat the garbage collector never looks at a word in a Go frame\nand sees a stale pointer value that could cause a space leak.\n(C frames and assembly frames are still possibly problematic.)\n\nThis CL is required to start making collection of interface values\nas precise as collection of pointer values are today.\nSince we have to dereference the interface type to understand\nwhether the value is a pointer, it is critical that the type field be\ninitialized.\n\nA future CL by Carl will make the garbage collection pointer\nbitmaps context-sensitive. At that point it will be possible to\nremove most of the zeroing. The only values that will still need\nzeroing are values whose addresses escape the block scoping\nof the function but do not escape to the heap.\n\nbenchmark                         old ns/op    new ns/op    delta\nBenchmarkBinaryTree17            4420289180   4331060459   -2.02%\nBenchmarkFannkuch11              3442469663   3277706251   -4.79%\nBenchmarkFmtFprintfEmpty                100          142  +42.00%\nBenchmarkFmtFprintfString               262          310  +18.32%\nBenchmarkFmtFprintfInt                  213          281  +31.92%\nBenchmarkFmtFprintfIntInt               355          431  +21.41%\nBenchmarkFmtFprintfPrefixedInt          321          383  +19.31%\nBenchmarkFmtFprintfFloat                444          533  +20.05%\nBenchmarkFmtManyArgs                   1380         1559  +12.97%\nBenchmarkGobDecode                 10240054     11794915  +15.18%\nBenchmarkGobEncode                 17350274     19970478  +15.10%\nBenchmarkGzip                     455179460    460699139   +1.21%\nBenchmarkGunzip                   114271814    119291574   +4.39%\nBenchmarkHTTPClientServer             89051        89894   +0.95%\nBenchmarkJSONEncode                40486799     52691558  +30.15%\nBenchmarkJSONDecode                94193361    112428781  +19.36%\nBenchmarkMandelbrot200              4747060      4748043   +0.02%\nBenchmarkGoParse                    6363798      6675098   +4.89%\nBenchmarkRegexpMatchEasy0_32            129          171  +32.56%\nBenchmarkRegexpMatchEasy0_1K            365          395   +8.22%\nBenchmarkRegexpMatchEasy1_32            106          152  +43.40%\nBenchmarkRegexpMatchEasy1_1K            952         1245  +30.78%\nBenchmarkRegexpMatchMedium_32           198          283  +42.93%\nBenchmarkRegexpMatchMedium_1K         79006       101097  +27.96%\nBenchmarkRegexpMatchHard_32            3478         5115  +47.07%\nBenchmarkRegexpMatchHard_1K          110245       163582  +48.38%\nBenchmarkRevcomp                  777384355    793270857   +2.04%\nBenchmarkTemplate                 136713089    157093609  +14.91%\nBenchmarkTimeParse                     1511         1761  +16.55%\nBenchmarkTimeFormat                     535          850  +58.88%\n\nbenchmark                          old MB/s     new MB/s  speedup\nBenchmarkGobDecode                    74.95        65.07    0.87x\nBenchmarkGobEncode                    44.24        38.43    0.87x\nBenchmarkGzip                         42.63        42.12    0.99x\nBenchmarkGunzip                      169.81       162.67    0.96x\nBenchmarkJSONEncode                   47.93        36.83    0.77x\nBenchmarkJSONDecode                   20.60        17.26    0.84x\nBenchmarkGoParse                       9.10         8.68    0.95x\nBenchmarkRegexpMatchEasy0_32         247.24       186.31    0.75x\nBenchmarkRegexpMatchEasy0_1K        2799.20      2591.93    0.93x\nBenchmarkRegexpMatchEasy1_32         299.31       210.44    0.70x\nBenchmarkRegexpMatchEasy1_1K        1074.71       822.45    0.77x\nBenchmarkRegexpMatchMedium_32          5.04         3.53    0.70x\nBenchmarkRegexpMatchMedium_1K         12.96        10.13    0.78x\nBenchmarkRegexpMatchHard_32            9.20         6.26    0.68x\nBenchmarkRegexpMatchHard_1K            9.29         6.26    0.67x\nBenchmarkRevcomp                     326.95       320.40    0.98x\nBenchmarkTemplate                     14.19        12.35    0.87x",
+	"cc": [
+		"cshapiro@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello cshapiro (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-09 04:22:30.836220",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I forgot to mention: issue 6087 reminds us to get the performance back\r\nbefore the release.\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 04:35:12.584930",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for reporting the benchmark numbers in the commit message.  Given the performance consequences, adjusting the threshold for the rep stosd up to 8 would be a simple worthwhile experiment before submitting.\n\nI confused about the status of the -Z flag after this change.  If this zeroing is always on, why not remove the -Z option once and for all?\n\nFunctionality-wise, this change LGTM.\n\nhttps://codereview.appspot.com/12616045/diff/6001/src/cmd/6g/ggen.c\nFile src/cmd/6g/ggen.c (right):\n\nhttps://codereview.appspot.com/12616045/diff/6001/src/cmd/6g/ggen.c#newcode37\nsrc/cmd/6g/ggen.c:37: p = appendp(p, AREP, D_NONE, 0, D_NONE, 0);\nUse of the REP prefix entails start-up overhead.  Both the Intel and AMD optimization guides suggest an unrolled loop when the count value is less than eight.\n\nhttps://codereview.appspot.com/12616045/diff/6001/src/cmd/8g/ggen.c\nFile src/cmd/8g/ggen.c (right):\n\nhttps://codereview.appspot.com/12616045/diff/6001/src/cmd/8g/ggen.c#newcode35\nsrc/cmd/8g/ggen.c:35: if(stkptrsize > 3*widthptr) {\nDitto.",
+			"disapproval": false,
+			"date": "2013-08-09 19:55:42.696340",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 9, 2013 at 3:55 PM, <cshapiro@golang.org> wrote:\r\n\r\n> Thank you for reporting the benchmark numbers in the commit message.\r\n> Given the performance consequences, adjusting the threshold for the rep\r\n> stosd up to 8 would be a simple worthwhile experiment before submitting.\r\n>\r\n\r\nOkay, will try that.\r\n\r\n\r\n> I confused about the status of the -Z flag after this change.  If this\r\n> zeroing is always on, why not remove the -Z option once and for all?\r\n>\r\n\r\nLet's leave it for Go 1.2. People might have scripts using it, and it might\r\nstill be useful when we are doing less zeroing, as a way to rule out bugs\r\ninvolving missing zeroing.\r\n\r\n\r\n> Functionality-wise, this change LGTM.\r\n>\r\n> https://codereview.appspot.**com/12616045/diff/6001/src/**cmd/6g/ggen.c<https://codereview.appspot.com/12616045/diff/6001/src/cmd/6g/ggen.c>\r\n> File src/cmd/6g/ggen.c (right):\r\n>\r\n> https://codereview.appspot.**com/12616045/diff/6001/src/**\r\n> cmd/6g/ggen.c#newcode37<https://codereview.appspot.com/12616045/diff/6001/src/cmd/6g/ggen.c#newcode37>\r\n> src/cmd/6g/ggen.c:37: p = appendp(p, AREP, D_NONE, 0, D_NONE, 0);\r\n> Use of the REP prefix entails start-up overhead.  Both the Intel and AMD\r\n> optimization guides suggest an unrolled loop when the count value is\r\n> less than eight.\r\n>\r\n\r\nWill do.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 20:05:47.972800",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Moving up to 8 didn't change much, but I'll leave it there. As I wrote in\r\nthe CL description, I expect this code to be replaced by much more targeted\r\nzeroing as soon as the flow-sensitive bitmaps are in.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 20:22:19.421410",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "sgtm",
+			"disapproval": false,
+			"date": "2013-08-09 21:04:41.906080",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"cshapiro@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=4f468b088d66 ***\n\ncmd/gc: zero pointers on entry to function\n\nOn entry to a function, zero the results and zero the pointer\nsection of the local variables.\n\nThis is an intermediate step on the way to precise collection\nof Go frames.\n\nThis can incur a significant (up to 30%) slowdown, but it also ensures\nthat the garbage collector never looks at a word in a Go frame\nand sees a stale pointer value that could cause a space leak.\n(C frames and assembly frames are still possibly problematic.)\n\nThis CL is required to start making collection of interface values\nas precise as collection of pointer values are today.\nSince we have to dereference the interface type to understand\nwhether the value is a pointer, it is critical that the type field be\ninitialized.\n\nA future CL by Carl will make the garbage collection pointer\nbitmaps context-sensitive. At that point it will be possible to\nremove most of the zeroing. The only values that will still need\nzeroing are values whose addresses escape the block scoping\nof the function but do not escape to the heap.\n\nbenchmark                         old ns/op    new ns/op    delta\nBenchmarkBinaryTree17            4420289180   4331060459   -2.02%\nBenchmarkFannkuch11              3442469663   3277706251   -4.79%\nBenchmarkFmtFprintfEmpty                100          142  +42.00%\nBenchmarkFmtFprintfString               262          310  +18.32%\nBenchmarkFmtFprintfInt                  213          281  +31.92%\nBenchmarkFmtFprintfIntInt               355          431  +21.41%\nBenchmarkFmtFprintfPrefixedInt          321          383  +19.31%\nBenchmarkFmtFprintfFloat                444          533  +20.05%\nBenchmarkFmtManyArgs                   1380         1559  +12.97%\nBenchmarkGobDecode                 10240054     11794915  +15.18%\nBenchmarkGobEncode                 17350274     19970478  +15.10%\nBenchmarkGzip                     455179460    460699139   +1.21%\nBenchmarkGunzip                   114271814    119291574   +4.39%\nBenchmarkHTTPClientServer             89051        89894   +0.95%\nBenchmarkJSONEncode                40486799     52691558  +30.15%\nBenchmarkJSONDecode                94193361    112428781  +19.36%\nBenchmarkMandelbrot200              4747060      4748043   +0.02%\nBenchmarkGoParse                    6363798      6675098   +4.89%\nBenchmarkRegexpMatchEasy0_32            129          171  +32.56%\nBenchmarkRegexpMatchEasy0_1K            365          395   +8.22%\nBenchmarkRegexpMatchEasy1_32            106          152  +43.40%\nBenchmarkRegexpMatchEasy1_1K            952         1245  +30.78%\nBenchmarkRegexpMatchMedium_32           198          283  +42.93%\nBenchmarkRegexpMatchMedium_1K         79006       101097  +27.96%\nBenchmarkRegexpMatchHard_32            3478         5115  +47.07%\nBenchmarkRegexpMatchHard_1K          110245       163582  +48.38%\nBenchmarkRevcomp                  777384355    793270857   +2.04%\nBenchmarkTemplate                 136713089    157093609  +14.91%\nBenchmarkTimeParse                     1511         1761  +16.55%\nBenchmarkTimeFormat                     535          850  +58.88%\n\nbenchmark                          old MB/s     new MB/s  speedup\nBenchmarkGobDecode                    74.95        65.07    0.87x\nBenchmarkGobEncode                    44.24        38.43    0.87x\nBenchmarkGzip                         42.63        42.12    0.99x\nBenchmarkGunzip                      169.81       162.67    0.96x\nBenchmarkJSONEncode                   47.93        36.83    0.77x\nBenchmarkJSONDecode                   20.60        17.26    0.84x\nBenchmarkGoParse                       9.10         8.68    0.95x\nBenchmarkRegexpMatchEasy0_32         247.24       186.31    0.75x\nBenchmarkRegexpMatchEasy0_1K        2799.20      2591.93    0.93x\nBenchmarkRegexpMatchEasy1_32         299.31       210.44    0.70x\nBenchmarkRegexpMatchEasy1_1K        1074.71       822.45    0.77x\nBenchmarkRegexpMatchMedium_32          5.04         3.53    0.70x\nBenchmarkRegexpMatchMedium_1K         12.96        10.13    0.78x\nBenchmarkRegexpMatchHard_32            9.20         6.26    0.68x\nBenchmarkRegexpMatchHard_1K            9.29         6.26    0.67x\nBenchmarkRevcomp                     326.95       320.40    0.98x\nBenchmarkTemplate                     14.19        12.35    0.87x\n\nR=cshapiro\nCC=golang-dev\nhttps://codereview.appspot.com/12616045",
+			"disapproval": false,
+			"date": "2013-08-10 03:11:04.388210",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 12616045: cmd/gc: zero pointers on entry to function",
+	"created": "2013-08-09 02:06:44.515310",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		16001,
+		19001,
+		19002,
+		20013
+	],
+	"modified": "2013-08-13 23:08:46.173300",
+	"closed": true,
+	"issue": 12616045
+}

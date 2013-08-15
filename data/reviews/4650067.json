@@ -1,0 +1,154 @@
+{
+	"description": "5l, 6l, 8l: Add a PT_LOAD PHDR entry for the PHDR.\n\nPer the TIS ELF spec, if a PHDR entry is present in the\nprogram header table, it must be part of the memory image of\nthe program. Failure to do this makes elflint complain, and\ncauses some tools that manipulate ELF to crash.",
+	"cc": [
+		"iant@google.com",
+		"rsc@golang.org",
+		"dave@natulte.net",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "danderson@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "For reference, here's the diff of the output of `elflint` and `paxctl`,\nrunning on a Go binary before/after this change:\n\n--- before.txt  2011-07-02 14:29:33.847685849 -0700\n+++ after.txt   2011-07-02 14:31:41.091685867 -0700\n@@ -1,6 +1,5 @@\n % elflint main\n-PHDR segment not contained in a loaded segment\n section [ 7] '.symtab': symbol 2: st_value out of bounds\n section [ 7] '.symtab': symbol 3: st_value out of bounds\n section [ 7] '.symtab': symbol 4: st_value out of bounds\n section [ 7] '.symtab': symbol 5: st_value out of bounds\n@@ -833,5 +832,5 @@\n % paxctl -v main\n PaX control v0.5\n Copyright 2004,2005,2006,2007 PaX Team <pageexec@freemail.hu>\n\n-file main is not a valid ELF executable (PT_PHDR is outside of first\nPT_LOAD)\n+file main does not have a PT_PAX_FLAGS program header, try conversion\n\n(the new paxctl output is normal for a binary not built with a patched\nbinutils - but does indicate that paxctl successfully read the file)\n\nI've tested this change on linux/386, and setting up a VM for linux/amd64\nright now. The change is quite straightforward though, and implements an ELF\nrequirement from the base spec, not the architecture/OS specific sections,\nso I don't expect any surprises.\n\n- Dave\n\nOn Sat, Jul 2, 2011 at 14:52, <danderson@google.com> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: dave@natulte.net,\n> golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> 5l, 6l, 8l: Add a PT_LOAD PHDR entry for the PHDR.\n>\n> Per the TIS ELF spec, if a PHDR entry is present in the\n> program header table, it must be part of the memory image of\n> the program. Failure to do this makes elflint complain, and\n> causes some tools that manipulate ELF to crash.\n>\n> Please review this at http://codereview.appspot.com/**4650067/<http://codereview.appspot.com/4650067/>\n>\n> Affected files:\n>  M src/cmd/5l/asm.c\n>  M src/cmd/6l/asm.c\n>  M src/cmd/8l/asm.c\n>\n>\n> Index: src/cmd/5l/asm.c\n> ==============================**==============================**=======\n> --- a/src/cmd/5l/asm.c\n> +++ b/src/cmd/5l/asm.c\n> @@ -291,7 +291,7 @@ asmb(void)\n>        int a, dynsym;\n>        uint32 fo, symo, startva;\n>        ElfEhdr *eh;\n> -       ElfPhdr *ph, *pph;\n> +       ElfPhdr *ph, *pph, *pphl;\n>        ElfShdr *sh;\n>        Section *sect;\n>\n> @@ -456,12 +456,21 @@ asmb(void)\n>                /* program header info */\n>                pph = newElfPhdr();\n>                pph->type = PT_PHDR;\n> -               pph->flags = PF_R + PF_X;\n> +               pph->flags = PF_R;\n>                pph->off = eh->ehsize;\n>                pph->vaddr = INITTEXT - HEADR + pph->off;\n>                pph->paddr = INITTEXT - HEADR + pph->off;\n>                pph->align = INITRND;\n>\n> +               /* PHDR must be in a loaded segment */\n> +               pphl = newElfPhdr();\n> +               pphl->type = PT_LOAD;\n> +               pphl->flags = PF_R;\n> +               pphl->off = eh->ehsize;\n> +               pphl->vaddr = INITTEXT - HEADR + pphl->off;\n> +               pphl->paddr = INITTEXT - HEADR + pphl->off;\n> +               pphl->align = INITRND;\n> +\n>                if(!debug['d']) {\n>                        /* interpreter for dynamic linking */\n>                        sh = newElfShdr(elfstr[**ElfStrInterp]);\n> @@ -608,6 +617,8 @@ asmb(void)\n>                if(pph != nil) {\n>                        pph->filesz = eh->phnum * eh->phentsize;\n>                        pph->memsz = pph->filesz;\n> +                       pphl->filesz = pph->filesz;\n> +                       pphl->memsz = pph->filesz;\n>                }\n>\n>                seek(cout, 0, 0);\n> Index: src/cmd/6l/asm.c\n> ==============================**==============================**=======\n> --- a/src/cmd/6l/asm.c\n> +++ b/src/cmd/6l/asm.c\n> @@ -696,7 +696,7 @@ asmb(void)\n>        int a, dynsym;\n>        vlong vl, startva, symo, machlink;\n>        ElfEhdr *eh;\n> -       ElfPhdr *ph, *pph;\n> +       ElfPhdr *ph, *pph, *pphl;\n>        ElfShdr *sh;\n>        Section *sect;\n>\n> @@ -856,12 +856,21 @@ asmb(void)\n>                /* program header info */\n>                pph = newElfPhdr();\n>                pph->type = PT_PHDR;\n> -               pph->flags = PF_R + PF_X;\n> +               pph->flags = PF_R;\n>                pph->off = eh->ehsize;\n>                pph->vaddr = INITTEXT - HEADR + pph->off;\n>                pph->paddr = INITTEXT - HEADR + pph->off;\n>                pph->align = INITRND;\n>\n> +               /* PHDR must be in a loaded segment */\n> +               pphl = newElfPhdr();\n> +               pphl->type = PT_LOAD;\n> +               pphl->flags = PF_R;\n> +               pphl->off = eh->ehsize;\n> +               pphl->vaddr = INITTEXT - HEADR + pphl->off;\n> +               pphl->paddr = INITTEXT - HEADR + pphl->off;\n> +               pphl->align = INITRND;\n> +\n>                if(!debug['d']) {\n>                        /* interpreter */\n>                        sh = newElfShdr(elfstr[**ElfStrInterp]);\n> @@ -1050,6 +1059,8 @@ asmb(void)\n>\n>                pph->filesz = eh->phnum * eh->phentsize;\n>                pph->memsz = pph->filesz;\n> +               pphl->filesz = pph->filesz;\n> +               pphl->memsz = pph->filesz;\n>\n>                seek(cout, 0, 0);\n>                a = 0;\n> Index: src/cmd/8l/asm.c\n> ==============================**==============================**=======\n> --- a/src/cmd/8l/asm.c\n> +++ b/src/cmd/8l/asm.c\n> @@ -661,7 +661,7 @@ asmb(void)\n>        int a, dynsym;\n>        uint32 symo, startva, machlink;\n>        ElfEhdr *eh;\n> -       ElfPhdr *ph, *pph;\n> +       ElfPhdr *ph, *pph, *pphl;\n>        ElfShdr *sh;\n>        Section *sect;\n>        Sym *sym;\n> @@ -926,12 +926,21 @@ asmb(void)\n>                /* program header info */\n>                pph = newElfPhdr();\n>                pph->type = PT_PHDR;\n> -               pph->flags = PF_R + PF_X;\n> +               pph->flags = PF_R;\n>                pph->off = eh->ehsize;\n>                pph->vaddr = INITTEXT - HEADR + pph->off;\n>                pph->paddr = INITTEXT - HEADR + pph->off;\n>                pph->align = INITRND;\n>\n> +               /* PHDR must be in a loaded segment */\n> +               pphl = newElfPhdr();\n> +               pphl->type = PT_LOAD;\n> +               pphl->flags = PF_R;\n> +               pphl->off = eh->ehsize;\n> +               pphl->vaddr = INITTEXT - HEADR + pphl->off;\n> +               pphl->paddr = INITTEXT - HEADR + pphl->off;\n> +               pphl->align = INITRND;\n> +\n>                if(!debug['d']) {\n>                        /* interpreter */\n>                        sh = newElfShdr(elfstr[**ElfStrInterp]);\n> @@ -1124,6 +1133,8 @@ asmb(void)\n>                if(pph != nil) {\n>                        pph->filesz = eh->phnum * eh->phentsize;\n>                        pph->memsz = pph->filesz;\n> +                       pphl->filesz = pph->filesz;\n> +                       pphl->memsz = pph->filesz;\n>                }\n>\n>                seek(cout, 0, 0);\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-07-02 21:57:25.882251",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "danderson@google.com writes:\n\n> 5l, 6l, 8l: Add a PT_LOAD PHDR entry for the PHDR.\n>\n> Per the TIS ELF spec, if a PHDR entry is present in the\n> program header table, it must be part of the memory image of\n> the program. Failure to do this makes elflint complain, and\n> causes some tools that manipulate ELF to crash.\n\nHow hard would it be to get the program headers into an existing PT_LOAD\nsegment, rather than introducing a new one.  A new one is OK but\navoiding the extra mmap at program startup time would be better.\n\nIan\n",
+			"disapproval": false,
+			"date": "2011-07-03 04:25:41.429381",
+			"approval": false
+		},
+		{
+			"sender": "danderson@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Sat, Jul 2, 2011 at 21:25, Ian Lance Taylor <iant@google.com> wrote:\n\n> danderson@google.com writes:\n>\n> > 5l, 6l, 8l: Add a PT_LOAD PHDR entry for the PHDR.\n> >\n> > Per the TIS ELF spec, if a PHDR entry is present in the\n> > program header table, it must be part of the memory image of\n> > the program. Failure to do this makes elflint complain, and\n> > causes some tools that manipulate ELF to crash.\n>\n> How hard would it be to get the program headers into an existing PT_LOAD\n> segment, rather than introducing a new one.  A new one is OK but\n> avoiding the extra mmap at program startup time would be better.\n>\n\nRelatively easy, assuming two things: that it's okay to also map the section\nheader table into the program image (it's between the PHDR and the current\ntext segment), and that it's okay to mark both those header tables R+X\ninstead of just R.\n\nPoking in the headers of /bin/true built with GNU ld, looks like ld\ntypically maps the entire ELF header into memory along with the executable\nsegment, so I guess that's the canonical way to do it and my concerns are\nunjustified. I'll make the change and update the code review.\n\n- Dave\n\n\n> Ian\n>\n",
+			"disapproval": false,
+			"date": "2011-07-03 04:39:59.906883",
+			"approval": false
+		},
+		{
+			"sender": "danderson@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Sat, Jul 2, 2011 at 21:39, David Anderson <danderson@google.com> wrote:\n\n> On Sat, Jul 2, 2011 at 21:25, Ian Lance Taylor <iant@google.com> wrote:\n>\n>> danderson@google.com writes:\n>>\n>> > 5l, 6l, 8l: Add a PT_LOAD PHDR entry for the PHDR.\n>> >\n>> > Per the TIS ELF spec, if a PHDR entry is present in the\n>> > program header table, it must be part of the memory image of\n>> > the program. Failure to do this makes elflint complain, and\n>> > causes some tools that manipulate ELF to crash.\n>>\n>> How hard would it be to get the program headers into an existing PT_LOAD\n>> segment, rather than introducing a new one.  A new one is OK but\n>> avoiding the extra mmap at program startup time would be better.\n>>\n>\n> Relatively easy, assuming two things: that it's okay to also map the\n> section header table into the program image (it's between the PHDR and the\n> current text segment), and that it's okay to mark both those header tables\n> R+X instead of just R.\n>\n> Poking in the headers of /bin/true built with GNU ld, looks like ld\n> typically maps the entire ELF header into memory along with the executable\n> segment, so I guess that's the canonical way to do it and my concerns are\n> unjustified. I'll make the change and update the code review.\n>\n\nDone.\n\n\n>\n> - Dave\n>\n>\n>> Ian\n>>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-07-03 05:39:32.279359",
+			"approval": false
+		},
+		{
+			"sender": "danderson@google.com",
+			"recipients": [
+				"danderson@google.com",
+				"golang-dev@googlegroups.com",
+				"dave@natulte.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: dave@natulte.net, golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-07-02 21:52:02.369006",
+			"approval": false
+		},
+		{
+			"sender": "danderson@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Tested on linux/amd64, same diff of elflint/paxctl.\n\n- Dave\n\nOn Sat, Jul 2, 2011 at 14:57, David Anderson <danderson@google.com> wrote:\n\n> For reference, here's the diff of the output of `elflint` and `paxctl`,\n> running on a Go binary before/after this change:\n>\n> --- before.txt  2011-07-02 14:29:33.847685849 -0700\n> +++ after.txt   2011-07-02 14:31:41.091685867 -0700\n> @@ -1,6 +1,5 @@\n>  % elflint main\n> -PHDR segment not contained in a loaded segment\n>  section [ 7] '.symtab': symbol 2: st_value out of bounds\n>  section [ 7] '.symtab': symbol 3: st_value out of bounds\n>  section [ 7] '.symtab': symbol 4: st_value out of bounds\n>  section [ 7] '.symtab': symbol 5: st_value out of bounds\n> @@ -833,5 +832,5 @@\n>  % paxctl -v main\n>  PaX control v0.5\n>  Copyright 2004,2005,2006,2007 PaX Team <pageexec@freemail.hu>\n>\n> -file main is not a valid ELF executable (PT_PHDR is outside of first\n> PT_LOAD)\n> +file main does not have a PT_PAX_FLAGS program header, try conversion\n>\n> (the new paxctl output is normal for a binary not built with a patched\n> binutils - but does indicate that paxctl successfully read the file)\n>\n> I've tested this change on linux/386, and setting up a VM for linux/amd64\n> right now. The change is quite straightforward though, and implements an ELF\n> requirement from the base spec, not the architecture/OS specific sections,\n> so I don't expect any surprises.\n>\n> - Dave\n>\n> On Sat, Jul 2, 2011 at 14:52, <danderson@google.com> wrote:\n>\n>> Reviewers: golang-dev_googlegroups.com,\n>>\n>> Message:\n>> Hello golang-dev@googlegroups.com (cc: dave@natulte.net,\n>> golang-dev@googlegroups.com),\n>>\n>> I'd like you to review this change to\n>> https://go.googlecode.com/hg/\n>>\n>>\n>> Description:\n>> 5l, 6l, 8l: Add a PT_LOAD PHDR entry for the PHDR.\n>>\n>> Per the TIS ELF spec, if a PHDR entry is present in the\n>> program header table, it must be part of the memory image of\n>> the program. Failure to do this makes elflint complain, and\n>> causes some tools that manipulate ELF to crash.\n>>\n>> Please review this at http://codereview.appspot.com/**4650067/<http://codereview.appspot.com/4650067/>\n>>\n>> Affected files:\n>>  M src/cmd/5l/asm.c\n>>  M src/cmd/6l/asm.c\n>>  M src/cmd/8l/asm.c\n>>\n>>\n>> Index: src/cmd/5l/asm.c\n>> ==============================**==============================**=======\n>> --- a/src/cmd/5l/asm.c\n>> +++ b/src/cmd/5l/asm.c\n>> @@ -291,7 +291,7 @@ asmb(void)\n>>        int a, dynsym;\n>>        uint32 fo, symo, startva;\n>>        ElfEhdr *eh;\n>> -       ElfPhdr *ph, *pph;\n>> +       ElfPhdr *ph, *pph, *pphl;\n>>        ElfShdr *sh;\n>>        Section *sect;\n>>\n>> @@ -456,12 +456,21 @@ asmb(void)\n>>                /* program header info */\n>>                pph = newElfPhdr();\n>>                pph->type = PT_PHDR;\n>> -               pph->flags = PF_R + PF_X;\n>> +               pph->flags = PF_R;\n>>                pph->off = eh->ehsize;\n>>                pph->vaddr = INITTEXT - HEADR + pph->off;\n>>                pph->paddr = INITTEXT - HEADR + pph->off;\n>>                pph->align = INITRND;\n>>\n>> +               /* PHDR must be in a loaded segment */\n>> +               pphl = newElfPhdr();\n>> +               pphl->type = PT_LOAD;\n>> +               pphl->flags = PF_R;\n>> +               pphl->off = eh->ehsize;\n>> +               pphl->vaddr = INITTEXT - HEADR + pphl->off;\n>> +               pphl->paddr = INITTEXT - HEADR + pphl->off;\n>> +               pphl->align = INITRND;\n>> +\n>>                if(!debug['d']) {\n>>                        /* interpreter for dynamic linking */\n>>                        sh = newElfShdr(elfstr[**ElfStrInterp]);\n>> @@ -608,6 +617,8 @@ asmb(void)\n>>                if(pph != nil) {\n>>                        pph->filesz = eh->phnum * eh->phentsize;\n>>                        pph->memsz = pph->filesz;\n>> +                       pphl->filesz = pph->filesz;\n>> +                       pphl->memsz = pph->filesz;\n>>                }\n>>\n>>                seek(cout, 0, 0);\n>> Index: src/cmd/6l/asm.c\n>> ==============================**==============================**=======\n>> --- a/src/cmd/6l/asm.c\n>> +++ b/src/cmd/6l/asm.c\n>> @@ -696,7 +696,7 @@ asmb(void)\n>>        int a, dynsym;\n>>        vlong vl, startva, symo, machlink;\n>>        ElfEhdr *eh;\n>> -       ElfPhdr *ph, *pph;\n>> +       ElfPhdr *ph, *pph, *pphl;\n>>        ElfShdr *sh;\n>>        Section *sect;\n>>\n>> @@ -856,12 +856,21 @@ asmb(void)\n>>                /* program header info */\n>>                pph = newElfPhdr();\n>>                pph->type = PT_PHDR;\n>> -               pph->flags = PF_R + PF_X;\n>> +               pph->flags = PF_R;\n>>                pph->off = eh->ehsize;\n>>                pph->vaddr = INITTEXT - HEADR + pph->off;\n>>                pph->paddr = INITTEXT - HEADR + pph->off;\n>>                pph->align = INITRND;\n>>\n>> +               /* PHDR must be in a loaded segment */\n>> +               pphl = newElfPhdr();\n>> +               pphl->type = PT_LOAD;\n>> +               pphl->flags = PF_R;\n>> +               pphl->off = eh->ehsize;\n>> +               pphl->vaddr = INITTEXT - HEADR + pphl->off;\n>> +               pphl->paddr = INITTEXT - HEADR + pphl->off;\n>> +               pphl->align = INITRND;\n>> +\n>>                if(!debug['d']) {\n>>                        /* interpreter */\n>>                        sh = newElfShdr(elfstr[**ElfStrInterp]);\n>> @@ -1050,6 +1059,8 @@ asmb(void)\n>>\n>>                pph->filesz = eh->phnum * eh->phentsize;\n>>                pph->memsz = pph->filesz;\n>> +               pphl->filesz = pph->filesz;\n>> +               pphl->memsz = pph->filesz;\n>>\n>>                seek(cout, 0, 0);\n>>                a = 0;\n>> Index: src/cmd/8l/asm.c\n>> ==============================**==============================**=======\n>> --- a/src/cmd/8l/asm.c\n>> +++ b/src/cmd/8l/asm.c\n>> @@ -661,7 +661,7 @@ asmb(void)\n>>        int a, dynsym;\n>>        uint32 symo, startva, machlink;\n>>        ElfEhdr *eh;\n>> -       ElfPhdr *ph, *pph;\n>> +       ElfPhdr *ph, *pph, *pphl;\n>>        ElfShdr *sh;\n>>        Section *sect;\n>>        Sym *sym;\n>> @@ -926,12 +926,21 @@ asmb(void)\n>>                /* program header info */\n>>                pph = newElfPhdr();\n>>                pph->type = PT_PHDR;\n>> -               pph->flags = PF_R + PF_X;\n>> +               pph->flags = PF_R;\n>>                pph->off = eh->ehsize;\n>>                pph->vaddr = INITTEXT - HEADR + pph->off;\n>>                pph->paddr = INITTEXT - HEADR + pph->off;\n>>                pph->align = INITRND;\n>>\n>> +               /* PHDR must be in a loaded segment */\n>> +               pphl = newElfPhdr();\n>> +               pphl->type = PT_LOAD;\n>> +               pphl->flags = PF_R;\n>> +               pphl->off = eh->ehsize;\n>> +               pphl->vaddr = INITTEXT - HEADR + pphl->off;\n>> +               pphl->paddr = INITTEXT - HEADR + pphl->off;\n>> +               pphl->align = INITRND;\n>> +\n>>                if(!debug['d']) {\n>>                        /* interpreter */\n>>                        sh = newElfShdr(elfstr[**ElfStrInterp]);\n>> @@ -1124,6 +1133,8 @@ asmb(void)\n>>                if(pph != nil) {\n>>                        pph->filesz = eh->phnum * eh->phentsize;\n>>                        pph->memsz = pph->filesz;\n>> +                       pphl->filesz = pph->filesz;\n>> +                       pphl->memsz = pph->filesz;\n>>                }\n>>\n>>                seek(cout, 0, 0);\n>>\n>>\n>>\n>\n",
+			"disapproval": false,
+			"date": "2011-07-02 23:51:27.218599",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"danderson@google.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"dave@natulte.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks\n\nhttp://codereview.appspot.com/4650067/diff/3/src/cmd/5l/asm.c\nFile src/cmd/5l/asm.c (right):\n\nhttp://codereview.appspot.com/4650067/diff/3/src/cmd/5l/asm.c#newcode297\nsrc/cmd/5l/asm.c:297: int textoff;\ns/textoff/o/\n\nhttp://codereview.appspot.com/4650067/diff/3/src/cmd/5l/asm.c#newcode466\nsrc/cmd/5l/asm.c:466: /* PHDR must be in a loaded segment. Adjust the text\n/* on line by itself in multiline comment.",
+			"disapproval": false,
+			"date": "2011-07-12 18:37:51.926473",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"danderson@google.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"dave@natulte.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2011-07-13 00:49:35.691656",
+			"approval": true
+		},
+		{
+			"sender": "danderson@google.com",
+			"recipients": [
+				"danderson@google.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"dave@natulte.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Modifications made to all linkers.\n\nhttp://codereview.appspot.com/4650067/diff/3/src/cmd/5l/asm.c\nFile src/cmd/5l/asm.c (right):\n\nhttp://codereview.appspot.com/4650067/diff/3/src/cmd/5l/asm.c#newcode297\nsrc/cmd/5l/asm.c:297: int textoff;\nOn 2011/07/12 18:37:52, rsc wrote:\n> s/textoff/o/\n\nDone.\n\nhttp://codereview.appspot.com/4650067/diff/3/src/cmd/5l/asm.c#newcode466\nsrc/cmd/5l/asm.c:466: /* PHDR must be in a loaded segment. Adjust the text\nOn 2011/07/12 18:37:52, rsc wrote:\n> /* on line by itself in multiline comment.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-07-12 23:32:44.656003",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"danderson@google.com",
+				"iant@google.com",
+				"rsc@golang.org",
+				"dave@natulte.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=2131931a8b68 ***\n\n5l, 6l, 8l: Add a PT_LOAD PHDR entry for the PHDR.\n\nPer the TIS ELF spec, if a PHDR entry is present in the\nprogram header table, it must be part of the memory image of\nthe program. Failure to do this makes elflint complain, and\ncauses some tools that manipulate ELF to crash.\n\nR=iant, rsc\nCC=dave, golang-dev\nhttp://codereview.appspot.com/4650067\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2011-07-13 00:49:59.657705",
+			"approval": false
+		}
+	],
+	"owner_email": "danderson@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "danderson",
+	"subject": "code review 4650067: 5l, 6l, 8l: Add a PT_LOAD PHDR entry for the PHDR.",
+	"created": "2011-07-02 21:39:11.522900",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		11001,
+		13001,
+		3
+	],
+	"modified": "2011-09-29 07:10:22.312669",
+	"closed": true,
+	"issue": 4650067
+}

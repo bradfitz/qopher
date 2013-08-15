@@ -1,0 +1,220 @@
+{
+	"description": "net: return error from pollster rather than panicing\n\nFixes issue 3590.",
+	"cc": [
+		"bradfitz@golang.org",
+		"mikioh.mikioh@gmail.com",
+		"iant@golang.org",
+		"bsiegert@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I believe this is Ian's code? He'd be a better reviewer than me.\r\n\r\nIn general, just send reviews to golang-dev when unsure.\r\n On Oct 15, 2012 4:08 AM, <dave@cheney.net> wrote:\r\n\r\n> Reviewers: bradfitz, mikio,\r\n>\r\n> Message:\r\n> Hello bradfitz@golang.org, mikioh.mikioh@gmail.com (cc:\r\n> golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> net: return error from pollster rather than panicing\r\n>\r\n> Fixes issue 3590.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6684054/<http://codereview.appspot.com/6684054/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/fd_unix.go\r\n>   A src/pkg/net/fd_unix_test.go\r\n>\r\n>\r\n> Index: src/pkg/net/fd_unix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/fd_unix.go\r\n> +++ b/src/pkg/net/fd_unix.go\r\n> @@ -97,15 +97,11 @@\r\n>         }\r\n>\r\n>         wake, err := s.poll.AddFD(intfd, mode, false)\r\n> +       s.Unlock()\r\n>         if err != nil {\r\n> -               panic(\"pollServer AddFD \" + err.Error())\r\n> +               return &OpError{\"addfd\", fd.net, fd.laddr, err}\r\n>         }\r\n> -       if wake {\r\n> -               doWakeup = true\r\n> -       }\r\n> -       s.Unlock()\r\n> -\r\n> -       if doWakeup {\r\n> +       if wake || doWakeup {\r\n>                 s.Wakeup()\r\n>         }\r\n>         return nil\r\n> Index: src/pkg/net/fd_unix_test.go\r\n> ==============================**==============================**=======\r\n> new file mode 100644\r\n> --- /dev/null\r\n> +++ b/src/pkg/net/fd_unix_test.go\r\n> @@ -0,0 +1,56 @@\r\n> +// Copyright 2012 The Go Authors. All rights reserved.\r\n> +// Use of this source code is governed by a BSD-style\r\n> +// license that can be found in the LICENSE file.\r\n> +\r\n> +// +build darwin freebsd linux netbsd openbsd\r\n> +\r\n> +package net\r\n> +\r\n> +import (\r\n> +       \"io\"\r\n> +       \"testing\"\r\n> +)\r\n> +\r\n> +// Issue 3590. netFd.AddFD should return an error\r\n> +// from the underlying pollster rather than panicing.\r\n> +func TestAddFDReturnsError(t *testing.T) {\r\n> +       l, err := Listen(\"tcp\", \"127.0.0.1:0\")\r\n> +       if err != nil {\r\n> +               t.Fatal(err)\r\n> +       }\r\n> +       defer l.Close()\r\n> +\r\n> +       go func() {\r\n> +               for {\r\n> +                       if _, err := l.Accept(); err != nil {\r\n> +                               if err != io.EOF {\r\n> +                                       t.Error(err)\r\n> +                               }\r\n> +                               return\r\n> +                       }\r\n> +               }\r\n> +       }()\r\n> +\r\n> +       c, err := Dial(\"tcp\", l.Addr().String())\r\n> +       if err != nil {\r\n> +               t.Fatal(err)\r\n> +       }\r\n> +       defer c.Close()\r\n> +\r\n> +       // replace c's pollServer with a closed version.\r\n> +       ps, err := newPollServer()\r\n> +       if err != nil {\r\n> +               t.Fatal(err)\r\n> +       }\r\n> +       ps.poll.Close()\r\n> +       c.(*TCPConn).conn.fd.**pollServer = ps\r\n> +\r\n> +       var b [1]byte\r\n> +       _, err = c.Read(b[:])\r\n> +       if err, ok := err.(*OpError); ok {\r\n> +               if err.Op == \"addfd\" {\r\n> +                       return\r\n> +               }\r\n> +       }\r\n> +       t.Error(err)\r\n> +}\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-15 12:08:12.102670",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, mikioh.mikioh@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-10-15 11:08:47.244620",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-10-15 16:55:10.331020",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks Ian. Could I ask someone from then *BSD camps to check this CL\r\npasses on their systems please ?\r\n\r\nOn Tue, Oct 16, 2012 at 3:55 AM,  <iant@golang.org> wrote:\r\n> LGTM\r\n>\r\n> https://codereview.appspot.com/6684054/\r\n",
+			"disapproval": false,
+			"date": "2012-10-15 22:30:16.460330",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LTGM\na few nits, even if the kernel will clean the table when go test process disappears.\n\nhttps://codereview.appspot.com/6684054/diff/15001/src/pkg/net/fd_unix_test.go\nFile src/pkg/net/fd_unix_test.go (right):\n\nhttps://codereview.appspot.com/6684054/diff/15001/src/pkg/net/fd_unix_test.go#newcode19\nsrc/pkg/net/fd_unix_test.go:19: }\ndefer l.Close() to prevent fd leak?\n\nhttps://codereview.appspot.com/6684054/diff/15001/src/pkg/net/fd_unix_test.go#newcode22\nsrc/pkg/net/fd_unix_test.go:22: defer l.Close()\nhow to close underlying listener fd when Dial or newPollServer fails?",
+			"disapproval": false,
+			"date": "2012-10-16 03:17:38.260350",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\n> LTGM\r\n",
+			"disapproval": false,
+			"date": "2012-10-16 03:23:12.910070",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, mikioh.mikioh@gmail.com, iant@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-10-16 05:05:24.881040",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've asked bsiegert if he can check NetBSD.\r\n\r\nOn Tue, Oct 16, 2012 at 9:32 PM, Mikio Hara <mikioh.mikioh@gmail.com> wrote:\r\n> forgot to say; it passes on freebsd/amd64,386.\r\n",
+			"disapproval": false,
+			"date": "2012-10-16 10:35:14.304740",
+			"approval": false
+		},
+		{
+			"sender": "bsiegert@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM then.\r\n",
+			"disapproval": false,
+			"date": "2012-10-16 13:04:51.040900",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for your comments. PTAL.\n\nhttps://codereview.appspot.com/6684054/diff/15001/src/pkg/net/fd_unix_test.go\nFile src/pkg/net/fd_unix_test.go (right):\n\nhttps://codereview.appspot.com/6684054/diff/15001/src/pkg/net/fd_unix_test.go#newcode19\nsrc/pkg/net/fd_unix_test.go:19: }\nOn 2012/10/16 03:17:38, mikio wrote:\n> defer l.Close() to prevent fd leak?\n\nDone.\n\nhttps://codereview.appspot.com/6684054/diff/15001/src/pkg/net/fd_unix_test.go#newcode22\nsrc/pkg/net/fd_unix_test.go:22: defer l.Close()\nOn 2012/10/16 03:17:38, mikio wrote:\n> how to close underlying listener fd when Dial or newPollServer fails?\n\nyes, good point, fixed.",
+			"disapproval": false,
+			"date": "2012-10-16 05:05:35.002580",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for your comments. I am waiting on confirmation that this passes on FreeBSD and NetBSD then I will submit.",
+			"disapproval": false,
+			"date": "2012-10-16 10:28:39.882260",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "forgot to say; it passes on freebsd/amd64,386.\r\n",
+			"disapproval": false,
+			"date": "2012-10-16 10:32:51.707730",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"iant@golang.org",
+				"bsiegert@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=7fe634e0f93e ***\n\nnet: return error from pollster rather than panicing\n\nFixes issue 3590.\n\nR=bradfitz, mikioh.mikioh, iant, bsiegert\nCC=golang-dev\nhttp://codereview.appspot.com/6684054",
+			"disapproval": false,
+			"date": "2012-10-16 22:41:25.150300",
+			"approval": false
+		},
+		{
+			"sender": "bsiegert@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Oct 16, 2012 at 12:35 PM, Dave Cheney <dave@cheney.net> wrote:\r\n> I've asked bsiegert if he can check NetBSD.\r\n\r\nPasses on netbsd both on amd64 and 386.\r\n\r\nHowever, when run with \"go test -v\", there is a warning:\r\n\r\n=== RUN TestAddFDReturnsError\r\npollServer WaitFD: kevent: bad file descriptor\r\n--- PASS: TestAddFDReturnsError (0.00 seconds)\r\n\r\nIs this harmless?\r\n\r\n--Benny.\r\n\r\n-- \r\nThe first essential in chemistry is that you should perform practical\r\nwork and conduct experiments, for he who performs not practical work\r\nnor makes experiments will never attain the least degree of mastery.\r\n        -- Abu Musa Jabir ibn Hayyan (721-815)\r\n",
+			"disapproval": false,
+			"date": "2012-10-16 13:01:48.623830",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, this is the same as Linux.\r\n\r\nAs I am calling Read on a pollster that has been deliberately closed, some\r\ncomplaining is expected, but harmless.\r\n\r\nOn 17 Oct 2012 00:01, \"Benny Siegert\" <bsiegert@gmail.com> wrote:\r\n>\r\n> On Tue, Oct 16, 2012 at 12:35 PM, Dave Cheney <dave@cheney.net> wrote:\r\n> > I've asked bsiegert if he can check NetBSD.\r\n>\r\n> Passes on netbsd both on amd64 and 386.\r\n>\r\n> However, when run with \"go test -v\", there is a warning:\r\n>\r\n> === RUN TestAddFDReturnsError\r\n> pollServer WaitFD: kevent: bad file descriptor\r\n> --- PASS: TestAddFDReturnsError (0.00 seconds)\r\n>\r\n> Is this harmless?\r\n>\r\n> --Benny.\r\n>\r\n> --\r\n> The first essential in chemistry is that you should perform practical\r\n> work and conduct experiments, for he who performs not practical work\r\n> nor makes experiments will never attain the least degree of mastery.\r\n>         -- Abu Musa Jabir ibn Hayyan (721-815)\r\n",
+			"disapproval": false,
+			"date": "2012-10-16 13:04:17.389480",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 6684054: net: return error from pollster rather than panicing",
+	"created": "2012-10-15 10:42:01.293820",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		1002,
+		8001,
+		4,
+		15001,
+		20001,
+		13002,
+		25001,
+		20002
+	],
+	"modified": "2012-10-16 22:41:58.825130",
+	"closed": true,
+	"issue": 6684054
+}

@@ -1,0 +1,104 @@
+{
+	"description": "cmd/gc, runtime: avoid unnecessary copy on type assertion.\n\nWhen the first result of a type assertion is blank, the compiler would still copy out a potentially large non-interface type.\n\nFixes issue 1021.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Nov 5, 2012 at 12:05 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> Out of curiosity, have you tried to simplify the regexp package as the\r\n> original issue discussed?  If so, I'd be curious if the performance was\r\n> unchanged.\r\n>\r\n\r\nThe mentioned construct doesn't exist any more. This is a very old issue.\r\n",
+			"disapproval": false,
+			"date": "2012-11-05 06:11:56.509950",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-11-04 14:56:33.491580",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6812079/diff/5001/src/pkg/runtime/iface.c\nFile src/pkg/runtime/iface.c (right):\n\nhttps://codereview.appspot.com/6812079/diff/5001/src/pkg/runtime/iface.c#newcode284\nsrc/pkg/runtime/iface.c:284: if(i.tab == nil || i.tab->type != t) {\nok = i.tab!=nil && i.tab->type==t;\nFLUSH(&ok);\n\nsame kind of thing below.\n\nIt might even make sense to inline these but this is a good step for now.\n\nhttps://codereview.appspot.com/6812079/diff/5001/src/pkg/runtime/iface.c#newcode352\nsrc/pkg/runtime/iface.c:352: if(t != e.type) {\nok = t==e.type;\nFLUSH(&ok);",
+			"disapproval": false,
+			"date": "2012-11-06 18:41:40.730990",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Out of curiosity, have you tried to simplify the regexp package as the\r\noriginal issue discussed?  If so, I'd be curious if the performance was\r\nunchanged.\r\n\r\nOn Sun, Nov 4, 2012 at 3:56 PM, <daniel.morsing@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> cmd/gc, runtime: avoid unnecessary copy on type assertion.\r\n>\r\n> When the first result of a type assertion is blank, the compiler would\r\n> still copy out a potentially large non-interface type.\r\n>\r\n> Fixes issue 1021.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6812079/<http://codereview.appspot.com/6812079/>\r\n>\r\n> Affected files:\r\n>   M src/cmd/gc/builtin.c\r\n>   M src/cmd/gc/runtime.go\r\n>   M src/cmd/gc/walk.c\r\n>   M src/pkg/runtime/iface.c\r\n>\r\n>\r\n> Index: src/cmd/gc/builtin.c\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/gc/builtin.c\r\n> +++ b/src/cmd/gc/builtin.c\r\n> @@ -54,6 +54,8 @@\r\n>         \"func @\\\"\\\".assertI2I2(@\\\"\\\".typ *byte, @\\\"\\\".iface any)\r\n> (@\\\"\\\".ret any, @\\\"\\\".ok bool)\\n\"\r\n>         \"func @\\\"\\\".assertI2T(@\\\"\\\".typ *byte, @\\\"\\\".iface any) (@\\\"\\\".ret\r\n> any)\\n\"\r\n>         \"func @\\\"\\\".assertI2T2(@\\\"\\\".typ *byte, @\\\"\\\".iface any)\r\n> (@\\\"\\\".ret any, @\\\"\\\".ok bool)\\n\"\r\n> +       \"func @\\\"\\\".assertI2TOK(@\\\"\\\".typ *byte, @\\\"\\\".iface any)\r\n> (@\\\"\\\".ok bool)\\n\"\r\n> +       \"func @\\\"\\\".assertE2TOK(@\\\"\\\".typ *byte, @\\\"\\\".iface any)\r\n> (@\\\"\\\".ok bool)\\n\"\r\n>         \"func @\\\"\\\".ifaceeq(@\\\"\\\".i1 any, @\\\"\\\".i2 any) (@\\\"\\\".ret bool)\\n\"\r\n>         \"func @\\\"\\\".efaceeq(@\\\"\\\".i1 any, @\\\"\\\".i2 any) (@\\\"\\\".ret bool)\\n\"\r\n>         \"func @\\\"\\\".ifacethash(@\\\"\\\".i1 any) (@\\\"\\\".ret uint32)\\n\"\r\n> Index: src/cmd/gc/runtime.go\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/gc/runtime.go\r\n> +++ b/src/cmd/gc/runtime.go\r\n> @@ -76,6 +76,8 @@\r\n>  func assertI2I2(typ *byte, iface any) (ret any, ok bool)\r\n>  func assertI2T(typ *byte, iface any) (ret any)\r\n>  func assertI2T2(typ *byte, iface any) (ret any, ok bool)\r\n> +func assertI2TOK(typ *byte, iface any) (ok bool)\r\n> +func assertE2TOK(typ *byte, iface any) (ok bool)\r\n>\r\n>  func ifaceeq(i1 any, i2 any) (ret bool)\r\n>  func efaceeq(i1 any, i2 any) (ret bool)\r\n> Index: src/cmd/gc/walk.c\r\n> ==============================**==============================**=======\r\n> --- a/src/cmd/gc/walk.c\r\n> +++ b/src/cmd/gc/walk.c\r\n> @@ -686,6 +686,31 @@\r\n>                 n->ninit = nil;\r\n>                 r = n->rlist->n;\r\n>                 walkexprlistsafe(n->list, init);\r\n> +               if(isblank(n->list->n) && !isinter(r->type)) {\r\n> +                       strcpy(buf, \"assert\");\r\n> +                       p = buf+strlen(buf);\r\n> +                       if(isnilinter(r->left->type))\r\n> +                               *p++ = 'E';\r\n> +                       else\r\n> +                               *p++ = 'I';\r\n> +                       *p++ = '2';\r\n> +                       *p++ = 'T';\r\n> +                       *p++ = 'O';\r\n> +                       *p++ = 'K';\r\n> +                       *p = '\\0';\r\n> +\r\n> +                       fn = syslook(buf, 1);\r\n> +                       ll = list1(typename(r->type));\r\n> +                       ll = list(ll, r->left);\r\n> +                       argtype(fn, r->left->type);\r\n> +                       n1 = nod(OCALL, fn, N);\r\n> +                       n1->list = ll;\r\n> +                       n = nod(OAS, n->list->next->n, n1);\r\n> +                       typecheck(&n, Etop);\r\n> +                       walkexpr(&n, init);\r\n> +                       goto ret;\r\n> +               }\r\n> +\r\n>                 r->op = ODOTTYPE2;\r\n>                 walkexpr(&r, init);\r\n>                 ll = ascompatet(n->op, n->list, &r->type, 0, init);\r\n> Index: src/pkg/runtime/iface.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/iface.c\r\n> +++ b/src/pkg/runtime/iface.c\r\n> @@ -278,6 +278,18 @@\r\n>         copyout(t, &i.data, ret);\r\n>  }\r\n>\r\n> +void\r\n> +runtime\u00b7assertI2TOK(Type *t, Iface i, bool ok)\r\n> +{\r\n> +       if(i.tab == nil || i.tab->type != t) {\r\n> +               ok = false;\r\n> +               FLUSH(&ok);\r\n> +               return;\r\n> +       }\r\n> +       ok = true;\r\n> +       FLUSH(&ok);\r\n> +}\r\n> +\r\n>  static void assertE2Tret(Type *t, Eface e, byte *ret);\r\n>\r\n>  // func ifaceE2T(typ *byte, iface any) (ret any)\r\n> @@ -334,6 +346,18 @@\r\n>         copyout(t, &e.data, ret);\r\n>  }\r\n>\r\n> +void\r\n> +runtime\u00b7assertE2TOK(Type *t, Eface e, bool ok)\r\n> +{\r\n> +       if(t != e.type) {\r\n> +               ok = false;\r\n> +               FLUSH(&ok);\r\n> +               return;\r\n> +       }\r\n> +       ok = true;\r\n> +       FLUSH(&ok);\r\n> +}\r\n> +\r\n>  // func convI2E(elem any) (ret any)\r\n>  void\r\n>  runtime\u00b7convI2E(Iface i, Eface ret)\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-04 23:05:21.005410",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6812079/diff/5001/src/pkg/runtime/iface.c\nFile src/pkg/runtime/iface.c (right):\n\nhttps://codereview.appspot.com/6812079/diff/5001/src/pkg/runtime/iface.c#newcode284\nsrc/pkg/runtime/iface.c:284: if(i.tab == nil || i.tab->type != t) {\nOn 2012/11/06 18:41:40, rsc wrote:\n> ok = i.tab!=nil && i.tab->type==t;\n> FLUSH(&ok);\n> \n> same kind of thing below.\n> \n> It might even make sense to inline these but this is a good step for now.\n\nDone.\n\nhttps://codereview.appspot.com/6812079/diff/5001/src/pkg/runtime/iface.c#newcode352\nsrc/pkg/runtime/iface.c:352: if(t != e.type) {\nOn 2012/11/06 18:41:40, rsc wrote:\n> ok = t==e.type;\n> FLUSH(&ok);\n\nDone.",
+			"disapproval": false,
+			"date": "2012-11-06 19:37:11.120350",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=ae0310fd287b ***\n\ncmd/gc, runtime: avoid unnecessary copy on type assertion.\n\nWhen the first result of a type assertion is blank, the compiler would still copy out a potentially large non-interface type.\n\nFixes issue 1021.\n\nR=golang-dev, bradfitz, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6812079",
+			"disapproval": false,
+			"date": "2012-11-06 19:40:45.115590",
+			"approval": false
+		}
+	],
+	"owner_email": "daniel.morsing@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "DMorsing",
+	"subject": "code review 6812079: cmd/gc, runtime: avoid unnecessary copy on type assertion.",
+	"created": "2012-11-04 14:55:47.819980",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		7003,
+		11001
+	],
+	"modified": "2012-11-06 19:40:46.399050",
+	"closed": true,
+	"issue": 6812079
+}

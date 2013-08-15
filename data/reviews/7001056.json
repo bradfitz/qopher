@@ -1,0 +1,206 @@
+{
+	"description": "sync/atomic: document that users must deal with 64-bit alignment\n\nUpdate issue 599.",
+	"cc": [
+		"dvyukov@google.com",
+		"iant@golang.org",
+		"minux.ma@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Dec 24, 2012 at 1:37 PM, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Monday, December 24, 2012, Dmitry Vyukov wrote:\r\n>>\r\n>> On Mon, Dec 24, 2012 at 1:23 PM, minux <minux.ma@gmail.com> wrote:\r\n>> > On Monday, December 24, 2012, Dmitry Vyukov wrote:\r\n>> >> 64-bit atomic load/store are not atomic on 386/amd64 (when unaligned).\r\n>> >> That was the original issue than I hit with GC on 386 with\r\n>> >> GOMAXPROCS>1. So there is the same problem.\r\n>> > i was confused by your saying \"All LOCK prefixed operations are\r\n>> > atomic regardless of alignment\", so you mean the instruction itself\r\n>> > is atomic whereas the memory access is not?\r\n>> 64-bit atomic load on amd64/386 does not use LOCK prefixed instructions.\r\n>\r\n> but cas does use lock prefix. i think we can use cas to provide\r\n> atomic loads just like we do on ARM? is that what you have in mind\r\n> when saying we can fix the library?\r\n\r\nYes, that's what I meant. It can hundreds of times slower.\r\n\r\nI think on ARM one needs just LDX, not the whole CAS. However I\r\nunderstand that there are issues with portability.\r\n",
+			"disapproval": false,
+			"date": "2012-12-24 10:05:18.711450",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"iant@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/23 10:05:24, dvyukov wrote:\n> We can fix it in the library. It's possible to implement atomic\n> operations on non-aligned vars. All LOCK prefixed operations are\n> atomic regardless of alignment. It will incur one additional branch\n> for aligned vars, for non-aligned var it will LOCK prefixed\n> instructions + there is huge overhead for LOCK prefixed operations\n> that occupy 2 cache lines (it can be 5000+ cycles vs 15 cycles).\n> I don't know about LL/SC on ARM.\nARM ARM specifies LDREXD/STREXD must have 64-bit alignment,\nor alignment fault will result.",
+			"disapproval": false,
+			"date": "2012-12-23 13:21:58.616460",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Dec 23, 2012 at 11:21 PM, Russ Cox <rsc@golang.org> wrote:\r\n> I'm happy to add global variables to the list of aligned things. We align\r\n> all >=8-byte variables to 8-byte boundaries.\r\n>\r\n> \"We can fix it\" + \"huge overhead\" doesn't sound like a fix. I think it's\r\n> fine to tell people who use sync/atomic that they have to work a little bit\r\n> for it. Especially since it might not be possible on ARM or other future\r\n> platforms.\r\n\r\nIt's possible on any platform with global mutex hashtable. But it will\r\nbe slower and not \"lock-free\".\r\n\r\nWhat I afraid is that it can lead to extremely hard to diagnose issues\r\nand the comment won't actually help people. Perhaps add a runtime\r\ncheck for alignment.\r\n",
+			"disapproval": false,
+			"date": "2012-12-24 08:07:00.787150",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "We can fix it in the library. It's possible to implement atomic\r\noperations on non-aligned vars. All LOCK prefixed operations are\r\natomic regardless of alignment. It will incur one additional branch\r\nfor aligned vars, for non-aligned var it will LOCK prefixed\r\ninstructions + there is huge overhead for LOCK prefixed operations\r\nthat occupy 2 cache lines (it can be 5000+ cycles vs 15 cycles).\r\nI don't know about LL/SC on ARM.\r\n\r\nOn Sun, Dec 23, 2012 at 10:59 AM,  <iant@golang.org> wrote:\r\n> LGTM\r\n>\r\n> Can we provide any guarantees about int64 global variables?\r\n>\r\n>\r\n> https://codereview.appspot.com/7001056/\r\n",
+			"disapproval": false,
+			"date": "2012-12-23 10:05:24.832970",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Dec 24, 2012 at 12:21 PM, minux <minux.ma@gmail.com> wrote:\r\n>> > I'm happy to add global variables to the list of aligned things. We\r\n>> > align\r\n>> > all >=8-byte variables to 8-byte boundaries.\r\n>> >\r\n>> > \"We can fix it\" + \"huge overhead\" doesn't sound like a fix. I think it's\r\n>> > fine to tell people who use sync/atomic that they have to work a little\r\n>> > bit\r\n>> > for it. Especially since it might not be possible on ARM or other future\r\n>> > platforms.\r\n>>\r\n>> It's possible on any platform with global mutex hashtable. But it will\r\n>> be slower and not \"lock-free\".\r\n>\r\n> using that defeated the very purpose of using atomic instructions.\r\n\r\nIt's a difficult question, because hardware uses mutexes in implement\r\natomic ops anyway :)\r\nHowever, of course if we add software mutexes, it will bring blocking\r\nto OS level.\r\n\r\n> (we already uses that for 64-bit arm atomics in runtime unconditionally,\r\n> and we should fix that to use native instr. or kernel helper if avail.\r\n> i want to move part or all of core atomics package into runtime,\r\n> as their functionality is currently duplicated in runtime. what do you\r\n> think?)\r\n\r\nWhen I proposed it some time ago, Russ said that he does not want to\r\nunify them because one is C called and another is Go called.\r\nIt's possible with an additional level of abstraction :) Maybe Russ\r\nhas changed his mind...\r\n\r\n\r\n>> What I afraid is that it can lead to extremely hard to diagnose issues\r\n>> and the comment won't actually help people. Perhaps add a runtime\r\n>> check for alignment.\r\n>\r\n> agreed. we should panic if the address is not properly aligned.\r\n> the problem is, should we panic on x86 where unaligned atomics\r\n> is tolerated? i think we should, to provide an uniform api and help\r\n> people who develop on 386 for arm.\r\n\r\n64-bit atomic load/store are not atomic on 386/amd64 (when unaligned).\r\nThat was the original issue than I hit with GC on 386 with\r\nGOMAXPROCS>1. So there is the same problem.\r\n",
+			"disapproval": false,
+			"date": "2012-12-24 08:33:15.579960",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Dec 24, 2012 at 1:23 PM, minux <minux.ma@gmail.com> wrote:\r\n>\r\n> On Monday, December 24, 2012, Dmitry Vyukov wrote:\r\n>>\r\n>> 64-bit atomic load/store are not atomic on 386/amd64 (when unaligned).\r\n>> That was the original issue than I hit with GC on 386 with\r\n>> GOMAXPROCS>1. So there is the same problem.\r\n>\r\n> i was confused by your saying \"All LOCK prefixed operations are\r\n> atomic regardless of alignment\", so you mean the instruction itself\r\n> is atomic whereas the memory access is not?\r\n\r\n64-bit atomic load on amd64/386 does not use LOCK prefixed instructions.\r\n",
+			"disapproval": false,
+			"date": "2012-12-24 09:28:24.020120",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nCan we provide any guarantees about int64 global variables?",
+			"disapproval": false,
+			"date": "2012-12-23 06:59:47.051240",
+			"approval": true
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Monday, December 24, 2012, Dmitry Vyukov wrote:\r\n\r\n> On Sun, Dec 23, 2012 at 11:21 PM, Russ Cox <rsc@golang.org <javascript:;>>\r\n> wrote:\r\n> > I'm happy to add global variables to the list of aligned things. We align\r\n> > all >=8-byte variables to 8-byte boundaries.\r\n> >\r\n> > \"We can fix it\" + \"huge overhead\" doesn't sound like a fix. I think it's\r\n> > fine to tell people who use sync/atomic that they have to work a little\r\n> bit\r\n> > for it. Especially since it might not be possible on ARM or other future\r\n> > platforms.\r\n>\r\n> It's possible on any platform with global mutex hashtable. But it will\r\n> be slower and not \"lock-free\".\r\n\r\nusing that defeated the very purpose of using atomic instructions.\r\n(we already uses that for 64-bit arm atomics in runtime unconditionally,\r\nand we should fix that to use native instr. or kernel helper if avail.\r\ni want to move part or all of core atomics package into runtime,\r\nas their functionality is currently duplicated in runtime. what do you\r\nthink?)\r\n\r\n>\r\n> What I afraid is that it can lead to extremely hard to diagnose issues\r\n> and the comment won't actually help people. Perhaps add a runtime\r\n> check for alignment.\r\n>\r\nagreed. we should panic if the address is not properly aligned.\r\nthe problem is, should we panic on x86 where unaligned atomics\r\nis tolerated? i think we should, to provide an uniform api and help\r\npeople who develop on 386 for arm.\r\n",
+			"disapproval": false,
+			"date": "2012-12-24 08:21:04.367820",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov, iant (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-12-22 23:53:48.705650",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"iant@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7001056/diff/5001/src/pkg/sync/atomic/doc.go\nFile src/pkg/sync/atomic/doc.go (right):\n\nhttps://codereview.appspot.com/7001056/diff/5001/src/pkg/sync/atomic/doc.go#newcode41\nsrc/pkg/sync/atomic/doc.go:41: // BUG(rsc): On ARM, the 64-bit functions use instructions unavailable before ARM 11.\nwhile you're at it, please remove this BUG, as it's no longer true\nfor Linux/ARM (though it's still true for FreeBSD/ARM).",
+			"disapproval": false,
+			"date": "2012-12-23 13:14:18.566910",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm happy to add global variables to the list of aligned things. We align\r\nall >=8-byte variables to 8-byte boundaries.\r\n\r\n\"We can fix it\" + \"huge overhead\" doesn't sound like a fix. I think it's\r\nfine to tell people who use sync/atomic that they have to work a little bit\r\nfor it. Especially since it might not be possible on ARM or other future\r\nplatforms.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-12-23 19:21:24.107210",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Monday, December 24, 2012, Dmitry Vyukov wrote:\r\n>\r\n> 64-bit atomic load/store are not atomic on 386/amd64 (when unaligned).\r\n> That was the original issue than I hit with GC on 386 with\r\n> GOMAXPROCS>1. So there is the same problem.\r\n>\r\ni was confused by your saying \"All LOCK prefixed operations are\r\natomic regardless of alignment\", so you mean the instruction itself\r\nis atomic whereas the memory access is not?\r\n",
+			"disapproval": false,
+			"date": "2012-12-24 09:23:56.144960",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Monday, December 24, 2012, Dmitry Vyukov wrote:\r\n\r\n> On Mon, Dec 24, 2012 at 1:23 PM, minux <minux.ma@gmail.com <javascript:;>>\r\n> wrote:\r\n> > On Monday, December 24, 2012, Dmitry Vyukov wrote:\r\n> >> 64-bit atomic load/store are not atomic on 386/amd64 (when unaligned).\r\n> >> That was the original issue than I hit with GC on 386 with\r\n> >> GOMAXPROCS>1. So there is the same problem.\r\n> > i was confused by your saying \"All LOCK prefixed operations are\r\n> > atomic regardless of alignment\", so you mean the instruction itself\r\n> > is atomic whereas the memory access is not?\r\n> 64-bit atomic load on amd64/386 does not use LOCK prefixed instructions.\r\n>\r\nbut cas does use lock prefix. i think we can use cas to provide\r\natomic loads just like we do on ARM? is that what you have in mind\r\nwhen saying we can fix the library?\r\n",
+			"disapproval": false,
+			"date": "2012-12-24 09:37:09.520470",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"iant@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I added the global variable note and removed the ARM 64-bit note.\nWill submit now. We can talk about relaxing the constraint in a followup\nif there is a compelling reason, but we'd need to believe that it will be\npossible to relax on every architecture, present and future.",
+			"disapproval": false,
+			"date": "2013-01-02 20:41:48.724370",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"iant@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=b2bc77ca3160 ***\n\nsync/atomic: document that users must deal with 64-bit alignment\n\nUpdate issue 599.\n\nR=dvyukov, iant, minux.ma\nCC=golang-dev\nhttps://codereview.appspot.com/7001056",
+			"disapproval": false,
+			"date": "2013-01-02 20:44:04.877420",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 7001056: sync/atomic: document that users must deal with 64-bit ...",
+	"created": "2012-12-22 23:53:17.300120",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		13001,
+		16001
+	],
+	"modified": "2013-01-02 20:44:06.958360",
+	"closed": true,
+	"issue": 7001056
+}

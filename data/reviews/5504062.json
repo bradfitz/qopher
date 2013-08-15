@@ -1,0 +1,84 @@
+{
+	"description": "build: fixes for Windows\n\n* work around a linker/cgo bug\n* do not run deps.bash on Windows unless we need it\n  (cuts a full minute off the build time)\n* add windows to the list of cgo-enabled targets\n\nThe gopack problem is issue 2601.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-12-21 20:46:12.572028",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/5504062/diff/2001/src/cmd/go/build.go\nFile src/cmd/go/build.go (right):\n\nhttp://codereview.appspot.com/5504062/diff/2001/src/cmd/go/build.go#newcode583\nsrc/cmd/go/build.go:583: // not sure I want to know.  http://golang.org/issue/2601\ntake out the editorializing by s/,.*know/./",
+			"disapproval": false,
+			"date": "2011-12-21 20:48:38.542679",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Remove the println debugging?\n\nOn Wed, Dec 21, 2011 at 12:46 PM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> build: fixes for Windows\n>\n> * work around a gopack bug\n> * do not run deps.bash on Windows unless we need it\n>  (cuts a full minute off the build time)\n> * add windows to the list of cgo-enabled targets\n>\n> The gopack problem is issue 2601.\n>\n> Please review this at http://codereview.appspot.com/**5504062/<http://codereview.appspot.com/5504062/>\n>\n> Affected files:\n>  M src/cmd/go/build.go\n>  M src/make.bash\n>  M src/pkg/go/build/dir.go\n>\n>\n> Index: src/cmd/go/build.go\n> ==============================**==============================**=======\n> --- a/src/cmd/go/build.go\n> +++ b/src/cmd/go/build.go\n> @@ -452,7 +452,7 @@\n>                return err\n>        }\n>\n> -       var gofiles, cfiles, sfiles, objects []string\n> +       var gofiles, cfiles, sfiles, objects, cgoObjects []string\n>        gofiles = append(gofiles, a.p.GoFiles...)\n>        cfiles = append(cfiles, a.p.CFiles...)\n>        sfiles = append(sfiles, a.p.SFiles...)\n> @@ -464,6 +464,7 @@\n>                // cgo and non-cgo worlds, so it necessarily has files in\n> both.\n>                // In that case gcc only gets the gcc_* files.\n>                var gccfiles []string\n> +               println(\"std?\", a.p.Standard, a.p.ImportPath)\n>                if a.p.Standard && a.p.ImportPath == \"runtime/cgo\" {\n>                        filter := func(files, nongcc, gcc []string)\n> ([]string, []string) {\n>                                for _, f := range files {\n> @@ -487,7 +488,7 @@\n>                if err != nil {\n>                        return err\n>                }\n> -               objects = append(objects, outObj...)\n> +               cgoObjects = append(cgoObjects, outObj...)\n>                gofiles = append(gofiles, outGo...)\n>        }\n>\n> @@ -576,6 +577,12 @@\n>                objects = append(objects, out)\n>        }\n>\n> +       // NOTE(rsc): On Windows, it is critically important that the\n> +       // gcc-compiled objects (cgoObjects) be listed after the ordinary\n> +       // objects in the archive.  I do not know why this is, and I am\n> +       // not sure I want to know.  http://golang.org/issue/2601\n> +       objects = append(objects, cgoObjects...)\n> +\n>        // pack into archive in obj directory\n>        if err := b.gopack(a.p, obj, a.objpkg, objects); err != nil {\n>                return err\n> @@ -917,6 +924,8 @@\n>                return nil, nil, errors.New(\"cannot use cgo when compiling\n> for a different operating system\")\n>        }\n>\n> +       outObj = append(outObj, \"\") // for importObj, at end of function\n> +\n>        // cgo\n>        // TODO: CGOPKGPATH, CGO_FLAGS?\n>        gofiles := []string{obj + \"_cgo_gotypes.go\"}\n> @@ -983,7 +992,11 @@\n>        if err := b.cc(p, obj, importObj, importC); err != nil {\n>                return nil, nil, err\n>        }\n> -       outObj = append(outObj, importObj)\n> +\n> +       // NOTE(rsc): The importObj is a 5c/6c/8c object and on Windows\n> +       // must be processed before the gcc-generated objects.\n> +       // Put it first.  We left room above.\n> http://golang.org/issue/2601\n> +       outObj[0] = importObj\n>\n>        return outGo, outObj, nil\n>  }\n> Index: src/make.bash\n> ==============================**==============================**=======\n> --- a/src/make.bash\n> +++ b/src/make.bash\n> @@ -71,6 +71,7 @@\n>        fi\n>  done\n>\n> +$USE_GO_TOOL ||\n>  (\n>        cd \"$GOROOT\"/src/pkg;\n>        bash deps.bash  # do this here so clean.bash will work in the pkg\n> directory\n> Index: src/pkg/go/build/dir.go\n> ==============================**==============================**=======\n> --- a/src/pkg/go/build/dir.go\n> +++ b/src/pkg/go/build/dir.go\n> @@ -84,6 +84,8 @@\n>        \"linux/amd64\":   true,\n>        \"freebsd/386\":   true,\n>        \"freebsd/amd64\": true,\n> +       \"windows/386\":   true,\n> +       \"windows/amd64\": true,\n>  }\n>\n>  func defaultContext() Context {\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-12-21 20:51:22.924211",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Dec 21, 2011 at 15:51, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> Remove the println debugging?\n\njust did that\n",
+			"disapproval": false,
+			"date": "2011-12-21 20:52:01.521181",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=f31b4b5afe43 ***\n\nbuild: fixes for Windows\n\n* work around a linker/cgo bug\n* do not run deps.bash on Windows unless we need it\n  (cuts a full minute off the build time)\n* add windows to the list of cgo-enabled targets\n\nThe gopack problem is issue 2601.\n\nR=golang-dev, r, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5504062",
+			"disapproval": false,
+			"date": "2011-12-21 20:57:52.644060",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5504062: build: fixes for Windows",
+	"created": "2011-12-21 20:42:47.747086",
+	"patchsets": [
+		1,
+		2001,
+		5002
+	],
+	"modified": "2011-12-21 20:57:54.461167",
+	"closed": true,
+	"issue": 5504062
+}

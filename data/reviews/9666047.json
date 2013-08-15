@@ -1,0 +1,144 @@
+{
+	"description": "cmd/ld, runtime: emit pointer maps for nosplits identified by the linker\n\nA nosplits was assumed to have no argument information and no\npointer map.  However, nosplits created by the linker often\nhave both.  This change uses the pointer map size as an\nalternate source of argument size when processing a nosplit.\n\nIn addition, the symbol table construction pointer map size\nand argument size consistency check is strengthened.  If a\nnptrs is greater than 0 it must be equal to the number of\nargument words.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"khr@golang.org",
+		"khr@google.com"
+	],
+	"reviewers": [
+		"r@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 29, 2013 at 2:21 PM, Keith Randall <khr@google.com> wrote:\r\n\r\n> What I'm saying here is that you are using NOSPLIT as a proxy for \"no arg\r\n> info\" when they are not in fact the same thing.  Can't we just check if the\r\n> arg info is there directly?  Maybe it's not that easy...\r\n\r\n\r\nAt present, no.  The arg info is 0 when it is not available.  This is\r\nindistinguishable from a 0 argument procedure.\r\n\r\nI am trying to solve this problem more generally by providing the missing\r\ninformation where possible and eliminating the remaining, problematic\r\nconstructs.  It will take a few CLs to make this happen.\r\n",
+			"disapproval": false,
+			"date": "2013-05-29 21:37:58.522880",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"khr@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=44ea8c2938f1 ***\n\ncmd/ld, runtime: emit pointer maps for nosplits identified by the linker\n\nA nosplits was assumed to have no argument information and no\npointer map.  However, nosplits created by the linker often\nhave both.  This change uses the pointer map size as an\nalternate source of argument size when processing a nosplit.\n\nIn addition, the symbol table construction pointer map size\nand argument size consistency check is strengthened.  If a\nnptrs is greater than 0 it must be equal to the number of\nargument words.\n\nR=golang-dev, khr, khr\nCC=golang-dev\nhttps://codereview.appspot.com/9666047",
+			"disapproval": false,
+			"date": "2013-05-30 00:17:00.843360",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-29 02:49:50.785540",
+			"approval": false
+		},
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9666047/diff/5001/src/cmd/ld/lib.c\nFile src/cmd/ld/lib.c (right):\n\nhttps://codereview.appspot.com/9666047/diff/5001/src/cmd/ld/lib.c#newcode1917\nsrc/cmd/ld/lib.c:1917: if(s->text->textflag & NOSPLIT) {\nI don't understand why NOSPLIT implies that we don't have any information about args.  For most (all?) NOSPLIT routines we do.\n\nhttps://codereview.appspot.com/9666047/diff/5001/src/pkg/runtime/symtab.c\nFile src/pkg/runtime/symtab.c (right):\n\nhttps://codereview.appspot.com/9666047/diff/5001/src/pkg/runtime/symtab.c#newcode237\nsrc/pkg/runtime/symtab.c:237: if(sym->value != 0 && sym->value != func[nfunc-1].args/sizeof(uintptr)) {\nThis will change when we have pointer info for locals, right?",
+			"disapproval": false,
+			"date": "2013-05-29 19:07:03.411860",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9666047/diff/5001/src/cmd/ld/lib.c\nFile src/cmd/ld/lib.c (right):\n\nhttps://codereview.appspot.com/9666047/diff/5001/src/cmd/ld/lib.c#newcode1917\nsrc/cmd/ld/lib.c:1917: if(s->text->textflag & NOSPLIT) {\nIf we are talking about 6g compiled code, most nosplits will have argument information.  The exception is the trampoline functions built by the genembedtramp function.  I am working on a fix for that right now.\n\nHowever, the linker is not limited to processing 6g compiled code.  It also sees 6c compiled code.  There are routinely hundreds of routines that pass through the linker without argument information.  Some of these are nosplits by virtue of allocating no stack space.  Others are nosplits because of an optional textflag annotation or a required textflag annotation because of varargs usage.\n\nHere's a list...\n\nruntime.memequal0\nruntime.memcopy0\nruntime.memequal8\nruntime.memcopy8\nruntime.memequal16\nruntime.memcopy16\nruntime.memequal32\nruntime.memcopy32\nruntime.memequal64\nruntime.memcopy64\nruntime.memequal128\nruntime.memcopy128\nruntime.f32equal\nruntime.f64equal\nruntime.c64equal\nruntime.c128equal\nruntime.slicecopy\nruntime.strcopy\nruntime.intercopy\nruntime.nilintercopy\nruntime.atomicload\nruntime.atomicload64\nruntime.atomicloadp\nruntime.chansend1\nruntime.chanrecv1\nruntime.selectnbsend\nruntime.selectnbrecv\nreflect.chansend\nruntime.closechan\nreflect.chanlen\nreflect.chancap\nenqueue\nruntime.mapaccess2_fast32\nruntime.mapaccess1_fast64\nruntime.mapaccess2_fast64\nruntime.mapaccess1_faststr\nruntime.mapaccess2_faststr\nhash_gciter_init\nruntime.mapaccess1\nruntime.mapaccess2\nruntime.mapassign1\nruntime.mapdelete\nruntime.mapiter1\nreflect.maplen\nruntime.mapiter2\nruntime.typ2Itab\nruntime.convT2I\nruntime.convT2E\nruntime.assertI2T\nruntime.assertI2T2\nruntime.assertI2TOK\nruntime.assertE2T\nruntime.assertE2T2\nruntime.assertE2TOK\nruntime.convI2E\nruntime.ifacethash\nruntime.efacethash\nruntime.noteclear\nruntime.MGetSizeClassInfo\nruntime.FixAlloc_Init\nruntime.FixAlloc_Free\nruntime.blockspecial\nBestFit\nruntime.MHeap_Lookup\nruntime.MHeap_LookupMaybe\nruntime.MSpan_Init\nruntime.MSpanList_Init\nruntime.MSpanList_Remove\nruntime.MSpanList_IsEmpty\nruntime.setprof\nruntime.badsignal\nruntime.deferproc\nruntime.deferreturn\nruntime.recover\nruntime.printf\nruntime.typestring\nmhelpgc\nmspinning\nruntime.entersyscall\nruntime.entersyscallblock\nruntime.newproc\nLockOSThread\nUnlockOSThread\nruntime.mcount\nmget\nglobrunqput\nruntime.charntorune\nruntime.runetochar\nruntime.mcmp\nruntime.mchr\nruntime.atoi\nruntime.fastrand1\nruntime.appendslice\nruntime.appendstr\nruntime.copy\nruntime.slicestringcopy\nreadword\nsplitpcln\nruntime.funcline\nhasprefix\nvdso_init_from_sysinfo_ehdr\nruntime.purgecachedstats\nruntime.new\nMProf_GC\ngetaddrbucket\nnetpollunblock\nsemroot\nsemqueue\nsemdequeue\nruntime.findnull\nruntime.concatstring\nruntime.strcmp\n_rt0_amd64\nruntime.asminit\nruntime.gosave\nruntime.gogo\nruntime.gogocall\nruntime.gogocallfn\nruntime.mcall\nruntime.morestack\nreflect.call\nruntime.lessstack\nruntime.morestack00\nruntime.morestack01\nruntime.morestack10\nruntime.morestack11\nruntime.morestack8\nruntime.morestack16\nruntime.morestack24\nruntime.morestack32\nruntime.morestack40\nruntime.morestack48\nmorestack\nruntime.cas\nruntime.cas64\nruntime.casp\nruntime.xadd\nruntime.xadd64\nruntime.xchg\nruntime.xchg64\nruntime.procyield\nruntime.atomicstorep\nruntime.atomicstore\nruntime.atomicstore64\nruntime.jmpdefer\nreturn\nruntime.asmcgocall\nsetmg_gcc\nruntime.stackcheck\nruntime.memclr\nruntime.getcallerpc\nruntime.getcallersp\nruntime.cputicks\nruntime.aeshash\nruntime.aeshashstr\nruntime.aeshashbody\nruntime.aeshash32\nruntime.aeshash64\nmasks\nshifts\nruntime.memeq\nbytes.Equal\nruntime.memeqbody\nruntime.cmpstring\nruntime.cmpbody\nruntime.memmove\n_rt0_amd64_linux\nmain\nruntime.exit\nruntime.open\nruntime.close\nruntime.write\nruntime.read\nruntime.usleep\nruntime.raise\nruntime.setitimer\nruntime.mincore\ntime.now\nruntime.nanotime\nruntime.rtsigprocmask\nruntime.rt_sigaction\nruntime.sigtramp\nruntime.sigreturn\nruntime.mmap\nruntime.munmap\nruntime.madvise\nruntime.futex\nruntime.clone\nruntime.sigaltstack\nruntime.settls\nruntime.osyield\nruntime.sched_getaffinity\nruntime.epollwait\nbytes.IndexByte\ncrypto/md5.block\nreflect.methodValueCall\nmath.Abs\nmath.Ldexp\nsyscall.Syscall\nsyscall.Syscall6\nsyscall.RawSyscall\nsyscall.RawSyscall6\nsync/atomic.CompareAndSwapInt32\nsync/atomic.CompareAndSwapUint32\nsync/atomic.AddInt32\nsync/atomic.AddUint32\nsync/atomic.LoadUint32\nsync/atomic.StoreInt32\nsync/atomic.StoreUint32\n\nhttps://codereview.appspot.com/9666047/diff/5001/src/pkg/runtime/symtab.c\nFile src/pkg/runtime/symtab.c (right):\n\nhttps://codereview.appspot.com/9666047/diff/5001/src/pkg/runtime/symtab.c#newcode237\nsrc/pkg/runtime/symtab.c:237: if(sym->value != 0 && sym->value != func[nfunc-1].args/sizeof(uintptr)) {\nYes, the condition and the error message will have to change.",
+			"disapproval": false,
+			"date": "2013-05-29 20:06:40.654910",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 29, 2013 at 1:06 PM, <cshapiro@google.com> wrote:\r\n\r\n>\r\n> https://codereview.appspot.**com/9666047/diff/5001/src/cmd/**ld/lib.c<https://codereview.appspot.com/9666047/diff/5001/src/cmd/ld/lib.c>\r\n> File src/cmd/ld/lib.c (right):\r\n>\r\n> https://codereview.appspot.**com/9666047/diff/5001/src/cmd/**\r\n> ld/lib.c#newcode1917<https://codereview.appspot.com/9666047/diff/5001/src/cmd/ld/lib.c#newcode1917>\r\n> src/cmd/ld/lib.c:1917: if(s->text->textflag & NOSPLIT) {\r\n> If we are talking about 6g compiled code, most nosplits will have\r\n> argument information.  The exception is the trampoline functions built\r\n> by the genembedtramp function.  I am working on a fix for that right\r\n> now.\r\n>\r\n> However, the linker is not limited to processing 6g compiled code.  It\r\n> also sees 6c compiled code.  There are routinely hundreds of routines\r\n> that pass through the linker without argument information.  Some of\r\n> these are nosplits by virtue of allocating no stack space.  Others are\r\n> nosplits because of an optional textflag annotation or a required\r\n> textflag annotation because of varargs usage.\r\n>\r\n>\r\nWhat I'm saying here is that you are using NOSPLIT as a proxy for \"no arg\r\ninfo\" when they are not in fact the same thing.  Can't we just check if the\r\narg info is there directly?  Maybe it's not that easy...\r\n\r\n\r\n> Here's a list...\r\n>\r\n> runtime.memequal0\r\n> runtime.memcopy0\r\n> runtime.memequal8\r\n> runtime.memcopy8\r\n> runtime.memequal16\r\n> runtime.memcopy16\r\n> runtime.memequal32\r\n> runtime.memcopy32\r\n> runtime.memequal64\r\n> runtime.memcopy64\r\n> runtime.memequal128\r\n> runtime.memcopy128\r\n> runtime.f32equal\r\n> runtime.f64equal\r\n> runtime.c64equal\r\n> runtime.c128equal\r\n> runtime.slicecopy\r\n> runtime.strcopy\r\n> runtime.intercopy\r\n> runtime.nilintercopy\r\n> runtime.atomicload\r\n> runtime.atomicload64\r\n> runtime.atomicloadp\r\n> runtime.chansend1\r\n> runtime.chanrecv1\r\n> runtime.selectnbsend\r\n> runtime.selectnbrecv\r\n> reflect.chansend\r\n> runtime.closechan\r\n> reflect.chanlen\r\n> reflect.chancap\r\n> enqueue\r\n> runtime.mapaccess2_fast32\r\n> runtime.mapaccess1_fast64\r\n> runtime.mapaccess2_fast64\r\n> runtime.mapaccess1_faststr\r\n> runtime.mapaccess2_faststr\r\n> hash_gciter_init\r\n> runtime.mapaccess1\r\n> runtime.mapaccess2\r\n> runtime.mapassign1\r\n> runtime.mapdelete\r\n> runtime.mapiter1\r\n> reflect.maplen\r\n> runtime.mapiter2\r\n> runtime.typ2Itab\r\n> runtime.convT2I\r\n> runtime.convT2E\r\n> runtime.assertI2T\r\n> runtime.assertI2T2\r\n> runtime.assertI2TOK\r\n> runtime.assertE2T\r\n> runtime.assertE2T2\r\n> runtime.assertE2TOK\r\n> runtime.convI2E\r\n> runtime.ifacethash\r\n> runtime.efacethash\r\n> runtime.noteclear\r\n> runtime.MGetSizeClassInfo\r\n> runtime.FixAlloc_Init\r\n> runtime.FixAlloc_Free\r\n> runtime.blockspecial\r\n> BestFit\r\n> runtime.MHeap_Lookup\r\n> runtime.MHeap_LookupMaybe\r\n> runtime.MSpan_Init\r\n> runtime.MSpanList_Init\r\n> runtime.MSpanList_Remove\r\n> runtime.MSpanList_IsEmpty\r\n> runtime.setprof\r\n> runtime.badsignal\r\n> runtime.deferproc\r\n> runtime.deferreturn\r\n> runtime.recover\r\n> runtime.printf\r\n> runtime.typestring\r\n> mhelpgc\r\n> mspinning\r\n> runtime.entersyscall\r\n> runtime.entersyscallblock\r\n> runtime.newproc\r\n> LockOSThread\r\n> UnlockOSThread\r\n> runtime.mcount\r\n> mget\r\n> globrunqput\r\n> runtime.charntorune\r\n> runtime.runetochar\r\n> runtime.mcmp\r\n> runtime.mchr\r\n> runtime.atoi\r\n> runtime.fastrand1\r\n> runtime.appendslice\r\n> runtime.appendstr\r\n> runtime.copy\r\n> runtime.slicestringcopy\r\n> readword\r\n> splitpcln\r\n> runtime.funcline\r\n> hasprefix\r\n> vdso_init_from_sysinfo_ehdr\r\n> runtime.purgecachedstats\r\n> runtime.new\r\n> MProf_GC\r\n> getaddrbucket\r\n> netpollunblock\r\n> semroot\r\n> semqueue\r\n> semdequeue\r\n> runtime.findnull\r\n> runtime.concatstring\r\n> runtime.strcmp\r\n> _rt0_amd64\r\n> runtime.asminit\r\n> runtime.gosave\r\n> runtime.gogo\r\n> runtime.gogocall\r\n> runtime.gogocallfn\r\n> runtime.mcall\r\n> runtime.morestack\r\n> reflect.call\r\n> runtime.lessstack\r\n> runtime.morestack00\r\n> runtime.morestack01\r\n> runtime.morestack10\r\n> runtime.morestack11\r\n> runtime.morestack8\r\n> runtime.morestack16\r\n> runtime.morestack24\r\n> runtime.morestack32\r\n> runtime.morestack40\r\n> runtime.morestack48\r\n> morestack\r\n> runtime.cas\r\n> runtime.cas64\r\n> runtime.casp\r\n> runtime.xadd\r\n> runtime.xadd64\r\n> runtime.xchg\r\n> runtime.xchg64\r\n> runtime.procyield\r\n> runtime.atomicstorep\r\n> runtime.atomicstore\r\n> runtime.atomicstore64\r\n> runtime.jmpdefer\r\n> return\r\n> runtime.asmcgocall\r\n> setmg_gcc\r\n> runtime.stackcheck\r\n> runtime.memclr\r\n> runtime.getcallerpc\r\n> runtime.getcallersp\r\n> runtime.cputicks\r\n> runtime.aeshash\r\n> runtime.aeshashstr\r\n> runtime.aeshashbody\r\n> runtime.aeshash32\r\n> runtime.aeshash64\r\n> masks\r\n> shifts\r\n> runtime.memeq\r\n> bytes.Equal\r\n> runtime.memeqbody\r\n> runtime.cmpstring\r\n> runtime.cmpbody\r\n> runtime.memmove\r\n> _rt0_amd64_linux\r\n> main\r\n> runtime.exit\r\n> runtime.open\r\n> runtime.close\r\n> runtime.write\r\n> runtime.read\r\n> runtime.usleep\r\n> runtime.raise\r\n> runtime.setitimer\r\n> runtime.mincore\r\n> time.now\r\n> runtime.nanotime\r\n> runtime.rtsigprocmask\r\n> runtime.rt_sigaction\r\n> runtime.sigtramp\r\n> runtime.sigreturn\r\n> runtime.mmap\r\n> runtime.munmap\r\n> runtime.madvise\r\n> runtime.futex\r\n> runtime.clone\r\n> runtime.sigaltstack\r\n> runtime.settls\r\n> runtime.osyield\r\n> runtime.sched_getaffinity\r\n> runtime.epollwait\r\n> bytes.IndexByte\r\n> crypto/md5.block\r\n> reflect.methodValueCall\r\n> math.Abs\r\n> math.Ldexp\r\n> syscall.Syscall\r\n> syscall.Syscall6\r\n> syscall.RawSyscall\r\n> syscall.RawSyscall6\r\n> sync/atomic.**CompareAndSwapInt32\r\n> sync/atomic.**CompareAndSwapUint32\r\n> sync/atomic.AddInt32\r\n> sync/atomic.AddUint32\r\n> sync/atomic.LoadUint32\r\n> sync/atomic.StoreInt32\r\n> sync/atomic.StoreUint32\r\n>\r\n>\r\n> https://codereview.appspot.**com/9666047/diff/5001/src/pkg/**\r\n> runtime/symtab.c<https://codereview.appspot.com/9666047/diff/5001/src/pkg/runtime/symtab.c>\r\n> File src/pkg/runtime/symtab.c (right):\r\n>\r\n> https://codereview.appspot.**com/9666047/diff/5001/src/pkg/**\r\n> runtime/symtab.c#newcode237<https://codereview.appspot.com/9666047/diff/5001/src/pkg/runtime/symtab.c#newcode237>\r\n> src/pkg/runtime/symtab.c:237: if(sym->value != 0 && sym->value !=\r\n> func[nfunc-1].args/sizeof(**uintptr)) {\r\n> Yes, the condition and the error message will have to change.\r\n>\r\n> https://codereview.appspot.**com/9666047/<https://codereview.appspot.com/9666047/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-29 21:21:21.413880",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Maybe the condition should be (s->text->textflag & NOSPLIT) && s->args ==\r\n0.  In any case, put a comment in there with your text above.\r\n\r\nLGTM.\r\n\r\n\r\nOn Wed, May 29, 2013 at 2:37 PM, Carl Shapiro <cshapiro@google.com> wrote:\r\n\r\n> On Wed, May 29, 2013 at 2:21 PM, Keith Randall <khr@google.com> wrote:\r\n>\r\n>> What I'm saying here is that you are using NOSPLIT as a proxy for \"no arg\r\n>> info\" when they are not in fact the same thing.  Can't we just check if the\r\n>> arg info is there directly?  Maybe it's not that easy...\r\n>\r\n>\r\n> At present, no.  The arg info is 0 when it is not available.  This is\r\n> indistinguishable from a 0 argument procedure.\r\n>\r\n> I am trying to solve this problem more generally by providing the missing\r\n> information where possible and eliminating the remaining, problematic\r\n> constructs.  It will take a few CLs to make this happen.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-29 21:46:27.321930",
+			"approval": true
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This piece of deep runtime was submitted without a core team member's\r\nLGTM. It's always good to have external approval (thanks kr) but\r\nespecially for critical pieces please get a core LGTM. Keith Randall's\r\n'sounds good' wasn't enough for my petty tyrannical tendencies.\r\n\r\n-rob\r\n\r\n\r\nOn Thu, May 30, 2013 at 12:17 AM,  <cshapiro@google.com> wrote:\r\n> *** Submitted as\r\n> https://code.google.com/p/go/source/detail?r=44ea8c2938f1 ***\r\n>\r\n> cmd/ld, runtime: emit pointer maps for nosplits identified by the linker\r\n>\r\n> A nosplits was assumed to have no argument information and no\r\n> pointer map.  However, nosplits created by the linker often\r\n> have both.  This change uses the pointer map size as an\r\n> alternate source of argument size when processing a nosplit.\r\n>\r\n> In addition, the symbol table construction pointer map size\r\n> and argument size consistency check is strengthened.  If a\r\n> nptrs is greater than 0 it must be equal to the number of\r\n> argument words.\r\n>\r\n> R=golang-dev, khr, khr\r\n> CC=golang-dev\r\n> https://codereview.appspot.com/9666047\r\n>\r\n>\r\n> https://codereview.appspot.com/9666047/\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n>\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-30 01:36:57.466670",
+			"approval": true
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 29, 2013 at 2:46 PM, Keith Randall <khr@google.com> wrote:\r\n\r\n> Maybe the condition should be (s->text->textflag & NOSPLIT) && s->args ==\r\n> 0.  In any case, put a comment in there with your text above.\r\n>\r\n\r\nI have changed the pointer map information to have nptrs always count the\r\nsize of the pointer map in words and not take any shortcuts when the map is\r\nall zero.  This allows the condition to be simplified to\r\n\r\nif(s->text->textflag & NOSPLIT) && (s->args == 0) && (s->nptrs < 0)\r\n\r\n\r\nWhich is another way of saying \"is this a nosplit, is the argumnt size 0,\r\nand is there no pointer map\".\r\n\r\nOf course, this will trigger for routines that are 6c compiled, marked by\r\nthe linker as NOSPLIT, and have 0 arguments.  There is not yet much I can\r\ndo about that.\r\n",
+			"disapproval": false,
+			"date": "2013-05-29 23:42:55.774150",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sounds good.\r\n\r\n\r\nOn Wed, May 29, 2013 at 4:42 PM, Carl Shapiro <cshapiro@google.com> wrote:\r\n\r\n> On Wed, May 29, 2013 at 2:46 PM, Keith Randall <khr@google.com> wrote:\r\n>\r\n>> Maybe the condition should be (s->text->textflag & NOSPLIT) && s->args\r\n>> == 0.  In any case, put a comment in there with your text above.\r\n>>\r\n>\r\n> I have changed the pointer map information to have nptrs always count the\r\n> size of the pointer map in words and not take any shortcuts when the map is\r\n> all zero.  This allows the condition to be simplified to\r\n>\r\n> if(s->text->textflag & NOSPLIT) && (s->args == 0) && (s->nptrs < 0)\r\n>\r\n>\r\n> Which is another way of saying \"is this a nosplit, is the argumnt size 0,\r\n> and is there no pointer map\".\r\n>\r\n> Of course, this will trigger for routines that are 6c compiled, marked by\r\n> the linker as NOSPLIT, and have 0 arguments.  There is not yet much I can\r\n> do about that.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-29 23:44:30.123450",
+			"approval": false
+		}
+	],
+	"owner_email": "cshapiro@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "cshapiro1",
+	"subject": "code review 9666047: cmd/ld, runtime: emit pointer maps for nosplits identif...",
+	"created": "2013-05-29 02:46:23.356430",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		15001,
+		18001,
+		1002,
+		19004,
+		16003
+	],
+	"modified": "2013-05-30 01:36:57.593730",
+	"closed": true,
+	"issue": 9666047
+}

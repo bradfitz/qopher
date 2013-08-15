@@ -1,0 +1,155 @@
+{
+	"description": "runtime: fix handling of network deadlines\nEnsure that deadlines affect already issued IO.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"mikioh.mikioh@gmail.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-13 09:50:50.181470",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Dmitry,\r\n\r\nLooks like TestDeadlineRace in timeout_test.go is still broken.\r\nNow, and probably in Go 1.2, we will keep four network pollsters like\r\nthe following:\r\n\r\na) runtime-integrated network pollster on top of epoll, Linux\r\nb) runtime-integrated network pollster on top of IO completion mech., Windows\r\nc) runtime-integrated network pollster on top of kqueue, FreeBSD,\r\nOpenBSD (I'm working on, not yet completed)\r\nd) package net own pollster on top of kqueue (one-shot IO bounce),\r\nFreeBSD/ARM, NetBSD\r\n\r\nUnfortunately, setDeadline of (d) will never return non-nil value, thanks. ;)\r\n\r\n\r\nOn Tue, Aug 13, 2013 at 6:50 PM,  <dvyukov@google.com> wrote:\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> runtime: fix handling of network deadlines\r\n> Ensure that deadlines affect already issued IO.\r\n>\r\n> Please review this at https://codereview.appspot.com/12847043/\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/timeout_test.go\r\n>   M src/pkg/runtime/netpoll.goc\r\n>\r\n>\r\n> Index: src/pkg/net/timeout_test.go\r\n> ===================================================================\r\n> --- a/src/pkg/net/timeout_test.go\r\n> +++ b/src/pkg/net/timeout_test.go\r\n> @@ -718,6 +718,10 @@\r\n>                 t.Fatalf(\"Dial: %v\", err)\r\n>         }\r\n>         defer c.Close()\r\n> +       // TODO(dvyukov): the old poller can't change deadline for an\r\n> already issued IO.\r\n> +       // So ensure that we have some initial deadline.\r\n> +       // Remove this once all OSes switch to the runtime poller.\r\n> +       c.SetDeadline(time.Now().Add(2 * time.Microsecond))\r\n>         done := make(chan bool)\r\n>         go func() {\r\n>                 t := time.NewTicker(2 * time.Microsecond).C\r\n> Index: src/pkg/runtime/netpoll.goc\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/netpoll.goc\r\n> +++ b/src/pkg/runtime/netpoll.goc\r\n> @@ -134,9 +134,13 @@\r\n>  }\r\n>\r\n>  func runtime_pollSetDeadline(pd *PollDesc, d int64, mode int) {\r\n> +       G *rg, *wg;\r\n> +\r\n>         runtime\u00b7lock(pd);\r\n> -       if(pd->closing)\r\n> -               goto ret;\r\n> +       if(pd->closing) {\r\n> +               runtime\u00b7unlock(pd);\r\n> +               return;\r\n> +       }\r\n>         pd->seq++;  // invalidate current timers\r\n>         // Reset current timers.\r\n>         if(pd->rt.fv) {\r\n> @@ -148,9 +152,8 @@\r\n>                 pd->wt.fv = nil;\r\n>         }\r\n>         // Setup new timers.\r\n> -       if(d != 0 && d <= runtime\u00b7nanotime()) {\r\n> +       if(d != 0 && d <= runtime\u00b7nanotime())\r\n>                 d = -1;\r\n> -       }\r\n>         if(mode == 'r' || mode == 'r'+'w')\r\n>                 pd->rd = d;\r\n>         if(mode == 'w' || mode == 'r'+'w')\r\n> @@ -180,8 +183,17 @@\r\n>                         runtime\u00b7addtimer(&pd->wt);\r\n>                 }\r\n>         }\r\n> -ret:\r\n> +       // If we set the new deadline in the past, unblock currently pending\r\n> IO if any.\r\n> +       rg = wg = nil;\r\n> +       if(pd->rd < 0)\r\n> +               rg = netpollunblock(pd, 'r', false);\r\n> +       if(pd->wd < 0)\r\n> +               wg = netpollunblock(pd, 'w', false);\r\n>         runtime\u00b7unlock(pd);\r\n> +       if(rg)\r\n> +               runtime\u00b7ready(rg);\r\n> +       if(wg)\r\n> +               runtime\u00b7ready(wg);\r\n>  }\r\n>\r\n>  func runtime_pollUnblock(pd *PollDesc) {\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n",
+			"disapproval": false,
+			"date": "2013-08-13 10:29:34.341650",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Aug 13, 2013 at 2:29 PM, Mikio Hara <mikioh.mikioh@gmail.com> wrote:\r\n\r\n> Dmitry,\r\n>\r\n> Looks like TestDeadlineRace in timeout_test.go is still broken.\r\n> Now, and probably in Go 1.2, we will keep four network pollsters like\r\n> the following:\r\n>\r\n> a) runtime-integrated network pollster on top of epoll, Linux\r\n> b) runtime-integrated network pollster on top of IO completion mech.,\r\n> Windows\r\n> c) runtime-integrated network pollster on top of kqueue, FreeBSD,\r\n> OpenBSD (I'm working on, not yet completed)\r\n> d) package net own pollster on top of kqueue (one-shot IO bounce),\r\n> FreeBSD/ARM, NetBSD\r\n>\r\n> Unfortunately, setDeadline of (d) will never return non-nil value, thanks.\r\n> ;)\r\n>\r\n>\r\n\r\nDo you mean that the goroutine that sets deadlines will never exit?\r\nLooks like the fourth bug unveiled by the test :)\r\n\r\nI would expect all operations on closed Conn to return errClosing.\r\n\r\nWhat is we change fd_poll_unix.go from:\r\n\r\nfunc setReadDeadline(fd *netFD, t time.Time) error {\r\n    fd.pd.rdeadline.setTime(t)\r\n    return nil\r\n}\r\n\r\nto something like:\r\n\r\nfunc setReadDeadline(fd *netFD, t time.Time) error {\r\n    if err := fd.incref(); err != nil {\r\n        return err\r\n    }\r\n    defer fd.decref()\r\n    fd.pd.rdeadline.setTime(t)\r\n    fd.pd.Wakeup()\r\n    return nil\r\n}\r\n\r\n?\r\n\r\nIt should solve both errClosing and updating dealines for already issued IO.\r\n",
+			"disapproval": false,
+			"date": "2013-08-13 10:44:22.688680",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Aug 13, 2013 at 7:44 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> Do you mean that the goroutine that sets deadlines will never exit?\r\n> Looks like the fourth bug unveiled by the test :)\r\n\r\nSure, Hooray!\r\n\r\n> I would expect all operations on closed Conn to return errClosing.\r\n>\r\n> What is we change fd_poll_unix.go from:\r\n>\r\n> func setReadDeadline(fd *netFD, t time.Time) error {\r\n>     fd.pd.rdeadline.setTime(t)\r\n>     return nil\r\n> }\r\n>\r\n> to something like:\r\n>\r\n> func setReadDeadline(fd *netFD, t time.Time) error {\r\n>     if err := fd.incref(); err != nil {\r\n>         return err\r\n>     }\r\n>     defer fd.decref()\r\n>     fd.pd.rdeadline.setTime(t)\r\n>     fd.pd.Wakeup()\r\n>     return nil\r\n> }\r\n>\r\n> ?\r\n>\r\n> It should solve both errClosing and updating dealines for already issued IO.\r\n\r\nLGTM\r\n",
+			"disapproval": false,
+			"date": "2013-08-13 10:58:19.761250",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/13 10:58:19, mikio wrote:\n> On Tue, Aug 13, 2013 at 7:44 PM, Dmitry Vyukov <mailto:dvyukov@google.com> wrote:\n> \n> > Do you mean that the goroutine that sets deadlines will never exit?\n> > Looks like the fourth bug unveiled by the test :)\n> \n> Sure, Hooray!\n> \n> > I would expect all operations on closed Conn to return errClosing.\n> >\n> > What is we change fd_poll_unix.go from:\n> >\n> > func setReadDeadline(fd *netFD, t time.Time) error {\n> >     fd.pd.rdeadline.setTime(t)\n> >     return nil\n> > }\n> >\n> > to something like:\n> >\n> > func setReadDeadline(fd *netFD, t time.Time) error {\n> >     if err := fd.incref(); err != nil {\n> >         return err\n> >     }\n> >     defer fd.decref()\n> >     fd.pd.rdeadline.setTime(t)\n> >     fd.pd.Wakeup()\n> >     return nil\n> > }\n> >\n> > ?\n> >\n> > It should solve both errClosing and updating dealines for already issued IO.\n> \n> LGTM\n\nDone\nPTAL",
+			"disapproval": false,
+			"date": "2013-08-13 12:07:36.768370",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "thanks, test passes with below modifications.\n\nhttps://codereview.appspot.com/12847043/diff/16001/src/pkg/net/fd_poll_unix.go\nFile src/pkg/net/fd_poll_unix.go (right):\n\nhttps://codereview.appspot.com/12847043/diff/16001/src/pkg/net/fd_poll_unix.go#newcode366\nsrc/pkg/net/fd_poll_unix.go:366: func (fd *netFD) setDeadlineImpl(fd *netFD, t time.Time, read, write bool) error {\ndrop receiver\n\nhttps://codereview.appspot.com/12847043/diff/16001/src/pkg/net/fd_poll_unix.go#newcode377\nsrc/pkg/net/fd_poll_unix.go:377: fd.pd.Wakeup()\nreturn nil",
+			"disapproval": false,
+			"date": "2013-08-13 12:24:58.649210",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/13 12:24:58, mikio wrote:\n> thanks, test passes with below modifications.\n> \n> https://codereview.appspot.com/12847043/diff/16001/src/pkg/net/fd_poll_unix.go\n> File src/pkg/net/fd_poll_unix.go (right):\n> \n> https://codereview.appspot.com/12847043/diff/16001/src/pkg/net/fd_poll_unix.go#newcode366\n> src/pkg/net/fd_poll_unix.go:366: func (fd *netFD) setDeadlineImpl(fd *netFD, t\n> time.Time, read, write bool) error {\n> drop receiver\n> \n> https://codereview.appspot.com/12847043/diff/16001/src/pkg/net/fd_poll_unix.go#newcode377\n> src/pkg/net/fd_poll_unix.go:377: fd.pd.Wakeup()\n> return nil\n\nDone, thanks!\nPTAL",
+			"disapproval": false,
+			"date": "2013-08-13 13:18:28.677800",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/12847043/diff/21001/src/pkg/net/fd_poll_unix.go\nFile src/pkg/net/fd_poll_unix.go (right):\n\nhttps://codereview.appspot.com/12847043/diff/21001/src/pkg/net/fd_poll_unix.go#newcode366\nsrc/pkg/net/fd_poll_unix.go:366: func setDeadlineImpl(fd *netFD, t time.Time, read, write bool) error {\nImpl?  How about just setDeadline?  If we have both func setDeadline and func setDeadlineImpl, I'm curious what setDeadline is doing.\n\nhttps://codereview.appspot.com/12847043/diff/21001/src/pkg/runtime/netpoll.goc\nFile src/pkg/runtime/netpoll.goc (right):\n\nhttps://codereview.appspot.com/12847043/diff/21001/src/pkg/runtime/netpoll.goc#newcode187\nsrc/pkg/runtime/netpoll.goc:187: rg = wg = nil;\nis this style okay?  I don't remember seeing this elsewhere in the codebase.",
+			"disapproval": false,
+			"date": "2013-08-13 15:02:33.766830",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12847043/diff/21001/src/pkg/net/fd_poll_unix.go\nFile src/pkg/net/fd_poll_unix.go (right):\n\nhttps://codereview.appspot.com/12847043/diff/21001/src/pkg/net/fd_poll_unix.go#newcode366\nsrc/pkg/net/fd_poll_unix.go:366: func setDeadlineImpl(fd *netFD, t time.Time, read, write bool) error {\nOn 2013/08/13 15:02:34, bradfitz wrote:\n> Impl?  How about just setDeadline?  If we have both func setDeadline and func\n> setDeadlineImpl, I'm curious what setDeadline is doing.\n\nsetDeadline/setReadDeadline/setWriteDeadline are interface functions of netFD, they are called from net.go.\nsetDeadlineImpl is netFD implementation detail.\nwe have the same structure in fd_poll_runtime.go\n\nhttps://codereview.appspot.com/12847043/diff/21001/src/pkg/runtime/netpoll.goc\nFile src/pkg/runtime/netpoll.goc (right):\n\nhttps://codereview.appspot.com/12847043/diff/21001/src/pkg/runtime/netpoll.goc#newcode187\nsrc/pkg/runtime/netpoll.goc:187: rg = wg = nil;\nOn 2013/08/13 15:02:34, bradfitz wrote:\n> is this style okay?  I don't remember seeing this elsewhere in the codebase.\n\nI think it's used in several places, but yeah, it's more of an exception.\nDone",
+			"disapproval": false,
+			"date": "2013-08-13 15:10:31.838520",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=2a6434ea7154 ***\n\nruntime: fix handling of network deadlines\nEnsure that deadlines affect already issued IO.\n\nR=golang-dev, mikioh.mikioh, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/12847043",
+			"disapproval": false,
+			"date": "2013-08-13 15:12:07.825680",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 12847043: runtime: fix handling of network deadlines",
+	"created": "2013-08-13 09:32:22.714750",
+	"patchsets": [
+		1,
+		3001,
+		2002,
+		7001,
+		14001,
+		7002,
+		16001,
+		21001,
+		28001,
+		26003
+	],
+	"modified": "2013-08-13 15:12:09.897420",
+	"closed": true,
+	"issue": 12847043
+}

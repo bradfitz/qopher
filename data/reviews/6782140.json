@@ -1,0 +1,567 @@
+{
+	"description": "log/syslog: retry once if write fails\n\nImplements deferred connections + single-attempt automatic\nretry. Based on CL 5078042 from kuroneko.\n\nFixes issue 2264.",
+	"cc": [
+		"mikioh.mikioh@gmail.com",
+		"rsc@golang.org",
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-11-30 11:18:37.825100",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "thank you for tackling this.\n\nhttps://codereview.appspot.com/6782140/diff/6001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/6001/src/pkg/log/syslog/syslog.go#newcode1\nsrc/pkg/log/syslog/syslog.go:1: // Copyright 2012 The Go Authors. All rights reserved.\nno need to update copyright line.\n\nhttps://codereview.appspot.com/6782140/diff/6001/src/pkg/log/syslog/syslog.go#newcode18\nsrc/pkg/log/syslog/syslog.go:18: \"syscall\"\nwell, please have a look at src/pkg/go/build/deps_test.go.\nalso please run all.bash before review.\n\n// pkgDeps defines the expected dependencies between packages in\n// the Go source tree.  It is a statement of policy.\n// Changes should not be made to this map without prior discussion.\n//\n// The map contains two kinds of entries:\n// 1) Lower-case keys are standard import paths and list the\n// allowed imports in that package.\n// 2) Upper-case keys define aliases for package sets, which can then\n// be used as dependencies by other rules.\n//\n// DO NOT CHANGE THIS DATA TO FIX BUILDS.\n\nhttps://codereview.appspot.com/6782140/diff/6001/src/pkg/log/syslog/syslog.go#newcode122\nsrc/pkg/log/syslog/syslog.go:122: if w.conn != nil {\nno lock?\n\nhttps://codereview.appspot.com/6782140/diff/6001/src/pkg/log/syslog/syslog.go#newcode147\nsrc/pkg/log/syslog/syslog.go:147: return oe.Err == syscall.ECONNREFUSED\nplatform independent?",
+			"disapproval": false,
+			"date": "2012-12-01 13:16:15.446830",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "OK, I think I understand the problem. log/syslog is allowed to use  L4, OS and net. So it seems like I should be checking something in os or net instead of syscall. So it seems like I will need to add the concept of conn refused in net, following the pattern of Timeout(), perhaps. Sound like the right general direction to go?",
+			"disapproval": false,
+			"date": "2012-12-01 20:18:56.582020",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please take a look. This is what it would look like fi we did this by making a new OS-independent API to detect the connection refused condition.\n\nI need feedback from Go hackers if this is the right direction to go with this.\n\nThanks.",
+			"disapproval": false,
+			"date": "2012-12-05 15:44:55.074090",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please don't edit the copyright notices: we don't bother updating the year.\r\n\r\nI agree with Mikio: I don't understand why we only want to do this is\r\nthe connection was refused. What if the connection is unreachable\r\nbecause the machine is temporarily off the network? If this code is\r\ngoing to retry I think it should just retry, regardless of why it\r\ncould not connect.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-12-06 06:22:38.257360",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi,\r\n\r\nI don't see any reason we should tweak net package here.\r\n\r\nfunc (w *Writer) writeString() (int, error) {\r\n  n, err := w.c.WriteString()\r\n  if err != nil {\r\n    if err := openlog(...); err != nil { // try to reconnect or reopen log\r\n      return 0, err\r\n    }\r\n    n, err := w.c.WriteString()\r\n }\r\n return n, err\r\n}\r\n\r\nisn't enough?\r\n",
+			"disapproval": false,
+			"date": "2012-12-06 06:59:59.518030",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, mikioh.mikioh@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-06 09:40:09.124400",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If you want to make a conn of Writer mutable then you\r\nneed to prevent data race. For example, go test -race\r\nberks with attached test case.\r\n\r\n==================\r\nWARNING: DATA RACE\r\nWrite by goroutine 6:\r\n  log/syslog.(*Writer).reconnect()\r\n      /Users/go/src/pkg/log/syslog/syslog.go:135 +0x1fe\r\n  log/syslog.(*Writer).writeString()\r\n      /Users/go/src/pkg/log/syslog/syslog.go:214 +0x51\r\n  log/syslog.(*Writer).Write()\r\n      /Users/go/src/pkg/log/syslog/syslog.go:146 +0x91\r\n  io.WriteString()\r\n      /Users/go/src/pkg/io/io.go:256 +0xf2\r\n  log/syslog.func\u00b7001()\r\n      /Users/go/src/pkg/log/syslog/syslog_test.go:254 +0x7c\r\n\r\nfunc TestConcurrentWrite(t *testing.T) {\r\n        addr := startUdpServer(make(chan string))\r\n        w, err := Dial(\"udp\", addr, LOG_USER|LOG_ERR, \"how's it going?\")\r\n        if err != nil {\r\n                t.Fatalf(\"syslog.Dial() failed: %s\", err)\r\n        }\r\n        var wg sync.WaitGroup\r\n        for i := 0; i < 10; i++ {\r\n                go func(w *Writer) {\r\n                        wg.Add(1)\r\n                        defer func() { wg.Done() }()\r\n                        _, err = io.WriteString(w, \"so so\")\r\n                        if err != nil {\r\n                                t.Errorf(\"WriteString() failed: %s\", err)\r\n                                return\r\n                        }\r\n                }(w)\r\n        }\r\n        wg.Wait()\r\n}\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 02:57:51.062850",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I had a quick look ti syslog.go, not enough to tests.\nAlso you don't need to update api.txt in this CL.\n\nhttps://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go#newcode119\nsrc/pkg/log/syslog/syslog.go:119: return &Writer{priority: priority, tag: tag, hostname: hostname, conn: nil, network: network, raddr: raddr}, nil\nwhy did you remove net.Dial from here?\n\nhttps://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go#newcode122\nsrc/pkg/log/syslog/syslog.go:122: // must be called with w.mu held\nlooks like a different comment style.\n\nhttps://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go#newcode219\nsrc/pkg/log/syslog/syslog.go:219: w.mu.Lock()\nwhy not give a chance of first write before entering lock contention?\n\nhttps://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go#newcode222\nsrc/pkg/log/syslog/syslog.go:222: if w.conn == nil {\ntest w.conn here then test again in reconnect looks redundant.\n\nhttps://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog_test.go\nFile src/pkg/log/syslog/syslog_test.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog_test.go#newcode35\nsrc/pkg/log/syslog/syslog_test.go:35: func startUdpServer(done chan<- string) string {\ns/Udp/UDP/\n\nhttps://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog_test.go#newcode88\nsrc/pkg/log/syslog/syslog_test.go:88: t.Fatalf(\"Dial() failed: %s\", err)\n%v?",
+			"disapproval": false,
+			"date": "2012-12-07 11:53:25.235990",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Dec 7, 2012 at 7:37 PM,  <dvyukov@google.com> wrote:\r\n\r\n> Keep deracing!\r\n\r\nGreat work, much appreciate it.\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 11:50:55.770660",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, mikioh.mikioh@gmail.com, rsc@golang.org, dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-07 15:29:22.867970",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go#newcode119\nsrc/pkg/log/syslog/syslog.go:119: return &Writer{priority: priority, tag: tag, hostname: hostname, conn: nil, network: network, raddr: raddr}, nil\nI don't think it's a good idea.\n\nWhat if we have multiple syslog servers and want to implement\ncandidate selection with own policies? Your dial takes all and we \ncannot take it back anymore.",
+			"disapproval": false,
+			"date": "2012-12-08 03:00:19.665920",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks, I totally forgot about that comment from before.\n\nI included your test and the correct locking code in syslog.go.\n\nI found something funny... even your test had a data race, because the err inside the go routine is shadowed between all the goroutines! Added a : to fix that right up.\n\nPTAL.",
+			"disapproval": false,
+			"date": "2012-12-07 10:25:25.704460",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Keep deracing!",
+			"disapproval": false,
+			"date": "2012-12-07 10:37:30.883390",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6782140/diff/34001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/34001/src/pkg/log/syslog/syslog.go#newcode88\nsrc/pkg/log/syslog/syslog.go:88: type serverConn interface {\nserverConn? I'm confused a bit.\n\nhttps://codereview.appspot.com/6782140/diff/34001/src/pkg/log/syslog/syslog.go#newcode122\nsrc/pkg/log/syslog/syslog.go:122: // *Writer.connect makes a connection to the syslog server.\nno *Writer prefix.\n\nhttps://codereview.appspot.com/6782140/diff/34001/src/pkg/log/syslog/syslog.go#newcode220\nsrc/pkg/log/syslog/syslog.go:220: w.mu.Lock()\nsync.RWMutex is your friend.",
+			"disapproval": false,
+			"date": "2012-12-08 02:18:52.425050",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttp://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go#newcode119\nsrc/pkg/log/syslog/syslog.go:119: return &Writer{priority: priority, tag: tag, hostname: hostname, conn: nil, network: network, raddr: raddr}, nil\nI am working from a previous patch, which implemented delayed connect at the same time as reconnect. It seemed like a good idea to me, so I kept it.\n\nhttp://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go#newcode122\nsrc/pkg/log/syslog/syslog.go:122: // must be called with w.mu held\nOn 2012/12/07 11:53:25, mikio wrote:\n> looks like a different comment style.\n\nDone.\n\nhttp://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go#newcode219\nsrc/pkg/log/syslog/syslog.go:219: w.mu.Lock()\nMy understanding is that reading w.conn is not safe unless I hold the mutex. Is only writing racy?\n\nhttp://codereview.appspot.com/6782140/diff/27001/src/pkg/log/syslog/syslog.go#newcode222\nsrc/pkg/log/syslog/syslog.go:222: if w.conn == nil {\nThis test conn == nil. The other is conn != nil, to prevent a nil deref on w.conn.Close().",
+			"disapproval": false,
+			"date": "2012-12-07 20:38:20.751930",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6782140/diff/20001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/20001/src/pkg/log/syslog/syslog.go#newcode117\nsrc/pkg/log/syslog/syslog.go:117: return &Writer{priority: priority, tag: tag, hostname: hostname, conn: nil, network: network, raddr: raddr}, nil\nThe doc comment says that Dial establishes a connection, but now the code does not. Please make the code establish a connection once, so that Dial can return an error if the initial connection fails.",
+			"disapproval": false,
+			"date": "2012-12-11 15:38:36.494320",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello mikioh.mikioh@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-13 08:26:48.808080",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello mikioh.mikioh@gmail.com, rsc@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-14 09:08:20.099210",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please revisit test cases because I've just modified ListenUnixgram\nsignature. Also please provide multiple fake syslog servers which \nuse \"tcp\", \"udp\", \"unix\" and \"unixgram\".  And it would be better\nnot only concurrent write test but concurrent re-connect test.\nThanks.\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go#newcode89\nsrc/pkg/log/syslog/syslog.go:89: type serverConn interface {\nI think this interface is unnecessary unless you want to\nuse both net.Conn and net.PacketConn.\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go#newcode94\nsrc/pkg/log/syslog/syslog.go:94: type netConn struct {\nditto.\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go#newcode167\nsrc/pkg/log/syslog/syslog.go:167: func (w *Writer) Close() error {\nClose is exposed so it needs comments.\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go#newcode239\nsrc/pkg/log/syslog/syslog.go:239: if w.conn == nil {\nI'm not keen to manage a conn state with write-only lock because \nthe state of conn might be a single point of failure to all syslog.Writer \nusers in a single go process. For example, once the conn brings down, \nall users would be blocked by this state until new conn estab attempts \nfinished (no DialTimeout...).\n\nI have no clue, do you have any good solution for this?\nE.g., anyway syslog.Writer fails as quick as possible and wont block up\nusers during re-connecting.",
+			"disapproval": false,
+			"date": "2012-12-16 06:54:17.759000",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode82\nsrc/pkg/log/syslog/syslog.go:82: mu       sync.Mutex\neither put a space before this line and/or add a comment on the same line after sync.Mutex saying what it guards:\n\nmu sync.Mutex // guards conn, network, raddr\n\nor\n\nmu sync.Mutex // guards conn\n\n(in which case network and raddr should go above the mutex, so the mutex is at the head of its own block of things it protects)\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode108\nsrc/pkg/log/syslog/syslog.go:108: func Dial(network, raddr string, priority Priority, tag string) (w *Writer, err error) {\ndrop the named result parameters here. they add nothing to the docs.  just:\n\n (*Writer, error)\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode118\nsrc/pkg/log/syslog/syslog.go:118: w = &Writer{priority: priority, tag: tag, hostname: hostname, conn: nil, network: network, raddr: raddr}\ngo multiple lines here, and you can drop the \"conn: nil\", or if you really want it there for explictness, at least explain it:\n\n   conn: nil,  // initialized by connect, below\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode121\nsrc/pkg/log/syslog/syslog.go:121: err = w.connect()\nerr :=\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode125\nsrc/pkg/log/syslog/syslog.go:125: return\nreturn w, nil\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode130\nsrc/pkg/log/syslog/syslog.go:130: func (w *Writer) connect() (err error) {\nthis named result parameter is okay, btw, since it's a private method and doesn't pollute godoc.\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode160\nsrc/pkg/log/syslog/syslog.go:160: func (w *Writer) Close() (err error) {\ndrop the named result parameter.",
+			"disapproval": false,
+			"date": "2012-12-13 20:32:36.240290",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Leaving for Mikioh to also review and then submit.\r\n\r\nOn Fri, Dec 14, 2012 at 9:02 AM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> LGTM\r\n>\r\n> On Fri, Dec 14, 2012 at 1:08 AM, <jeff.allen@gmail.com> wrote:\r\n>\r\n>> Hello mikioh.mikioh@gmail.com, rsc@golang.org, bradfitz@golang.org (cc:\r\n>>\r\n>> golang-dev@googlegroups.com),\r\n>>\r\n>> Please take another look.\r\n>>\r\n>>\r\n>> https://codereview.appspot.**com/6782140/<https://codereview.appspot.com/6782140/>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-14 17:11:20.377490",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Fri, Dec 14, 2012 at 1:08 AM, <jeff.allen@gmail.com> wrote:\r\n\r\n> Hello mikioh.mikioh@gmail.com, rsc@golang.org, bradfitz@golang.org (cc:\r\n>\r\n> golang-dev@googlegroups.com),\r\n>\r\n> Please take another look.\r\n>\r\n>\r\n> https://codereview.appspot.**com/6782140/<https://codereview.appspot.com/6782140/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-14 17:02:09.057600",
+			"approval": true
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Most comments have been addressed. Still need to do the concurrent reconnect test.\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode82\nsrc/pkg/log/syslog/syslog.go:82: mu       sync.Mutex\nOn 2012/12/13 20:32:36, bradfitz wrote:\n> either put a space before this line and/or add a comment on the same line after\n> sync.Mutex saying what it guards:\n> \n> mu sync.Mutex // guards conn, network, raddr\n> \n> or\n> \n> mu sync.Mutex // guards conn\n> \n> (in which case network and raddr should go above the mutex, so the mutex is at\n> the head of its own block of things it protects)\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode108\nsrc/pkg/log/syslog/syslog.go:108: func Dial(network, raddr string, priority Priority, tag string) (w *Writer, err error) {\nOn 2012/12/13 20:32:36, bradfitz wrote:\n> drop the named result parameters here. they add nothing to the docs.  just:\n> \n>  (*Writer, error)\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode118\nsrc/pkg/log/syslog/syslog.go:118: w = &Writer{priority: priority, tag: tag, hostname: hostname, conn: nil, network: network, raddr: raddr}\nOn 2012/12/13 20:32:36, bradfitz wrote:\n> go multiple lines here, and you can drop the \"conn: nil\", or if you really want\n> it there for explictness, at least explain it:\n> \n>    conn: nil,  // initialized by connect, below\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode121\nsrc/pkg/log/syslog/syslog.go:121: err = w.connect()\nOn 2012/12/13 20:32:36, bradfitz wrote:\n> err :=\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode125\nsrc/pkg/log/syslog/syslog.go:125: return\nOn 2012/12/13 20:32:36, bradfitz wrote:\n> return w, nil\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/38001/src/pkg/log/syslog/syslog.go#newcode160\nsrc/pkg/log/syslog/syslog.go:160: func (w *Writer) Close() (err error) {\nOn 2012/12/13 20:32:36, bradfitz wrote:\n> drop the named result parameter.\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go#newcode89\nsrc/pkg/log/syslog/syslog.go:89: type serverConn interface {\nOn 2012/12/16 06:54:17, mikio wrote:\n> I think this interface is unnecessary unless you want to\n> use both net.Conn and net.PacketConn.\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go#newcode94\nsrc/pkg/log/syslog/syslog.go:94: type netConn struct {\nOn 2012/12/16 06:54:17, mikio wrote:\n> ditto.\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go#newcode167\nsrc/pkg/log/syslog/syslog.go:167: func (w *Writer) Close() error {\nOn 2012/12/16 06:54:17, mikio wrote:\n> Close is exposed so it needs comments.\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/42002/src/pkg/log/syslog/syslog.go#newcode239\nsrc/pkg/log/syslog/syslog.go:239: if w.conn == nil {\nI think the correct approach to this risk is to reduce the number of callers to syslog.Write, and the correct way to do that is for the calling application to queue pending log message itself via a buffering channel. I think the vast majority of callers don't need this, so I don't think it should be in the standard library. (For comparison: log.New on an io.Writer which represents a TCP pipe could cause log.Write to block while holding log.Logger.mu, and all other callers would block as well.)\n\nSo my proposal is to not do anything and let the caller deal with it if they care. I could add a sentence or two in the docs explaining this.",
+			"disapproval": false,
+			"date": "2012-12-18 15:18:02.971080",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I think the correct approach to this risk is to reduce the number of callers to\n> syslog.Write, and the correct way to do that is for the calling application to\n> queue pending log message itself via a buffering channel. I think the vast\n> majority of callers don't need this, so I don't think it should be in the\n> standard library.\n(snip)\n> So my proposal is to not do anything and let the caller deal with it if they\n> care. I could add a sentence or two in the docs explaining this.\n\nfair enough.\n\n> (For comparison: log.New on an io.Writer which represents a\n> TCP pipe could cause log.Write to block while holding log.Logger.mu, and all\n> other callers would block as well.)\n\nthere's a difference btw log and syslog. log transfers all connection \nsetup/teardown controls to users but syslog takes almost all.\nfor example, your CL  allows to revive a closed syslog.Writer by using \nsyslog.Write. is this intentional behavior?",
+			"disapproval": false,
+			"date": "2012-12-19 00:30:55.841170",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/19 00:30:55, mikio wrote:\n> for example, your CL  allows to revive a closed syslog.Writer by using \n> syslog.Write. is this intentional behavior?\n\nYes. I see it as a not-unuseful side effect of the very useful fix to the legitimate issue 2264.\n\nA caller who does not want a given *Writer to reconnect should lose its last reference to it, and it will be GC'd.",
+			"disapproval": false,
+			"date": "2012-12-19 09:06:36.409200",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please take another look. The concurrent test is done now, and the mystery about Read vs. ReadFrom is solved (see issue 4636).\n\nThis CL is now depending on issue 4636 to be fixed (CL submitted for it).",
+			"disapproval": false,
+			"date": "2013-01-09 12:55:00.815970",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Something has to be done about embedded newlines, because they are the record separator for stream-oriented transports. An embedded newline causes the remainder of the message to be lost.\n\nIf you only talk syslog over unixgram or UDP, the datagram is the record, so you don't need to worry about embedded newlines.",
+			"disapproval": false,
+			"date": "2013-01-31 10:34:32.452750",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6782140/diff/55001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/55001/src/pkg/log/syslog/syslog.go#newcode119\nsrc/pkg/log/syslog/syslog.go:119: // w.mu not held, but w is still private to us at this point\nw.mu.Lock()\ndefer w.mu.Unlock()\n\nconnect says it requires w.mu to be held. make that true.\nmuch better than a comment. having one reference is not\nthe same as holding a lock. what if connect kicks off a goroutine\nthat will do something with w after acquiring the lock, under the\nassumption that the 'something' can't happen until connect returns?\nthe lock isn't actually held in this call so the call to connect and the\nhypothetical goroutine will step on each other.\n\nhttps://codereview.appspot.com/6782140/diff/55001/src/pkg/log/syslog/syslog.go#newcode238\nsrc/pkg/log/syslog/syslog.go:238: if w.conn == nil {\nDoesn't this end up connecting twice? Simpler:\n\nif w.conn != nil {\n     if n, err := w.write(pr, s); err == nil {\n         return n, err\n     }\n}\nif err := w.connect(); err != nil {\n    return 0, err\n}\nreturn w.write(pr, s)\n\nhttps://codereview.appspot.com/6782140/diff/55001/src/pkg/log/syslog/syslog.go#newcode265\nsrc/pkg/log/syslog/syslog.go:265: _, isTcp := w.conn.(*net.TCPConn)\nThis has nothing to do with reconnecting and should not be in this CL.\nI would probably argue it shouldn't be done anyway, but it definitely shouldn't be in this CL.",
+			"disapproval": false,
+			"date": "2013-01-30 17:35:15.462520",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello mikioh.mikioh@gmail.com, rsc@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-02-01 09:27:11.926640",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This CL has just been updated to work with tip of tree. Please check it in when issue 4636 is fixed.",
+			"disapproval": false,
+			"date": "2013-01-30 12:43:43.297410",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6782140/diff/55001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/55001/src/pkg/log/syslog/syslog.go#newcode127\nsrc/pkg/log/syslog/syslog.go:127: // (*Writer).connect makes a connection to the syslog server.\nyou can just say \"connect\".\n\n// connect makes ...\n\nhttps://codereview.appspot.com/6782140/diff/55001/src/pkg/log/syslog/syslog.go#newcode154\nsrc/pkg/log/syslog/syslog.go:154: // Write sends a log message to the syslog daemon. A failing\nthis is a lot of words.  I think a subset of this could be moved to the package comment instead, since it applies to all methods, not just Write.",
+			"disapproval": false,
+			"date": "2013-01-30 17:20:01.059990",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello mikioh.mikioh@gmail.com, rsc@golang.org, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-31 10:35:16.019970",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Seems fine, leaving for Brad and Mikio.\n\nWe can have a discussion about newlines in messages, just not in a CL about redialing.\n\nhttps://codereview.appspot.com/6782140/diff/58003/src/pkg/log/syslog/syslog_test.go\nFile src/pkg/log/syslog/syslog_test.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/58003/src/pkg/log/syslog/syslog_test.go#newcode54\nsrc/pkg/log/syslog/syslog_test.go:54: } else {\nno else after return\ngolang.org/doc/effective_go.html#if\n\nhttps://codereview.appspot.com/6782140/diff/58003/src/pkg/log/syslog/syslog_test.go#newcode58\nsrc/pkg/log/syslog/syslog_test.go:58: for {\nfor ct := 1; !crashy || ct%7 != 0; ct++ {\n\nhttps://codereview.appspot.com/6782140/diff/58003/src/pkg/log/syslog/syslog_test.go#newcode61\nsrc/pkg/log/syslog/syslog_test.go:61: if crashy && (ct%7) == 0 {\ndrop unnecessary ()\n\nhttps://codereview.appspot.com/6782140/diff/58003/src/pkg/log/syslog/syslog_test.go#newcode71\nsrc/pkg/log/syslog/syslog_test.go:71: return\nunneeded; delete\n\nhttps://codereview.appspot.com/6782140/diff/58003/src/pkg/log/syslog/syslog_test.go#newcode171\nsrc/pkg/log/syslog/syslog_test.go:171: s, err := New(LOG_INFO|LOG_USER, \"tcp:127.0.0.1:514\")\nWhy this address-looking string as a tag?\n\nhttps://codereview.appspot.com/6782140/diff/58003/src/pkg/log/syslog/syslog_test.go#newcode173\nsrc/pkg/log/syslog/syslog_test.go:173: t.Fatalf(\"New() failed: %v\", err)\nFWIW %s was fine.\n\nhttps://codereview.appspot.com/6782140/diff/58003/src/pkg/log/syslog/syslog_test.go#newcode203\nsrc/pkg/log/syslog/syslog_test.go:203: t.Fatalf(\"Dial() failed: %v\", err)\nFWIW %s was fine.\n\nhttps://codereview.appspot.com/6782140/diff/58003/src/pkg/log/syslog/syslog_test.go#newcode219\nsrc/pkg/log/syslog/syslog_test.go:219: return\nNo need for return at end of function that doesn't return anything. Delete.",
+			"disapproval": false,
+			"date": "2013-01-31 15:44:00.497960",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go#newcode11\nsrc/pkg/log/syslog/syslog.go:11: // A failing write will cause the package to try to reconnect one time.\nThe \"one time\" is correct \"per-write\", but it reads like you get one reconnect only, ever.  I would also drop the second sentence justifying it.  If you want that text, move it to the retry function itself, but I doubt end-users care.\n\nAnd if the intent is to calm users into thinking their syslogged message will make it through, you don't explicitly say that the reconnect is before the re-write of the message that failed.\n\nMaybe something like:\n\n// Only one call to Dial is necessary. On write failures\n// the syslog client will attempt to reconnect to the server\n// and write again.\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go#newcode166\nsrc/pkg/log/syslog/syslog.go:166: func (w *Writer) Close() error {\nis this meant to be permanent? the next write will just re-dial again, right?\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go#newcode251\nsrc/pkg/log/syslog/syslog.go:251: // write: generates and writes a syslog formatted string. The\ndrop the colon\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go#newcode254\nsrc/pkg/log/syslog/syslog.go:254: // If transport is stream-based, pay attention that the only \\n is at\nthis comment no longer belongs, right?  this will be in a future CL?\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go#newcode259\nsrc/pkg/log/syslog/syslog.go:259: if len(msg) == 0 || msg[len(msg)-1] != '\\n' {\nif !strings.HasSuffix(msg, \"\\n\") {\n\n?",
+			"disapproval": false,
+			"date": "2013-02-01 17:08:10.142970",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=8d71734a0cb0 ***\n\nlog/syslog: retry once if write fails\n\nImplements deferred connections + single-attempt automatic\nretry. Based on CL 5078042 from kuroneko.\n\nFixes issue 2264.\n\nR=mikioh.mikioh, rsc, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/6782140\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2013-02-05 17:54:04.839500",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "brad, PTAL.\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go\nFile src/pkg/log/syslog/syslog.go (right):\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go#newcode166\nsrc/pkg/log/syslog/syslog.go:166: func (w *Writer) Close() error {\nIt is for compatibility with the previous api, and to let someone who it counting every last file descriptor free the one to the syslog daemon, I guess.\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go#newcode251\nsrc/pkg/log/syslog/syslog.go:251: // write: generates and writes a syslog formatted string. The\nOn 2013/02/01 17:08:10, bradfitz wrote:\n> drop the colon\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go#newcode254\nsrc/pkg/log/syslog/syslog.go:254: // If transport is stream-based, pay attention that the only \\n is at\nOn 2013/02/01 17:08:10, bradfitz wrote:\n> this comment no longer belongs, right?  this will be in a future CL?\n\nDone.\n\nhttps://codereview.appspot.com/6782140/diff/68001/src/pkg/log/syslog/syslog.go#newcode259\nsrc/pkg/log/syslog/syslog.go:259: if len(msg) == 0 || msg[len(msg)-1] != '\\n' {\nOn 2013/02/01 17:08:10, bradfitz wrote:\n> if !strings.HasSuffix(msg, \"\\n\") {\n> \n> ?\n\nDone.",
+			"disapproval": false,
+			"date": "2013-02-05 16:08:47.730260",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff.allen@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-02-05 17:53:45.316510",
+			"approval": true
+		}
+	],
+	"owner_email": "jeff.allen@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jeff.allen",
+	"subject": "code review 6782140: log/syslog: retry once if write fails",
+	"created": "2012-11-30 11:09:23.871090",
+	"patchsets": [
+		1,
+		2001,
+		1002,
+		6001,
+		11001,
+		16001,
+		20001,
+		27001,
+		27003,
+		34001,
+		38001,
+		42002,
+		44004,
+		52001,
+		55001,
+		58003,
+		68001,
+		71001
+	],
+	"modified": "2013-02-06 07:29:46.272720",
+	"closed": true,
+	"issue": 6782140
+}

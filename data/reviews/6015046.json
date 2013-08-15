@@ -1,0 +1,180 @@
+{
+	"description": "syscall: remove the Signal type on Plan 9\n\nInstead use a new type, \"Note\", whose underlying\ntype is just a string.  This change allows us to\nremove the exported os.Plan9Note type.",
+	"cc": [
+		"bradfitz@golang.org",
+		"seed@mail.nanosouffle.net",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-04-12 13:32:45.668473",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "godoc won't look good with this (the docs on the vars will be sorted away\nin a different section with the Signal interface type).  You may just have\nto duplicate the docs between exec_posix.go and exec_plan9.go.\n\n\nOn Thu, Apr 12, 2012 at 6:32 AM, <ality@pbrane.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://code.google.com/p/go/\n>\n>\n> Description:\n> syscall: remove the Signal type on Plan 9\n>\n> Instead use a new type, \"Note\", whose underlying\n> type is just a string.  This change allows us to\n> remove the exported os.Plan9Note type.\n>\n> Please review this at http://codereview.appspot.com/**6015046/<http://codereview.appspot.com/6015046/>\n>\n> Affected files:\n>  M src/pkg/os/exec.go\n>  M src/pkg/os/exec_plan9.go\n>  M src/pkg/os/exec_posix.go\n>  M src/pkg/syscall/syscall_plan9.**go\n>  M src/pkg/syscall/zerrors_plan9_**386.go\n>\n>\n> Index: src/pkg/os/exec.go\n> ==============================**==============================**=======\n> --- a/src/pkg/os/exec.go\n> +++ b/src/pkg/os/exec.go\n> @@ -49,19 +49,15 @@\n>  // A Signal represents an operating system signal.\n>  // The usual underlying implementation is operating system-dependent:\n>  // on Unix it is syscall.Signal.\n> +//\n> +// The only signal values guaranteed to be present on all systems\n> +// are Interrupt (send the process an interrupt) and Kill (force\n> +// the process to exit).\n>  type Signal interface {\n>        String() string\n>        Signal() // to distinguish from other Stringers\n>  }\n>\n> -// The only signal values guaranteed to be present on all systems\n> -// are Interrupt (send the process an interrupt) and\n> -// Kill (force the process to exit).\n> -var (\n> -       Interrupt Signal = syscall.SIGINT\n> -       Kill      Signal = syscall.SIGKILL\n> -)\n> -\n>  // Getpid returns the process id of the caller.\n>  func Getpid() int { return syscall.Getpid() }\n>\n> Index: src/pkg/os/exec_plan9.go\n> ==============================**==============================**=======\n> --- a/src/pkg/os/exec_plan9.go\n> +++ b/src/pkg/os/exec_plan9.go\n> @@ -11,6 +11,11 @@\n>        \"time\"\n>  )\n>\n> +var (\n> +       Interrupt = syscall.Note(\"interrupt\")\n> +       Kill      = syscall.Note(\"kill\")\n> +)\n> +\n>  func startProcess(name string, argv []string, attr *ProcAttr) (p\n> *Process, err error) {\n>        sysattr := &syscall.ProcAttr{\n>                Dir: attr.Dir,\n> @@ -30,35 +35,35 @@\n>        return newProcess(pid, h), nil\n>  }\n>\n> -// Plan9Note implements the Signal interface on Plan 9.\n> -type Plan9Note string\n> -\n> -func (note Plan9Note) String() string {\n> -       return string(note)\n> +func (p *Process) writeProcFile(file string, data string) error {\n> +       f, e := OpenFile(\"/proc/\"+itoa(p.Pid)+**\"/ctl\", O_WRONLY, 0)\n> +       if e != nil {\n> +               return e\n> +       }\n> +       defer f.Close()\n> +       _, e = f.Write([]byte(data))\n> +       return e\n>  }\n>\n>  func (p *Process) signal(sig Signal) error {\n>        if p.done {\n>                return errors.New(\"os: process already finished\")\n>        }\n> -\n> -       f, e := OpenFile(\"/proc/\"+itoa(p.Pid)+**\"/note\", O_WRONLY, 0)\n> -       if e != nil {\n> +       if sig == Kill {\n> +               // Special-case the kill signal since it doesn't use\n> /proc/$pid/note.\n> +               return p.Kill()\n> +       }\n> +       if e := p.writeProcFile(\"note\", sig.String()); e != nil {\n>                return NewSyscallError(\"signal\", e)\n>        }\n> -       defer f.Close()\n> -       _, e = f.Write([]byte(sig.String()))\n> -       return e\n> +       return nil\n>  }\n>\n>  func (p *Process) kill() error {\n> -       f, e := OpenFile(\"/proc/\"+itoa(p.Pid)+**\"/ctl\", O_WRONLY, 0)\n> -       if e != nil {\n> +       if e := p.writeProcFile(\"ctl\", \"kill\"); e != nil {\n>                return NewSyscallError(\"kill\", e)\n>        }\n> -       defer f.Close()\n> -       _, e = f.Write([]byte(\"kill\"))\n> -       return e\n> +       return nil\n>  }\n>\n>  func (p *Process) wait() (ps *ProcessState, err error) {\n> Index: src/pkg/os/exec_posix.go\n> ==============================**==============================**=======\n> --- a/src/pkg/os/exec_posix.go\n> +++ b/src/pkg/os/exec_posix.go\n> @@ -10,6 +10,11 @@\n>        \"syscall\"\n>  )\n>\n> +var (\n> +       Interrupt Signal = syscall.SIGINT\n> +       Kill      Signal = syscall.SIGKILL\n> +)\n> +\n>  func startProcess(name string, argv []string, attr *ProcAttr) (p\n> *Process, err error) {\n>        // Double-check existence of the directory we want\n>        // to chdir into.  We can make the error clearer this way.\n> Index: src/pkg/syscall/syscall_plan9.**go\n> ==============================**==============================**=======\n> --- a/src/pkg/syscall/syscall_**plan9.go\n> +++ b/src/pkg/syscall/syscall_**plan9.go\n> @@ -23,6 +23,16 @@\n>  // NewError converts s to an ErrorString, which satisfies the Error\n> interface.\n>  func NewError(s string) error { return ErrorString(s) }\n>\n> +// A Note is a string describing a process signal.\n> +// It implements the os.Signal interface.\n> +type Note string\n> +\n> +func (n Note) Signal() {}\n> +\n> +func (n Note) String() string {\n> +       return string(n)\n> +}\n> +\n>  var (\n>        Stdin  = 0\n>        Stdout = 1\n> @@ -335,14 +345,6 @@\n>        return make([]int, 0), nil\n>  }\n>\n> -type Signal int\n> -\n> -func (s Signal) Signal() {}\n> -\n> -func (s Signal) String() string {\n> -       return \"\"\n> -}\n> -\n>  //sys  Dup(oldfd int, newfd int) (fd int, err error)\n>  //sys  Open(path string, mode int) (fd int, err error)\n>  //sys  Create(path string, mode int, perm uint32) (fd int, err error)\n> Index: src/pkg/syscall/zerrors_plan9_**386.go\n> ==============================**==============================**=======\n> --- a/src/pkg/syscall/zerrors_**plan9_386.go\n> +++ b/src/pkg/syscall/zerrors_**plan9_386.go\n> @@ -24,9 +24,6 @@\n>        S_IFREG  = 0x8000\n>        S_IFLNK  = 0xa000\n>        S_IFSOCK = 0xc000\n> -\n> -       SIGINT  = Signal(0x2)\n> -       SIGKILL = Signal(0x9)\n>  )\n>\n>  // Errors\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-04-12 14:17:47.458027",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Brad Fitzpatrick <bradfitz@golang.org> once said:\n> godoc won't look good with this (the docs on the vars will be sorted away\n> in a different section with the Signal interface type).  You may just have\n> to duplicate the docs between exec_posix.go and exec_plan9.go.\n\nI tried \"godoc os Signal\", \"godoc os Interrupt\", and\ncompared the web interface and it looks fine to me.\n\nThe variables always end up below the Signal type docs.\n\nWhat am I missing?\n\n  Anthony\n",
+			"disapproval": false,
+			"date": "2012-04-17 01:10:38.520115",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"ality@pbrane.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"seed@mail.nanosouffle.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6015046/diff/1002/src/pkg/os/exec_plan9.go\nFile src/pkg/os/exec_plan9.go (right):\n\nhttp://codereview.appspot.com/6015046/diff/1002/src/pkg/os/exec_plan9.go#newcode38\nsrc/pkg/os/exec_plan9.go:38: func (p *Process) writeProcFile(file string, data string) error {\nMake this use ``file''; currently you are just writing everything to the process' ctl file.",
+			"disapproval": false,
+			"date": "2012-04-17 07:25:25.163200",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6015046/diff/1002/src/pkg/os/exec.go\nFile src/pkg/os/exec.go (right):\n\nhttp://codereview.appspot.com/6015046/diff/1002/src/pkg/os/exec.go#newcode52\nsrc/pkg/os/exec.go:52: //\nPlease move this comment back to the var blocks.\nIf nothing else the comment should be on the var block for when\nprogrammers are reading the source code.\n\nhttp://codereview.appspot.com/6015046/diff/1002/src/pkg/os/exec_plan9.go\nFile src/pkg/os/exec_plan9.go (right):\n\nhttp://codereview.appspot.com/6015046/diff/1002/src/pkg/os/exec_plan9.go#newcode14\nsrc/pkg/os/exec_plan9.go:14: var (\nCopy the doc comment here, please.\n\nhttp://codereview.appspot.com/6015046/diff/1002/src/pkg/os/exec_plan9.go#newcode15\nsrc/pkg/os/exec_plan9.go:15: Interrupt = syscall.Note(\"interrupt\")\nInterrupt Signal =\nKill Signal = \n\nthey need to have os.Signal type, not syscall.Note type.\n\nhttp://codereview.appspot.com/6015046/diff/1002/src/pkg/os/exec_posix.go\nFile src/pkg/os/exec_posix.go (right):\n\nhttp://codereview.appspot.com/6015046/diff/1002/src/pkg/os/exec_posix.go#newcode13\nsrc/pkg/os/exec_posix.go:13: var (\nCopy the doc comment here too.",
+			"disapproval": false,
+			"date": "2012-04-25 02:55:52.250089",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, seed@mail.nanosouffle.net, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-04-26 10:05:43.085900",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6015046/diff/11001/src/pkg/os/exec_plan9.go\nFile src/pkg/os/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6015046/diff/11001/src/pkg/os/exec_plan9.go#newcode42\nsrc/pkg/os/exec_plan9.go:42: f, e := OpenFile(\"/proc/\"+itoa(p.Pid)+\"/ctl\", O_WRONLY, 0)\nf, e := OpenFile(\"/proc/\"+itoa(p.Pid)+file, O_WRONLY, 0)\n(You still haven't fixed this yet.)",
+			"disapproval": false,
+			"date": "2012-04-26 22:35:38.447646",
+			"approval": false
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/6015046/diff/11001/src/pkg/os/exec_plan9.go\nFile src/pkg/os/exec_plan9.go (right):\n\nhttps://codereview.appspot.com/6015046/diff/11001/src/pkg/os/exec_plan9.go#newcode42\nsrc/pkg/os/exec_plan9.go:42: f, e := OpenFile(\"/proc/\"+itoa(p.Pid)+\"/ctl\", O_WRONLY, 0)\nOn 2012/04/26 22:35:38, akumar wrote:\n> f, e := OpenFile(\"/proc/\"+itoa(p.Pid)+file, O_WRONLY, 0)\n> (You still haven't fixed this yet.)\n\nWow. I don't know how I missed your comment.\nApologies.\n\nDone.",
+			"disapproval": false,
+			"date": "2012-04-27 05:35:28.540879",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/6015046/diff/20001/src/pkg/syscall/syscall_plan9.go\nFile src/pkg/syscall/syscall_plan9.go (right):\n\nhttp://codereview.appspot.com/6015046/diff/20001/src/pkg/syscall/syscall_plan9.go#newcode26\nsrc/pkg/syscall/syscall_plan9.go:26: // A Note is a string describing a process signal.\ns/signal/note/",
+			"disapproval": false,
+			"date": "2012-05-03 21:44:26.239653",
+			"approval": true
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\nOn 2012/05/03 21:44:26, rsc wrote:\n> LGTM\n> \n> http://codereview.appspot.com/6015046/diff/20001/src/pkg/syscall/syscall_plan9.go\n> File src/pkg/syscall/syscall_plan9.go (right):\n> \n> http://codereview.appspot.com/6015046/diff/20001/src/pkg/syscall/syscall_plan9.go#newcode26\n> src/pkg/syscall/syscall_plan9.go:26: // A Note is a string describing a process\n> signal.\n> s/signal/note/",
+			"disapproval": false,
+			"date": "2012-05-03 22:11:03.117723",
+			"approval": true
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"ality@pbrane.org",
+				"bradfitz@golang.org",
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=3dcc01e8e6a5 ***\n\nsyscall: remove the Signal type on Plan 9\n\nInstead use a new type, \"Note\", whose underlying\ntype is just a string.  This change allows us to\nremove the exported os.Plan9Note type.\n\nR=bradfitz, seed, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6015046",
+			"disapproval": false,
+			"date": "2012-05-04 10:44:51.156423",
+			"approval": false
+		}
+	],
+	"owner_email": "ality@pbrane.org",
+	"private": false,
+	"base_url": "",
+	"owner": "ality",
+	"subject": "code review 6015046: syscall: remove the Signal type on Plan 9",
+	"created": "2012-04-12 12:29:02.710140",
+	"patchsets": [
+		1,
+		5001,
+		1002,
+		11001,
+		20001,
+		24001
+	],
+	"modified": "2012-05-04 10:44:53.302691",
+	"closed": true,
+	"issue": 6015046
+}

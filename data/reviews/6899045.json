@@ -1,0 +1,195 @@
+{
+	"description": "spec: constant indexes and array/slice sizes must fit into int64\n\nalso:\n- consistently use 'indexes' rather than 'indices'\n\nThis CL refines earlier CLs 6725053 and 6699048.\nRestricting the maximum value for integer indices\nto 1<<63-1 (\"MaxInt64\") is reasonable and permits\nmore compile-time checks (and a simpler implementation).\n\nThe compilers have implemented similar restrictions\nearly on, so this is unlikely to cause existing\nprograms to break.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It should be int64 of course. Same argument applies.\r\nOn Dec 6, 2012 10:36 PM, \"Ian Lance Taylor\" <iant@google.com> wrote:\r\n\r\n> On Thu, Dec 6, 2012 at 10:19 PM, Robert Griesemer <gri@golang.org> wrote:\r\n> >\r\n> > I think the example is broken. That can be written shorter and cleaner\r\n> as:\r\n> >\r\n> > var n int\r\n> > if unsafe.Sizeof(int(1)) == 4 {\r\n> >     n = 1 << 16\r\n> > } else {\r\n> >     n = 1 << 36\r\n> > }\r\n> > big := make([]int, n)\r\n>\r\n> No, you can't write it that way.  Try it with a 32-bit build.  You'll\r\n> get something like\r\n>\r\n> foo.go:8: constant 68719476736 overflows int\r\n>\r\n> > or even:\r\n> >\r\n> > n := 1 << 16\r\n> > if unsafe.Sizeof(int(1)) == 8 {\r\n> >     n = 1 << 36\r\n> > }\r\n> > big := make([]int, n)\r\n>\r\n> Doesn't work either, for the same reason.\r\n>\r\n> Ian\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 06:58:02.080120",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/12/6 Russ Cox <rsc@golang.org> wrote:\r\n> We have been going back and forth on indices and indexes. Indexes is a\r\n> common alternative spelling, matches the heading in the spec, and is\r\n> found when you search for index.\r\n>\r\n> The rule used to be 'has to fit in int', but that means x[1<<40]\r\n> compiles on amd64 but does not compile on 386. We were trying to make\r\n> whether a Go program is valid not depend on the architecture (at least\r\n> for this specific rule), so an earlier CL removed the limit entirely.\r\n> However, we decided that allowing indexes that didn't work on _any_\r\n> architecture was silly, so this CL re-restricts the indexes, this time\r\n> to fit in an int64, for consistency across architectures.\r\n\r\nBut nobody is trying to make:\r\n\r\npackage main\r\nimport \"fmt\"\r\nfunc main() {\r\n\tx := 0x123456789abcdef\r\n\tfmt.Println(x)\r\n}\r\n\r\ncompile regardless of architecture, right?\r\n\r\nR\u00e9my.\r\n",
+			"disapproval": false,
+			"date": "2012-12-06 21:43:53.578110",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "[re-sending, this time to all]\r\n\r\nI think the example is broken. That can be written shorter and cleaner as:\r\n\r\nvar n int\r\nif unsafe.Sizeof(int(1)) == 4 {\r\n    n = 1 << 16\r\n} else {\r\n    n = 1 << 36\r\n}\r\nbig := make([]int, n)\r\n\r\nor even:\r\n\r\nn := 1 << 16\r\nif unsafe.Sizeof(int(1)) == 8 {\r\n    n = 1 << 36\r\n}\r\nbig := make([]int, n)\r\n\r\nI am starting to lean the other (Rob's) way:\r\n\r\nlen(a) will return an int and it's simply not possible to create an\r\narray/slice with a larger size. The places where it matters are:\r\n\r\na) array declarations\r\nb) index/slice expressions\r\nc) make()\r\n\r\nIn a) the size must be a constant and cannot be larger than int (we\r\ncertainly don't want a runtime-error for a declaration!). So a)\r\nalready requires the size to be within int limits. In fact my current\r\nCL is wrong in this respect.\r\n\r\nArguably, if a) imposes this limit, we should have the same in c)\r\nwhich is in some sense the dynamic version of c). As shown, Ian's\r\nexample can always be trivially rewritten using a variable.\r\n\r\nFor b) any constant index for an array can impossibly be larger than\r\nint ever, because such arrays cannot be declared. It seems odd to\r\nrequire a run-time error in that case if the constant is an int.\r\nAgain, in the rare case where it might matter, a variable is trivially\r\nsolving the problem.\r\n\r\nFinally, this only matters when we compile code for a given platform.\r\nI think it makes a lot of sense for that code to not compile if it in\r\nfact either a) declares an array that cannot be represented (size too\r\nlarge), or make is called with a size too large. Again, if that make\r\nis not dynamically invoked, a variable trivially circumvents the\r\nissue. In some sense this is an issue of writing portable code, not of\r\nthe language being restrictive.\r\n\r\nI propose:\r\n\r\n1) I separate the language change indices -> indexes into a separate\r\nCL (which can be discussed as long as we want)\r\n\r\n2) I change the limit to be the maximum int value for the given platform.\r\n\r\n- gri\r\n\r\nPS: 2) has also the advantage that it almost completely describes the\r\nimplemented status quo which in fact has not caused any problems so\r\nfar. This issue came up not because of problems with the compilers but\r\nbecause the compilers implemented something different from what the\r\nspec said.\r\n\r\nOn Thu, Dec 6, 2012 at 10:06 PM, Rob Pike <r@golang.org> wrote:\r\n> I like your example. I remain nervous about the specificity of int64\r\n> but it seems likely to be big enough for the time being, so OK.\r\n>\r\n> -rob\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 06:19:59.868670",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 6, 2012 at 10:19 PM, Robert Griesemer <gri@golang.org> wrote:\r\n>\r\n> I think the example is broken. That can be written shorter and cleaner as:\r\n>\r\n> var n int\r\n> if unsafe.Sizeof(int(1)) == 4 {\r\n>     n = 1 << 16\r\n> } else {\r\n>     n = 1 << 36\r\n> }\r\n> big := make([]int, n)\r\n\r\nNo, you can't write it that way.  Try it with a 32-bit build.  You'll\r\nget something like\r\n\r\nfoo.go:8: constant 68719476736 overflows int\r\n\r\n> or even:\r\n>\r\n> n := 1 << 16\r\n> if unsafe.Sizeof(int(1)) == 8 {\r\n>     n = 1 << 36\r\n> }\r\n> big := make([]int, n)\r\n\r\nDoesn't work either, for the same reason.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 06:36:38.637440",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> But nobody is trying to make:\r\n>\r\n> package main\r\n> import \"fmt\"\r\n> func main() {\r\n>         x := 0x123456789abcdef\r\n>         fmt.Println(x)\r\n> }\r\n>\r\n> compile regardless of architecture, right?\r\n\r\nNo.\r\n",
+			"disapproval": false,
+			"date": "2012-12-06 22:19:25.874860",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Index is a Latin-rooted word with a Latin plural. To use 'indexes'\r\nrather than 'indices' in this context isn't as bad as 'mediums' for\r\n'media' or 'semantics' as a plural, and it (all of them, really) may\r\nwell be the way English is going, but it bothers me to use a word we\r\nknow is, however mildly, incorrect.\r\n\r\nThat trivium (ha!) aside, what is the right thing to do about the\r\ncompile-time limits on an index constant? I don't see why 'int' isn't\r\nthe right answer.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 04:45:14.160800",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You can write it, you just have to write\r\n    var n int64\r\n(not that most users would figure that out).\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 07:29:06.012510",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Dec 6, 2012 at 8:45 PM, Rob Pike <r@golang.org> wrote:\r\n> Index is a Latin-rooted word with a Latin plural. To use 'indexes'\r\n> rather than 'indices' in this context isn't as bad as 'mediums' for\r\n> 'media' or 'semantics' as a plural, and it (all of them, really) may\r\n> well be the way English is going, but it bothers me to use a word we\r\n> know is, however mildly, incorrect.\r\n\r\nThis issue is both flammable and inflammable.\r\n\r\n> That trivium (ha!) aside, what is the right thing to do about the\r\n> compile-time limits on an index constant? I don't see why 'int' isn't\r\n> the right answer.\r\n\r\nIt's occasionally nice to be able to write code like\r\n\r\n    var big []int\r\n    if unsafe.Sizeof(int(1)) == 4 {\r\n        big = make([]int, 1 << 16)\r\n    } else {\r\n        big = make([]int, 1 << 36)\r\n    }\r\n\r\nIf we restrict the constants to int, that code will fail at compile\r\ntime, because the 1 << 36 will be rejected when building on a 32-bit\r\nsystem.  Obviously there are various workarounds one can use, such as\r\nbuild constraints, or using variables rather than constants.  But it\r\nseems reasonable to me to simply permit the simple code, and give the\r\nerror at run time if necessary.  It's unlikely that restricting the\r\nconstant to int will ever catch any actual problem at compile time.\r\nPermitting an int64 constant will permit some natural code to work\r\nwithout awkward workarounds.\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 05:09:42.422020",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"r@golang.org",
+				"ken@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, iant@golang.org, r@golang.org, ken@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-12-06 21:10:30.378800",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The plural of index in a mathematical context is 'indices'. The plural\r\nof index in a catalog context is 'indexes'. The correct plural in this\r\ndocument is 'indices'. I have said this before.\r\n\r\nThat aside, I'm unsure about this change. First question: Why int64\r\nrather than int? After all, addressing only goes up to the maximum\r\npositive value representable in an int.\r\n\r\nYou're missing a semicolon from one of your &lt;s.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-12-06 21:30:04.812780",
+			"approval": false
+		},
+		{
+			"sender": "gri@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "So, what I should have written:\r\n\r\nvar n int64 = 1 << 16\r\nif ...\r\n\r\nOtherwise its not portable code of course.\r\n\r\n- gri\r\nOn Dec 6, 2012 10:58 PM, \"Robert Griesemer\" <gri@golang.org> wrote:\r\n\r\n> It should be int64 of course. Same argument applies.\r\n> On Dec 6, 2012 10:36 PM, \"Ian Lance Taylor\" <iant@google.com> wrote:\r\n>\r\n>> On Thu, Dec 6, 2012 at 10:19 PM, Robert Griesemer <gri@golang.org> wrote:\r\n>> >\r\n>> > I think the example is broken. That can be written shorter and cleaner\r\n>> as:\r\n>> >\r\n>> > var n int\r\n>> > if unsafe.Sizeof(int(1)) == 4 {\r\n>> >     n = 1 << 16\r\n>> > } else {\r\n>> >     n = 1 << 36\r\n>> > }\r\n>> > big := make([]int, n)\r\n>>\r\n>> No, you can't write it that way.  Try it with a 32-bit build.  You'll\r\n>> get something like\r\n>>\r\n>> foo.go:8: constant 68719476736 overflows int\r\n>>\r\n>> > or even:\r\n>> >\r\n>> > n := 1 << 16\r\n>> > if unsafe.Sizeof(int(1)) == 8 {\r\n>> >     n = 1 << 36\r\n>> > }\r\n>> > big := make([]int, n)\r\n>>\r\n>> Doesn't work either, for the same reason.\r\n>>\r\n>> Ian\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 07:07:53.451030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "We have been going back and forth on indices and indexes. Indexes is a\r\ncommon alternative spelling, matches the heading in the spec, and is\r\nfound when you search for index.\r\n\r\nThe rule used to be 'has to fit in int', but that means x[1<<40]\r\ncompiles on amd64 but does not compile on 386. We were trying to make\r\nwhether a Go program is valid not depend on the architecture (at least\r\nfor this specific rule), so an earlier CL removed the limit entirely.\r\nHowever, we decided that allowing indexes that didn't work on _any_\r\narchitecture was silly, so this CL re-restricts the indexes, this time\r\nto fit in an int64, for consistency across architectures.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-12-06 21:37:18.502160",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I like your example. I remain nervous about the specificity of int64\r\nbut it seems likely to be big enough for the time being, so OK.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-12-07 06:06:27.696330",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "(Right.)\r\n",
+			"disapproval": false,
+			"date": "2012-12-06 22:19:42.210800",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This one's dead, right? Removing reviewers.",
+			"disapproval": false,
+			"date": "2012-12-11 15:45:39.245660",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-12-12 19:09:18.977490",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 6899045: spec: constant indexes and array/slice sizes must fit i...",
+	"created": "2012-12-06 20:33:14.071870",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		6002,
+		9001
+	],
+	"modified": "2012-12-12 19:09:19.998960",
+	"closed": true,
+	"issue": 6899045
+}

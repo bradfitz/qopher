@@ -1,0 +1,175 @@
+{
+	"description": "cmd/6g: fix crash in cgen_bmul.\n\nUsed to print:\n../test/torture.go:116: internal compiler error: bad width: 0463 (../test/torture.go:116) MOVB    ,BX (0, 8)",
+	"cc": [
+		"nigeltao@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, nigeltao@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-10-23 22:17:30.783330",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/23 07:55:23, nigeltao wrote:\n> Does the codegen change for something less torturous, like:\n> var w, x, y, z byte\n> return w*x*y*z\n\nIt makes some unnecessary zero-extensions which are not caught by the peephole optimizer.\n\nFor\nfunc G(a, b, c, d byte) byte {\n      return a*b*c*d\n} \n\nBefore:\n--- prog list \"G\" ---\n0000 (/tmp/byte.go:7) TEXT    G+0(SB),$0-16\n0001 (/tmp/byte.go:8) MOVBQZX a+0(FP),BX\n0002 (/tmp/byte.go:8) MOVBQZX b+1(FP),BP\n0003 (/tmp/byte.go:8) IMULQ   BP,BX\n0004 (/tmp/byte.go:8) MOVBQZX c+2(FP),BP\n0005 (/tmp/byte.go:8) IMULQ   BP,BX\n0006 (/tmp/byte.go:8) MOVBQZX d+3(FP),BP\n0007 (/tmp/byte.go:8) IMULQ   BP,BX\n0008 (/tmp/byte.go:8) MOVB    BX,.noname+8(FP)\n0009 (/tmp/byte.go:8) RET     ,\n\nAfter:\n--- prog list \"G\" ---\n0000 (/tmp/byte.go:7) TEXT    G+0(SB),$0-16\n0001 (/tmp/byte.go:8) MOVB    a+0(FP),BX\n0002 (/tmp/byte.go:8) MOVBQZX BX,BX\n0003 (/tmp/byte.go:8) MOVB    b+1(FP),BP\n0004 (/tmp/byte.go:8) MOVBQZX BP,BP\n0005 (/tmp/byte.go:8) IMULQ   BP,BX\n0006 (/tmp/byte.go:8) MOVBQZX BX,BX\n0007 (/tmp/byte.go:8) MOVB    c+2(FP),BP\n0008 (/tmp/byte.go:8) MOVBQZX BP,BP\n0009 (/tmp/byte.go:8) IMULQ   BP,BX\n0010 (/tmp/byte.go:8) MOVBQZX BX,BX\n0011 (/tmp/byte.go:8) MOVB    d+3(FP),BP\n0012 (/tmp/byte.go:8) MOVBQZX BP,BP\n0013 (/tmp/byte.go:8) IMULQ   BP,BX\n0014 (/tmp/byte.go:8) MOVB    BX,.noname+8(FP)\n0015 (/tmp/byte.go:8) RET     ,\n0016 (/tmp/byte.go:9) CALL    ,runtime.throwreturn+0(SB)\n0017 (/tmp/byte.go:9) RET     ,\n\nBut this patch is essentially reverting a simplification that I think I submitted some weeks ago. I am probably working around another bug or unplanned use of gins, so I could keep the current cgen_bmul and instead fix the bug.",
+			"disapproval": false,
+			"date": "2012-10-23 20:49:40.262180",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-10-22 23:03:34.443100",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Does the codegen change for something less torturous, like:\nvar w, x, y, z byte\nreturn w*x*y*z",
+			"disapproval": false,
+			"date": "2012-10-23 07:55:23.519930",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Fixing things was too hard. cgen simply doesn't expect operands of different types. Or well, it can accept them but not in all cases. When going through the sudoaddable branch things get screwed.\n\nIf sudoaddable filled a Node instead of an Addr (while still keeping the same logic), it could use gmove instead of gins, that would make things a bit easier, and maybe avoid patching partially generated instructions.\n\nI have simply adapted cgen_bmul to work around that and keep the same generated code.",
+			"disapproval": false,
+			"date": "2012-10-23 22:28:52.187290",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.",
+			"disapproval": false,
+			"date": "2012-10-24 12:04:09.714820",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Does the latest CL still use MOVB? That's very expensive.\r\n",
+			"disapproval": false,
+			"date": "2012-10-24 19:12:33.776710",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It doesn't, but that's because it is eliminated at peephole-time.\n\nHere is where we stand:\n\n$ cat /tmp/byte.go\npackage b\n\nfunc F(s [4]byte) byte {\n\treturn s[0]*s[1] + s[2]*s[3]\n}\n\nfunc F2(s [4]byte, i, j int) byte {\n\treturn s[i]*s[i] + s[j]*s[j]\n}\n\nfunc G(a, b, c, d byte) byte {\n      return a*b*c*d\n}\n$ bin/go tool 6g -S /tmp/byte.go\n\n--- prog list \"F\" ---\n0000 (/tmp/byte.go:3) TEXT    F+0(SB),$0-16\n0001 (/tmp/byte.go:4) MOVBQZX s+0(FP),BX\n0002 (/tmp/byte.go:4) MOVBQZX s+1(FP),BP\n0003 (/tmp/byte.go:4) IMULQ   BP,BX\n0004 (/tmp/byte.go:4) MOVBQZX s+2(FP),BP\n0005 (/tmp/byte.go:4) MOVBQZX s+3(FP),R8\n0006 (/tmp/byte.go:4) IMULQ   R8,BP\n0007 (/tmp/byte.go:4) ADDQ    BP,BX\n0008 (/tmp/byte.go:4) MOVB    BX,.noname+8(FP)\n0009 (/tmp/byte.go:4) RET     ,\n\n--- prog list \"F2\" ---\n0010 (/tmp/byte.go:7) TEXT    F2+0(SB),$0-32\n0011 (/tmp/byte.go:7) MOVQ    i+8(FP),BP\n0012 (/tmp/byte.go:7) MOVQ    j+16(FP),AX\n0013 (/tmp/byte.go:8) MOVQ    BP,CX\n0014 (/tmp/byte.go:8) LEAQ    s+0(FP),R8\n0015 (/tmp/byte.go:8) CMPQ    BP,$4\n0016 (/tmp/byte.go:8) JCS     $1,19\n0017 (/tmp/byte.go:8) CALL    ,runtime.panicindex+0(SB)\n0018 (/tmp/byte.go:8) UNDEF   ,\n0019 (/tmp/byte.go:8) MOVBQZX (R8)(BP*1),BX\n0020 (/tmp/byte.go:8) MOVQ    CX,R8\n0021 (/tmp/byte.go:8) LEAQ    s+0(FP),R9\n0022 (/tmp/byte.go:8) CMPQ    CX,$4\n0023 (/tmp/byte.go:8) JCS     $1,26\n0024 (/tmp/byte.go:8) CALL    ,runtime.panicindex+0(SB)\n0025 (/tmp/byte.go:8) UNDEF   ,\n0026 (/tmp/byte.go:8) MOVBQZX (R9)(R8*1),BP\n0027 (/tmp/byte.go:8) IMULQ   BP,BX\n0028 (/tmp/byte.go:8) MOVQ    AX,R8\n0029 (/tmp/byte.go:8) LEAQ    s+0(FP),R9\n0030 (/tmp/byte.go:8) CMPQ    AX,$4\n0031 (/tmp/byte.go:8) JCS     $1,34\n0032 (/tmp/byte.go:8) CALL    ,runtime.panicindex+0(SB)\n0033 (/tmp/byte.go:8) UNDEF   ,\n0034 (/tmp/byte.go:8) MOVBQZX (R9)(R8*1),BP\n0035 (/tmp/byte.go:8) MOVQ    AX,R9\n0036 (/tmp/byte.go:8) LEAQ    s+0(FP),R10\n0037 (/tmp/byte.go:8) CMPQ    AX,$4\n0038 (/tmp/byte.go:8) JCS     $1,41\n0039 (/tmp/byte.go:8) CALL    ,runtime.panicindex+0(SB)\n0040 (/tmp/byte.go:8) UNDEF   ,\n0041 (/tmp/byte.go:8) MOVBQZX (R10)(R9*1),R8\n0042 (/tmp/byte.go:8) IMULQ   R8,BP\n0043 (/tmp/byte.go:8) ADDQ    BP,BX\n0044 (/tmp/byte.go:8) MOVB    BX,.noname+24(FP)\n0045 (/tmp/byte.go:8) RET     ,\n\n--- prog list \"G\" ---\n0046 (/tmp/byte.go:11) TEXT    G+0(SB),$0-16\n0047 (/tmp/byte.go:12) MOVBQZX a+0(FP),BX\n0048 (/tmp/byte.go:12) MOVBQZX b+1(FP),BP\n0049 (/tmp/byte.go:12) IMULQ   BP,BX\n0050 (/tmp/byte.go:12) MOVBQZX c+2(FP),BP\n0051 (/tmp/byte.go:12) IMULQ   BP,BX\n0052 (/tmp/byte.go:12) MOVBQZX d+3(FP),BP\n0053 (/tmp/byte.go:12) IMULQ   BP,BX\n0054 (/tmp/byte.go:12) MOVB    BX,.noname+8(FP)\n0055 (/tmp/byte.go:12) RET     ,",
+			"disapproval": false,
+			"date": "2012-10-24 19:59:07.119880",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Some users are annoyed by the bug. May I submit with Nigel's LGTM and since rsc's remark seems addressed, or are there other remarks?",
+			"disapproval": false,
+			"date": "2012-10-25 20:56:48.351820",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/25 20:56:48, remyoudompheng wrote:\n> Some users are annoyed by the bug. May I submit with Nigel's LGTM and since\n> rsc's remark seems addressed, or are there other remarks?\n\nyes",
+			"disapproval": false,
+			"date": "2012-10-25 21:43:33.069810",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"nigeltao@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d81bcf447d65 ***\n\ncmd/6g: fix crash in cgen_bmul.\n\nUsed to print:\n../test/torture.go:116: internal compiler error: bad width: 0463 (../test/torture.go:116) MOVB    ,BX (0, 8)\n\nR=nigeltao, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6736068",
+			"disapproval": false,
+			"date": "2012-10-25 22:29:52.634600",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 6736068: cmd/6g: fix crash in cgen_bmul.",
+	"created": "2012-10-22 23:02:07.269270",
+	"patchsets": [
+		1,
+		1002,
+		4001,
+		6003,
+		15001
+	],
+	"modified": "2012-10-25 22:29:53.993670",
+	"closed": true,
+	"issue": 6736068
+}

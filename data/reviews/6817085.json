@@ -1,0 +1,191 @@
+{
+	"description": "cmd/5g: enable xtramodes optimisation\n\nxtramodes' C_PBIT optimisation transforms:\n\nMOVW          0(R3),R1\nADD           $4,R3,R3\n\ninto:\n\nMOVW.P        4(R3),R1\n\nand the AADD optimisation tranforms:\n\nADD          R0,R1\nMOVBU        0(R1),R0\n\ninto:\n\nMOVBU        R0<<0(R1),R0\n\n5g does not appear to generate sequences that\ncan be transformed by xtramodes' AMOVW.",
+	"cc": [
+		"remyoudompheng@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/5 Dave Cheney <dave@cheney.net> wrote:\r\n> Heaps\r\n>\r\n> The pbit optimisation kicks in for the inc at the bottom of every range loop\r\n\r\nIndeed that's a good use case.\r\n\r\n> AADD is everywhere.\r\n\r\n> I observe their behaviour by adding a warn above the excise the inspecting\r\n> the objdump for the progs referenced.\r\n\r\nUsually I do the following:\r\n  go build -gcflags -S -a cmd/go | sed 's,.*/src/,,'\r\nwith the appropriate GOARCH and do a diff before and after.\r\n\r\nR\u00e9my.\r\n",
+			"disapproval": false,
+			"date": "2012-11-05 21:02:34.069110",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think it's an opportunity to make the intention more explicit.\n\nMy comments suggestions may not be accurate. Feel free to make them correct.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c\nFile src/cmd/5g/peep.c (right):\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode265\nsrc/cmd/5g/peep.c:265: Reg*\n// uniqp returns a \"unique\" predecessor to instruction r.\n// If the instruction is the first one or has multiple\n// predecessors due to jump, R is returned.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode738\nsrc/cmd/5g/peep.c:738: findpre(Reg *r, Adr *v)\n// findpre returns the last instruction mentioning v\n// before r. It must be a set, and there must be\n// a unique path from that instruction to r.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode758\nsrc/cmd/5g/peep.c:758: findinc(Reg *r, Reg *r2, Adr *v)\nfindinc doesn't find an increment as the name suggests. At least not only increments by 1.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode847\nsrc/cmd/5g/peep.c:847: int\nplease adda comment explaining what this function is doing.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode855\nsrc/cmd/5g/peep.c:855: if(debug['h'] && p->as == AMOVB && p->from.type == D_OREG)\t/* byte load */\nI don't understand what the h flag is.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode864\nsrc/cmd/5g/peep.c:864: case AADD:\np1 might have a scond and I don't see a test for this. You don't want to elide a ADD.S if the carry bit is needed by a subsequent instruction.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode867\nsrc/cmd/5g/peep.c:867: (p->as != AMOVB || (a == &p->from && (p1->from.offset&~0xf) == 0))) ||\nthese if's are absolutely atrocious.",
+			"disapproval": false,
+			"date": "2012-11-05 22:13:30.283920",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-11-10 18:56:08.544180",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c\nFile src/cmd/5g/peep.c (right):\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode864\nsrc/cmd/5g/peep.c:864: case AADD:\n5g generates ADD.S/ADC for addition of int64's. Although it looks unlikely that they becomes eligible for this, it might provoke subtle bugs.",
+			"disapproval": false,
+			"date": "2012-11-07 07:00:44.683070",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Heaps\r\n\r\nThe pbit optimisation kicks in for the inc at the bottom of every range loop\r\n\r\nAADD is everywhere.\r\n\r\nI observe their behaviour by adding a warn above the excise the inspecting\r\nthe objdump for the progs referenced.\r\n\r\nI have some micro benchmarks which demonstrate it, but they are waiting on\r\nanother review.\r\n\r\nDave\r\nOn 6 Nov 2012 03:07, <remyoudompheng@gmail.com> wrote:\r\n\r\n> igen is supposed to be there to avoid generating sequences that can be\r\n> optimized like this. Did you find places where any of these\r\n> optimizations is triggered?\r\n>\r\n> http://codereview.appspot.com/**6817085/<http://codereview.appspot.com/6817085/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-05 16:11:55.106160",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, I also use -S once I figure out the prog that is being transformed. I will post some samples of the AADD transform. \r\n\r\nOn 06/11/2012, at 8:02, R\u00e9my Oudompheng <remyoudompheng@gmail.com> wrote:\r\n\r\n> On 2012/11/5 Dave Cheney <dave@cheney.net> wrote:\r\n>> Heaps\r\n>> \r\n>> The pbit optimisation kicks in for the inc at the bottom of every range loop\r\n> \r\n> Indeed that's a good use case.\r\n> \r\n>> AADD is everywhere.\r\n> \r\n>> I observe their behaviour by adding a warn above the excise the inspecting\r\n>> the objdump for the progs referenced.\r\n> \r\n> Usually I do the following:\r\n>  go build -gcflags -S -a cmd/go | sed 's,.*/src/,,'\r\n> with the appropriate GOARCH and do a diff before and after.\r\n> \r\n> R\u00e9my.\r\n",
+			"disapproval": false,
+			"date": "2012-11-05 21:42:11.134210",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for your comments, I have tried to address as many of them as possible. Please take another look.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c\nFile src/cmd/5g/peep.c (right):\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode265\nsrc/cmd/5g/peep.c:265: Reg*\nOn 2012/11/05 22:13:30, remyoudompheng wrote:\n> // uniqp returns a \"unique\" predecessor to instruction r.\n> // If the instruction is the first one or has multiple\n> // predecessors due to jump, R is returned.\n\nDone. Thank you for your suggestion. I have modified it to respect the existing comment style.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode738\nsrc/cmd/5g/peep.c:738: findpre(Reg *r, Adr *v)\nOn 2012/11/05 22:13:30, remyoudompheng wrote:\n> // findpre returns the last instruction mentioning v\n> // before r. It must be a set, and there must be\n> // a unique path from that instruction to r.\n\nDone.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode758\nsrc/cmd/5g/peep.c:758: findinc(Reg *r, Reg *r2, Adr *v)\nOn 2012/11/05 22:13:30, remyoudompheng wrote:\n> findinc doesn't find an increment as the name suggests. At least not only\n> increments by 1.\n\nI've tried to document what I think findinc does, I may not be correct.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode847\nsrc/cmd/5g/peep.c:847: int\nOn 2012/11/05 22:13:30, remyoudompheng wrote:\n> please adda comment explaining what this function is doing.\n\nDone.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode855\nsrc/cmd/5g/peep.c:855: if(debug['h'] && p->as == AMOVB && p->from.type == D_OREG)\t/* byte load */\nDeleted.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode864\nsrc/cmd/5g/peep.c:864: case AADD:\nOn 2012/11/07 07:00:44, remyoudompheng wrote:\n> 5g generates ADD.S/ADC for addition of int64's. Although it looks unlikely that\n> they becomes eligible for this, it might provoke subtle bugs.\n\nI've added a guard to check for this. FWIW, there are 0 occurrences of this in the stdlib.\n\nhttp://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode867\nsrc/cmd/5g/peep.c:867: (p->as != AMOVB || (a == &p->from && (p1->from.offset&~0xf) == 0))) ||\nOn 2012/11/06 19:03:30, rsc wrote:\n> On 2012/11/05 22:13:30, remyoudompheng wrote:\n> > these if's are absolutely atrocious.\n> \n> Agreed but they match 5c.\n\nI'd prefer to leave them untouched.",
+			"disapproval": false,
+			"date": "2012-11-07 09:40:31.485560",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-11-05 12:09:05.496280",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-11-07 09:40:47.085960",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"remyoudompheng@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "igen is supposed to be there to avoid generating sequences that can be optimized like this. Did you find places where any of these optimizations is triggered?",
+			"disapproval": false,
+			"date": "2012-11-05 16:07:04.652500",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "i'm happy once remy is\n\nhttps://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c\nFile src/cmd/5g/peep.c (right):\n\nhttps://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode855\nsrc/cmd/5g/peep.c:855: if(debug['h'] && p->as == AMOVB && p->from.type == D_OREG)\t/* byte load */\nOn 2012/11/05 22:13:30, remyoudompheng wrote:\n> I don't understand what the h flag is.\n\nThis is mostly picked up from 5c, and it isn't new code in this CL, so I wouldn't rearrange it too much. I don't see any meaning assigned to -h in either case, though, so I'd be inclined to just delete this line.\n\nEarly versions of ARM did not have byte load instructions, so it is possible that the -h flag controlled whether those got used, in the original 5c. But it is gone even from there.\n\nhttps://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode864\nsrc/cmd/5g/peep.c:864: case AADD:\nOn 2012/11/05 22:13:30, remyoudompheng wrote:\n> p1 might have a scond and I don't see a test for this. You don't want to elide a\n> ADD.S if the carry bit is needed by a subsequent instruction.\n\nDoes the compiler generate ADD.S? 5c never did, so this code does not expect it. It is not trying to be an optimizer for general ARM code, just an optimizer for what the compiler generates.\n\nhttps://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode867\nsrc/cmd/5g/peep.c:867: (p->as != AMOVB || (a == &p->from && (p1->from.offset&~0xf) == 0))) ||\nOn 2012/11/05 22:13:30, remyoudompheng wrote:\n> these if's are absolutely atrocious.\n\nAgreed but they match 5c.",
+			"disapproval": false,
+			"date": "2012-11-06 19:03:30.742210",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\r\n\r\nOn 07/11/2012, at 18:00, remyoudompheng@gmail.com wrote:\r\n\r\n> \r\n> http://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c\r\n> File src/cmd/5g/peep.c (right):\r\n> \r\n> http://codereview.appspot.com/6817085/diff/6001/src/cmd/5g/peep.c#newcode864\r\n> src/cmd/5g/peep.c:864: case AADD:\r\n> 5g generates ADD.S/ADC for addition of int64's. Although it looks\r\n> unlikely that they becomes eligible for this, it might provoke subtle\r\n> bugs.\r\n\r\nRight. I will address this as I want to revisit kabi's notes in cgen64.c and I don't want to stumble into this. \r\n\r\n\r\n> \r\n> http://codereview.appspot.com/6817085/\r\n",
+			"disapproval": false,
+			"date": "2012-11-07 07:23:07.174710",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=422c00e8e022 ***\n\ncmd/5g: enable xtramodes optimisation\n\nxtramodes' C_PBIT optimisation transforms:\n\nMOVW          0(R3),R1\nADD           $4,R3,R3\n\ninto:\n\nMOVW.P        4(R3),R1\n\nand the AADD optimisation tranforms:\n\nADD          R0,R1\nMOVBU        0(R1),R0\n\ninto:\n\nMOVBU        R0<<0(R1),R0\n\n5g does not appear to generate sequences that\ncan be transformed by xtramodes' AMOVW.\n\nR=remyoudompheng, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6817085",
+			"disapproval": false,
+			"date": "2012-11-10 20:51:42.992400",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 6817085: cmd/5g: enable xtramodes optimisation",
+	"created": "2012-11-05 03:47:54.541950",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		6001,
+		12001,
+		4,
+		14001
+	],
+	"modified": "2012-11-11 10:24:17.552950",
+	"closed": true,
+	"issue": 6817085
+}

@@ -1,0 +1,107 @@
+{
+	"description": "template: Set.Exports() returns template names that are exported idents.\n\nexp/template/html will use this at set parse time to escape the set of\nexported templates.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"r@golang.org",
+		"rsc@golang.org",
+		"rogpeppe@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "as i said in private mail, there are other ways to do this. not sure which is right.\n\nis it correct to conflate \"exported\" and \"needs escaping\", and to assume that \"not exported\" means \"safe\"?",
+			"disapproval": false,
+			"date": "2011-10-11 20:32:14.033276",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello r@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-11 20:29:40.411762",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "2011/10/11  <r@golang.org>:\n> as i said in private mail, there are other ways to do this. not sure\n> which is right.\n>\n> is it correct to conflate \"exported\" and \"needs escaping\", and to assume\n> that \"not exported\" means \"safe\"?\n\nI want to identify all template names such that\n    set.Execute(buffer, name, data)\nmight be called.\n\nThis is different from \"needs escaping\" since in\n   {{define \"Main\"}}<b>{{template \"helper\"}}</b>{{end}}\nthe template \"helper\" needs escaping even if only \"Main\" will ever be\nexecuted directly.\n\nIf {{template \"helper\"}} appeared in a different context,\n  {{define \"Main\"}}<script>doStuff( {{template \"helper\"}} )</script>{{end}}\nit would need escaping despite not producing HTML.\n\nOptions:\n(1) Conservatively assume all templates might be executed.\n(2) Use a naming convention and enforce it in the overridden Set.Execute.\n(3) Lazily escape templates the first time a name is used in Set.Execute.\n(4) Allow some kind of annotation in the {{define}} header.\n\nOption (3) is easy to implement, is guaranteed not to miss, but is not\nfail-fast so does not play well with SetMust.\n",
+			"disapproval": false,
+			"date": "2011-10-13 16:37:34.778509",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "We have been working off the model \"just do the right thing\",\ninferring all the types as necessary, but here it is really not clear\nwhat the right thing is.  I see two plausible ways forward.\n\nFirst, we could keep on with the dynamic typing feel of all this\nand just make it work.  When someone invokes a template,\nthat template has to be escaped to produce valid HTML.  If that\ntemplate gets used in a URL context in some other call, then it\nneeds to be escaped differently.  But this is possible, all hidden\nbehind the API, without having to let the user know.\n\nSecond, we could say that a little static typing might be a good\nthing, and define that the template name specifies what kind of\noutput it generates, and thus what kind of context it can appear in:\n\n\tfoo - generates html\n\tcss:foo - generates css (like type CSS)\n\tjs:foo - generates javascript (like type JS)\n\tjsstr:foo - generates javascript quoted string (like type JSStr)\n\turl:foo - generates safe URL\n\nWith these hints, the current type inference algorithm turns into\na type checking algorithm.  That is, if you write an HTML template\nthat says\n\n\t<script>{{myscript}}</script>\n\nthen that's a type error diagnosed while the template is compiled.\nOnly templates whose names begin js: would be valid for use in\nthat context.\n\nI know you have been pushing hard on \"just do the right thing\"\nbut if you are going to introduce a convention, this seems much\nmore direct than inventing rules about upper and lower case\nthat have no correspondence to Go's own rules.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-10-13 17:03:25.843613",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "2011/10/13 Russ Cox <rsc@golang.org>:\n> We have been working off the model \"just do the right thing\",\n> inferring all the types as necessary, but here it is really not clear\n> what the right thing is. \u00a0I see two plausible ways forward.\n>\n> First, we could keep on with the dynamic typing feel of all this\n> and just make it work. \u00a0When someone invokes a template,\n> that template has to be escaped to produce valid HTML. \u00a0If that\n> template gets used in a URL context in some other call, then it\n> needs to be escaped differently. \u00a0But this is possible, all hidden\n> behind the API, without having to let the user know.\n>\n> Second, we could say that a little static typing might be a good\n> thing, and define that the template name specifies what kind of\n> output it generates, and thus what kind of context it can appear in:\n>\n> \u00a0 \u00a0 \u00a0 \u00a0foo - generates html\n> \u00a0 \u00a0 \u00a0 \u00a0css:foo - generates css (like type CSS)\n> \u00a0 \u00a0 \u00a0 \u00a0js:foo - generates javascript (like type JS)\n> \u00a0 \u00a0 \u00a0 \u00a0jsstr:foo - generates javascript quoted string (like type JSStr)\n> \u00a0 \u00a0 \u00a0 \u00a0url:foo - generates safe URL\n>\n> With these hints, the current type inference algorithm turns into\n> a type checking algorithm. \u00a0That is, if you write an HTML template\n> that says\n>\n> \u00a0 \u00a0 \u00a0 \u00a0<script>{{myscript}}</script>\n>\n> then that's a type error diagnosed while the template is compiled.\n> Only templates whose names begin js: would be valid for use in\n> that context.\n>\n> I know you have been pushing hard on \"just do the right thing\"\n> but if you are going to introduce a convention, this seems much\n> more direct than inventing rules about upper and lower case\n> that have no correspondence to Go's own rules.\n\nI am not wedded to introducing a convention.\n\nIf people are ok with err possibly being a failure to autoescape when\nsomeone does\n\n    err := mySet.Execute(out, \"foo\", ...)\n\nthen I think we can do without any kind of convention.\n\nI'll withdraw this CL.\n",
+			"disapproval": false,
+			"date": "2011-10-13 17:45:03.159016",
+			"approval": false
+		},
+		{
+			"sender": "mikesamuel@gmail.com",
+			"recipients": [
+				"mikesamuel@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2011-10-13 17:47:08.743259",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 13 October 2011 18:03, Russ Cox <rsc@golang.org> wrote:\n> \u00a0 \u00a0 \u00a0 \u00a0foo - generates html\n> \u00a0 \u00a0 \u00a0 \u00a0css:foo - generates css (like type CSS)\n> \u00a0 \u00a0 \u00a0 \u00a0js:foo - generates javascript (like type JS)\n> \u00a0 \u00a0 \u00a0 \u00a0jsstr:foo - generates javascript quoted string (like type JSStr)\n> \u00a0 \u00a0 \u00a0 \u00a0url:foo - generates safe URL\n\nif you renamed these to foo.html, foo.css, foo.js, etc\nthat might work nicely, given ParseTemplateFiles.\n",
+			"disapproval": false,
+			"date": "2011-10-13 18:48:09.659435",
+			"approval": false
+		}
+	],
+	"owner_email": "mikesamuel@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "MikeSamuel",
+	"subject": "code review 5254058: template: Set.Exports() returns template names that are...",
+	"created": "2011-10-11 20:27:50.649652",
+	"patchsets": [
+		1,
+		2001,
+		4001
+	],
+	"modified": "2011-10-13 18:48:09.854031",
+	"closed": true,
+	"issue": 5254058
+}

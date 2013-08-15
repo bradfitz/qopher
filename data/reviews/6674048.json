@@ -1,0 +1,151 @@
+{
+	"description": "cmd/5g: peep.c: reactivate some optimisations\n\nThanks to Minux and Remy for their advice.\n\nThe EOR optimisation is applied to a few places in the stdlib.\n\n// hash/crc32/crc32.go\nfunc update(crc uint32, tab *Table, p []byte) uint32 {\n\tcrc = ^crc\n\tfor _, v := range p {\n        \tcrc = tab[byte(crc)^v] ^ (crc >> 8)\n\t}\n\treturn ^crc\n}\n\nbefore:\n\n--- prog list \"update\" ---\n0164 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:101) TEXT        update+0(SB),$12-24\n0165 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:101) MOVW        tab+4(FP),R8\n0166 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:102) MOVW        crc+0(FP),R0\n0167 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:102) EOR         $-1,R0,R5\n0168 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:103) MOVW        p+8(FP),R0\n0169 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:103) MOVW        R0,autotmp_0019+-12(SP)\n\nafter:\n\n--- prog list \"update\" ---\n0164 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:101) TEXT        update+0(SB),$12-24\n0165 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:101) MOVW        tab+4(FP),R8\n0166 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:102) MOVW        crc+0(FP),R0\n0167 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:102) MVN         R0,R5\n0168 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:103) MOVW        p+8(FP),R0\n0169 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:103) MOVW        R0,autotmp_0019+-12(SP)\n\nAfter 5l has done its work, \n\n        crc = ^crc\n   3d710:       e59d0014        ldr     r0, [sp, #20]\n   3d714:       e3e0b000        mvn     fp, #0\n   3d718:       e020500b        eor     r5, r0, fp\n\nbecomes\n\n        crc = ^crc\n   3d710:       e59d0014        ldr     r0, [sp, #20]\n   3d714:       e1e05000        mvn     r5, r0\n\n\nThe MOVB optimisation has a small impact on the stdlib, in strconv\nand gzip.\n\n// GZIP (RFC 1952) is little-endian, unlike ZLIB (RFC 1950).\nfunc put2(p []byte, v uint16) {\n        p[0] = uint8(v >> 0)\n        p[1] = uint8(v >> 8)\n}\n\nbefore:\n\n--- prog list \"put2\" ---\n1369 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:76) TEXT       put2+0(SB),$0-16\n1370 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:76) MOVHU      v+12(FP),R4\n1371 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVHU      R4,R0\n1372 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVHU      R0,R0\n1373 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVBU      R0,R1\n1374 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVBU      R1,R3\n1375 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVW       $p+0(FP),R1\n\nafter:\n\n--- prog list \"put2\" ---\n1369 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:76) TEXT       put2+0(SB),$0-16\n1370 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:76) MOVHU      v+12(FP),R4\n1371 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVHU      R4,R0\n1372 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVBU      R0,R1\n1373 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVBU      R1,R3\n1374 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVW       $p+0(FP),R1",
+	"cc": [
+		"remyoudompheng@gmail.com",
+		"rsc@golang.org",
+		"minux.ma@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "the EOR optimization seems to remove a MOVW $-1, R11,\nif it's the case, please update description.",
+			"disapproval": false,
+			"date": "2012-10-14 09:52:52.855510",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.",
+			"disapproval": false,
+			"date": "2012-10-14 09:50:58.083620",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello remyoudompheng@gmail.com, rsc@golang.org, minux.ma@gmail.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-10-14 09:45:02.375990",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/14 10:17:13, dfc wrote:\n> I have updated the description, I haven't been able to find anything touching\n> R11, but\n>         crc = ^crc\n>    3d710:       e59d0014        ldr     r0, [sp, #20]\n>    3d714:       e3e0b000        mvn     fp, #0\nhere, mvn fp, #0 is an efficient way of saying movw $-1, R11 (which is fp)\n5l did a good job!\n>    3d718:       e020500b        eor     r5, r0, fp\n\nother might think the description is too long, but it's up to you.",
+			"disapproval": false,
+			"date": "2012-10-14 10:21:07.372560",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/14 09:52:52, minux wrote:\n> the EOR optimization seems to remove a MOVW $-1, R11,\n> if it's the case, please update description.\n\nI have updated the description, I haven't been able to find anything touching R11, but\n\n\n        crc = ^crc\n   3d710:       e59d0014        ldr     r0, [sp, #20]\n   3d714:       e3e0b000        mvn     fp, #0\n   3d718:       e020500b        eor     r5, r0, fp\n\nbecomes\n\n        crc = ^crc\n   3d710:       e59d0014        ldr     r0, [sp, #20]\n   3d714:       e1e05000        mvn     r5, r0",
+			"disapproval": false,
+			"date": "2012-10-14 10:17:13.058340",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping",
+			"disapproval": false,
+			"date": "2012-10-25 14:45:38.969740",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-10-25 21:21:33.156050",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"remyoudompheng@gmail.com",
+				"rsc@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=1bd1e8e9aaa8 ***\n\ncmd/5g: peep.c: reactivate some optimisations\n\nThanks to Minux and Remy for their advice.\n\nThe EOR optimisation is applied to a few places in the stdlib.\n\n// hash/crc32/crc32.go\nfunc update(crc uint32, tab *Table, p []byte) uint32 {\n\tcrc = ^crc\n\tfor _, v := range p {\n        \tcrc = tab[byte(crc)^v] ^ (crc >> 8)\n\t}\n\treturn ^crc\n}\n\nbefore:\n\n--- prog list \"update\" ---\n0164 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:101) TEXT        update+0(SB),$12-24\n0165 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:101) MOVW        tab+4(FP),R8\n0166 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:102) MOVW        crc+0(FP),R0\n0167 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:102) EOR         $-1,R0,R5\n0168 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:103) MOVW        p+8(FP),R0\n0169 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:103) MOVW        R0,autotmp_0019+-12(SP)\n\nafter:\n\n--- prog list \"update\" ---\n0164 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:101) TEXT        update+0(SB),$12-24\n0165 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:101) MOVW        tab+4(FP),R8\n0166 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:102) MOVW        crc+0(FP),R0\n0167 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:102) MVN         R0,R5\n0168 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:103) MOVW        p+8(FP),R0\n0169 (/home/dfc/go/src/pkg/hash/crc32/crc32.go:103) MOVW        R0,autotmp_0019+-12(SP)\n\nAfter 5l has done its work, \n\n        crc = ^crc\n   3d710:       e59d0014        ldr     r0, [sp, #20]\n   3d714:       e3e0b000        mvn     fp, #0\n   3d718:       e020500b        eor     r5, r0, fp\n\nbecomes\n\n        crc = ^crc\n   3d710:       e59d0014        ldr     r0, [sp, #20]\n   3d714:       e1e05000        mvn     r5, r0\n\n\nThe MOVB optimisation has a small impact on the stdlib, in strconv\nand gzip.\n\n// GZIP (RFC 1952) is little-endian, unlike ZLIB (RFC 1950).\nfunc put2(p []byte, v uint16) {\n        p[0] = uint8(v >> 0)\n        p[1] = uint8(v >> 8)\n}\n\nbefore:\n\n--- prog list \"put2\" ---\n1369 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:76) TEXT       put2+0(SB),$0-16\n1370 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:76) MOVHU      v+12(FP),R4\n1371 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVHU      R4,R0\n1372 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVHU      R0,R0\n1373 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVBU      R0,R1\n1374 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVBU      R1,R3\n1375 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVW       $p+0(FP),R1\n\nafter:\n\n--- prog list \"put2\" ---\n1369 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:76) TEXT       put2+0(SB),$0-16\n1370 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:76) MOVHU      v+12(FP),R4\n1371 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVHU      R4,R0\n1372 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVBU      R0,R1\n1373 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVBU      R1,R3\n1374 (/home/dfc/go/src/pkg/compress/gzip/gzip.go:77) MOVW       $p+0(FP),R1\n\nR=remyoudompheng, rsc, minux.ma\nCC=golang-dev\nhttp://codereview.appspot.com/6674048",
+			"disapproval": false,
+			"date": "2012-10-26 07:19:16.788480",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 6674048: cmd/5g: peep.c: reactivate some optimisations",
+	"created": "2012-10-14 02:36:09.897820",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		3005,
+		6001,
+		8001,
+		13001,
+		15001
+	],
+	"modified": "2012-10-26 07:44:36.216510",
+	"closed": true,
+	"issue": 6674048
+}

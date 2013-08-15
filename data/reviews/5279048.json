@@ -1,0 +1,380 @@
+{
+	"description": "runtime: faster and more scalable GC\nSerial improvements: free memory blocks in batches (sweep), some memory prefetching (mark+sweep).\nParallel improvements: parallel for over root blocks (mark), parallel for over spans (sweep), lock-free stacks of free/full work blocks (mark).\nThe CL brings unit testing into C runtime.\nBelow are benchmarking results on 2 machines for test/garbage/parser. usr+sys time basically does grow between procs=2 and procs=4, while gc pause is basically halved and real time is decreased by 2m. For procs=8 usr+sys time starts growing and speedup is very modest. So the CL bumps Gcmaxprocs to 4. Last but not least, there is considerable single-threaded speedup.\n\non 2 x Intel Xeon E5620 (2 processors x 4 HT cores), 2.4GHz, Linux\nprocs usr   sys  usr+sys real  pause1 ngc pause\nold 1 28.42 0.53 28.95   29.02 0.29   16  4.59\nnew 1 25.19 0.58 25.77   25.83 0.24   13  3.11\ndelta old/new    -3.18   -3.19 -.11\n\nold 2 29.90 0.66 30.56   25.31 0.19   14  2.63\nnew 2 26.90 0.54 27.44   23.71 0.13   14  1.82\ndelta old/new    -3.12   -1.60 -.06\ndelta new/new1   +1.67   -2.12 -.09\n\nold 4 30.83 0.82 31.65   22.92 0.10   15  1.44\nnew 4 27.05 0.62 27.67   21.64 0.07   14  0.96\ndelta old/new    -3.18   -0.87 -.04\ndelta new/new1   +1.90   -4.19 -.15\n\nold 8 33.76 2.28 36.04   22.29 0.07   15  1.10\nnew 8 29.64 1.00 30.64   21.28 0.04   15  0.66\ndelta old/new    -5.40   -1.01 -.03\ndelta new/new1   +4.87   -4.55 -.16\n\non Intel Core2 Penryn (2 cores), 2.1GHz, Darwin\nprocs usr   sys  usr+sys real  pause1 ngc pause\nold 1 37.37 2.03 39.40   40.98 0.39   14  5.01\nnew 1 35.37 2.02 37.39   38.98 0.29   15  4.43\ndelta old/new    -2.01   -2.00 -.10\n\nold 2 40.60 2.09 42.69   37.87 0.27   14  3.16\nnew 2 39.54 2.05 41.59   37.16 0.17   17  2.81\ndelta old/new    -1.01   -0.70 -.10\ndelta new/new1   +4.20   -1.82 -.12",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-11-21 17:30:32.376488",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks.\n\nIt would certainly have been nice to know this was coming.\nThis is a very large CL to just drop on us, even if it's great code.\nhttp://golang.org/doc/contribute.html#Design\n\nSome preliminary comments below.  I haven't digested it all.\nI do want to figure out what we can do about the 32-bit \narchitectures.  We can't just turn our backs on them.\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/arm/asm.s\nFile src/pkg/runtime/arm/asm.s (right):\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/arm/asm.s#newcode312\nsrc/pkg/runtime/arm/asm.s:312: // LDREXD and STREXD were introduced in ARM 11.\nWhat about all the pre-ARM-11 chips?\nWe can't throw them away.\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c#newcode606\nsrc/pkg/runtime/mgc0.c:606: collectstackroots(G *gp)\ncollect is an overloaded word here.\nThis is just adding the stack roots, so how about addstackroots?\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c#newcode654\nsrc/pkg/runtime/mgc0.c:654: collectfinroots(void *v)\ns/collect/add\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c#newcode667\nsrc/pkg/runtime/mgc0.c:667: collectroots(void)\ns/collect/add/\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c#newcode1339\nsrc/pkg/runtime/mgc0.c:1339: // Amd64 uses 48-bit virtual addresses, 47-th bit is used as kernel/user flag.\nOn 32-bit machines (#ifdef _64BIT) it might make more\nsense to use 32.\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/proc.c#newcode691\nsrc/pkg/runtime/proc.c:691: // Figure out how many CPUs GC could possibly use.\nI am pretty sure you were the one who suggested that I \npass the extra flag back so that this computation would\nnot be duplicated between here and gcprocs.\nIf these get out of sync then you end up with a thread\nleak (because every starttheworld makes a new thread)\nor single-threaded gc (because none do).\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/runtime.c\nFile src/pkg/runtime/runtime.c (right):\n\nhttp://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/runtime.c#newcode328\nsrc/pkg/runtime/runtime.c:328: uint64 z64 = 42;\nDrop initializations.\nThey don't match the surrounding code and are redundant anyway.",
+			"disapproval": false,
+			"date": "2011-11-21 21:55:36.563151",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2011/11/22 09:18:40, dvyukov wrote:\n> test/bench/binary-tree -n=17\n> procs    old,s     new,s    delta\n> 1        9.29      8.13     -12%\n> 2        9.07      7.15     -21%\n           -.22\n> 4        8.23      6.16     -25%",
+			"disapproval": false,
+			"date": "2011-11-23 15:39:19.366720",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2011/11/23 20:27:33, fw_deneb.enyo.de wrote:\n> > I've replaced LDREXD/STREXD with locktable emulation. Not ideal\n> > performance-wise, but should do.\n> > 386 arch now requires at least Pentium MMX (1996).\n> \n> Perhaps you could use FILD/FIST instead?  This is what the JVM does if\n> SSE2 is not available.\n> \n> Instead of XADD (i486 and later), plain LOCK ADD would be okay.\n\nHi,\n\nLOCK XADD is already used in runtime.xadd(), so it's not a problem.\nAs for FILD/FIST, I just do not want to do it over again... Russ said that he want to require SSE in some future anyway and sync/atomic uses MMX.\nWell, if you want you may submit a patch with FILD/FIST ;)",
+			"disapproval": false,
+			"date": "2011-11-25 11:22:34.259991",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2011/11/21 21:55:36, rsc wrote:\n> Thanks.\n> \n> It would certainly have been nice to know this was coming.\n> This is a very large CL to just drop on us, even if it's great code.\n> http://golang.org/doc/contribute.html#Design\n\nSorry. Initially it was small and innocent... I will keep golang-dev informed of non-trivial changes.\nWhat should I do now? Testing, benchmarking and result aggregation is time consuming for such changes, however for the purpose of review and commit I can split it to several parts (some pieces may make no sense until all pieces code together).\n\n\n> Some preliminary comments below.  I haven't digested it all.\n> I do want to figure out what we can do about the 32-bit \n> architectures.  We can't just turn our backs on them.\n\nWhat is the problem with 32-bit architectures?\n\n\n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/arm/asm.s\n> File src/pkg/runtime/arm/asm.s (right):\n> \n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/arm/asm.s#newcode312\n> src/pkg/runtime/arm/asm.s:312: // LDREXD and STREXD were introduced in ARM 11.\n> What about all the pre-ARM-11 chips?\n> We can't throw them away.\n\nsync/atomic uses them, so I though it is OK... I will think about it.\n\n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c\n> File src/pkg/runtime/mgc0.c (right):\n> \n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c#newcode606\n> src/pkg/runtime/mgc0.c:606: collectstackroots(G *gp)\n> collect is an overloaded word here.\n> This is just adding the stack roots, so how about addstackroots?\n\nDone.\n\n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c#newcode654\n> src/pkg/runtime/mgc0.c:654: collectfinroots(void *v)\n> s/collect/add\n\nDone.\n\n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c#newcode667\n> src/pkg/runtime/mgc0.c:667: collectroots(void)\n> s/collect/add/\n\nDone.\n\n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/mgc0.c#newcode1339\n> src/pkg/runtime/mgc0.c:1339: // Amd64 uses 48-bit virtual addresses, 47-th bit\n> is used as kernel/user flag.\n> On 32-bit machines (#ifdef _64BIT) it might make more\n> sense to use 32.\n\nDone.\n\n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/proc.c\n> File src/pkg/runtime/proc.c (right):\n> \n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/proc.c#newcode691\n> src/pkg/runtime/proc.c:691: // Figure out how many CPUs GC could possibly use.\n> I am pretty sure you were the one who suggested that I \n> pass the extra flag back so that this computation would\n> not be duplicated between here and gcprocs.\n> If these get out of sync then you end up with a thread\n> leak (because every starttheworld makes a new thread)\n> or single-threaded gc (because none do).\n\nI not only suggested that, I implemented that :) But the problem is that now I need to know number of threads ahead of time. I tried to keep the logic at least in one place (several functions, though). I am happy to improve/simplify it, if somebody has any suggestions.\n\n\n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/runtime.c\n> File src/pkg/runtime/runtime.c (right):\n> \n> http://codereview.appspot.com/5279048/diff/39130/src/pkg/runtime/runtime.c#newcode328\n> src/pkg/runtime/runtime.c:328: uint64 z64 = 42;\n> Drop initializations.\n> They don't match the surrounding code and are redundant anyway.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-11-22 09:12:41.833375",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 22, 2011 at 5:38 PM, Russ Cox <rsc@golang.org> wrote:\n\n> On Tue, Nov 22, 2011 at 04:12,  <dvyukov@google.com> wrote:\n> > What is the problem with 32-bit architectures?\n>\n> It's the 64-bit atomics.  If you look at the bottom of 'godoc sync/atomic'\n> it explains the systems on which the 64-bit ones will not work.\n> We have to this point just provided those routines for others to use\n> but not required their use in the standard library.  This would require\n> their use, which would in particular give up on support for the many\n> tiny little ARM boards that are available.  There are a lot of people\n> playing with Go on ARM 5 (no floating point).  I am pretty sure those\n> chips don't have 64-bit atomics.\n>\n>\nPortability sucks :)\nOK, I think I will be able to solve that one way or another.\n",
+			"disapproval": false,
+			"date": "2011-11-22 13:48:48.106953",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On the 386 I don't mind requiring the 64-bit atomics.\nIt is mainly the ARM that needs an alternative.\n(On the 386 I would like to require SSE at some point,\nand that is even newer.)\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-22 13:57:07.151507",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 22, 2011 at 04:12,  <dvyukov@google.com> wrote:\n> What is the problem with 32-bit architectures?\n\nIt's the 64-bit atomics.  If you look at the bottom of 'godoc sync/atomic'\nit explains the systems on which the 64-bit ones will not work.\nWe have to this point just provided those routines for others to use\nbut not required their use in the standard library.  This would require\ntheir use, which would in particular give up on support for the many\ntiny little ARM boards that are available.  There are a lot of people\nplaying with Go on ARM 5 (no floating point).  I am pretty sure those\nchips don't have 64-bit atomics.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-11-22 13:38:12.956305",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2011/11/23 15:30:17, dvyukov wrote:\n> Hello mailto:rsc@golang.org (cc: mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nI've replaced LDREXD/STREXD with locktable emulation. Not ideal performance-wise, but should do.\n386 arch now requires at least Pentium MMX (1996).\n\nI've addressed your concern regarding gcprocs by adding a unit test that verifies number of procs created. I've also added isShort parameter to C unit tests (otherwise some tests are prohibitively slow on ARM emulation).",
+			"disapproval": false,
+			"date": "2011-11-23 15:36:44.508461",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2011/11/22 09:18:40, dvyukov wrote:\n> test/bench/binary-tree -n=17\n> procs    old,s     new,s    delta\n> 1        9.29      8.13     -12%\n> 2        9.07      7.15     -21%\n           -.22      -.58\n> 4        8.23      6.16     -25%\n           -.44      -.59",
+			"disapproval": false,
+			"date": "2011-11-23 15:41:09.501900",
+			"approval": false
+		},
+		{
+			"sender": "lucio.dere@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Deary, deary me!  In the old days these would all be reserved\ninstructions not available for language designers to mess with.  When\nyou needed an intelligent locking mechanism, you asked nicely of the\nOS to give it to you.\n\nI'm not sure we're gaining anything from having all this weird\ntechnology at user level.  Or having discussions about it, so please\nforgive me mouthing off :-)\n\nLucio.\n\nOn 11/25/11, dvyukov@google.com <dvyukov@google.com> wrote:\n> On 2011/11/23 20:27:33, fw_deneb.enyo.de wrote:\n>> > I've replaced LDREXD/STREXD with locktable emulation. Not ideal\n>> > performance-wise, but should do.\n>> > 386 arch now requires at least Pentium MMX (1996).\n>\n>> Perhaps you could use FILD/FIST instead?  This is what the JVM does if\n>> SSE2 is not available.\n>\n>> Instead of XADD (i486 and later), plain LOCK ADD would be okay.\n>\n> Hi,\n>\n> LOCK XADD is already used in runtime.xadd(), so it's not a problem.\n> As for FILD/FIST, I just do not want to do it over again... Russ said\n> that he want to require SSE in some future anyway and sync/atomic uses\n> MMX.\n> Well, if you want you may submit a patch with FILD/FIST ;)\n>\n>\n>\n> http://codereview.appspot.com/5279048/\n>\n",
+			"disapproval": false,
+			"date": "2011-11-25 12:35:53.160774",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "test/bench/binary-tree -n=17\nprocs    old,s     new,s    delta\n1        9.29      8.13     -12%\n2        9.07      7.15     -21%\n4        8.23      6.16     -25%",
+			"disapproval": false,
+			"date": "2011-11-22 09:18:40.099126",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-23 15:30:17.827657",
+			"approval": false
+		},
+		{
+			"sender": "fw@deneb.enyo.de",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I've replaced LDREXD/STREXD with locktable emulation. Not ideal\n> performance-wise, but should do.\n> 386 arch now requires at least Pentium MMX (1996).\n\nPerhaps you could use FILD/FIST instead?  This is what the JVM does if\nSSE2 is not available.\n\nInstead of XADD (i486 and later), plain LOCK ADD would be okay.\n",
+			"disapproval": false,
+			"date": "2011-11-23 20:27:33.369124",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi.\n\nI would like to move forward with this, but the CL is too big.\nAs a first couple steps, please:\n\n1) Create a separate CL with just the new atomics.\n2) Create a separate CL with the parallel for support in\nits own file parfor.c and declarations in runtime.h.\n\nOnce those are reviewed and submitted we can come back to this\nand figure out what the next steps are.\n\nThanks.",
+			"disapproval": false,
+			"date": "2012-04-04 15:09:43.254367",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Apr 4, 2012 at 7:09 PM, <rsc@golang.org> wrote:\n\n> Hi.\n>\n> I would like to move forward with this, but the CL is too big.\n> As a first couple steps, please:\n>\n> 1) Create a separate CL with just the new atomics.\n> 2) Create a separate CL with the parallel for support in\n> its own file parfor.c and declarations in runtime.h.\n>\n> Once those are reviewed and submitted we can come back to this\n> and figure out what the next steps are.\n>\n> Thanks.\n>\n>\nOK. Thanks. I am on it.\n",
+			"disapproval": false,
+			"date": "2012-04-04 15:39:34.492918",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/04/04 15:09:43, rsc wrote:\n> Hi.\n> \n> I would like to move forward with this, but the CL is too big.\n> As a first couple steps, please:\n> \n> 1) Create a separate CL with just the new atomics.\n> 2) Create a separate CL with the parallel for support in\n> its own file parfor.c and declarations in runtime.h.\n> \n> Once those are reviewed and submitted we can come back to this\n> and figure out what the next steps are.\n\n\nRuss,\n\nThe CL also contains an infrastructure for unit-testing of C runtime:\nhttp://codereview.appspot.com/5279048/diff/92019/src/pkg/runtime/runtime_test.go\nhttp://codereview.appspot.com/5279048/diff/92019/src/pkg/runtime/export_test.go\nIt is somewhat debatable and I think must go into a separate CL. So what do you think in general about unit-testing of C runtime? I found it useful and I think it may be useful for testing of things like atomics or heap implementation in timers, etc. What do you think about this particular implementation? In order to add a new test you need to modify 3 files, I found no shorter way (which is yet simple and straightforward).\nOne downside is that tests are compiled into runtime, that is bloat binary size.\nIf you agree with the general line, then I will prepare a separate CL that contains the infrastructure and establishes a precedent on a simple test.",
+			"disapproval": false,
+			"date": "2012-04-05 04:24:31.217660",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/04/04 15:09:43, rsc wrote:\n> Hi.\n> \n> I would like to move forward with this, but the CL is too big.\n> As a first couple steps, please:\n> \n> 1) Create a separate CL with just the new atomics.\n> 2) Create a separate CL with the parallel for support in\n> its own file parfor.c and declarations in runtime.h.\n> \n> Once those are reviewed and submitted we can come back to this\n> and figure out what the next steps are.\n\n\nRuss,\n\nThe CL also contains an infrastructure for unit-testing of C runtime:\nhttp://codereview.appspot.com/5279048/diff/92019/src/pkg/runtime/runtime_test.go\nhttp://codereview.appspot.com/5279048/diff/92019/src/pkg/runtime/export_test.go\nIt is somewhat debatable and I think must go into a separate CL. So what do you think in general about unit-testing of C runtime? I found it useful and I think it may be useful for testing of things like atomics or heap implementation in timers, etc. What do you think about this particular implementation? In order to add a new test you need to modify 3 files, I found no shorter way (which is yet simple and straightforward).\nOne downside is that tests are compiled into runtime, that is bloat binary size.\nIf you agree with the general line, then I will prepare a separate CL that contains the infrastructure and establishes a precedent on a simple test.",
+			"disapproval": false,
+			"date": "2012-04-05 04:24:34.441586",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FTR, the atomic part of this CL is moved out to:\nhttp://codereview.appspot.com/5985047",
+			"disapproval": false,
+			"date": "2012-04-05 14:13:58.677610",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/04/05 14:13:58, dvyukov wrote:\n> FTR, the atomic part of this CL is moved out to:\n> http://codereview.appspot.com/5985047\n\nOne more part\nhttp://codereview.appspot.com/5987045/",
+			"disapproval": false,
+			"date": "2012-04-05 14:21:08.370047",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"fw@deneb.enyo.de",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/04/05 04:24:31, dvyukov wrote:\n> On 2012/04/04 15:09:43, rsc wrote:\n> > Hi.\n> > \n> > I would like to move forward with this, but the CL is too big.\n> > As a first couple steps, please:\n> > \n> > 1) Create a separate CL with just the new atomics.\n> > 2) Create a separate CL with the parallel for support in\n> > its own file parfor.c and declarations in runtime.h.\n> > \n> > Once those are reviewed and submitted we can come back to this\n> > and figure out what the next steps are.\n> \n> \n> Russ,\n> \n> The CL also contains an infrastructure for unit-testing of C runtime:\n> http://codereview.appspot.com/5279048/diff/92019/src/pkg/runtime/runtime_test.go\n> http://codereview.appspot.com/5279048/diff/92019/src/pkg/runtime/export_test.go\n> It is somewhat debatable and I think must go into a separate CL. So what do you\n> think in general about unit-testing of C runtime? I found it useful and I think\n> it may be useful for testing of things like atomics or heap implementation in\n> timers, etc. What do you think about this particular implementation? In order to\n> add a new test you need to modify 3 files, I found no shorter way (which is yet\n> simple and straightforward).\n> One downside is that tests are compiled into runtime, that is bloat binary size.\n> If you agree with the general line, then I will prepare a separate CL that\n> contains the infrastructure and establishes a precedent on a simple test.\n\nRuss,\n\nI would like to bring in the C testing infrastructure before submitting parallel for and lock-free stack.",
+			"disapproval": false,
+			"date": "2012-04-05 17:01:38.526681",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Can you put the C testing stuff in _test.c files?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-04-05 17:02:49.995757",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Apr 5, 2012 at 13:02, Russ Cox <rsc@golang.org> wrote:\n> Can you put the C testing stuff in _test.c files?\n\nAnswering my own question, no, that won't work,\nbut I would be surprised if the tests end up in the\nactual binaries.  They should be dead code, and\nthe linker should remove dead code.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-04-05 17:03:35.383587",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2012-06-03 04:59:12.901010",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 5279048: runtime: faster and more scalable GC",
+	"created": "2011-10-15 11:39:20.775401",
+	"patchsets": [
+		1,
+		2001,
+		3007,
+		6001,
+		9001,
+		12001,
+		14001,
+		16001,
+		18009,
+		21001,
+		24001,
+		26001,
+		30001,
+		25010,
+		31001,
+		29010,
+		32001,
+		35001,
+		36019,
+		34010,
+		32011,
+		37019,
+		38028,
+		38038,
+		40019,
+		39037,
+		42029,
+		39047,
+		39057,
+		44019,
+		42061,
+		39071,
+		43043,
+		46019,
+		44036,
+		40044,
+		47022,
+		46021,
+		46022,
+		43125,
+		41079,
+		39089,
+		39090,
+		46055,
+		41081,
+		45170,
+		46076,
+		48038,
+		39130,
+		52019,
+		57021,
+		53038,
+		60019,
+		60020,
+		71019,
+		74019,
+		77019,
+		78057,
+		79041,
+		92019
+	],
+	"modified": "2012-06-05 17:40:01.771952",
+	"closed": true,
+	"issue": 5279048
+}

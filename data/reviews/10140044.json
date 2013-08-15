@@ -1,0 +1,82 @@
+{
+	"description": "runtime: use persistentalloc instead of SysAlloc in FixAlloc\nAlso reduce FixAlloc allocation granulatiry from 128k to 16k,\nsmall programs do not need that much memory for MCache's and MSpan's.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"khr@google.com"
+	],
+	"reviewers": [
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\r\n\r\n\r\nOn Sun, Jun 9, 2013 at 10:32 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime: use persistentalloc instead of SysAlloc in FixAlloc\r\n> Also reduce FixAlloc allocation granulatiry from 128k to 16k,\r\n> small programs do not need that much memory for MCache's and MSpan's.\r\n>\r\n> Please review this at https://codereview.appspot.**com/10140044/<https://codereview.appspot.com/10140044/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/malloc.goc\r\n>   M src/pkg/runtime/malloc.h\r\n>   M src/pkg/runtime/mfixalloc.c\r\n>   M src/pkg/runtime/mheap.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/malloc.goc\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/malloc.goc\r\n> +++ b/src/pkg/runtime/malloc.goc\r\n> @@ -407,7 +407,7 @@\r\n>         runtime\u00b7mheap.arena_end = runtime\u00b7mheap.arena_start + arena_size;\r\n>\r\n>         // Initialize the rest of the allocator.\r\n> -       runtime\u00b7MHeap_Init(&runtime\u00b7**mheap, runtime\u00b7SysAlloc);\r\n> +       runtime\u00b7MHeap_Init(&runtime\u00b7**mheap);\r\n>         m->mcache = runtime\u00b7allocmcache();\r\n>\r\n>         // See if it works.\r\n> Index: src/pkg/runtime/malloc.h\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/malloc.h\r\n> +++ b/src/pkg/runtime/malloc.h\r\n> @@ -108,7 +108,7 @@\r\n>         // Tunable constants.\r\n>         MaxSmallSize = 32<<10,\r\n>\r\n> -       FixAllocChunk = 128<<10,        // Chunk size for FixAlloc\r\n> +       FixAllocChunk = 16<<10,         // Chunk size for FixAlloc\r\n>         MaxMHeapList = 1<<(20 - PageShift),     // Maximum page length for\r\n> fixed-size list in MHeap.\r\n>         HeapAllocChunk = 1<<20,         // Chunk size for heap growth\r\n>\r\n> @@ -188,7 +188,6 @@\r\n>  struct FixAlloc\r\n>  {\r\n>         uintptr size;\r\n> -       void *(*alloc)(uintptr);\r\n>         void (*first)(void *arg, byte *p);      // called first time p is\r\n> returned\r\n>         void *arg;\r\n>         MLink *list;\r\n> @@ -198,7 +197,7 @@\r\n>         uintptr sys;    // bytes obtained from system\r\n>  };\r\n>\r\n> -void   runtime\u00b7FixAlloc_Init(FixAlloc *f, uintptr size, void\r\n> *(*alloc)(uintptr), void (*first)(void*, byte*), void *arg);\r\n> +void   runtime\u00b7FixAlloc_Init(FixAlloc *f, uintptr size, void\r\n> (*first)(void*, byte*), void *arg);\r\n>  void*  runtime\u00b7FixAlloc_Alloc(**FixAlloc *f);\r\n>  void   runtime\u00b7FixAlloc_Free(FixAlloc *f, void *p);\r\n>\r\n> @@ -432,7 +431,7 @@\r\n>  };\r\n>  extern MHeap runtime\u00b7mheap;\r\n>\r\n> -void   runtime\u00b7MHeap_Init(MHeap *h, void *(*allocator)(uintptr));\r\n> +void   runtime\u00b7MHeap_Init(MHeap *h);\r\n>  MSpan* runtime\u00b7MHeap_Alloc(MHeap *h, uintptr npage, int32 sizeclass,\r\n> int32 acct, int32 zeroed);\r\n>  void   runtime\u00b7MHeap_Free(MHeap *h, MSpan *s, int32 acct);\r\n>  MSpan* runtime\u00b7MHeap_Lookup(MHeap *h, void *v);\r\n> Index: src/pkg/runtime/mfixalloc.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mfixalloc.c\r\n> +++ b/src/pkg/runtime/mfixalloc.c\r\n> @@ -13,10 +13,9 @@\r\n>  // Initialize f to allocate objects of the given size,\r\n>  // using the allocator to obtain chunks of memory.\r\n>  void\r\n> -runtime\u00b7FixAlloc_Init(**FixAlloc *f, uintptr size, void\r\n> *(*alloc)(uintptr), void (*first)(void*, byte*), void *arg)\r\n> +runtime\u00b7FixAlloc_Init(**FixAlloc *f, uintptr size, void (*first)(void*,\r\n> byte*), void *arg)\r\n>  {\r\n>         f->size = size;\r\n> -       f->alloc = alloc;\r\n>         f->first = first;\r\n>         f->arg = arg;\r\n>         f->list = nil;\r\n> @@ -44,9 +43,7 @@\r\n>         }\r\n>         if(f->nchunk < f->size) {\r\n>                 f->sys += FixAllocChunk;\r\n> -               f->chunk = f->alloc(FixAllocChunk);\r\n> -               if(f->chunk == nil)\r\n> -                       runtime\u00b7throw(\"out of memory (FixAlloc)\");\r\n> +               f->chunk = runtime\u00b7persistentalloc(**FixAllocChunk, 0);\r\n>                 f->nchunk = FixAllocChunk;\r\n>         }\r\n>         v = f->chunk;\r\n> Index: src/pkg/runtime/mheap.c\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/mheap.c\r\n> +++ b/src/pkg/runtime/mheap.c\r\n> @@ -51,12 +51,12 @@\r\n>\r\n>  // Initialize the heap; fetch memory using alloc.\r\n>  void\r\n> -runtime\u00b7MHeap_Init(MHeap *h, void *(*alloc)(uintptr))\r\n> +runtime\u00b7MHeap_Init(MHeap *h)\r\n>  {\r\n>         uint32 i;\r\n>\r\n> -       runtime\u00b7FixAlloc_Init(&h->**spanalloc, sizeof(MSpan), alloc,\r\n> RecordSpan, h);\r\n> -       runtime\u00b7FixAlloc_Init(&h->**cachealloc, sizeof(MCache), alloc,\r\n> nil, nil);\r\n> +       runtime\u00b7FixAlloc_Init(&h->**spanalloc, sizeof(MSpan), RecordSpan,\r\n> h);\r\n> +       runtime\u00b7FixAlloc_Init(&h->**cachealloc, sizeof(MCache), nil, nil);\r\n>         // h->mapcache needs no init\r\n>         for(i=0; i<nelem(h->free); i++)\r\n>                 runtime\u00b7MSpanList_Init(&h->**free[i]);\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-10 03:54:16.525350",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Dmitry,\r\n\r\nWould you consider, if you think it is appropriate, a note in the 1.2 release notes about the potential reduction in runtime footprint related to this set of changes. \r\n\r\nOn 10/06/2013, at 15:20, dvyukov@google.com wrote:\r\n\r\n> *** Submitted as\r\n> https://code.google.com/p/go/source/detail?r=3bd0f5144c86 ***\r\n> \r\n> runtime: use persistentalloc instead of SysAlloc in FixAlloc\r\n> Also reduce FixAlloc allocation granulatiry from 128k to 16k,\r\n> small programs do not need that much memory for MCache's and MSpan's.\r\n> \r\n> R=golang-dev, khr\r\n> CC=golang-dev\r\n> https://codereview.appspot.com/10140044\r\n> \r\n> \r\n> https://codereview.appspot.com/10140044/\r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-06-10 05:44:31.401890",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"khr@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=3bd0f5144c86 ***\n\nruntime: use persistentalloc instead of SysAlloc in FixAlloc\nAlso reduce FixAlloc allocation granulatiry from 128k to 16k,\nsmall programs do not need that much memory for MCache's and MSpan's.\n\nR=golang-dev, khr\nCC=golang-dev\nhttps://codereview.appspot.com/10140044",
+			"disapproval": false,
+			"date": "2013-06-10 05:20:41.831480",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-06-09 17:32:43.231370",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jun 10, 2013 at 9:44 AM, Dave Cheney <dave@cheney.net> wrote:\r\n> Dmitry,\r\n>\r\n> Would you consider, if you think it is appropriate, a note in the 1.2 release notes about the potential reduction in runtime footprint related to this set of changes.\r\n\r\n\r\nUnfortunately my windows machine is broken, so I can't test there (I\r\nwould expect the \"maximum\" benefit there).\r\nI am not sure whether it's worth mentioning in the release notes.\r\n\r\n\r\n\r\n> On 10/06/2013, at 15:20, dvyukov@google.com wrote:\r\n>\r\n>> *** Submitted as\r\n>> https://code.google.com/p/go/source/detail?r=3bd0f5144c86 ***\r\n>>\r\n>> runtime: use persistentalloc instead of SysAlloc in FixAlloc\r\n>> Also reduce FixAlloc allocation granulatiry from 128k to 16k,\r\n>> small programs do not need that much memory for MCache's and MSpan's.\r\n>>\r\n>> R=golang-dev, khr\r\n>> CC=golang-dev\r\n",
+			"disapproval": false,
+			"date": "2013-06-10 13:34:57.882950",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 10140044: runtime: use persistentalloc instead of SysAlloc in FixAlloc",
+	"created": "2013-06-09 17:29:45.352930",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001
+	],
+	"modified": "2013-06-10 13:34:57.924300",
+	"closed": true,
+	"issue": 10140044
+}

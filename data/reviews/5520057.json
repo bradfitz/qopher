@@ -1,0 +1,208 @@
+{
+	"description": "net: Export SetReuseAddr on the underlying netFD for both TCP and UDP sockets.\n\nFixes issue 1692.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"rsc@golang.org",
+		"mikioh.mikioh@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5520057/diff/1002/src/pkg/net/udpsock_posix.go\nFile src/pkg/net/udpsock_posix.go (right):\n\nhttp://codereview.appspot.com/5520057/diff/1002/src/pkg/net/udpsock_posix.go#newcode146\nsrc/pkg/net/udpsock_posix.go:146: func (c *TCPConn) SetReuseAddr(reuse bool) error {\ns/TCP/UDP/",
+			"disapproval": false,
+			"date": "2012-01-07 08:32:20.472808",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-06 22:16:07.326971",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/06 22:16:07, dho wrote:\n> Hello mailto:rsc@golang.org (cc: mailto:golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n\nActually, this change isn't good.\n\nBecause there was never any explanation as to why this was happening either in Issue 1692 or in the mailing list thread at http://groups.google.com/group/golang-nuts/browse_thread/thread/4cbbc28d5aa7ca52, I'll go into it.\n\nThe netFD returned by calling file, _ := conn.(*net.UDPConn).File() explicitly dup(2)s the descriptor and returns one that is explicitly a blocking socket. There's a comment in fd.go:635 -- \"We want blocking mode for the new fd, hence the double negative\" and it's explicitly set to block (this is documented in all of the File() exports). So the code in the example is just incorrect. Unfortunately, there's not a way to set SO_REUSEADDR on a TCPConn or UDPConn. The patch referenced fixes that, and the call \"setNoReuseAddress(conn)\" would simply change to conn.SetReuseAddr(false).\n\nI think we must allow setting this for UDP sockets given the unicast / multicast use case. I'm willing to get rid of the TCPConn export in the patch.\n\nBut it goes further: in both Linux and FreeBSD, it seems not well defined which socket gets the data (tested with Issue 1692's code + nc -4u 10000). This opens the door for a local user denial of service attack on UDP sockets. (I'd actually vote that we don't turn on SO_REUSEADDR by default on UDP sockets for precisely this reason, but still export SetReuseAddr so that those writing multicast applications over UDP can use it.\n\nFreeBSD also makes the assumption in UDP that once set, you never unset SO_REUSEADDR (see comment in udp_usrreq.c); I'm not sure what Linux does here.\n\nI'll submit an updated patch removing SO_REUSEADDR from being set on UDP sockets by default (as I think we should given the two reasons above), but let me know regarding exporting TCPConn.SetReuseAddr.\n\n--dho",
+			"disapproval": false,
+			"date": "2012-01-07 01:39:07.523139",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi,\n\nI'm still not convinced whether we should have SetReuseAddr/Port\nmethods on UDPConn, TCPConn or not.\n\nBut even if UDP multicast is the case, I don't see why because\na) we can set TCP,UDPConn to transport protocol, platform\nsuitable settings in socket w/ setKernelSpecificSocketOptions,\nb) other methods on ProtocolConn such as JoinGroup would be\na trigger for multicast settings as someone suggested to fix the\nUDP multicast on Windows issue.\n\n-- Mikio\n\nOn Sat, Jan 7, 2012 at 10:39 AM,  <devon.odell@gmail.com> wrote:\n> On 2012/01/06 22:16:07, dho wrote:\n>>\n>> Hello mailto:rsc@golang.org (cc: mailto:golang-dev@googlegroups.com),\n>\n>\n>> I'd like you to review this change to\n>> https://go.googlecode.com/hg/\n>\n>\n> Actually, this change isn't good.\n>\n> Because there was never any explanation as to why this was happening\n> either in Issue 1692 or in the mailing list thread at\n> http://groups.google.com/group/golang-nuts/browse_thread/thread/4cbbc28d5aa7ca52,\n> I'll go into it.\n>\n> The netFD returned by calling file, _ := conn.(*net.UDPConn).File()\n> explicitly dup(2)s the descriptor and returns one that is explicitly a\n> blocking socket. There's a comment in fd.go:635 -- \"We want blocking\n> mode for the new fd, hence the double negative\" and it's explicitly set\n> to block (this is documented in all of the File() exports). So the code\n> in the example is just incorrect. Unfortunately, there's not a way to\n> set SO_REUSEADDR on a TCPConn or UDPConn. The patch referenced fixes\n> that, and the call \"setNoReuseAddress(conn)\" would simply change to\n> conn.SetReuseAddr(false).\n>\n> I think we must allow setting this for UDP sockets given the unicast /\n> multicast use case. I'm willing to get rid of the TCPConn export in the\n> patch.\n>\n> But it goes further: in both Linux and FreeBSD, it seems not well\n> defined which socket gets the data (tested with Issue 1692's code + nc\n> -4u 10000). This opens the door for a local user denial of service\n> attack on UDP sockets. (I'd actually vote that we don't turn on\n> SO_REUSEADDR by default on UDP sockets for precisely this reason, but\n> still export SetReuseAddr so that those writing multicast applications\n> over UDP can use it.\n>\n> FreeBSD also makes the assumption in UDP that once set, you never unset\n> SO_REUSEADDR (see comment in udp_usrreq.c); I'm not sure what Linux does\n> here.\n>\n> I'll submit an updated patch removing SO_REUSEADDR from being set on UDP\n> sockets by default (as I think we should given the two reasons above),\n> but let me know regarding exporting TCPConn.SetReuseAddr.\n>\n> --dho\n>\n> http://codereview.appspot.com/5520057/\n",
+			"disapproval": false,
+			"date": "2012-01-08 02:51:09.212872",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I like your CL better than this one.\n\n2012/1/12 Mikio Hara <mikioh.mikioh@gmail.com>:\n> Hi,\n>\n> On Tue, Jan 10, 2012 at 3:22 AM, Russ Cox <rsc@golang.org> wrote:\n>\n>> Since SO_REUSEADDR has such wildly different meanings\n>> on Windows and on Unix, I think exposing this in the public\n>> net API is a mistake.\n>\n> Probably you are right but I'd like to hear a bit more Devon's\n> use case for TCP.\n>\n>> Why are we doing this? \u00a0What isn't doing the right thing?\n>> Can we make it do the right thing?\n>\n> To make things smoother I've just sent a separate CL to fix\n> default socket options stuff.\n",
+			"disapproval": false,
+			"date": "2012-01-12 17:06:16.351901",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, mikioh.mikioh@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-07 19:45:30.476839",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/07 19:45:30, dho wrote:\n> Hello mailto:rsc@golang.org, mailto:mikioh.mikioh@gmail.com (cc: mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nArgh, don't. I've forgotten how to add files to these changes. Gimme a sec, here.",
+			"disapproval": false,
+			"date": "2012-01-07 19:46:18.567531",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, mikioh.mikioh@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-07 19:50:25.752624",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Since SO_REUSEADDR has such wildly different meanings\non Windows and on Unix, I think exposing this in the public\nnet API is a mistake.\n\nWhy are we doing this?  What isn't doing the right thing?\nCan we make it do the right thing?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-09 18:22:33.053869",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "2012/1/7 Mikio Hara <mikioh.mikioh@gmail.com>:\n> Hi,\n>\n> I'm still not convinced whether we should have SetReuseAddr/Port\n> methods on UDPConn, TCPConn or not.\n\nI detail below why it should be allowed for TCP, but I don't care so\nmuch how it works for UDP as long as they're not set for UDP by\ndefault on at least Linux and BSD.\n\n> But even if UDP multicast is the case, I don't see why because\n> a) we can set TCP,UDPConn to transport protocol, platform\n> suitable settings in socket w/ setKernelSpecificSocketOptions,\n\nThe new code only sets SO_REUSE(ADDR|PORT) on TCP sockets in\nsetKernelSpecificSocketOptions under Linux and BSD. Windows doesn't\nappear to set it at all. I really don't think these should be set on\nUDP sockets because the behavior of both in the common case is at\nleast unexpected, if not undesirable for the reasons I mentioned in my\nprevious comment (poorly defined behavior for unicast packets over\nUDP, and the fact that, in FreeBSD at least, the kernel effectively\nignores unsetting these sockopts after they're set).\n\n> b) other methods on ProtocolConn such as JoinGroup would be\n> a trigger for multicast settings as someone suggested to fix the\n> UDP multicast on Windows issue.\n\nI'm not really familiar with multicast in Go (or sockets on Windows in\ngeneral), but I'm happy to make JoinGroup set SO_REUSEPORT (on BSD)\nand SO_REUSEADDR (on BSD and Linux) for UDP. I don't see any\ncompelling argument to turn them off by default for TCP, but there is\na compelling argument to export them for TCP: namely, binding to a\nport on inaddr_any or inaddr6_any with SO_REUSEADDR set allows another\napplication to bind to the same port on a more specific address. Not\nbeing able to turn off this behavior can create additional local user\ndenial of service conditions on ports >1024 (which is a *ton* of\nservices these days).\n\nIt'd definitely be useful to get some input on how these things work\non Windows, but I think there's a pretty good case to export them and\nturn them off by default for UDP on Linux / BSD.\n\n--dho\n\n> -- Mikio\n>\n> On Sat, Jan 7, 2012 at 10:39 AM, \u00a0<devon.odell@gmail.com> wrote:\n>> On 2012/01/06 22:16:07, dho wrote:\n>>>\n>>> Hello mailto:rsc@golang.org (cc: mailto:golang-dev@googlegroups.com),\n>>\n>>\n>>> I'd like you to review this change to\n>>> https://go.googlecode.com/hg/\n>>\n>>\n>> Actually, this change isn't good.\n>>\n>> Because there was never any explanation as to why this was happening\n>> either in Issue 1692 or in the mailing list thread at\n>> http://groups.google.com/group/golang-nuts/browse_thread/thread/4cbbc28d5aa7ca52,\n>> I'll go into it.\n>>\n>> The netFD returned by calling file, _ := conn.(*net.UDPConn).File()\n>> explicitly dup(2)s the descriptor and returns one that is explicitly a\n>> blocking socket. There's a comment in fd.go:635 -- \"We want blocking\n>> mode for the new fd, hence the double negative\" and it's explicitly set\n>> to block (this is documented in all of the File() exports). So the code\n>> in the example is just incorrect. Unfortunately, there's not a way to\n>> set SO_REUSEADDR on a TCPConn or UDPConn. The patch referenced fixes\n>> that, and the call \"setNoReuseAddress(conn)\" would simply change to\n>> conn.SetReuseAddr(false).\n>>\n>> I think we must allow setting this for UDP sockets given the unicast /\n>> multicast use case. I'm willing to get rid of the TCPConn export in the\n>> patch.\n>>\n>> But it goes further: in both Linux and FreeBSD, it seems not well\n>> defined which socket gets the data (tested with Issue 1692's code + nc\n>> -4u 10000). This opens the door for a local user denial of service\n>> attack on UDP sockets. (I'd actually vote that we don't turn on\n>> SO_REUSEADDR by default on UDP sockets for precisely this reason, but\n>> still export SetReuseAddr so that those writing multicast applications\n>> over UDP can use it.\n>>\n>> FreeBSD also makes the assumption in UDP that once set, you never unset\n>> SO_REUSEADDR (see comment in udp_usrreq.c); I'm not sure what Linux does\n>> here.\n>>\n>> I'll submit an updated patch removing SO_REUSEADDR from being set on UDP\n>> sockets by default (as I think we should given the two reasons above),\n>> but let me know regarding exporting TCPConn.SetReuseAddr.\n>>\n>> --dho\n>>\n>> http://codereview.appspot.com/5520057/\n",
+			"disapproval": false,
+			"date": "2012-01-08 03:08:54.663532",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for the details, now I can see your point.\n\nOn Sun, Jan 8, 2012 at 12:08 PM, Devon H. O'Dell <devon.odell@gmail.com> wrote:\n\n> I don't see any\n> compelling argument to turn them off by default for TCP, but there is\n> a compelling argument to export them for TCP: namely, binding to a\n> port on inaddr_any or inaddr6_any with SO_REUSEADDR set allows another\n> application to bind to the same port on a more specific address. Not\n> being able to turn off this behavior can create additional local user\n> denial of service conditions on ports >1024 (which is a *ton* of\n> services these days).\n\nSounds like we need a new test case, so please add it\nespecially you described above.\n\n> It'd definitely be useful to get some input on how these things work\n> on Windows, but I think there's a pretty good case to export them and\n> turn them off by default for UDP on Linux / BSD.\n\nSO_REUSEADDR in Windows\n<http://groups.google.com/group/golang-dev/browse_thread/thread/b71aa6f44a11182e/d0e000f0af90139a>\n\nAlso I guess you can poke Paul Lalonde. ;-)\n",
+			"disapproval": false,
+			"date": "2012-01-08 13:10:07.067252",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5520057/diff/9001/src/pkg/net/Makefile\nFile src/pkg/net/Makefile (right):\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/Makefile#newcode42\nsrc/pkg/net/Makefile:42: udpsock_bsd.go\\\npls move up before udpsock_posix.go.\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/Makefile#newcode71\nsrc/pkg/net/Makefile:71: udpsock_bsd.go\\\nsame\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/Makefile#newcode127\nsrc/pkg/net/Makefile:127: udpsock_bsd.go\\\nditto\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/Makefile#newcode149\nsrc/pkg/net/Makefile:149: udpsock_bsd.go\\\nsame\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/sock.go\nFile src/pkg/net/sock.go (right):\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/sock.go#newcode38\nsrc/pkg/net/sock.go:38: setKernelSpecificSockopt(s, f, t)\npls rename this guy because this guy will handle not only \nkernel specific socket options but also other socket options \nto make apps transport protocol adaptive.\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/sock_bsd.go\nFile src/pkg/net/sock_bsd.go (right):\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/sock_bsd.go#newcode18\nsrc/pkg/net/sock_bsd.go:18: if (f == syscall.AF_INET || f == syscall.AF_INET6) && t == syscall.SOCK_STREAM {\nswitch t { ... }\nand what about AF_UNIX? can we ignore that address family?\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/sock_linux.go\nFile src/pkg/net/sock_linux.go (right):\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/sock_linux.go#newcode15\nsrc/pkg/net/sock_linux.go:15: if (f == syscall.AF_INET || f == syscall.AF_INET6) && t == syscall.SOCK_STREAM {\nsame as comment on BSD.\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/tcpsock_posix.go\nFile src/pkg/net/tcpsock_posix.go (right):\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/tcpsock_posix.go#newcode223\nsrc/pkg/net/tcpsock_posix.go:223: return setReuseAddr(c.fd, reuse)\nI suspect that this makes different behavior btw BSD \nvariants and Linux, Windows because on Linux, perhaps \nalso Windows SO_REUSEADDR works almost same as a combo \nof SO_REUSEADDR and SO_REUSEPORT on BSD variants.\nYup, we need a test case.\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/udpsock_bsd.go\nFile src/pkg/net/udpsock_bsd.go (right):\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/udpsock_bsd.go#newcode18\nsrc/pkg/net/udpsock_bsd.go:18: func (c *UDPConn) SetReusePort(reuse bool) error {\nnot sure we could do without a stub, placeholder \nfor other OSes. I think we should avoid to introduce \nplatform-dependent public API to standard pkgs.\n\ncan we consolidate both REUSEADDR and REUSEPORT \ninto one API?\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/udpsock_posix.go\nFile src/pkg/net/udpsock_posix.go (right):\n\nhttp://codereview.appspot.com/5520057/diff/9001/src/pkg/net/udpsock_posix.go#newcode150\nsrc/pkg/net/udpsock_posix.go:150: return setReuseAddr(c.fd, reuse)\nsame as comment on TCP.",
+			"disapproval": false,
+			"date": "2012-01-08 14:08:31.594660",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi,\n\nOn Tue, Jan 10, 2012 at 3:22 AM, Russ Cox <rsc@golang.org> wrote:\n\n> Since SO_REUSEADDR has such wildly different meanings\n> on Windows and on Unix, I think exposing this in the public\n> net API is a mistake.\n\nProbably you are right but I'd like to hear a bit more Devon's\nuse case for TCP.\n\n> Why are we doing this? \u00a0What isn't doing the right thing?\n> Can we make it do the right thing?\n\nTo make things smoother I've just sent a separate CL to fix\ndefault socket options stuff.\n",
+			"disapproval": false,
+			"date": "2012-01-12 16:42:26.714832",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Now that we have Mikio's CL, we don't need to\nexport the ability to toggle SO_REUSEADDR directly\nanymore, right?\n",
+			"disapproval": false,
+			"date": "2012-01-13 17:53:41.824336",
+			"approval": false
+		},
+		{
+			"sender": "devon.odell@gmail.com",
+			"recipients": [
+				"devon.odell@gmail.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-01-19 22:19:40.907660",
+			"approval": false
+		}
+	],
+	"owner_email": "devon.odell@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dho",
+	"subject": "code review 5520057: net: Export SetReuseAddr on the underlying netFD for bo...",
+	"created": "2012-01-06 22:14:54.871705",
+	"patchsets": [
+		1,
+		1002,
+		5001,
+		4006,
+		9001
+	],
+	"modified": "2012-01-19 22:19:41.662926",
+	"closed": true,
+	"issue": 5520057
+}

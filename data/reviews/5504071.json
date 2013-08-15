@@ -1,0 +1,61 @@
+{
+	"description": "dashboard: do not require key in source code\n\nOr else eventually someone will check it in.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=e70b4ec9df91 ***\n\ndashboard: do not require key in source code\n\nOr else eventually someone will check it in.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5504071",
+			"disapproval": false,
+			"date": "2011-12-22 15:22:02.758514",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-12-22 14:05:49.839570",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\n\nOn Thu, Dec 22, 2011 at 6:05 AM, <rsc@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> dashboard: do not require key in source code\n>\n> Or else eventually someone will check it in.\n>\n> Please review this at http://codereview.appspot.com/**5504071/<http://codereview.appspot.com/5504071/>\n>\n> Affected files:\n>  M misc/dashboard/app/build/**handler.go\n>  M misc/dashboard/app/build/key.**go\n>\n>\n> Index: misc/dashboard/app/build/**handler.go\n> ==============================**==============================**=======\n> --- a/misc/dashboard/app/build/**handler.go\n> +++ b/misc/dashboard/app/build/**handler.go\n> @@ -322,7 +322,7 @@\n>                // Validate key query parameter for POST requests only.\n>                key := r.FormValue(\"key\")\n>                builder := r.FormValue(\"builder\")\n> -               if r.Method == \"POST\" && !validKey(key, builder) {\n> +               if r.Method == \"POST\" && !validKey(c, key, builder) {\n>                        err = os.NewError(\"invalid key: \" + key)\n>                }\n>\n> @@ -368,7 +368,8 @@\n>                logErr(w, r, os.NewError(\"must supply builder in query\n> string\"))\n>                return\n>        }\n> -       fmt.Fprint(w, builderKey(builder))\n> +       c := appengine.NewContext(r)\n> +       fmt.Fprint(w, builderKey(c, builder))\n>  }\n>\n>  func init() {\n> @@ -392,18 +393,18 @@\n>        return hash != \"\"\n>  }\n>\n> -func validKey(key, builder string) bool {\n> +func validKey(c appengine.Context, key, builder string) bool {\n>        if appengine.IsDevAppServer() {\n>                return true\n>        }\n> -       if key == secretKey {\n> +       if key == secretKey(c) {\n>                return true\n>        }\n> -       return key == builderKey(builder)\n> +       return key == builderKey(c, builder)\n>  }\n>\n> -func builderKey(builder string) string {\n> -       h := hmac.NewMD5([]byte(secretKey))\n> +func builderKey(c appengine.Context, builder string) string {\n> +       h := hmac.NewMD5([]byte(secretKey(**c)))\n>        h.Write([]byte(builder))\n>        return fmt.Sprintf(\"%x\", h.Sum())\n>  }\n> Index: misc/dashboard/app/build/key.**go\n> ==============================**==============================**=======\n> --- a/misc/dashboard/app/build/**key.go\n> +++ b/misc/dashboard/app/build/**key.go\n> @@ -4,13 +4,59 @@\n>\n>  package build\n>\n> -import \"appengine\"\n> +import (\n> +       \"sync\"\n>\n> -// Delete this init function before deploying to production.\n> -func init() {\n> -       if !appengine.IsDevAppServer() {\n> -               panic(\"please read misc/dashboard/app/build/key.**go\")\n> -       }\n> +       \"appengine\"\n> +       \"appengine/datastore\"\n> +)\n> +\n> +var theKey struct {\n> +       sync.RWMutex\n> +       BuilderKey\n>  }\n>\n> -const secretKey = \"\" // Important! Put a secret here before deploying!\n> +type BuilderKey struct {\n> +       Secret string\n> +}\n> +\n> +func (k *BuilderKey) Key(c appengine.Context) *datastore.Key {\n> +       return datastore.NewKey(c, \"BuilderKey\", \"root\", 0, nil)\n> +}\n> +\n> +func secretKey(c appengine.Context) string {\n> +       // check with rlock\n> +       theKey.RLock()\n> +       k := theKey.Secret\n> +       theKey.RUnlock()\n> +       if k != \"\" {\n> +               return k\n> +       }\n> +\n> +       // prepare to fill; check with lock and keep lock\n> +       theKey.Lock()\n> +       defer theKey.Unlock()\n> +       if theKey.Secret != \"\" {\n> +               return theKey.Secret\n> +       }\n> +\n> +       // fill\n> +       if err := datastore.Get(c, theKey.Key(c), &theKey.BuilderKey); err\n> != nil {\n> +               if err == datastore.ErrNoSuchEntity {\n> +                       // If the key is not stored in datastore, write it.\n> +                       // This only happens at the beginning of a new\n> deployment.\n> +                       // The code is left here for SDK use and in case a\n> fresh\n> +                       // deployment is ever needed.  \"gophers rule\" is\n> not the\n> +                       // real key.\n> +                       if !appengine.IsDevAppServer() {\n> +                               panic(\"lost key from datastore\")\n> +                       }\n> +                       theKey.Secret = \"gophers rule\"\n> +                       datastore.Put(c, theKey.Key(c), &theKey.BuilderKey)\n> +                       return theKey.Secret\n> +               }\n> +               panic(\"cannot load builder key: \" + err.String())\n> +       }\n> +\n> +       return theKey.Secret\n> +}\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-12-22 15:18:04.538841",
+			"approval": true
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 5504071: dashboard: do not require key in source code",
+	"created": "2011-12-22 14:05:14.172059",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		3008,
+		1004
+	],
+	"modified": "2011-12-22 15:22:04.792629",
+	"closed": true,
+	"issue": 5504071
+}

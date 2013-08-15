@@ -1,0 +1,120 @@
+{
+	"description": "bufio: make Writer.ReadFrom not flush prematurely. For example,\nmany small writes to a network may be less efficient that a few\nlarge writes.\n\nThis fixes net/http's TestClientWrites, broken by 6565056 that\nintroduced Writer.ReadFrom. That test implicitly assumed that\ncalling io.Copy on a *bufio.Writer wouldn't write to the\nunderlying network until the buffer was full.",
+	"cc": [
+		"dsymonds@golang.org",
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com",
+		"mchaten@gmail.com",
+		"mikioh.mikioh@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nbut sit on it for a day or two to let others take a look.\r\n",
+			"disapproval": false,
+			"date": "2012-10-19 05:17:42.099560",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 19 October 2012 16:05,  <nigeltao@golang.org> wrote:\r\n> Description:\r\n> bufio: make Writer.ReadFrom not flush prematurely.\r\n\r\n\"go test std\" is happy with this change.\r\n",
+			"disapproval": false,
+			"date": "2012-10-19 05:15:53.805970",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"dsymonds@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mchaten@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dsymonds@golang.org (cc: bradfitz@golang.org, golang-dev@googlegroups.com, mchaten@gmail.com, mikioh.mikioh@gmail.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-10-19 05:05:21.120890",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM too\r\n\r\nOn Thu, Oct 18, 2012 at 10:05 PM, <nigeltao@golang.org> wrote:\r\n\r\n> Reviewers: dsymonds,\r\n>\r\n> Message:\r\n> Hello dsymonds@golang.org (cc: bradfitz@golang.org,\r\n> golang-dev@googlegroups.com, mchaten@gmail.com,\r\n> mikioh.mikioh@gmail.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> bufio: make Writer.ReadFrom not flush prematurely. For example,\r\n> many small writes to a network may be less efficient that a few\r\n> large writes.\r\n>\r\n> This fixes net/http's TestClientWrites, broken by 6565056 that\r\n> introduced Writer.ReadFrom. That test implicitly assumed that\r\n> calling io.Copy on a *bufio.Writer wouldn't write to the\r\n> underlying network until the buffer was full.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6743044/<http://codereview.appspot.com/6743044/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/bufio/bufio.go\r\n>   M src/pkg/bufio/bufio_test.go\r\n>\r\n>\r\n> Index: src/pkg/bufio/bufio.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/bufio/bufio.go\r\n> +++ b/src/pkg/bufio/bufio.go\r\n> @@ -569,11 +569,10 @@\r\n>\r\n>  // ReadFrom implements io.ReaderFrom.\r\n>  func (b *Writer) ReadFrom(r io.Reader) (n int64, err error) {\r\n> -       if err = b.Flush(); err != nil {\r\n> -               return 0, err\r\n> -       }\r\n> -       if w, ok := b.wr.(io.ReaderFrom); ok {\r\n> -               return w.ReadFrom(r)\r\n> +       if b.Buffered() == 0 {\r\n> +               if w, ok := b.wr.(io.ReaderFrom); ok {\r\n> +                       return w.ReadFrom(r)\r\n> +               }\r\n>         }\r\n>         var m int\r\n>         for {\r\n> @@ -583,8 +582,10 @@\r\n>                 }\r\n>                 b.n += m\r\n>                 n += int64(m)\r\n> -               if err1 := b.Flush(); err1 != nil {\r\n> -                       return n, err1\r\n> +               if b.Available() == 0 {\r\n> +                       if err1 := b.Flush(); err1 != nil {\r\n> +                               return n, err1\r\n> +                       }\r\n>                 }\r\n>                 if err != nil {\r\n>                         break\r\n> Index: src/pkg/bufio/bufio_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/bufio/bufio_test.go\r\n> +++ b/src/pkg/bufio/bufio_test.go\r\n> @@ -881,6 +881,64 @@\r\n>         }\r\n>  }\r\n>\r\n> +// TestWriterReadFromCounts tests that using io.Copy to copy into a\r\n> +// bufio.Writer does not prematurely flush the buffer. For example, when\r\n> +// buffering writes to a network socket, excessive network writes should\r\n> be\r\n> +// avoided.\r\n> +func TestWriterReadFromCounts(t *testing.T) {\r\n> +       var w0 writeCountingDiscard\r\n> +       b0 := NewWriterSize(&w0, 1234)\r\n> +       b0.WriteString(strings.Repeat(**\"x\", 1000))\r\n> +       if w0 != 0 {\r\n> +               t.Fatalf(\"write 1000 'x's: got %d writes, want 0\", w0)\r\n> +       }\r\n> +       b0.WriteString(strings.Repeat(**\"x\", 200))\r\n> +       if w0 != 0 {\r\n> +               t.Fatalf(\"write 1200 'x's: got %d writes, want 0\", w0)\r\n> +       }\r\n> +       io.Copy(b0, &onlyReader{strings.NewReader(**strings.Repeat(\"x\",\r\n> 30))})\r\n> +       if w0 != 0 {\r\n> +               t.Fatalf(\"write 1230 'x's: got %d writes, want 0\", w0)\r\n> +       }\r\n> +       io.Copy(b0, &onlyReader{strings.NewReader(**strings.Repeat(\"x\",\r\n> 9))})\r\n> +       if w0 != 1 {\r\n> +               t.Fatalf(\"write 1239 'x's: got %d writes, want 1\", w0)\r\n> +       }\r\n> +\r\n> +       var w1 writeCountingDiscard\r\n> +       b1 := NewWriterSize(&w1, 1234)\r\n> +       b1.WriteString(strings.Repeat(**\"x\", 1200))\r\n> +       b1.Flush()\r\n> +       if w1 != 1 {\r\n> +               t.Fatalf(\"flush 1200 'x's: got %d writes, want 1\", w1)\r\n> +       }\r\n> +       b1.WriteString(strings.Repeat(**\"x\", 89))\r\n> +       if w1 != 1 {\r\n> +               t.Fatalf(\"write 1200 + 89 'x's: got %d writes, want 1\", w1)\r\n> +       }\r\n> +       io.Copy(b1, &onlyReader{strings.NewReader(**strings.Repeat(\"x\",\r\n> 700))})\r\n> +       if w1 != 1 {\r\n> +               t.Fatalf(\"write 1200 + 789 'x's: got %d writes, want 1\",\r\n> w1)\r\n> +       }\r\n> +       io.Copy(b1, &onlyReader{strings.NewReader(**strings.Repeat(\"x\",\r\n> 600))})\r\n> +       if w1 != 2 {\r\n> +               t.Fatalf(\"write 1200 + 1389 'x's: got %d writes, want 2\",\r\n> w1)\r\n> +       }\r\n> +       b1.Flush()\r\n> +       if w1 != 3 {\r\n> +               t.Fatalf(\"flush 1200 + 1389 'x's: got %d writes, want 3\",\r\n> w1)\r\n> +       }\r\n> +}\r\n> +\r\n> +// A writeCountingDiscard is like ioutil.Discard and counts the number of\r\n> times\r\n> +// Write is called on it.\r\n> +type writeCountingDiscard int\r\n> +\r\n> +func (w *writeCountingDiscard) Write(p []byte) (int, error) {\r\n> +       *w++\r\n> +       return len(p), nil\r\n> +}\r\n> +\r\n>  // An onlyReader only implements io.Reader, no matter what other methods\r\n> the underlying implementation may have.\r\n>  type onlyReader struct {\r\n>         r io.Reader\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-19 05:19:09.261150",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 19 October 2012 16:17, David Symonds <dsymonds@golang.org> wrote:\r\n> but sit on it for a day or two to let others take a look.\r\n\r\nOTOH the build is currently broken because of this. net/http's\r\nTestClientWrites fails at tip.\r\n",
+			"disapproval": false,
+			"date": "2012-10-19 05:19:26.219930",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Oct 18, 2012 at 10:19 PM, Nigel Tao <nigeltao@golang.org> wrote:\r\n\r\n> On 19 October 2012 16:17, David Symonds <dsymonds@golang.org> wrote:\r\n> > but sit on it for a day or two to let others take a look.\r\n>\r\n> OTOH the build is currently broken because of this. net/http's\r\n> TestClientWrites fails at tip.\r\n>\r\n\r\nI would just submit. (after running tests this time :))\r\n",
+			"disapproval": false,
+			"date": "2012-10-19 05:20:16.316200",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\n> This fixes net/http's TestClientWrites, broken by 6565056 that\r\n> introduced Writer.ReadFrom. That test implicitly assumed that\r\n> calling io.Copy on a *bufio.Writer wouldn't write to the\r\n> underlying network until the buffer was full.\r\n\r\nI'm fine w/ above assumption because net package disables\r\nTCP nagle's algo. by default, and there's no API to enable\r\nnagle's.\r\n",
+			"disapproval": false,
+			"date": "2012-10-19 05:25:03.755680",
+			"approval": true
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"nigeltao@golang.org",
+				"dsymonds@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mchaten@gmail.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=5c90dec799d3 ***\n\nbufio: make Writer.ReadFrom not flush prematurely. For example,\nmany small writes to a network may be less efficient that a few\nlarge writes.\n\nThis fixes net/http's TestClientWrites, broken by 6565056 that\nintroduced Writer.ReadFrom. That test implicitly assumed that\ncalling io.Copy on a *bufio.Writer wouldn't write to the\nunderlying network until the buffer was full.\n\nR=dsymonds\nCC=bradfitz, golang-dev, mchaten, mikioh.mikioh\nhttp://codereview.appspot.com/6743044",
+			"disapproval": false,
+			"date": "2012-10-19 05:33:22.488720",
+			"approval": false
+		}
+	],
+	"owner_email": "nigeltao@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "nigeltao",
+	"subject": "code review 6743044: bufio: make Writer.ReadFrom not flush prematurely. For ...",
+	"created": "2012-10-19 05:04:56.975430",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		10002
+	],
+	"modified": "2012-10-19 05:33:22.488720",
+	"closed": true,
+	"issue": 6743044
+}

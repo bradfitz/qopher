@@ -1,0 +1,488 @@
+{
+	"description": "runtime: record proper goroutine state during stack split\n\nUntil now, the goroutine state has been scattered during the\nexecution of newstack and oldstack. It's all there, and those routines\nknow how to get back to a working goroutine, but other pieces of\nthe system, like stack traces, do not. If something does interrupt\nthe newstack or oldstack execution, the rest of the system can't\nunderstand the goroutine. For example, if newstack decides there\nis an overflow and calls throw, the stack tracer wouldn't dump the\ngoroutine correctly.\n\nFor newstack to save a useful state snapshot, it needs to be able\nto rewind the PC in the function that triggered the split back to\nthe beginning of the function. (The PC is a few instructions in, just\nafter the call to morestack.) To make that possible, we change the\nprologues to insert a jmp back to the beginning of the function\nafter the call to morestack. That is, the prologue used to be roughly:\n\n        TEXT myfunc\n                check for split\n                jmpcond nosplit\n                call morestack\n        nosplit:\n                sub $xxx, sp\n\nNow an extra instruction is inserted after the call:\n\n        TEXT myfunc\n        start:\n                check for split\n                jmpcond nosplit\n                call morestack\n                jmp start\n        nosplit:\n                sub $xxx, sp\n\nThe jmp is not executed directly. It is decoded and simulated by\nruntime.rewindmorestack to discover the beginning of the function,\nand then the call to morestack returns directly to the start label\ninstead of to the jump instruction. So logically the jmp is still\nexecuted, just not by the cpu.\n\nThe prologue thus repeats in the case of a function that needs a\nstack split, but against the cost of the split itself, the extra few\ninstructions are noise. The repeated prologue has the nice effect of\nmaking a stack split double-check that the new stack is big enough:\nif morestack happens to return on a too-small stack, we'll now notice\nbefore corruption happens.\n\nThe ability for newstack to rewind to the beginning of the function\nshould help preemption too. If newstack decides that it was called\nfor preemption instead of a stack split, it now has the goroutine state\ncorrectly paused if rescheduling is needed, and when the goroutine\ncan run again, it can return to the start label on its original stack\nand re-execute the split check.\n\nHere is an example of a split stack overflow showing the full\ntrace, without any special cases in the stack printer.\n(This one was triggered by making the split check incorrect.)\n\nruntime: newstack framesize=0x0 argsize=0x18 sp=0x6aebd0 stack=[0x6b0000, 0x6b0fa0]\n        morebuf={pc:0x69f5b sp:0x6aebd8 lr:0x0}\n        sched={pc:0x68880 sp:0x6aebd0 lr:0x0 ctxt:0x34e700}\nruntime: split stack overflow: 0x6aebd0 < 0x6b0000\nfatal error: runtime: split stack overflow\n\ngoroutine 1 [stack split]:\nruntime.mallocgc(0x290, 0x100000000, 0x1)\n        /Users/rsc/g/go/src/pkg/runtime/zmalloc_darwin_amd64.c:21 fp=0x6aebd8\nruntime.new()\n        /Users/rsc/g/go/src/pkg/runtime/zmalloc_darwin_amd64.c:682 +0x5b fp=0x6aec08\ngo/build.(*Context).Import(0x5ae340, 0xc210030c71, 0xa, 0xc2100b4380, 0x1b, ...)\n        /Users/rsc/g/go/src/pkg/go/build/build.go:424 +0x3a fp=0x6b00a0\nmain.loadImport(0xc210030c71, 0xa, 0xc2100b4380, 0x1b, 0xc2100b42c0, ...)\n        /Users/rsc/g/go/src/cmd/go/pkg.go:249 +0x371 fp=0x6b01a8\nmain.(*Package).load(0xc21017c800, 0xc2100b42c0, 0xc2101828c0, 0x0, 0x0, ...)\n        /Users/rsc/g/go/src/cmd/go/pkg.go:431 +0x2801 fp=0x6b0c98\nmain.loadPackage(0x369040, 0x7, 0xc2100b42c0, 0x0)\n        /Users/rsc/g/go/src/cmd/go/pkg.go:709 +0x857 fp=0x6b0f80\n----- stack segment boundary -----\nmain.(*builder).action(0xc2100902a0, 0x0, 0x0, 0xc2100e6c00, 0xc2100e5750, ...)\n        /Users/rsc/g/go/src/cmd/go/build.go:539 +0x437 fp=0x6b14a0\nmain.(*builder).action(0xc2100902a0, 0x0, 0x0, 0xc21015b400, 0x2, ...)\n        /Users/rsc/g/go/src/cmd/go/build.go:528 +0x1d2 fp=0x6b1658\nmain.(*builder).test(0xc2100902a0, 0xc210092000, 0x0, 0x0, 0xc21008ff60, ...)\n        /Users/rsc/g/go/src/cmd/go/test.go:622 +0x1b53 fp=0x6b1f68\n----- stack segment boundary -----\nmain.runTest(0x5a6b20, 0xc21000a020, 0x2, 0x2)\n        /Users/rsc/g/go/src/cmd/go/test.go:366 +0xd09 fp=0x6a5cf0\nmain.main()\n        /Users/rsc/g/go/src/cmd/go/main.go:161 +0x4f9 fp=0x6a5f78\nruntime.main()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:183 +0x92 fp=0x6a5fa0\nruntime.goexit()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:1266 fp=0x6a5fa8\n\nAnd here is a seg fault during oldstack:\n\nSIGSEGV: segmentation violation\nPC=0x1b2a6\n\nruntime.oldstack()\n        /Users/rsc/g/go/src/pkg/runtime/stack.c:159 +0x76\nruntime.lessstack()\n        /Users/rsc/g/go/src/pkg/runtime/asm_amd64.s:270 +0x22\n\ngoroutine 1 [stack unsplit]:\nfmt.(*pp).printArg(0x2102e64e0, 0xe5c80, 0x2102c9220, 0x73, 0x0, ...)\n        /Users/rsc/g/go/src/pkg/fmt/print.go:818 +0x3d3 fp=0x221031e6f8\nfmt.(*pp).doPrintf(0x2102e64e0, 0x12fb20, 0x2, 0x221031eb98, 0x1, ...)\n        /Users/rsc/g/go/src/pkg/fmt/print.go:1183 +0x15cb fp=0x221031eaf0\nfmt.Sprintf(0x12fb20, 0x2, 0x221031eb98, 0x1, 0x1, ...)\n        /Users/rsc/g/go/src/pkg/fmt/print.go:234 +0x67 fp=0x221031eb40\nflag.(*stringValue).String(0x2102c9210, 0x1, 0x0)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:180 +0xb3 fp=0x221031ebb0\nflag.(*FlagSet).Var(0x2102f6000, 0x293d38, 0x2102c9210, 0x143490, 0xa, ...)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:633 +0x40 fp=0x221031eca0\nflag.(*FlagSet).StringVar(0x2102f6000, 0x2102c9210, 0x143490, 0xa, 0x12fa60, ...)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:550 +0x91 fp=0x221031ece8\nflag.(*FlagSet).String(0x2102f6000, 0x143490, 0xa, 0x12fa60, 0x0, ...)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:563 +0x87 fp=0x221031ed38\nflag.String(0x143490, 0xa, 0x12fa60, 0x0, 0x161950, ...)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:570 +0x6b fp=0x221031ed80\ntesting.init()\n        /Users/rsc/g/go/src/pkg/testing/testing.go:-531 +0xbb fp=0x221031edc0\nstrings_test.init()\n        /Users/rsc/g/go/src/pkg/strings/strings_test.go:1115 +0x62 fp=0x221031ef70\nmain.init()\n        strings/_test/_testmain.go:90 +0x3d fp=0x221031ef78\nruntime.main()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:180 +0x8a fp=0x221031efa0\nruntime.goexit()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:1269 fp=0x221031efa8\n\ngoroutine 2 [runnable]:\nruntime.MHeap_Scavenger()\n        /Users/rsc/g/go/src/pkg/runtime/mheap.c:438\nruntime.goexit()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:1269\ncreated by runtime.main\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:166\n\nrax     0x23ccc0\nrbx     0x23ccc0\nrcx     0x0\nrdx     0x38\nrdi     0x2102c0170\nrsi     0x221032cfe0\nrbp     0x221032cfa0\nrsp     0x7fff5fbff5b0\nr8      0x2102c0120\nr9      0x221032cfa0\nr10     0x221032c000\nr11     0x104ce8\nr12     0xe5c80\nr13     0x1be82baac718\nr14     0x13091135f7d69200\nr15     0x0\nrip     0x1b2a6\nrflags  0x10246\ncs      0x2b\nfs      0x0\ngs      0x0\n\nFixes issue 5723.",
+	"cc": [
+		"r@golang.org",
+		"dvyukov@google.com",
+		"go.peter.90@gmail.com",
+		"dave@cheney.net",
+		"iant@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello r (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-06-19 13:07:08.776040",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nOn 2013/06/19 14:54:18, dvyukov wrote:\n> I think it is too radical.\n> It must be traced back when traceback==2, you never know what piece of\n> information can help.\n> It may help end users as well. For example, you may have a goroutine running\n> Server.Loop(), and you expect to see it in the traceback. If you don't see it,\n> you  do not understand what happens. Either it is among N omitted stacks, or the\n> goroutine is not running for some reason. Stacks of all goroutines help to\n> understand global state of the process.\n> With this change gp->sched becomes a bit more precise -- it's updated on\n> morestack/lessstack. Preemptive scheduler will ensure periodic updates for\n> running goroutines as well.\n> I would just add it as a warning message, but traceback anyway.\n\nYou are approaching this from the perspective of a person debugging the runtime.\nI am approaching this from the perspective of a user.\nPrinting incorrect information is more confusing than printing no information.\nAnd now that the tracebacks are picky about making sure they understand the\nstack, starting with stale data can make the traceback get confused and abort.\nI really don't want to display possibly-wrong information.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode2468\nsrc/pkg/runtime/proc.c:2468: pc == (uintptr)runtime\u00b7lessstack ||\nOn 2013/06/19 14:54:18, dvyukov wrote:\n> you can not enumerate all functions that can catch SIGPROF or crash\n\nThis list is all functions that can appear with nothing above them on the stack.\nIf something is above a function f on the stack, then in the absence of better\ninformation the traceback assumes the args are the entire frame above f.\nThis list only needs to contain functions f that have no frame above them.\nThat's a small list, and it is enumerable.\n\nI do want to clean things up further, but not in this CL.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/signal_386.c\nFile src/pkg/runtime/signal_386.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/signal_386.c#newcode99\nsrc/pkg/runtime/signal_386.c:99: m->throwing = 1;\nOn 2013/06/19 14:07:33, dvyukov wrote:\n> There are other differences with runtime\u00b7dopanic():\n> runtime\u00b7dopanic ensures that tracebackothers() is called once\n> runtime\u00b7dopanic waits that other goroutines finish printing panics\n> \n> We also need to add proper handling of throws on g0 to runtime\u00b7dopanic . This\n> will need to be duplicated in all 5 signal_ files.\n> \n> I think it's better to call runtime\u00b7dopanic() below. This will require passing\n> current PC/SP to runtime\u00b7dopanic().\n\nMaybe. This can be done in a separate CL.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c#newcode169\nsrc/pkg/runtime/stack.c:169: label = top->gobuf;\nOn 2013/06/19 13:55:10, dvyukov wrote:\n> can't we now remove label var and just gogo(&gp->sched) below?\n> this will eliminate an additional copy of GObuf and ensure that gp->sched is\n> actually correct.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-19 16:00:11.198380",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": ">The ability for newstack to rewind to the beginning of the function should help preemption too.\n\nThis is very nice.\n\nI was thinking about resuming at caller of caller of morestack. This would have roughtly the same effect -- the goroutine will redo the CALL and then redo the prolog (including the split stack check).\nmorestack has caller-caller PC, but we need to rewind the call instruction, and it can be either CALL $4byteoff or CALL AX or probably something else.",
+			"disapproval": false,
+			"date": "2013-06-19 13:21:08.100520",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/29001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/29001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nOK, what about GOTRACEBACK=dvyukov?",
+			"disapproval": false,
+			"date": "2013-06-19 16:52:06.118600",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nOn 2013/06/19 16:05:32, rsc wrote:\n> Also, even *you* get confused by stale information. The trace in Rob's mail that\n> showed forkAndExecInChild calling Syscall instead of RawSyscall was caused\n> exactly by using a stale Gobuf, and it took all of us a while to figure out that\n> forkAndExecInChild was not actually calling Syscall as shown. I would rather\n> just say \"I don't know the stack\" than send people down the wrong path.\n\nHey, it's unrelated. The goroutine in Rob's email was not running. We've just used the wrong Gobug (sched instead of morebuf).",
+			"disapproval": false,
+			"date": "2013-06-19 16:29:43.871780",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Jun 19, 2013 at 9:21 AM, <dvyukov@google.com> wrote:\r\n\r\n> I was thinking about resuming at caller of caller of morestack. This\r\n> would have roughtly the same effect -- the goroutine will redo the CALL\r\n> and then redo the prolog (including the split stack check).\r\n> morestack has caller-caller PC, but we need to rewind the call\r\n> instruction, and it can be either CALL $4byteoff or CALL AX or probably\r\n> something else.\r\n>\r\n\r\nAnd AX might be gone!\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-06-19 13:22:03.330420",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nOn 2013/06/19 16:00:11, rsc wrote:\n> On 2013/06/19 14:54:18, dvyukov wrote:\n> > I think it is too radical.\n> > It must be traced back when traceback==2, you never know what piece of\n> > information can help.\n> > It may help end users as well. For example, you may have a goroutine running\n> > Server.Loop(), and you expect to see it in the traceback. If you don't see it,\n> > you  do not understand what happens. Either it is among N omitted stacks, or\n> the\n> > goroutine is not running for some reason. Stacks of all goroutines help to\n> > understand global state of the process.\n> > With this change gp->sched becomes a bit more precise -- it's updated on\n> > morestack/lessstack. Preemptive scheduler will ensure periodic updates for\n> > running goroutines as well.\n> > I would just add it as a warning message, but traceback anyway.\n> \n> You are approaching this from the perspective of a person debugging the runtime.\n> I am approaching this from the perspective of a user.\n> Printing incorrect information is more confusing than printing no information.\n> And now that the tracebacks are picky about making sure they understand the\n> stack, starting with stale data can make the traceback get confused and abort.\n> I really don't want to display possibly-wrong information.\n\n\nIf traceback==2, then it is run by a person debugging the runtime. Any information is useful. And we understand potential problems with running goroutines.\n\nThe following is actually about the end user:\n> > It may help end users as well. For example, you may have a goroutine running\n> > Server.Loop(), and you expect to see it in the traceback. If you don't see it,\n> > you  do not understand what happens. Either it is among N omitted stacks, or\n> the\n> > goroutine is not running for some reason. Stacks of all goroutines help to\n> > understand global state of the process.\n\nWith this change it's impossible to understand what goroutines exist and what are not started or finished prematurely for some reason.\n\nTo properly do what you want, you need to stop the world (not a good idea during crash). Because the checks are inherently racy. A goroutine can just become running. 100% precise stacks would make sense, but 99% precise stacks... kind of... can make it worse. Can I really trust the remaining printed stacks?..\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode2468\nsrc/pkg/runtime/proc.c:2468: pc == (uintptr)runtime\u00b7lessstack ||\nOn 2013/06/19 16:00:11, rsc wrote:\n> On 2013/06/19 14:54:18, dvyukov wrote:\n> > you can not enumerate all functions that can catch SIGPROF or crash\n> \n> This list is all functions that can appear with nothing above them on the stack.\n> If something is above a function f on the stack, then in the absence of better\n> information the traceback assumes the args are the entire frame above f.\n> This list only needs to contain functions f that have no frame above them.\n> That's a small list, and it is enumerable.\n> \n> I do want to clean things up further, but not in this CL.\n\n\nAh, I see.\nNote that SIGPROF can arrive before stack frame allocation (SUB SP), in this case traceback won't find caller function.",
+			"disapproval": false,
+			"date": "2013-06-19 16:22:39.813680",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/19 13:22:03, rsc wrote:\n> On Wed, Jun 19, 2013 at 9:21 AM, <mailto:dvyukov@google.com> wrote:\n> \n> > I was thinking about resuming at caller of caller of morestack. This\n> > would have roughtly the same effect -- the goroutine will redo the CALL\n> > and then redo the prolog (including the split stack check).\n> > morestack has caller-caller PC, but we need to rewind the call\n> > instruction, and it can be either CALL $4byteoff or CALL AX or probably\n> > something else.\n> >\n> \n> And AX might be gone!\n\nGood point",
+			"disapproval": false,
+			"date": "2013-06-19 13:26:30.216780",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/symtab.c\nFile src/pkg/runtime/symtab.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/symtab.c#newcode653\nsrc/pkg/runtime/symtab.c:653: if(m->throwing && gp != nil && (gp == m->curg || gp == m->caughtsig))\nOn 2013/06/19 15:43:59, rsc wrote:\n> On 2013/06/19 14:54:18, dvyukov wrote:\n> > I would remove caughtsig and instead check for \n> > gp == g || gp == m->curg || gp == m->g0\n> > If we are throwing, it would not harm to print detailed info for all of these.\n> \n> Yes, it does harm. We used to print all the possible information all the time,\n> and it was too confusing, because 99% of the time you don't care about these\n> internal frames or internal goroutines, and they make it hard to find the real\n> signal.\n> \n> https://codereview.appspot.com/4907048 was a real improvement. I do not want to\n> roll it back.\n> \n> What I want to do instead is identify the specific cases where more information\n> does matter, and only print that information then. That will keep the signal to\n> noise ratio high.\n\nThis is the specific case when we need more information.\n\nIf the crash/throw happens on g0, we do need more information. This is not something that should happen in user program. And if it does, we need the info.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_arm.c\nFile src/pkg/runtime/traceback_arm.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_arm.c#newcode62\nsrc/pkg/runtime/traceback_arm.c:62: if(printing && runtime\u00b7showframe(nil, gp))\nOn 2013/06/19 15:43:59, rsc wrote:\n> On 2013/06/19 14:54:18, dvyukov wrote:\n> > this also needs \"printall || \"\n> \n> I don't think it does.\n> The stack segment boundaries are printed only when gotraceback=2 or m->throwing.\n> \n> The point of printall is not to emit extra stuff, it's to print *something*.\n> The case where it comes up is goroutines that are entirely runtime frames and\n> that\n> would otherwise show no stack traces at all (such as system goroutines like the\n> scavenger). I don't need to see segment boundaries there.\n\nIt adds another format of stack traces -- with runtime frames but w/o stack boundaries. It's unclear who is intended user of this format. scavenger is excluded in tracebackothers(), so it won't be here if GOTRACEBACK is not 2 already. So this can make difference only in very obscure cases. If it's intended for an end user, then a \"[no stack frames]\" message would be enough. If the user will include this weird stack trace in bug report, then I (runtime developer) want to see segment boundaries.",
+			"disapproval": false,
+			"date": "2013-06-19 15:56:04.974390",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c#newcode169\nsrc/pkg/runtime/stack.c:169: label = top->gobuf;\ncan't we now remove label var and just gogo(&gp->sched) below?\nthis will eliminate an additional copy of GObuf and ensure that gp->sched is actually correct.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c#newcode211\nsrc/pkg/runtime/stack.c:211: sp = m->morebuf.sp;\nI do not understand why we are checking morebuf.sp here.\nIt's morestack caller caller SP. Why are not we checking morestack caller SP? That's what split check was done against.",
+			"disapproval": false,
+			"date": "2013-06-19 13:55:10.560140",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please measure binary size change. Building net/http.test should be enough.",
+			"disapproval": false,
+			"date": "2013-06-19 13:57:10.961140",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nOn 2013/06/19 16:05:32, rsc wrote:\n> Also, even *you* get confused by stale information. The trace in Rob's mail that\n> showed forkAndExecInChild calling Syscall instead of RawSyscall was caused\n> exactly by using a stale Gobuf, and it took all of us a while to figure out that\n> forkAndExecInChild was not actually calling Syscall as shown. I would rather\n> just say \"I don't know the stack\" than send people down the wrong path.\n\nThen you need to stop the world here.",
+			"disapproval": false,
+			"date": "2013-06-19 16:24:19.725060",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/signal_386.c\nFile src/pkg/runtime/signal_386.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/signal_386.c#newcode99\nsrc/pkg/runtime/signal_386.c:99: m->throwing = 1;\nThere are other differences with runtime\u00b7dopanic():\nruntime\u00b7dopanic ensures that tracebackothers() is called once\nruntime\u00b7dopanic waits that other goroutines finish printing panics\n\nWe also need to add proper handling of throws on g0 to runtime\u00b7dopanic . This will need to be duplicated in all 5 signal_ files.\n\nI think it's better to call runtime\u00b7dopanic() below. This will require passing current PC/SP to runtime\u00b7dopanic().\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c#newcode259\nsrc/pkg/runtime/stack.c:259: if(StackDebug) {\ndrop {}",
+			"disapproval": false,
+			"date": "2013-06-19 14:07:32.812230",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c#newcode211\nsrc/pkg/runtime/stack.c:211: sp = m->morebuf.sp;\nOn 2013/06/19 13:55:10, dvyukov wrote:\n> I do not understand why we are checking morebuf.sp here.\n> It's morestack caller caller SP. Why are not we checking morestack caller SP?\n> That's what split check was done against.\n\nYes, it should be gp->sched.sp. Will fix.\n(It was morebuf.sp because that's what it has always been, and I didn't notice it was wrong.)\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/stack.c#newcode259\nsrc/pkg/runtime/stack.c:259: if(StackDebug) {\nOn 2013/06/19 14:07:33, dvyukov wrote:\n> drop {}\n\nNo. These debugging print statements have a tendency to turn into multiline things.",
+			"disapproval": false,
+			"date": "2013-06-19 16:16:22.927430",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nI think it is too radical.\nIt must be traced back when traceback==2, you never know what piece of information can help.\nIt may help end users as well. For example, you may have a goroutine running Server.Loop(), and you expect to see it in the traceback. If you don't see it, you  do not understand what happens. Either it is among N omitted stacks, or the goroutine is not running for some reason. Stacks of all goroutines help to understand global state of the process.\nWith this change gp->sched becomes a bit more precise -- it's updated on morestack/lessstack. Preemptive scheduler will ensure periodic updates for running goroutines as well.\nI would just add it as a warning message, but traceback anyway.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode2468\nsrc/pkg/runtime/proc.c:2468: pc == (uintptr)runtime\u00b7lessstack ||\nyou can not enumerate all functions that can catch SIGPROF or crash\n\nWhat do you think about maintaining this list for GC (GC can not happen at morestack/lessstack), but not requiring exact argsize for SIGPROF and printing?\n\nHere is what I've done in traceback in not-yet-sent CL:\n\n\t\telse if(callback != nil) {  // arglen is not necessary for printing\n\t\t\truntime\u00b7printf(\"runtime: unknown argument frame size for %S\\n\", f->name);\n\t\t\truntime\u00b7throw(\"invalid stack\");\n\t\t}\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/symtab.c\nFile src/pkg/runtime/symtab.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/symtab.c#newcode653\nsrc/pkg/runtime/symtab.c:653: if(m->throwing && gp != nil && (gp == m->curg || gp == m->caughtsig))\nI would remove caughtsig and instead check for \ngp == g || gp == m->curg || gp == m->g0\nIf we are throwing, it would not harm to print detailed info for all of these.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/sys_arm.c\nFile src/pkg/runtime/sys_arm.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/sys_arm.c#newcode27\nsrc/pkg/runtime/sys_arm.c:27: inst = *(uint32*)gobuf->pc;\ncan't this cause misaligned read?\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_arm.c\nFile src/pkg/runtime/traceback_arm.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_arm.c#newcode62\nsrc/pkg/runtime/traceback_arm.c:62: if(printing && runtime\u00b7showframe(nil, gp))\nthis also needs \"printall || \"\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_arm.c#newcode155\nsrc/pkg/runtime/traceback_arm.c:155: if(m->throwing && gp == m->curg)\nsame thing as in traceback_x86.c\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_x86.c\nFile src/pkg/runtime/traceback_x86.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_x86.c#newcode66\nsrc/pkg/runtime/traceback_x86.c:66: if(printing && runtime\u00b7showframe(nil, gp))\nthis also needs \"printall || \"\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_x86.c#newcode158\nsrc/pkg/runtime/traceback_x86.c:158: if(m->throwing && gp == m->curg)\nthis diverges from the check in runtime\u00b7showframe(), it also checks caughtsig.\nI think you can just call runtime\u00b7showframe(nil, gp) here, it should do the right thing.\nI will have a side effect of printing fp's for all goroutines when GOTRACEBACK=2. I think it's fine, especially since you moved fp to the end of the line.",
+			"disapproval": false,
+			"date": "2013-06-19 14:54:18.261640",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/symtab.c\nFile src/pkg/runtime/symtab.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/symtab.c#newcode653\nsrc/pkg/runtime/symtab.c:653: if(m->throwing && gp != nil && (gp == m->curg || gp == m->caughtsig))\nOn 2013/06/19 14:54:18, dvyukov wrote:\n> I would remove caughtsig and instead check for \n> gp == g || gp == m->curg || gp == m->g0\n> If we are throwing, it would not harm to print detailed info for all of these.\n\nYes, it does harm. We used to print all the possible information all the time, and it was too confusing, because 99% of the time you don't care about these internal frames or internal goroutines, and they make it hard to find the real signal.\n\nhttps://codereview.appspot.com/4907048 was a real improvement. I do not want to roll it back.\n\nWhat I want to do instead is identify the specific cases where more information does matter, and only print that information then. That will keep the signal to noise ratio high.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/sys_arm.c\nFile src/pkg/runtime/sys_arm.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/sys_arm.c#newcode27\nsrc/pkg/runtime/sys_arm.c:27: inst = *(uint32*)gobuf->pc;\nOn 2013/06/19 14:54:18, dvyukov wrote:\n> can't this cause misaligned read?\n\nI should probably just remove the test on the next line.\nIf the pc is misaligned, something very bad is going on,\nand it's fine for the program to crash.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_arm.c\nFile src/pkg/runtime/traceback_arm.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_arm.c#newcode62\nsrc/pkg/runtime/traceback_arm.c:62: if(printing && runtime\u00b7showframe(nil, gp))\nOn 2013/06/19 14:54:18, dvyukov wrote:\n> this also needs \"printall || \"\n\nI don't think it does.\nThe stack segment boundaries are printed only when gotraceback=2 or m->throwing.\n\nThe point of printall is not to emit extra stuff, it's to print *something*.\nThe case where it comes up is goroutines that are entirely runtime frames and that\nwould otherwise show no stack traces at all (such as system goroutines like the\nscavenger). I don't need to see segment boundaries there.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_x86.c\nFile src/pkg/runtime/traceback_x86.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_x86.c#newcode66\nsrc/pkg/runtime/traceback_x86.c:66: if(printing && runtime\u00b7showframe(nil, gp))\nOn 2013/06/19 14:54:18, dvyukov wrote:\n> this also needs \"printall || \"\n\nSame reply as in traceback_arm.c.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_x86.c#newcode158\nsrc/pkg/runtime/traceback_x86.c:158: if(m->throwing && gp == m->curg)\nOn 2013/06/19 14:54:18, dvyukov wrote:\n> this diverges from the check in runtime\u00b7showframe(), it also checks caughtsig.\n> I think you can just call runtime\u00b7showframe(nil, gp) here, it should do the\n> right thing.\n> I will have a side effect of printing fp's for all goroutines when\n> GOTRACEBACK=2. I think it's fine, especially since you moved fp to the end of\n> the line.\n\nMaybe.\nThis gets back to signal vs noise. The fp should only be printed when it is useful.\nThe only time it is useful is for the current goroutine, typically to debug a split stack problem.\nThat only matters for m->curg.\nI can't think of any situation where I want to see the fp= for m->g0.",
+			"disapproval": false,
+			"date": "2013-06-19 15:43:59.173800",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"go.peter.90@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM within my limited understanding.",
+			"disapproval": false,
+			"date": "2013-06-21 21:49:16.031560",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/sys_arm.c\nFile src/pkg/runtime/sys_arm.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/sys_arm.c#newcode27\nsrc/pkg/runtime/sys_arm.c:27: inst = *(uint32*)gobuf->pc;\nOn 2013/06/19 15:43:59, rsc wrote:\n> On 2013/06/19 14:54:18, dvyukov wrote:\n> > can't this cause misaligned read?\n> \n> I should probably just remove the test on the next line.\n> If the pc is misaligned, something very bad is going on,\n> and it's fine for the program to crash.\n\nAh, I see.\nIf misaligned read will raise exception, we will catch and report it anyway. So I think it is fine.\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_x86.c\nFile src/pkg/runtime/traceback_x86.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/traceback_x86.c#newcode158\nsrc/pkg/runtime/traceback_x86.c:158: if(m->throwing && gp == m->curg)\nOn 2013/06/19 15:43:59, rsc wrote:\n> On 2013/06/19 14:54:18, dvyukov wrote:\n> > this diverges from the check in runtime\u00b7showframe(), it also checks caughtsig.\n> > I think you can just call runtime\u00b7showframe(nil, gp) here, it should do the\n> > right thing.\n> > I will have a side effect of printing fp's for all goroutines when\n> > GOTRACEBACK=2. I think it's fine, especially since you moved fp to the end of\n> > the line.\n> \n> Maybe.\n> This gets back to signal vs noise. The fp should only be printed when it is\n> useful.\n> The only time it is useful is for the current goroutine, typically to debug a\n> split stack problem.\n> That only matters for m->curg.\n> I can't think of any situation where I want to see the fp= for m->g0.\n\n\nWell, when g0 tries to split stack.\n\nCrashes on g0 must not happen at all, right? If it happens I don't want to be in a situation like - here is this one time crash; I only wish we have this additional bit of information in the report...\n\nI would not care about trace verbosity when (1) GOTRACEBACK=2 (runtime developer) or (2) this should never happen happens.",
+			"disapproval": false,
+			"date": "2013-06-19 16:03:57.563670",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nAlso, even *you* get confused by stale information. The trace in Rob's mail that showed forkAndExecInChild calling Syscall instead of RawSyscall was caused exactly by using a stale Gobuf, and it took all of us a while to figure out that forkAndExecInChild was not actually calling Syscall as shown. I would rather just say \"I don't know the stack\" than send people down the wrong path.",
+			"disapproval": false,
+			"date": "2013-06-19 16:05:32.385430",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nAs you observed, stopping the world is not wise or even possible. There is a difference between printing information that is probably correct (as in the other goroutine) and information that is definitely wrong (as in this goroutine).\n\nI certainly regret that we don't have a stack to print for this goroutine, but let's address that separately instead of pretending that we do. This is already a known issue: golang.org/issue/4494.",
+			"disapproval": false,
+			"date": "2013-06-19 16:29:32.789940",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode2468\nsrc/pkg/runtime/proc.c:2468: pc == (uintptr)runtime\u00b7lessstack ||\n> Ah, I see.\n> Note that SIGPROF can arrive before stack frame allocation (SUB SP), in this\n> case traceback won't find caller function.\n\nThanks, I hadn't remembered that case.\nThat's an important but separate problem. I created golang.org/issue/5736.",
+			"disapproval": false,
+			"date": "2013-06-19 16:30:56.276190",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/14001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nOn 2013/06/19 16:29:44, dvyukov wrote:\n> On 2013/06/19 16:05:32, rsc wrote:\n> > Also, even *you* get confused by stale information. The trace in Rob's mail\n> that\n> > showed forkAndExecInChild calling Syscall instead of RawSyscall was caused\n> > exactly by using a stale Gobuf, and it took all of us a while to figure out\n> that\n> > forkAndExecInChild was not actually calling Syscall as shown. I would rather\n> > just say \"I don't know the stack\" than send people down the wrong path.\n> \n> Hey, it's unrelated. The goroutine in Rob's email was not running. We've just\n> used the wrong Gobug (sched instead of morebuf).\n\nIt would not have been prevented by the edit at this line, but it is exactly the same problem: using a stale copy of gp->sched to try to interpret the current stack memory. That results in the first frame being wrong and subsequent frames maybe being correct or maybe not, depending on whether the walk ever converges on real stack frame boundaries.",
+			"disapproval": false,
+			"date": "2013-06-19 16:33:26.405980",
+			"approval": false
+		},
+		{
+			"sender": "go.peter.90@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"go.peter.90@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/19 16:52:06, dvyukov wrote:\n> https://codereview.appspot.com/10360048/diff/29001/src/pkg/runtime/proc.c\n> File src/pkg/runtime/proc.c (right):\n> \n> https://codereview.appspot.com/10360048/diff/29001/src/pkg/runtime/proc.c#newcode253\n> src/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread;\n> stack unavailable\\n\");\n> OK, what about GOTRACEBACK=dvyukov?\n\nWhat about GOTRACEBACK=\u0424\u0430\u0431\u0435\u0440\u0436\u0435\u0301? :-)\n\nPeter",
+			"disapproval": false,
+			"date": "2013-06-19 19:39:15.922960",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"go.peter.90@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nI am still debugging a thing or two on ARM, so this won't be submitted until Monday at the earliest.\n\nI am happy to keep discussing fun details like what does and doesn't get printed, but the longer we discuss the longer the runtime moratorium lasts. :-)\n\nhttps://codereview.appspot.com/10360048/diff/29001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/29001/src/pkg/runtime/proc.c#newcode253\nsrc/pkg/runtime/proc.c:253: runtime\u00b7printf(\"\\tgoroutine running on other thread; stack unavailable\\n\");\nOn 2013/06/19 16:52:06, dvyukov wrote:\n> OK, what about GOTRACEBACK=dvyukov?\n\nNo. Feel free to comment out the check in your local client.\nIf we can figure out a better approach in a future CL, that's fine.\nI don't want it to hold up this CL.",
+			"disapproval": false,
+			"date": "2013-06-21 19:25:20.575400",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"go.peter.90@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/21 19:25:20, rsc wrote:\n> PTAL\n\nYou seem forgot to upload. The comments are not addressed.",
+			"disapproval": false,
+			"date": "2013-06-22 15:34:51.834630",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\r\n\r\nThis CL now runs all.bash on arm, amd64, and 386.\r\nI am disinclined to change very much at this point.\r\n",
+			"disapproval": false,
+			"date": "2013-06-26 02:58:39.486470",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"go.peter.90@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/26 02:58:39, rsc wrote:\n> PTAL\n> \n> This CL now runs all.bash on arm, amd64, and 386.\n> I am disinclined to change very much at this point.\n\nTested without incident on armv5 and armv7 hosts.",
+			"disapproval": false,
+			"date": "2013-06-26 06:45:31.769000",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"go.peter.90@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/stack.c#newcode209\nsrc/pkg/runtime/stack.c:209: sp = m->morebuf.sp;\nit must be gp->sched.sp\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/stack.h\nFile src/pkg/runtime/stack.h (right):\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/stack.h#newcode88\nsrc/pkg/runtime/stack.h:88: \ndelete tab\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/traceback_arm.c\nFile src/pkg/runtime/traceback_arm.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/traceback_arm.c#newcode101\nsrc/pkg/runtime/traceback_arm.c:101: if(!printing)\ndo the same traceback_x86.c or remove this\nI think it's a good idea to not crash during crash print",
+			"disapproval": false,
+			"date": "2013-06-26 12:31:44.403030",
+			"approval": true
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"go.peter.90@gmail.com",
+				"dave@cheney.net",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/cmd/5l/noop.c\nFile src/cmd/5l/noop.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/cmd/5l/noop.c#newcode219\nsrc/cmd/5l/noop.c:219: //\tMOVW $(autoffset+(StackGuard-StackSmall)), R3\ns/autooffset/autosize/\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/traceback_arm.c\nFile src/pkg/runtime/traceback_arm.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/traceback_arm.c#newcode11\nsrc/pkg/runtime/traceback_arm.c:11: void runtime\u00b7newstack(void);\nDeclaration of newstack is no longer needed.\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/traceback_x86.c\nFile src/pkg/runtime/traceback_x86.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/traceback_x86.c#newcode13\nsrc/pkg/runtime/traceback_x86.c:13: void runtime\u00b7newstack(void);\nDeclaration of newstack is no longer needed.",
+			"disapproval": false,
+			"date": "2013-06-26 14:03:09.748800",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"go.peter.90@gmail.com",
+				"dave@cheney.net",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/stack.c\nFile src/pkg/runtime/stack.c (right):\n\nhttps://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/stack.c#newcode209\nsrc/pkg/runtime/stack.c:209: sp = m->morebuf.sp;\nOn 2013/06/26 12:31:45, dvyukov wrote:\n> it must be gp->sched.sp\n\nThat fails if we're in a reflectcall.\nI will look into that in a separate CL.",
+			"disapproval": false,
+			"date": "2013-06-26 18:37:17.700540",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Jun 26, 2013 at 10:37 PM,  <rsc@golang.org> wrote:\r\n>\r\n> https://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/stack.c\r\n> File src/pkg/runtime/stack.c (right):\r\n>\r\n> https://codereview.appspot.com/10360048/diff/58001/src/pkg/runtime/stack.c#newcode209\r\n> src/pkg/runtime/stack.c:209: sp = m->morebuf.sp;\r\n> On 2013/06/26 12:31:45, dvyukov wrote:\r\n>>\r\n>> it must be gp->sched.sp\r\n>\r\n>\r\n> That fails if we're in a reflectcall.\r\n> I will look into that in a separate CL.\r\n\r\nOK\r\n",
+			"disapproval": false,
+			"date": "2013-06-26 18:43:19.306580",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"dvyukov@google.com",
+				"go.peter.90@gmail.com",
+				"dave@cheney.net",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=5222e7d810a5 ***\n\nruntime: record proper goroutine state during stack split\n\nUntil now, the goroutine state has been scattered during the\nexecution of newstack and oldstack. It's all there, and those routines\nknow how to get back to a working goroutine, but other pieces of\nthe system, like stack traces, do not. If something does interrupt\nthe newstack or oldstack execution, the rest of the system can't\nunderstand the goroutine. For example, if newstack decides there\nis an overflow and calls throw, the stack tracer wouldn't dump the\ngoroutine correctly.\n\nFor newstack to save a useful state snapshot, it needs to be able\nto rewind the PC in the function that triggered the split back to\nthe beginning of the function. (The PC is a few instructions in, just\nafter the call to morestack.) To make that possible, we change the\nprologues to insert a jmp back to the beginning of the function\nafter the call to morestack. That is, the prologue used to be roughly:\n\n        TEXT myfunc\n                check for split\n                jmpcond nosplit\n                call morestack\n        nosplit:\n                sub $xxx, sp\n\nNow an extra instruction is inserted after the call:\n\n        TEXT myfunc\n        start:\n                check for split\n                jmpcond nosplit\n                call morestack\n                jmp start\n        nosplit:\n                sub $xxx, sp\n\nThe jmp is not executed directly. It is decoded and simulated by\nruntime.rewindmorestack to discover the beginning of the function,\nand then the call to morestack returns directly to the start label\ninstead of to the jump instruction. So logically the jmp is still\nexecuted, just not by the cpu.\n\nThe prologue thus repeats in the case of a function that needs a\nstack split, but against the cost of the split itself, the extra few\ninstructions are noise. The repeated prologue has the nice effect of\nmaking a stack split double-check that the new stack is big enough:\nif morestack happens to return on a too-small stack, we'll now notice\nbefore corruption happens.\n\nThe ability for newstack to rewind to the beginning of the function\nshould help preemption too. If newstack decides that it was called\nfor preemption instead of a stack split, it now has the goroutine state\ncorrectly paused if rescheduling is needed, and when the goroutine\ncan run again, it can return to the start label on its original stack\nand re-execute the split check.\n\nHere is an example of a split stack overflow showing the full\ntrace, without any special cases in the stack printer.\n(This one was triggered by making the split check incorrect.)\n\nruntime: newstack framesize=0x0 argsize=0x18 sp=0x6aebd0 stack=[0x6b0000, 0x6b0fa0]\n        morebuf={pc:0x69f5b sp:0x6aebd8 lr:0x0}\n        sched={pc:0x68880 sp:0x6aebd0 lr:0x0 ctxt:0x34e700}\nruntime: split stack overflow: 0x6aebd0 < 0x6b0000\nfatal error: runtime: split stack overflow\n\ngoroutine 1 [stack split]:\nruntime.mallocgc(0x290, 0x100000000, 0x1)\n        /Users/rsc/g/go/src/pkg/runtime/zmalloc_darwin_amd64.c:21 fp=0x6aebd8\nruntime.new()\n        /Users/rsc/g/go/src/pkg/runtime/zmalloc_darwin_amd64.c:682 +0x5b fp=0x6aec08\ngo/build.(*Context).Import(0x5ae340, 0xc210030c71, 0xa, 0xc2100b4380, 0x1b, ...)\n        /Users/rsc/g/go/src/pkg/go/build/build.go:424 +0x3a fp=0x6b00a0\nmain.loadImport(0xc210030c71, 0xa, 0xc2100b4380, 0x1b, 0xc2100b42c0, ...)\n        /Users/rsc/g/go/src/cmd/go/pkg.go:249 +0x371 fp=0x6b01a8\nmain.(*Package).load(0xc21017c800, 0xc2100b42c0, 0xc2101828c0, 0x0, 0x0, ...)\n        /Users/rsc/g/go/src/cmd/go/pkg.go:431 +0x2801 fp=0x6b0c98\nmain.loadPackage(0x369040, 0x7, 0xc2100b42c0, 0x0)\n        /Users/rsc/g/go/src/cmd/go/pkg.go:709 +0x857 fp=0x6b0f80\n----- stack segment boundary -----\nmain.(*builder).action(0xc2100902a0, 0x0, 0x0, 0xc2100e6c00, 0xc2100e5750, ...)\n        /Users/rsc/g/go/src/cmd/go/build.go:539 +0x437 fp=0x6b14a0\nmain.(*builder).action(0xc2100902a0, 0x0, 0x0, 0xc21015b400, 0x2, ...)\n        /Users/rsc/g/go/src/cmd/go/build.go:528 +0x1d2 fp=0x6b1658\nmain.(*builder).test(0xc2100902a0, 0xc210092000, 0x0, 0x0, 0xc21008ff60, ...)\n        /Users/rsc/g/go/src/cmd/go/test.go:622 +0x1b53 fp=0x6b1f68\n----- stack segment boundary -----\nmain.runTest(0x5a6b20, 0xc21000a020, 0x2, 0x2)\n        /Users/rsc/g/go/src/cmd/go/test.go:366 +0xd09 fp=0x6a5cf0\nmain.main()\n        /Users/rsc/g/go/src/cmd/go/main.go:161 +0x4f9 fp=0x6a5f78\nruntime.main()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:183 +0x92 fp=0x6a5fa0\nruntime.goexit()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:1266 fp=0x6a5fa8\n\nAnd here is a seg fault during oldstack:\n\nSIGSEGV: segmentation violation\nPC=0x1b2a6\n\nruntime.oldstack()\n        /Users/rsc/g/go/src/pkg/runtime/stack.c:159 +0x76\nruntime.lessstack()\n        /Users/rsc/g/go/src/pkg/runtime/asm_amd64.s:270 +0x22\n\ngoroutine 1 [stack unsplit]:\nfmt.(*pp).printArg(0x2102e64e0, 0xe5c80, 0x2102c9220, 0x73, 0x0, ...)\n        /Users/rsc/g/go/src/pkg/fmt/print.go:818 +0x3d3 fp=0x221031e6f8\nfmt.(*pp).doPrintf(0x2102e64e0, 0x12fb20, 0x2, 0x221031eb98, 0x1, ...)\n        /Users/rsc/g/go/src/pkg/fmt/print.go:1183 +0x15cb fp=0x221031eaf0\nfmt.Sprintf(0x12fb20, 0x2, 0x221031eb98, 0x1, 0x1, ...)\n        /Users/rsc/g/go/src/pkg/fmt/print.go:234 +0x67 fp=0x221031eb40\nflag.(*stringValue).String(0x2102c9210, 0x1, 0x0)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:180 +0xb3 fp=0x221031ebb0\nflag.(*FlagSet).Var(0x2102f6000, 0x293d38, 0x2102c9210, 0x143490, 0xa, ...)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:633 +0x40 fp=0x221031eca0\nflag.(*FlagSet).StringVar(0x2102f6000, 0x2102c9210, 0x143490, 0xa, 0x12fa60, ...)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:550 +0x91 fp=0x221031ece8\nflag.(*FlagSet).String(0x2102f6000, 0x143490, 0xa, 0x12fa60, 0x0, ...)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:563 +0x87 fp=0x221031ed38\nflag.String(0x143490, 0xa, 0x12fa60, 0x0, 0x161950, ...)\n        /Users/rsc/g/go/src/pkg/flag/flag.go:570 +0x6b fp=0x221031ed80\ntesting.init()\n        /Users/rsc/g/go/src/pkg/testing/testing.go:-531 +0xbb fp=0x221031edc0\nstrings_test.init()\n        /Users/rsc/g/go/src/pkg/strings/strings_test.go:1115 +0x62 fp=0x221031ef70\nmain.init()\n        strings/_test/_testmain.go:90 +0x3d fp=0x221031ef78\nruntime.main()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:180 +0x8a fp=0x221031efa0\nruntime.goexit()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:1269 fp=0x221031efa8\n\ngoroutine 2 [runnable]:\nruntime.MHeap_Scavenger()\n        /Users/rsc/g/go/src/pkg/runtime/mheap.c:438\nruntime.goexit()\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:1269\ncreated by runtime.main\n        /Users/rsc/g/go/src/pkg/runtime/proc.c:166\n\nrax     0x23ccc0\nrbx     0x23ccc0\nrcx     0x0\nrdx     0x38\nrdi     0x2102c0170\nrsi     0x221032cfe0\nrbp     0x221032cfa0\nrsp     0x7fff5fbff5b0\nr8      0x2102c0120\nr9      0x221032cfa0\nr10     0x221032c000\nr11     0x104ce8\nr12     0xe5c80\nr13     0x1be82baac718\nr14     0x13091135f7d69200\nr15     0x0\nrip     0x1b2a6\nrflags  0x10246\ncs      0x2b\nfs      0x0\ngs      0x0\n\nFixes issue 5723.\n\nR=r, dvyukov, go.peter.90, dave, iant\nCC=golang-dev\nhttps://codereview.appspot.com/10360048",
+			"disapproval": false,
+			"date": "2013-06-27 15:32:07.967650",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 10360048: runtime: record proper goroutine state during stack split",
+	"created": "2013-06-18 19:59:37.414170",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		8001,
+		11001,
+		14001,
+		29001,
+		42001,
+		56001,
+		58001,
+		75001
+	],
+	"modified": "2013-06-27 20:25:42.087660",
+	"closed": true,
+	"issue": 10360048
+}

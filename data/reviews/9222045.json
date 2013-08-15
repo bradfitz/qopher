@@ -1,0 +1,83 @@
+{
+	"description": "crypto/rsa: check for minimal PKCS#1 v1.5 padding.\n\nThe PKCS#1 spec requires that the PS padding in an RSA message be at\nleast 8 bytes long. We were not previously checking this. This isn't\nimportant in the most common situation (session key encryption), but\nthe impact is unclear in other cases.\n\nThis change enforces the specified minimum size.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\n\r\n\r\nOn Tue, May 14, 2013 at 2:43 PM, <agl@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> crypto/rsa: check for minimal PKCS#1 v1.5 padding.\r\n>\r\n> The PKCS#1 spec requires that the PS padding in an RSA message be at\r\n> least 8 bytes long. We were not previously checking this. This isn't\r\n> important in the most common situation (session key encryption), but\r\n> the impact is unclear in other cases.\r\n>\r\n> This change enforces the specified minimum size.\r\n>\r\n> Please review this at https://codereview.appspot.**com/9222045/<https://codereview.appspot.com/9222045/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/crypto/rsa/pkcs1v15.go\r\n>   M src/pkg/crypto/rsa/pkcs1v15_**test.go\r\n>   M src/pkg/crypto/subtle/**constant_time.go\r\n>   M src/pkg/crypto/subtle/**constant_time_test.go\r\n>\r\n>\r\n> Index: src/pkg/crypto/rsa/pkcs1v15.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/rsa/pkcs1v15.**go\r\n> +++ b/src/pkg/crypto/rsa/pkcs1v15.**go\r\n> @@ -124,7 +124,11 @@\r\n>                 lookingForIndex = subtle.ConstantTimeSelect(**equals0, 0,\r\n> lookingForIndex)\r\n>         }\r\n>\r\n> -       valid = firstByteIsZero & secondByteIsTwo & (^lookingForIndex & 1)\r\n> +       // The PS padding must be at least 8 bytes long, and it starts two\r\n> +       // bytes into em.\r\n> +       validPS := subtle.**ConstantTimeLessOrEqual(2+8, index)\r\n> +\r\n> +       valid = firstByteIsZero & secondByteIsTwo & (^lookingForIndex & 1)\r\n> & validPS\r\n>         msg = em[index+1:]\r\n>         return\r\n>  }\r\n> Index: src/pkg/crypto/rsa/pkcs1v15_**test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/rsa/pkcs1v15_**test.go\r\n> +++ b/src/pkg/crypto/rsa/pkcs1v15_**test.go\r\n> @@ -197,6 +197,14 @@\r\n>         }\r\n>  }\r\n>\r\n> +func TestOverlongMessagePKCS1v15(t *testing.T) {\r\n> +       ciphertext := decodeBase64(\"**fjOVdirUzFoLlukv80dBllMLjXythI**\r\n> f22feqPrNo0YoIjzyzyoMFiLjAc/**Y4krkeZ11XFThIrEvw\\**nkRiZcCq5ng==\")\r\n> +       _, err := DecryptPKCS1v15(nil, rsaPrivateKey, ciphertext)\r\n> +       if err == nil {\r\n> +               t.Error(\"RSA decrypted a message that was too long.\")\r\n> +       }\r\n> +}\r\n> +\r\n>  // In order to generate new test vectors you'll need the PEM form of this\r\n> key:\r\n>  // -----BEGIN RSA PRIVATE KEY-----\r\n>  // MIIBOgIBAAJBALKZD0nEffqM1ACuak**0bijtqE2QrI/**KLADv7l3kK3ppMyCuLKoF0\r\n> Index: src/pkg/crypto/subtle/**constant_time.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/subtle/**constant_time.go\r\n> +++ b/src/pkg/crypto/subtle/**constant_time.go\r\n> @@ -55,3 +55,11 @@\r\n>         }\r\n>         return\r\n>  }\r\n> +\r\n> +// ConstantTimeLessOrEqual returns 1 if x <= y and 0 otherwise.\r\n> +// Its behavior is undefined if x or y are negative or > 2**31 - 1.\r\n> +func ConstantTimeLessOrEqual(x, y int) int {\r\n> +       x32 := int32(x)\r\n> +       y32 := int32(y)\r\n> +       return int(((x32 - y32 - 1) >> 31) & 1)\r\n> +}\r\n> Index: src/pkg/crypto/subtle/**constant_time_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/subtle/**constant_time_test.go\r\n> +++ b/src/pkg/crypto/subtle/**constant_time_test.go\r\n> @@ -103,3 +103,23 @@\r\n>                 t.Error(err)\r\n>         }\r\n>  }\r\n> +\r\n> +var lessOrEqualTests = []struct {\r\n> +       x, y, result int\r\n> +}{\r\n> +       {0, 0, 1},\r\n> +       {1, 0, 0},\r\n> +       {0, 1, 1},\r\n> +       {10, 20, 1},\r\n> +       {20, 10, 0},\r\n> +       {10, 10, 1},\r\n> +}\r\n> +\r\n> +func TestConstantTimeLessOrEqual(t *testing.T) {\r\n> +       for i, test := range lessOrEqualTests {\r\n> +               result := ConstantTimeLessOrEqual(test.**x, test.y)\r\n> +               if result != test.result {\r\n> +                       t.Errorf(\"#%d: %d <= %d gave %d, expected %d\", i,\r\n> test.x, test.y, result, test.result)\r\n> +               }\r\n> +       }\r\n> +}\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 23:13:32.530500",
+			"approval": true
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-14 21:43:32.593460",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Equal is spelled Eq elsewhere in crypto/subtle. Why inconsistent here?\r\n\r\n\r\n\r\nOn Tue, May 14, 2013 at 2:43 PM, <agl@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> crypto/rsa: check for minimal PKCS#1 v1.5 padding.\r\n>\r\n> The PKCS#1 spec requires that the PS padding in an RSA message be at\r\n> least 8 bytes long. We were not previously checking this. This isn't\r\n> important in the most common situation (session key encryption), but\r\n> the impact is unclear in other cases.\r\n>\r\n> This change enforces the specified minimum size.\r\n>\r\n> Please review this at https://codereview.appspot.**com/9222045/<https://codereview.appspot.com/9222045/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/crypto/rsa/pkcs1v15.go\r\n>   M src/pkg/crypto/rsa/pkcs1v15_**test.go\r\n>   M src/pkg/crypto/subtle/**constant_time.go\r\n>   M src/pkg/crypto/subtle/**constant_time_test.go\r\n>\r\n>\r\n> Index: src/pkg/crypto/rsa/pkcs1v15.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/rsa/pkcs1v15.**go\r\n> +++ b/src/pkg/crypto/rsa/pkcs1v15.**go\r\n> @@ -124,7 +124,11 @@\r\n>                 lookingForIndex = subtle.ConstantTimeSelect(**equals0, 0,\r\n> lookingForIndex)\r\n>         }\r\n>\r\n> -       valid = firstByteIsZero & secondByteIsTwo & (^lookingForIndex & 1)\r\n> +       // The PS padding must be at least 8 bytes long, and it starts two\r\n> +       // bytes into em.\r\n> +       validPS := subtle.**ConstantTimeLessOrEqual(2+8, index)\r\n> +\r\n> +       valid = firstByteIsZero & secondByteIsTwo & (^lookingForIndex & 1)\r\n> & validPS\r\n>         msg = em[index+1:]\r\n>         return\r\n>  }\r\n> Index: src/pkg/crypto/rsa/pkcs1v15_**test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/rsa/pkcs1v15_**test.go\r\n> +++ b/src/pkg/crypto/rsa/pkcs1v15_**test.go\r\n> @@ -197,6 +197,14 @@\r\n>         }\r\n>  }\r\n>\r\n> +func TestOverlongMessagePKCS1v15(t *testing.T) {\r\n> +       ciphertext := decodeBase64(\"**fjOVdirUzFoLlukv80dBllMLjXythI**\r\n> f22feqPrNo0YoIjzyzyoMFiLjAc/**Y4krkeZ11XFThIrEvw\\**nkRiZcCq5ng==\")\r\n> +       _, err := DecryptPKCS1v15(nil, rsaPrivateKey, ciphertext)\r\n> +       if err == nil {\r\n> +               t.Error(\"RSA decrypted a message that was too long.\")\r\n> +       }\r\n> +}\r\n> +\r\n>  // In order to generate new test vectors you'll need the PEM form of this\r\n> key:\r\n>  // -----BEGIN RSA PRIVATE KEY-----\r\n>  // MIIBOgIBAAJBALKZD0nEffqM1ACuak**0bijtqE2QrI/**KLADv7l3kK3ppMyCuLKoF0\r\n> Index: src/pkg/crypto/subtle/**constant_time.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/subtle/**constant_time.go\r\n> +++ b/src/pkg/crypto/subtle/**constant_time.go\r\n> @@ -55,3 +55,11 @@\r\n>         }\r\n>         return\r\n>  }\r\n> +\r\n> +// ConstantTimeLessOrEqual returns 1 if x <= y and 0 otherwise.\r\n> +// Its behavior is undefined if x or y are negative or > 2**31 - 1.\r\n> +func ConstantTimeLessOrEqual(x, y int) int {\r\n> +       x32 := int32(x)\r\n> +       y32 := int32(y)\r\n> +       return int(((x32 - y32 - 1) >> 31) & 1)\r\n> +}\r\n> Index: src/pkg/crypto/subtle/**constant_time_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/subtle/**constant_time_test.go\r\n> +++ b/src/pkg/crypto/subtle/**constant_time_test.go\r\n> @@ -103,3 +103,23 @@\r\n>                 t.Error(err)\r\n>         }\r\n>  }\r\n> +\r\n> +var lessOrEqualTests = []struct {\r\n> +       x, y, result int\r\n> +}{\r\n> +       {0, 0, 1},\r\n> +       {1, 0, 0},\r\n> +       {0, 1, 1},\r\n> +       {10, 20, 1},\r\n> +       {20, 10, 0},\r\n> +       {10, 10, 1},\r\n> +}\r\n> +\r\n> +func TestConstantTimeLessOrEqual(t *testing.T) {\r\n> +       for i, test := range lessOrEqualTests {\r\n> +               result := ConstantTimeLessOrEqual(test.**x, test.y)\r\n> +               if result != test.result {\r\n> +                       t.Errorf(\"#%d: %d <= %d gave %d, expected %d\", i,\r\n> test.x, test.y, result, test.result)\r\n> +               }\r\n> +       }\r\n> +}\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 22:09:56.591530",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 14, 2013 at 6:09 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> Equal is spelled Eq elsewhere in crypto/subtle. Why inconsistent here?\r\n\r\nGood point. Changed.\r\n\r\n\r\nCheers\r\n\r\nAGL\r\n",
+			"disapproval": false,
+			"date": "2013-05-14 23:03:37.834970",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=1c5529b1592a ***\n\ncrypto/rsa: check for minimal PKCS#1 v1.5 padding.\n\nThe PKCS#1 spec requires that the PS padding in an RSA message be at\nleast 8 bytes long. We were not previously checking this. This isn't\nimportant in the most common situation (session key encryption), but\nthe impact is unclear in other cases.\n\nThis change enforces the specified minimum size.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/9222045",
+			"disapproval": false,
+			"date": "2013-05-15 14:27:46.169800",
+			"approval": false
+		}
+	],
+	"owner_email": "agl@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "agl1",
+	"subject": "code review 9222045: crypto/rsa: check for minimal PKCS#1 v1.5 padding.",
+	"created": "2013-05-14 21:39:32.747900",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		7005,
+		11001,
+		3
+	],
+	"modified": "2013-05-15 14:27:47.460870",
+	"closed": true,
+	"issue": 9222045
+}

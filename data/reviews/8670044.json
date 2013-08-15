@@ -1,0 +1,1068 @@
+{
+	"description": "net: implement netpoll for windows\n\nMoves the network poller from net package into runtime.\n\nbenchmark                           old ns/op    new ns/op    delta\nBenchmarkTCP4OneShot                   316386       287061   -9.27%\nBenchmarkTCP4OneShot-2                 339822       313424   -7.77%\nBenchmarkTCP4OneShot-3                 330057       306589   -7.11%\nBenchmarkTCP4OneShotTimeout            341775       287061  -16.01%\nBenchmarkTCP4OneShotTimeout-2          380835       295849  -22.32%\nBenchmarkTCP4OneShotTimeout-3          398412       328070  -17.66%\nBenchmarkTCP4Persistent                 40622        33392  -17.80%\nBenchmarkTCP4Persistent-2               44528        35736  -19.74%\nBenchmarkTCP4Persistent-3               44919        36907  -17.84%\nBenchmarkTCP4PersistentTimeout          45309        33588  -25.87%\nBenchmarkTCP4PersistentTimeout-2        50289        38079  -24.28%\nBenchmarkTCP4PersistentTimeout-3        51559        37103  -28.04%\nBenchmarkTCP6OneShot                   361305       345645   -4.33%\nBenchmarkTCP6OneShot-2                 361305       331976   -8.12%\nBenchmarkTCP6OneShot-3                 376929       347598   -7.78%\nBenchmarkTCP6OneShotTimeout            361305       322212  -10.82%\nBenchmarkTCP6OneShotTimeout-2          378882       333928  -11.86%\nBenchmarkTCP6OneShotTimeout-3          388647       335881  -13.58%\nBenchmarkTCP6Persistent                 47653        35345  -25.83%\nBenchmarkTCP6Persistent-2               49215        35736  -27.39%\nBenchmarkTCP6Persistent-3               38474        37493   -2.55%\nBenchmarkTCP6PersistentTimeout          56637        34369  -39.32%\nBenchmarkTCP6PersistentTimeout-2        42575        38079  -10.56%\nBenchmarkTCP6PersistentTimeout-3        44137        37689  -14.61%",
+	"cc": [
+		"dvyukov@google.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM (but this is not for submission, right)\nWe can also experiment with GetQueueCompletionStatusEx() and removing memory allocations from Read/Write later.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_poll_runtime.go\nFile src/pkg/net/fd_poll_runtime.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_poll_runtime.go#newcode107\nsrc/pkg/net/fd_poll_runtime.go:107: println(\"unreachable: \", res)\nI am not sure what is the policy about adding new println() calls.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_poll_unix.go\nFile src/pkg/net/fd_poll_unix.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_poll_unix.go#newcode306\nsrc/pkg/net/fd_poll_unix.go:306: func init() {\nI thought there are some initialization dependency issues, and that's why sysInit() was introduced. \nIs not sysInit() needed now?\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_epoll.c\nFile src/pkg/runtime/netpoll_epoll.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_epoll.c#newcode34\nsrc/pkg/runtime/netpoll_epoll.c:34: runtime\u00b7netpollopen(uintptr fd, PollDesc *pd)\nI think this should be the first patch - change int32 to uintptr for fd.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c#newcode50\nsrc/pkg/runtime/netpoll_windows.c:50: if(runtime\u00b7stdcall(runtime\u00b7CreateIoCompletionPort, 4, fd, cpiohandle, (uintptr)0, (uintptr)0) == 0) {\ndrop {}\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c#newcode83\nsrc/pkg/runtime/netpoll_windows.c:83: if(runtime\u00b7stdcall(runtime\u00b7GetQueuedCompletionStatus, 5, cpiohandle, &qty, &key, &o, (uintptr)wait) == 0) {\nI think you need a loop here to fetch all pending notifications (or at least a batch). Scheduler will behave better if you give it a batch of newly runnable goroutines.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c#newcode83\nsrc/pkg/runtime/netpoll_windows.c:83: if(runtime\u00b7stdcall(runtime\u00b7GetQueuedCompletionStatus, 5, cpiohandle, &qty, &key, &o, (uintptr)wait) == 0) {\nI remember you've said that it's difficult to call GetQueuedCompletionStatusEx() here because it's not available on all systems.\nBut at least try to benchmark with it, it will be useful to understand how much we lose here.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c#newcode86\nsrc/pkg/runtime/netpoll_windows.c:86: if(!block) {\ndrop {}",
+			"disapproval": false,
+			"date": "2013-05-19 15:15:48.719170",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_windows.go#newcode216\nsrc/pkg/net/fd_windows.go:216: o.fd.pd.WaitCanceled(int(o.mode))\nwait. you need the result from WaitCanceled. at this point the operation still can succeed. even if timeout or close happened, GetQueueCompletionStatus() can return success, and we need to communicate it to user.",
+			"disapproval": false,
+			"date": "2013-05-19 15:20:31.810660",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/20 06:50:05, dvyukov wrote:\n> \n> I am pretty sure it must work that way (and it works that way now).\n\nI am pretty sure you are right on both counts. But as far as I remember, I couldn't make it work -  some tests were failing. I will revisit this again and report my findings.\n\n> A simpler option would be to call CancelIOEx() directly in timer routine or in\n> evict routine, then waiting path is not changed at all. ...\n\nLets say, I decide to chose that option for systems that have CancelIOEx present (most windows systems have it this days). How do I go about implementing it in runtime?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-20 07:45:08.459690",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-05-20 02:12:23.853560",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for review.\n\nAlex\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_poll_runtime.go\nFile src/pkg/net/fd_poll_runtime.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_poll_runtime.go#newcode107\nsrc/pkg/net/fd_poll_runtime.go:107: println(\"unreachable: \", res)\nI don't know either. I will wait to be corrected.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_poll_unix.go\nFile src/pkg/net/fd_poll_unix.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_poll_unix.go#newcode306\nsrc/pkg/net/fd_poll_unix.go:306: func init() {\nsysInit is still needed for windows, but you code here should not dependent on it. I also don't want to have 2 copies of sysInit (one in fd_poll_unix.go and another in fd_poll_runtime.go), and I am moving it to fd_unix.go. I don't know when this duplicate code was introduced, but it is not needed. This change should be in a separate CL, and I will send it separately.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_windows.go#newcode216\nsrc/pkg/net/fd_windows.go:216: o.fd.pd.WaitCanceled(int(o.mode))\nI don't care if it succeeds or not, because our previous wait returned errClosing or errTimeout (see code above). I already made my mind on what I will return to the user - errClosing or errTimeout. I am just waiting here for IO to complete so I can release IO buffers. I don't care if completion is success or failure. Perhaps, the function name is no good - I am opened to suggestions.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_epoll.c\nFile src/pkg/runtime/netpoll_epoll.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_epoll.c#newcode34\nsrc/pkg/runtime/netpoll_epoll.c:34: runtime\u00b7netpollopen(uintptr fd, PollDesc *pd)\nSounds good: https://codereview.appspot.com/9569043/\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c#newcode50\nsrc/pkg/runtime/netpoll_windows.c:50: if(runtime\u00b7stdcall(runtime\u00b7CreateIoCompletionPort, 4, fd, cpiohandle, (uintptr)0, (uintptr)0) == 0) {\nOn 2013/05/19 15:15:48, dvyukov wrote:\n> drop {}\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c#newcode83\nsrc/pkg/runtime/netpoll_windows.c:83: if(runtime\u00b7stdcall(runtime\u00b7GetQueuedCompletionStatus, 5, cpiohandle, &qty, &key, &o, (uintptr)wait) == 0) {\nNoted.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c#newcode83\nsrc/pkg/runtime/netpoll_windows.c:83: if(runtime\u00b7stdcall(runtime\u00b7GetQueuedCompletionStatus, 5, cpiohandle, &qty, &key, &o, (uintptr)wait) == 0) {\nNoted. I will try and implement GetQueuedCompletionStatusEx when is is available. But at later stage.\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/runtime/netpoll_windows.c#newcode86\nsrc/pkg/runtime/netpoll_windows.c:86: if(!block) {\nOn 2013/05/19 15:15:48, dvyukov wrote:\n> drop {}\n\nDone.",
+			"disapproval": false,
+			"date": "2013-05-20 02:12:45.611350",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/2001/src/pkg/net/fd_windows.go#newcode216\nsrc/pkg/net/fd_windows.go:216: o.fd.pd.WaitCanceled(int(o.mode))\nOn 2013/05/20 02:12:45, brainman wrote:\n> I don't care if it succeeds or not, because our previous wait returned\n> errClosing or errTimeout (see code above). I already made my mind on what I will\n> return to the user - errClosing or errTimeout. I am just waiting here for IO to\n> complete so I can release IO buffers. I don't care if completion is success or\n> failure. Perhaps, the function name is no good - I am opened to suggestions.\n\nWhen you are writing/reading to/from network you want to know whether data was sent/received to/from network. It is a bug to return errTimeout/errClosing when data was actually sent/received. Even if timeout has happened and you called CancelIOEx(), you still need to wait for overlapped completion, and if it has succeeded, you need to return OK to user.",
+			"disapproval": false,
+			"date": "2013-05-20 04:02:53.973220",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/20 04:02:53, dvyukov wrote:\n> \n> ... you still need to wait for overlapped completion, and if it has\n> succeeded, you need to return OK to user.\n\nIf you say so. I will see what I can do.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-20 05:12:08.326960",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/20 10:11:32, dvyukov wrote:\n> \n> But how do you want to handle old OSes with only CancelIO()?\n> I think you can not do potentially blocking send in deadlineimpl() (in timer\n> goroutine).\n\nI do not think I can without CancelIOEx. We will have to have 2 different code paths, like we do mow. It just a question of how much different.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-20 11:23:15.283590",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/20 05:12:08, brainman wrote:\n> On 2013/05/20 04:02:53, dvyukov wrote:\n> > \n> > ... you still need to wait for overlapped completion, and if it has\n> > succeeded, you need to return OK to user.\n> \n> If you say so. I will see what I can do.\n\nI am pretty sure it must work that way (and it works that way now).\n\nA simpler option would be to call CancelIOEx() directly in timer routine or in evict routine, then waiting path is not changed at all. But it must be difficult to do w/o CancelIOEx().\n\nSo I think you need to make runtime_pollWaitCanceled() return overlapped result (but do not look at current fd status -- closed or timedout).",
+			"disapproval": false,
+			"date": "2013-05-20 06:50:05.909630",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/20 07:45:08, brainman wrote:\n> On 2013/05/20 06:50:05, dvyukov wrote:\n> > \n> > I am pretty sure it must work that way (and it works that way now).\n> \n> I am pretty sure you are right on both counts. But as far as I remember, I\n> couldn't make it work -  some tests were failing. I will revisit this again and\n> report my findings.\n> \n> > A simpler option would be to call CancelIOEx() directly in timer routine or in\n> > evict routine, then waiting path is not changed at all. ...\n> \n> Lets say, I decide to chose that option for systems that have CancelIOEx present\n> (most windows systems have it this days). How do I go about implementing it in\n> runtime?\n\n\nIf you remember read and write anOp or OVERLAPPED pointer in PollDesc, you can issue CancelIOEx() directly in deadlineimpl() and in runtime_pollUnblock(). They both lock the PollDesc's lock, so they should be able to determine outstanding OVERLAPPEDs and issue CancelIOEx() for them.",
+			"disapproval": false,
+			"date": "2013-05-20 10:09:55.214380",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/20 10:09:55, dvyukov wrote:\n> On 2013/05/20 07:45:08, brainman wrote:\n> > On 2013/05/20 06:50:05, dvyukov wrote:\n> > > \n> > > I am pretty sure it must work that way (and it works that way now).\n> > \n> > I am pretty sure you are right on both counts. But as far as I remember, I\n> > couldn't make it work -  some tests were failing. I will revisit this again\n> and\n> > report my findings.\n> > \n> > > A simpler option would be to call CancelIOEx() directly in timer routine or\n> in\n> > > evict routine, then waiting path is not changed at all. ...\n> > \n> > Lets say, I decide to chose that option for systems that have CancelIOEx\n> present\n> > (most windows systems have it this days). How do I go about implementing it in\n> > runtime?\n> \n> \n> If you remember read and write anOp or OVERLAPPED pointer in PollDesc, you can\n> issue CancelIOEx() directly in deadlineimpl() and in runtime_pollUnblock(). They\n> both lock the PollDesc's lock, so they should be able to determine outstanding\n> OVERLAPPEDs and issue CancelIOEx() for them.\n\nBut how do you want to handle old OSes with only CancelIO()?\nI think you can not do potentially blocking send in deadlineimpl() (in timer goroutine).",
+			"disapproval": false,
+			"date": "2013-05-20 10:11:32.094830",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/20 04:02:53, dvyukov wrote:\n> \n> ... Even if timeout has happened and you called\n> CancelIOEx(), you still need to wait for overlapped completion, and if it has\n> succeeded, you need to return OK to user.\n\nI updated my code. But now this fails:\n\nG:\\src\\pkg\\net>net.test.exe -test.run=lines4\n--- FAIL: TestVariousDeadlines4Proc (0.03 seconds)\n        timeout_test.go:483: 1ns run 1/3\n        timeout_test.go:503: for 1ns run 1/3, good client timeout after 15.6251ms, reading 696320 bytes\n        timeout_test.go:513: for 1ns run 1/3: server in 15.6251ms wrote 753664,WSASend tcp 127.0.0.1:4240: An existing connection was forcibly closed by the remote host.\n        timeout_test.go:483: 1ns run 2/3\n        timeout_test.go:505: for 1ns run 2/3: client Copy = 3694592, <nil> (want timeout)\nFAIL\n\nAs far as I can tell this test assumes that io.Copy(ioutil.Discard, c) will return err != nil. But, with this change, we get IO completion (after IO is canelled) with err == 0 and n == 0. This is translated into io.EOF. I cannot decide which part is wrong. Can you?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-21 04:24:20.927950",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-05-21 04:24:40.810410",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 21, 2013 at 8:24 AM,  <alex.brainman@gmail.com> wrote:\r\n> On 2013/05/20 04:02:53, dvyukov wrote:\r\n>\r\n>> ... Even if timeout has happened and you called\r\n>> CancelIOEx(), you still need to wait for overlapped completion, and if\r\n>\r\n> it has\r\n>>\r\n>> succeeded, you need to return OK to user.\r\n>\r\n>\r\n> I updated my code. But now this fails:\r\n>\r\n> G:\\src\\pkg\\net>net.test.exe -test.run=lines4\r\n> --- FAIL: TestVariousDeadlines4Proc (0.03 seconds)\r\n>         timeout_test.go:483: 1ns run 1/3\r\n>         timeout_test.go:503: for 1ns run 1/3, good client timeout after\r\n> 15.6251ms, reading 696320 bytes\r\n>         timeout_test.go:513: for 1ns run 1/3: server in 15.6251ms wrote\r\n> 753664,WSASend tcp 127.0.0.1:4240: An existing connection was forcibly\r\n> closed by the remote host.\r\n>         timeout_test.go:483: 1ns run 2/3\r\n>         timeout_test.go:505: for 1ns run 2/3: client Copy = 3694592,\r\n> <nil> (want timeout)\r\n> FAIL\r\n>\r\n> As far as I can tell this test assumes that io.Copy(ioutil.Discard, c)\r\n> will return err != nil. But, with this change, we get IO completion\r\n> (after IO is canelled) with err == 0 and n == 0. This is translated into\r\n> io.EOF. I cannot decide which part is wrong. Can you?\r\n\r\n\r\nIs there any chance you do 0-length read/write? It is a perfectly\r\nvalid WSA operation, and I guess it results in err=nil,n=0, and it\r\ndoes not mean EOF.\r\n",
+			"disapproval": false,
+			"date": "2013-05-21 06:47:30.554200",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/21 06:47:30, dvyukov wrote:\n> \n> Is there any chance you do 0-length read/write?\n\nI inserted debug prints. I do not have any 0-lenght read/writes as far as I can see.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-21 07:02:11.183120",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 21, 2013 at 11:02 AM,  <alex.brainman@gmail.com> wrote:\r\n> On 2013/05/21 06:47:30, dvyukov wrote:\r\n>\r\n>> Is there any chance you do 0-length read/write?\r\n>\r\n>\r\n> I inserted debug prints. I do not have any 0-lenght read/writes as far\r\n> as I can see.\r\n\r\nAnd WSAGetOverlappedResult() returns TRUE with *lpcbTransfer==0? Does\r\nit happen for reads or writes? It's weird. Maybe it's some upper\r\nlayers mess the values.\r\n",
+			"disapproval": false,
+			"date": "2013-05-21 07:26:18.055880",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have been busy lately. And it is more complicated then I expected. But I will continue with it when I have time. Just letting you know.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-27 10:35:39.712390",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Dmitriy,\n\nThe way I see things is this:\n\n- ready to read, so net issues netpoll.Prepare, this resets everything, and returns no error, good so far;\n- start read by issuing WSARecv; returns with ERROR_IO_PENDING, still good;\n- timeout gets fired, so netpoll state is set to \"report timed out when requested\", still good;\n- net calls netpoll.Wait, which returns immediately, since the state is \"timed out\", still good;\n- net calls CancelIO to stop submitted IO, still good;\n- net calls netpoll.WaitCanceled to wait for IO to complete or get canceled, but returns immediately again, since netpoll state is still \"timed out\" ... wrong;\n\nSo, I think, my current netpoll.WaitCanceled implementation is no good.\n\nI had an idea to add netpoll.Prepare's \"reset state\" logic to it, but that will break if IO completes (or get canceled) before we call netpoll.WaitCanceled.\n\nWhat do you think I should do?\n\nThank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-03 00:18:26.767680",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/03 00:18:26, brainman wrote:\n> Dmitriy,\n> \n> The way I see things is this:\n> \n> - ready to read, so net issues netpoll.Prepare, this resets everything, and\n> returns no error, good so far;\n> - start read by issuing WSARecv; returns with ERROR_IO_PENDING, still good;\n> - timeout gets fired, so netpoll state is set to \"report timed out when\n> requested\", still good;\n> - net calls netpoll.Wait, which returns immediately, since the state is \"timed\n> out\", still good;\n> - net calls CancelIO to stop submitted IO, still good;\n> - net calls netpoll.WaitCanceled to wait for IO to complete or get canceled, but\n> returns immediately again, since netpoll state is still \"timed out\" ... wrong;\n> \n> So, I think, my current netpoll.WaitCanceled implementation is no good.\n> \n> I had an idea to add netpoll.Prepare's \"reset state\" logic to it, but that will\n> break if IO completes (or get canceled) before we call netpoll.WaitCanceled.\n\nHummm... the first idea is to try the following thing:\nWhen a descriptor is closed we set pd.closing, when the descriptor is timedout we set pd.rd/wd. And these are checked in checkerr() before any IO wait. But in both cases we also set pd.rg/wg=READY, which is supposedly unnecessary.\nSo what if you introduce a parameter to netpollunblock() which says \"unblock currently waiting goroutines if any, but do not set READY\", and use it in close/timeout?",
+			"disapproval": false,
+			"date": "2013-06-03 04:07:22.280630",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Like that:\n\ndiff -r 2d4825868d95 src/pkg/runtime/netpoll.goc\n--- a/src/pkg/runtime/netpoll.goc\tMon May 20 15:23:45 2013 +1000\n+++ b/src/pkg/runtime/netpoll.goc\tMon Jun 03 14:54:29 2013 +1000\n@@ -2,7 +2,7 @@\n // Use of this source code is governed by a BSD-style\n // license that can be found in the LICENSE file.\n \n-// +build darwin linux\n+// +build darwin linux windows\n \n package net\n \n@@ -48,7 +48,7 @@\n } pollcache;\n \n static void\tnetpollblock(PollDesc*, int32);\n-static G*\tnetpollunblock(PollDesc*, int32);\n+static G*\tnetpollunblock(PollDesc*, int32, bool);\n static void\tdeadline(int64, Eface);\n static void\treadDeadline(int64, Eface);\n static void\twriteDeadline(int64, Eface);\n@@ -120,6 +120,12 @@\n \truntime\u00b7unlock(pd);\n }\n \n+func runtime_pollWaitCanceled(pd *PollDesc, mode int) {\n+\truntime\u00b7lock(pd);\n+\tnetpollblock(pd, mode);\n+\truntime\u00b7unlock(pd);\n+}\n+\n func runtime_pollSetDeadline(pd *PollDesc, d int64, mode int) {\n \truntime\u00b7lock(pd);\n \tif(pd->closing)\n@@ -179,8 +185,8 @@\n \t\truntime\u00b7throw(\"runtime_pollUnblock: already closing\");\n \tpd->closing = true;\n \tpd->seq++;\n-\trg = netpollunblock(pd, 'r');\n-\twg = netpollunblock(pd, 'w');\n+\trg = netpollunblock(pd, 'r', false);\n+\twg = netpollunblock(pd, 'w', false);\n \tif(pd->rt.fv) {\n \t\truntime\u00b7deltimer(&pd->rt);\n \t\tpd->rt.fv = nil;\n@@ -205,9 +211,9 @@\n \trg = wg = nil;\n \truntime\u00b7lock(pd);\n \tif(mode == 'r' || mode == 'r'+'w')\n-\t\trg = netpollunblock(pd, 'r');\n+\t\trg = netpollunblock(pd, 'r', true);\n \tif(mode == 'w' || mode == 'r'+'w')\n-\t\twg = netpollunblock(pd, 'w');\n+\t\twg = netpollunblock(pd, 'w', true);\n \truntime\u00b7unlock(pd);\n \tif(rg) {\n \t\trg->schedlink = *gpp;\n@@ -249,7 +255,7 @@\n }\n \n static G*\n-netpollunblock(PollDesc *pd, int32 mode)\n+netpollunblock(PollDesc *pd, int32 mode, bool setready)\n {\n \tG **gpp, *old;\n \n@@ -259,7 +265,8 @@\n \tif(*gpp == READY)\n \t\treturn nil;\n \tif(*gpp == nil) {\n-\t\t*gpp = READY;\n+\t\tif(setready)\n+\t\t\t*gpp = READY;\n \t\treturn nil;\n \t}\n \told = *gpp;\n@@ -291,14 +298,14 @@\n \t\t\truntime\u00b7throw(\"deadlineimpl: inconsistent read deadline\");\n \t\tpd->rd = -1;\n \t\tpd->rt.fv = nil;\n-\t\trg = netpollunblock(pd, 'r');\n+\t\trg = netpollunblock(pd, 'r', false);\n \t}\n \tif(write) {\n \t\tif(pd->wd <= 0 || (pd->wt.fv == nil && !read))\n \t\t\truntime\u00b7throw(\"deadlineimpl: inconsistent write deadline\");\n \t\tpd->wd = -1;\n \t\tpd->wt.fv = nil;\n-\t\twg = netpollunblock(pd, 'w');\n+\t\twg = netpollunblock(pd, 'w', false);\n \t}\n \truntime\u00b7unlock(pd);\n \tif(rg)\n\n? But, then I can see both IO completion and timeout gets fired during initial wait, then second wait (after cancelation) gets no events and test timesout.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-03 04:57:05.619960",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/03 04:57:05, brainman wrote:\n> Like that:\n> \n> diff -r 2d4825868d95 src/pkg/runtime/netpoll.goc\n> --- a/src/pkg/runtime/netpoll.goc\tMon May 20 15:23:45 2013 +1000\n> +++ b/src/pkg/runtime/netpoll.goc\tMon Jun 03 14:54:29 2013 +1000\n> @@ -2,7 +2,7 @@\n>  // Use of this source code is governed by a BSD-style\n>  // license that can be found in the LICENSE file.\n>  \n> -// +build darwin linux\n> +// +build darwin linux windows\n>  \n>  package net\n>  \n> @@ -48,7 +48,7 @@\n>  } pollcache;\n>  \n>  static void\tnetpollblock(PollDesc*, int32);\n> -static G*\tnetpollunblock(PollDesc*, int32);\n> +static G*\tnetpollunblock(PollDesc*, int32, bool);\n>  static void\tdeadline(int64, Eface);\n>  static void\treadDeadline(int64, Eface);\n>  static void\twriteDeadline(int64, Eface);\n> @@ -120,6 +120,12 @@\n>  \truntime\u00b7unlock(pd);\n>  }\n>  \n> +func runtime_pollWaitCanceled(pd *PollDesc, mode int) {\n> +\truntime\u00b7lock(pd);\n> +\tnetpollblock(pd, mode);\n> +\truntime\u00b7unlock(pd);\n> +}\n> +\n>  func runtime_pollSetDeadline(pd *PollDesc, d int64, mode int) {\n>  \truntime\u00b7lock(pd);\n>  \tif(pd->closing)\n> @@ -179,8 +185,8 @@\n>  \t\truntime\u00b7throw(\"runtime_pollUnblock: already closing\");\n>  \tpd->closing = true;\n>  \tpd->seq++;\n> -\trg = netpollunblock(pd, 'r');\n> -\twg = netpollunblock(pd, 'w');\n> +\trg = netpollunblock(pd, 'r', false);\n> +\twg = netpollunblock(pd, 'w', false);\n>  \tif(pd->rt.fv) {\n>  \t\truntime\u00b7deltimer(&pd->rt);\n>  \t\tpd->rt.fv = nil;\n> @@ -205,9 +211,9 @@\n>  \trg = wg = nil;\n>  \truntime\u00b7lock(pd);\n>  \tif(mode == 'r' || mode == 'r'+'w')\n> -\t\trg = netpollunblock(pd, 'r');\n> +\t\trg = netpollunblock(pd, 'r', true);\n>  \tif(mode == 'w' || mode == 'r'+'w')\n> -\t\twg = netpollunblock(pd, 'w');\n> +\t\twg = netpollunblock(pd, 'w', true);\n>  \truntime\u00b7unlock(pd);\n>  \tif(rg) {\n>  \t\trg->schedlink = *gpp;\n> @@ -249,7 +255,7 @@\n>  }\n>  \n>  static G*\n> -netpollunblock(PollDesc *pd, int32 mode)\n> +netpollunblock(PollDesc *pd, int32 mode, bool setready)\n>  {\n>  \tG **gpp, *old;\n>  \n> @@ -259,7 +265,8 @@\n>  \tif(*gpp == READY)\n>  \t\treturn nil;\n>  \tif(*gpp == nil) {\n> -\t\t*gpp = READY;\n> +\t\tif(setready)\n> +\t\t\t*gpp = READY;\n>  \t\treturn nil;\n>  \t}\n>  \told = *gpp;\n> @@ -291,14 +298,14 @@\n>  \t\t\truntime\u00b7throw(\"deadlineimpl: inconsistent read deadline\");\n>  \t\tpd->rd = -1;\n>  \t\tpd->rt.fv = nil;\n> -\t\trg = netpollunblock(pd, 'r');\n> +\t\trg = netpollunblock(pd, 'r', false);\n>  \t}\n>  \tif(write) {\n>  \t\tif(pd->wd <= 0 || (pd->wt.fv == nil && !read))\n>  \t\t\truntime\u00b7throw(\"deadlineimpl: inconsistent write deadline\");\n>  \t\tpd->wd = -1;\n>  \t\tpd->wt.fv = nil;\n> -\t\twg = netpollunblock(pd, 'w');\n> +\t\twg = netpollunblock(pd, 'w', false);\n>  \t}\n>  \truntime\u00b7unlock(pd);\n>  \tif(rg)\n> \n> ? But, then I can see both IO completion and timeout gets fired during initial\n> wait, then second wait (after cancelation) gets no events and test timesout.\n\n\nnetpollunblock() is executed under the descriptor lock.\nIf IO completion unblocks the wait, then goroutine will not wait second time. It will have the final result -- success or failure.\nIf cancel/timeout unblocks the wait, then IO completion will set rg/wg to READY. And the second wait will instantly return.\n\nThere may be other caveats or course. Reasoning about asynchronous concurrent logic is tricky.",
+			"disapproval": false,
+			"date": "2013-06-03 06:44:24.155770",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The high-level algorithm looks good.\nI actually like the way you changed netpoll.goc.\nI think netpoll.goc and fd_poll_runtime.go changes should go separately, and then the windows-specific changes.\n\n$ GOMAXPROCS=4 GOARCH=386 ./all.bash && GOMAXPROCS=4 ./all.bash\nalso passed on darwin\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc\nFile src/pkg/runtime/netpoll.goc (right):\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode213\nsrc/pkg/runtime/netpoll.goc:213: rg = netpollunblock(pd, 'r', true);\nOn 2013/06/04 09:47:34, dvyukov wrote:\n> This subtly changes behaviour of kqueue/epoll.\n> If they get concurrent io ready and timeout/cancel (or all 3 at once :) ), they\n> will retry read/write syscall, and it will most likely succeed. While currently\n> they return timeout/cancel.\n> Difficult to say what is better. Since it's a race, both behaviors are legal I\n> think.\n> For cancel you probably want to cancel as soon as possible (rather than accept\n> and handle one more tcp conn).\n> For timeout you probably want to give read() the last chance.\n> \n> I think the simplest way to revert to original behavior is to make\n> runtime_pollWait() call checkerr() unconditionally second time for epoll/kqueue\n> pollers.\n> I am not sure whether it's worth doing, it looks close to insignificant.\n> Leave it as is and please ask Brad.\n\nOn second though, your code is fine.\nThe concurrent ioready/cancel/timeout events are ordered by the descriptor mutex, and the code respects that order. E.g. if we get ioready followed by timeout, goroutine will do IO. If we get timeout followed by ioready, goroutine will return timeout.",
+			"disapproval": false,
+			"date": "2013-06-04 09:53:49.926900",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> \n> netpollunblock() is executed under the descriptor lock.\n\nBut, I think, it is possible to have 2 events fired (IO completion and timeout) while netpollblock waits for something to happened. In between runtime.park and runtime.lock. Isn't it?\n\nThen reported result gets skewed.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-03 07:19:41.644390",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jun 3, 2013 at 11:19 AM,  <alex.brainman@gmail.com> wrote:\r\n>\r\n>> netpollunblock() is executed under the descriptor lock.\r\n>\r\n>\r\n> But, I think, it is possible to have 2 events fired (IO completion and\r\n> timeout) while netpollblock waits for something to happened. In between\r\n> runtime.park and runtime.lock. Isn't it?\r\n>\r\n> Then reported result gets skewed.\r\n\r\nI do not understand the exact failure scenario. Please describe it in\r\nmore detail.\r\n",
+			"disapproval": false,
+			"date": "2013-06-03 08:17:15.537300",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/03 08:17:15, dvyukov wrote:\n> \n> I do not understand the exact failure scenario. Please describe it in\n> more detail.\n\nI see new IO submitted, then the goroutine goes into netpoll.Wait and blocks there. Then I can see both IO completion and timeout gets fired and original netpoll.Wait returns with error=2 (timeout). I can also see result of IO completion (error=0 and qty=8192). Since netpoll.Wait returns error=2, the goroutine continues into netpoll.WaitCancelled and never returns from there (I can see it calls runtime.park there).\n\nThe test fails with \"timeout error\".\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-03 09:26:06.152710",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/03 09:26:06, brainman wrote:\n> On 2013/06/03 08:17:15, dvyukov wrote:\n> > \n> > I do not understand the exact failure scenario. Please describe it in\n> > more detail.\n> \n> I see new IO submitted, then the goroutine goes into netpoll.Wait and blocks\n> there. Then I can see both IO completion and timeout gets fired and original\n> netpoll.Wait returns with error=2 (timeout). I can also see result of IO\n> completion (error=0 and qty=8192). Since netpoll.Wait returns error=2, the\n> goroutine continues into netpoll.WaitCancelled and never returns from there (I\n> can see it calls runtime.park there).\n> \n> The test fails with \"timeout error\".\n\nI see the problem.\nThe problem is that wait is preempted by IO completion notification, but then rechecks state in checkerr() and returns timeout/cancel, right?\nThe epoll/kqueue poller imposes quite weak requirements on the notifications, it's only important to not lose a notification and gets deadlocked. IOCP requires much more strict notifications.\nI think you need to make netpollblock() return whether it was preempted by IO completion or timeout/cancel. Then, if it's IO completion, do not call checkerr().\n\nI.e. add the setready flag to netpollunblock:\nnetpollunblock(PollDesc *pd, int32 mode, bool setready)\n\nadd bool return type to netpollblock:\nbool netpollblock(PollDesc *pd, int32 mode);\n\nThen change runtime_pollWait as:\nfunc runtime_pollWait(pd *PollDesc, mode int) (err int) {\n\truntime\u00b7lock(pd);\n\terr = checkerr(pd, mode);\n\tif(err == 0) {\n\t\tif(!netpollblock(pd, mode))\n\t\t\terr = checkerr(pd, mode);\n\t}\n\truntime\u00b7unlock(pd);\n}\n\nIf netpollblock() sees READY, then it returns true (got IO notification). If it blocks, then you need to communicate the return value from netpollunblock(). You can do it by storing the value in gp->param.",
+			"disapproval": false,
+			"date": "2013-06-03 10:37:19.988840",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I see the problem.\n> The problem is that wait is preempted by IO completion notification, but then\n> rechecks state in checkerr() and returns timeout/cancel, right?\n\nCorrect.\n\n> ...\n\nSounds like a plan. I will have a go.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-03 10:51:12.366290",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/03 10:37:19, dvyukov wrote:\n> ...\n> I think you need to make ...\n\nDone. All test pass now on windows/386, windows/amd64 and linux/386. Can you test it on darwin, please? Because if it breaks, I have no idea what is going on. Thank you.\n\nPTAL.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-04 04:30:25.634440",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-06-04 04:30:54.316360",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/04 04:30:25, brainman wrote:\n> On 2013/06/03 10:37:19, dvyukov wrote:\n> > ...\n> > I think you need to make ...\n> \n> Done. All test pass now on windows/386, windows/amd64 and linux/386. Can you\n> test it on darwin, please? Because if it breaks, I have no idea what is going\n> on. Thank you.\n\n\n$ GOARCH=386 ./all.bash && ./all.bash\npasses on darwin",
+			"disapproval": false,
+			"date": "2013-06-04 09:31:10.441340",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "And later you may also look at removing memory allocation from Read/Write (by embedding some structs into netFD). Reads/Writes oven an established tcp connection should trigger basically no allocations. And I think that will be very cool, because it moves it closer to the raw C performance.",
+			"disapproval": false,
+			"date": "2013-06-04 10:08:10.424860",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8670044/diff/44001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/net/fd_windows.go#newcode224\nsrc/pkg/net/fd_windows.go:224: return int(o.qty), nil\nadd a comment explaining that we've issued the cancellation request, but the operation succeeded before, so we need to treat it as succeeded (the bytes are actually sent/recv from network)\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc\nFile src/pkg/runtime/netpoll.goc (right):\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode117\nsrc/pkg/runtime/netpoll.goc:117: err = checkerr(pd, mode);\ncheck that err != 0\nit must be, right? because we are unblocked not by ioready event\nif the check does not fire, then, great, we have another invariant that we can rely on in this complex logic. otherwise there is something we do not understand in the code we wrote :)\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode213\nsrc/pkg/runtime/netpoll.goc:213: rg = netpollunblock(pd, 'r', true);\nThis subtly changes behaviour of kqueue/epoll.\nIf they get concurrent io ready and timeout/cancel (or all 3 at once :) ), they will retry read/write syscall, and it will most likely succeed. While currently they return timeout/cancel.\nDifficult to say what is better. Since it's a race, both behaviors are legal I think.\nFor cancel you probably want to cancel as soon as possible (rather than accept and handle one more tcp conn).\nFor timeout you probably want to give read() the last chance.\n\nI think the simplest way to revert to original behavior is to make runtime_pollWait() call checkerr() unconditionally second time for epoll/kqueue pollers.\nI am not sure whether it's worth doing, it looks close to insignificant.\nLeave it as is and please ask Brad.\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode261\nsrc/pkg/runtime/netpoll.goc:261: netpollunblock(PollDesc *pd, int32 mode, bool setready)\nprobably call it 'ioready' to be consistent with return value of netpollblock()\nnetpollblock() returns whether IO is ready or not, which is determined by ioready flag passed to netpollunblock()\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode272\nsrc/pkg/runtime/netpoll.goc:272: if(setready)\nexplain why we do not set READY when !ioready (runtime_pollWait checks for timeout/cancel before waiting)",
+			"disapproval": false,
+			"date": "2013-06-04 09:47:33.691660",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll_windows.c#newcode85\nsrc/pkg/runtime/netpoll_windows.c:85: // TODO(brainman): Call GetQueuedCompletionStatusEx() here when possible.\nThis is unrelated to this change, but I am eager to see how GetQueuedCompletionStatusEx() affects performance. Once this is submitted, you can patch it locally to use GetQueuedCompletionStatusEx() with a batch size 64 or something and run the net tcp benchmarks.",
+			"disapproval": false,
+			"date": "2013-06-04 09:56:42.407660",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/04 09:56:42, dvyukov wrote:\n> This is unrelated to this change, but I am eager to see how\n> GetQueuedCompletionStatusEx() affects performance. Once this is submitted, you\n> can patch it locally to use GetQueuedCompletionStatusEx() with a batch size 64\n> or something and run the net tcp benchmarks.\n\nI am snowed over at the moment. It is on my to do list. I will try as soon as this is submitted. I don't see significant speed up with this change, but I noticed that net benchmarks are more consistent with this change. So I am generally happy to go ahead with this change.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-05 07:37:15.903590",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/04 10:08:10, dvyukov wrote:\n> And later you may also look at removing memory allocation from Read/Write (by\n> embedding some structs into netFD). Reads/Writes oven an established tcp\n> connection should trigger basically no allocations. And I think that will be\n> very cool, because it moves it closer to the raw C performance.\n\nOn my to do list. In fact I have done it before, but then I got stuck with timers allocating memory. So I ditched memory allocation improvements in favor of doing this. I will get it in once this is submitted.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-05 07:39:22.190400",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-06-06 05:37:22.983240",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for review.\n\nAlex\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/net/fd_windows.go#newcode224\nsrc/pkg/net/fd_windows.go:224: return int(o.qty), nil\nOn 2013/06/04 09:47:34, dvyukov wrote:\n> add a comment explaining that we've issued the cancellation request, but the\n> operation succeeded before, so we need to treat it as succeeded (the bytes are\n> actually sent/recv from network)\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc\nFile src/pkg/runtime/netpoll.goc (right):\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode117\nsrc/pkg/runtime/netpoll.goc:117: err = checkerr(pd, mode);\nOn 2013/06/04 09:47:34, dvyukov wrote:\n> check that err != 0\n> it must be, right? because we are unblocked not by ioready event\n> if the check does not fire, then, great, we have another invariant that we can\n> rely on in this complex logic. otherwise there is something we do not understand\n> in the code we wrote :)\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode213\nsrc/pkg/runtime/netpoll.goc:213: rg = netpollunblock(pd, 'r', true);\nLeft as is.\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode213\nsrc/pkg/runtime/netpoll.goc:213: rg = netpollunblock(pd, 'r', true);\nLeft as is.\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode261\nsrc/pkg/runtime/netpoll.goc:261: netpollunblock(PollDesc *pd, int32 mode, bool setready)\nOn 2013/06/04 09:47:34, dvyukov wrote:\n> probably call it 'ioready' to be consistent with return value of netpollblock()\n> netpollblock() returns whether IO is ready or not, which is determined by\n> ioready flag passed to netpollunblock()\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll.goc#newcode272\nsrc/pkg/runtime/netpoll.goc:272: if(setready)\nOn 2013/06/04 09:47:34, dvyukov wrote:\n> explain why we do not set READY when !ioready (runtime_pollWait checks for\n> timeout/cancel before waiting)\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/44001/src/pkg/runtime/netpoll_windows.c#newcode85\nsrc/pkg/runtime/netpoll_windows.c:85: // TODO(brainman): Call GetQueuedCompletionStatusEx() here when possible.\nWill do.",
+			"disapproval": false,
+			"date": "2013-06-06 05:37:56.115600",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping",
+			"disapproval": false,
+			"date": "2013-06-20 23:04:55.770760",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/20 23:04:55, brainman wrote:\n> ping\n\nI thought we are waiting for you:\n\n> I think netpoll.goc and fd_poll_runtime.go changes should go separately, and\n> then the windows-specific changes.\n\nProbably it can be split even more. Other people need to look at these smaller changes as well.",
+			"disapproval": false,
+			"date": "2013-06-21 15:09:42.484730",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/21 15:09:42, dvyukov wrote:\n> On 2013/06/20 23:04:55, brainman wrote:\n> > ping\n> \n> I thought we are waiting for you:\n\nOops :-)\n\n> > I think netpoll.goc and fd_poll_runtime.go changes should go separately, and\n> > then the windows-specific changes.\n> \n> Probably it can be split even more. Other people need to look at these smaller\n> changes as well.\n\nAre you sure? You want me to copy netpoll.goc and fd_poll_runtime.go into new CL and send them separately? Why? You won't be able to see the reason for netpoll.goc and fd_poll_runtime.go changes.\n\nSure, I will do it, if you insist. Just let me know.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-23 10:34:07.861770",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/23 10:34:07, brainman wrote:\n> On 2013/06/21 15:09:42, dvyukov wrote:\n> > On 2013/06/20 23:04:55, brainman wrote:\n> > > ping\n> > \n> > I thought we are waiting for you:\n> \n> Oops :-)\n> \n> > > I think netpoll.goc and fd_poll_runtime.go changes should go separately, and\n> > > then the windows-specific changes.\n> > \n> > Probably it can be split even more. Other people need to look at these smaller\n> > changes as well.\n> \n> Are you sure? You want me to copy netpoll.goc and fd_poll_runtime.go into new CL\n> and send them separately? Why? You won't be able to see the reason for\n> netpoll.goc and fd_poll_runtime.go changes.\n> \n> Sure, I will do it, if you insist. Just let me know.\n\n\nThis CL changes the way runtime netpoll works and adds lots of windows-specific code. This is inconvenient for review/testing/rollback. E.g. people interested only in bsd systems won't even look at \"net: implement netpoll for windows\".\nPlease submit the platform-independent part separately. Regarding the reason for change, you may reference this patch and say that windows requires to know whether notification is ioready or timeout/closed.",
+			"disapproval": false,
+			"date": "2013-06-23 11:05:51.992810",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8670044/diff/57001/src/pkg/runtime/netpoll.goc\nFile src/pkg/runtime/netpoll.goc (right):\n\nhttps://codereview.appspot.com/8670044/diff/57001/src/pkg/runtime/netpoll.goc#newcode127\nsrc/pkg/runtime/netpoll.goc:127: netpollblock(pd, mode);\nwe expect that this returns only ioready, right?\nplease add such assertion\ncan't it be unblocked by runtime_pollUnblock? I suspect it can be, if we get timeout, unblock, issue CancelIOEx, wait for cancellation, at this point the fd is closed and we are unblocked by close; so we still don't know the result of the IO operation (succeeded/canceled)",
+			"disapproval": false,
+			"date": "2013-06-23 11:09:43.526300",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I also sent new CL https://codereview.appspot.com/10485043/ as per your request.\n\nAlex\n\nhttps://codereview.appspot.com/8670044/diff/57001/src/pkg/runtime/netpoll.goc\nFile src/pkg/runtime/netpoll.goc (right):\n\nhttps://codereview.appspot.com/8670044/diff/57001/src/pkg/runtime/netpoll.goc#newcode127\nsrc/pkg/runtime/netpoll.goc:127: netpollblock(pd, mode);\nOn 2013/06/23 11:09:44, dvyukov wrote:\n> we expect that this returns only ioready, right?\n> please add such assertion\n> can't it be unblocked by runtime_pollUnblock? I suspect it can be, if we get\n> timeout, unblock, issue CancelIOEx, wait for cancellation, at this point the fd\n> is closed and we are unblocked by close; so we still don't know the result of\n> the IO operation (succeeded/canceled)\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-24 04:37:27.974560",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-06-24 04:37:54.359350",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Updated to the tip. Waiting for instructions.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-25 04:43:00.276560",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/24 04:37:54, brainman wrote:\n> Hello mailto:dvyukov@google.com (cc: mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nThe fix looks good.\n\nThanks for splitting this CL.",
+			"disapproval": false,
+			"date": "2013-06-24 13:02:08.299810",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-06-25 04:41:58.987510",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8670044/diff/81001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/net/fd_windows.go#newcode96\nsrc/pkg/net/fd_windows.go:96: var i int\nguard the following lines by !canCancelIO, we really don't want to allocate these chans on modern OSes\nand probably regroup it as:\n\no.fd = fd\no.mode = mode\no.runtimeCtx = fd.pd.runtimeCtx\nif !canCancelIO {\n    everything else\n}\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/net/fd_windows.go#newcode123\nsrc/pkg/net/fd_windows.go:123: o.buf.Len = uint32(len(buf))\nIs it a known issue that windows impl does not support >2GB net operations? I think we need to file an issue.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll.goc\nFile src/pkg/runtime/netpoll.goc (right):\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll.goc#newcode273\nsrc/pkg/runtime/netpoll.goc:273: if(*gpp == READY) {\ndrop {}\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode17\nsrc/pkg/runtime/netpoll_windows.c:17: #pragma pack on\nhummm... how does this work? net_anOp matches net.anOp, but the latter does not have any special packing. So pragma pack is either unnecessary here, or do the wrong thing...\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode21\nsrc/pkg/runtime/netpoll_windows.c:21: struct net_anOp {\n{ on the next line\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode23\nsrc/pkg/runtime/netpoll_windows.c:23: Overlapped o;\nident 'o' with tab\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode24\nsrc/pkg/runtime/netpoll_windows.c:24: // my extras\nI think a better comment would be along the lines of \"used by netpoll\"\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode33\nsrc/pkg/runtime/netpoll_windows.c:33: static uintptr cpiohandle = INVALID_HANDLE_VALUE;  // completion port io handle\nit's usually abbreviated as iocp (IO Completion Port), cpio means something else\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode38\nsrc/pkg/runtime/netpoll_windows.c:38: cpiohandle = (uintptr)runtime\u00b7stdcall(runtime\u00b7CreateIoCompletionPort, 4, INVALID_HANDLE_VALUE, (uintptr)0, (uintptr)0, (uintptr)0);\nI think it's better to pass DWORD_MAX as max number of concurrent threads\nWindows does not understand what happens here and we do not have dedicated IO threads, so this model won't work. A worker thread can poll IOCP and then go into cgo. It will be a disaster if windows will decide to throttle Go scheduler worker threads.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode101\nsrc/pkg/runtime/netpoll_windows.c:101: pd = o->runtimeCtx;\npd refers to PollDesc* in netpoll-related files\nplease either (1) make pd PollDesc* or better just:\nruntime\u00b7netpollready(&gp, (void*)o->runtimeCtx, mode);",
+			"disapproval": false,
+			"date": "2013-06-25 12:00:28.849610",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/25 04:43:00, brainman wrote:\n> Updated to the tip. Waiting for instructions.\n\n\nI think we are very close to landing this.",
+			"disapproval": false,
+			"date": "2013-06-25 12:01:37.711140",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/26 10:23:22, dvyukov wrote:\n> \n> Hope you've done stress testing with GOARCH=386/amd64 GOMAXPROCS=1/2/4/8.\n\nDone as much as I could.\n\n> \n> Please set the maximum number of threads to something very large.\n\nSet to 0xffffffff. But now I have a problem - TestVariousDeadlines1Proc fails on amd64:\n\n...\n--- FAIL: TestVariousDeadlines1Proc (5.87 seconds)\n        timeout_test.go:483: 1ns run 1/3\n        timeout_test.go:503: for 1ns run 1/3, good client timeout after 2.9292ms, reading 0 bytes\n\t\t...\n        timeout_test.go:483: 750ns run 1/3\n        timeout_test.go:508: for 750ns run 1/3: timeout (2s) waiting for client to timeout (750ns) reading\nFAIL\t\t\n\nI looked high and low, and I cannot see any flaws in our changes. Also, If I change TestVariousDeadlines1Proc timeout time from 2s up to 10s, then problem goes away (but test sometimes runs for too long). So, to me, that proves our netpoll code is correct, it just scheduler is not good enough for this test. Perhaps I am wrong about that. Not sure what to do here :-(\n\n> \n> Please also include fresh benchmark results.\n\nI have collected some benchmarks https://code.google.com/p/go/issues/detail?id=5284#c4 (there is README to explain what is what). Like I said before, they are not conclusive. If you insist I publish something, help me pick benchmarks to include.\n\nAlex\n\nhttps://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c#newcode37\nsrc/pkg/runtime/netpoll_windows.c:37: runtime\u00b7printf(\"netpoll: failed to create cpio handle (errno=%d)\\n\", runtime\u00b7getlasterror());\nOn 2013/06/26 10:23:24, dvyukov wrote:\n> s/cpio/iocp/\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c#newcode38\nsrc/pkg/runtime/netpoll_windows.c:38: runtime\u00b7throw(\"netpoll: failed to create cpio handle\");\nOn 2013/06/26 10:23:24, dvyukov wrote:\n> s/cpio/iocp/\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-27 06:52:18.793830",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-06-26 07:17:56.871950",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8670044/diff/81001/src/pkg/net/fd_windows.go\nFile src/pkg/net/fd_windows.go (right):\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/net/fd_windows.go#newcode96\nsrc/pkg/net/fd_windows.go:96: var i int\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> guard the following lines by !canCancelIO, we really don't want to allocate\n> these chans on modern OSes\n> and probably regroup it as:\n> \n> o.fd = fd\n> o.mode = mode\n> o.runtimeCtx = fd.pd.runtimeCtx\n> if !canCancelIO {\n>     everything else\n> }\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/net/fd_windows.go#newcode123\nsrc/pkg/net/fd_windows.go:123: o.buf.Len = uint32(len(buf))\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> Is it a known issue that windows impl does not support >2GB net operations? I\n> think we need to file an issue.\n\nNo, no one complained about that. Feel free to create an issue, if you like.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll.goc\nFile src/pkg/runtime/netpoll.goc (right):\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll.goc#newcode273\nsrc/pkg/runtime/netpoll.goc:273: if(*gpp == READY) {\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> drop {}\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode17\nsrc/pkg/runtime/netpoll_windows.c:17: #pragma pack on\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> ... So pragma pack is either unnecessary here, or do the\n> wrong thing...\n\nRemoved.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode21\nsrc/pkg/runtime/netpoll_windows.c:21: struct net_anOp {\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> { on the next line\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode23\nsrc/pkg/runtime/netpoll_windows.c:23: Overlapped o;\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> ident 'o' with tab\n\nDone.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode24\nsrc/pkg/runtime/netpoll_windows.c:24: // my extras\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> I think a better comment would be along the lines of \"used by netpoll\"\n\nI agree. Changed.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode33\nsrc/pkg/runtime/netpoll_windows.c:33: static uintptr cpiohandle = INVALID_HANDLE_VALUE;  // completion port io handle\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> it's usually abbreviated as iocp (IO Completion Port), cpio means something else\n\nRenamed.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode38\nsrc/pkg/runtime/netpoll_windows.c:38: cpiohandle = (uintptr)runtime\u00b7stdcall(runtime\u00b7CreateIoCompletionPort, 4, INVALID_HANDLE_VALUE, (uintptr)0, (uintptr)0, (uintptr)0);\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> I think it's better to pass DWORD_MAX as max number of concurrent threads\n> Windows does not understand what happens here and we do not have dedicated IO\n> threads, so this model won't work. A worker thread can poll IOCP and then go\n> into cgo. It will be a disaster if windows will decide to throttle Go scheduler\n> worker threads.\n\nI have been thinking long and hard about this value. I did a lot of testing too. From my tests, I can only see that setting affect number of threads allowed to proceed into GetQueuedCompletionStatus. From what information I can gather, this model is designed around concept that all threads are blocked inside of GetQueuedCompletionStatus. Designers wanted to mimimize thread switching, so waiting threads are managed in FIFO order in the hope that thread that proceeds with IO will return back into GetQueuedCompletionStatus as soon as possible. Giving everything I know, I thought that 0 for that value (is translated into CPU number under covers) is most suitable.\n\nhttp://msdn.microsoft.com/en-us/library/windows/desktop/aa365198%28v=vs.85%29.aspx and http://int64.org/2009/05/13/high-performance-io-on-windows/ are some links on the subject. Also the fact that we are effectively running in 2 different modes here (controlled by block parameter in runtime.netpoll) makes things even more complicated.\n\nLeaving it as is. But will change to whatever you like, if you insist. Do not forget, we could always change it latter, once we gather more knowledge on the matter.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode101\nsrc/pkg/runtime/netpoll_windows.c:101: pd = o->runtimeCtx;\nOn 2013/06/25 12:00:32, dvyukov wrote:\n> pd refers to PollDesc* in netpoll-related files\n> please either (1) make pd PollDesc* or better just:\n> runtime\u00b7netpollready(&gp, (void*)o->runtimeCtx, mode);\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-26 07:18:04.236010",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI think you can submit now (after addressing the comments), it is on review for enough time.\n\nHope you've done stress testing with GOARCH=386/amd64 GOMAXPROCS=1/2/4/8.\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/81001/src/pkg/runtime/netpoll_windows.c#newcode38\nsrc/pkg/runtime/netpoll_windows.c:38: cpiohandle = (uintptr)runtime\u00b7stdcall(runtime\u00b7CreateIoCompletionPort, 4, INVALID_HANDLE_VALUE, (uintptr)0, (uintptr)0, (uintptr)0);\nOn 2013/06/26 07:18:05, brainman wrote:\n> On 2013/06/25 12:00:32, dvyukov wrote:\n> > I think it's better to pass DWORD_MAX as max number of concurrent threads\n> > Windows does not understand what happens here and we do not have dedicated IO\n> > threads, so this model won't work. A worker thread can poll IOCP and then go\n> > into cgo. It will be a disaster if windows will decide to throttle Go\n> scheduler\n> > worker threads.\n> \n> I have been thinking long and hard about this value. I did a lot of testing too.\n> From my tests, I can only see that setting affect number of threads allowed to\n> proceed into GetQueuedCompletionStatus. From what information I can gather, this\n> model is designed around concept that all threads are blocked inside of\n> GetQueuedCompletionStatus. Designers wanted to mimimize thread switching, so\n> waiting threads are managed in FIFO order in the hope that thread that proceeds\n> with IO will return back into GetQueuedCompletionStatus as soon as possible.\n> Giving everything I know, I thought that 0 for that value (is translated into\n> CPU number under covers) is most suitable.\n> \n> http://msdn.microsoft.com/en-us/library/windows/desktop/aa365198%2528v=vs.85%2529.aspx\n> and http://int64.org/2009/05/13/high-performance-io-on-windows/ are some links\n> on the subject. Also the fact that we are effectively running in 2 different\n> modes here (controlled by block parameter in runtime.netpoll) makes things even\n> more complicated.\n> \n> Leaving it as is. But will change to whatever you like, if you insist. Do not\n> forget, we could always change it latter, once we gather more knowledge on the\n> matter.\n\nYes, it is designed around a different model -- you have a thread pool (much more threads than CPUs), all threads are blocked on GQCS, once a thread is unblocked it processes the event and blocks again. Go model is different -- the thread that gets events does not process them, instead it distributes the events over a thread pool with number of CPUs threads (GOMAXPROCS). It's further complicated by syscalls and cgo.\n\nPlease set the maximum number of threads to something very large.\nAny potential performance problems that arise from that will be very difficult to track down.\nDisabling thread throttling has an additional benefit of aligning it with epoll/kqueue (that do not do any throttling). So any performance problems and changes will have more uniform effect across different OSes.\n\nhttps://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c\nFile src/pkg/runtime/netpoll_windows.c (right):\n\nhttps://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c#newcode37\nsrc/pkg/runtime/netpoll_windows.c:37: runtime\u00b7printf(\"netpoll: failed to create cpio handle (errno=%d)\\n\", runtime\u00b7getlasterror());\ns/cpio/iocp/\n\nhttps://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c#newcode38\nsrc/pkg/runtime/netpoll_windows.c:38: runtime\u00b7throw(\"netpoll: failed to create cpio handle\");\ns/cpio/iocp/",
+			"disapproval": false,
+			"date": "2013-06-26 10:23:22.742670",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/26 10:23:22, dvyukov wrote:\n> LGTM\n> \n> I think you can submit now (after addressing the comments), it is on review for\n> enough time.\n> \n> Hope you've done stress testing with GOARCH=386/amd64 GOMAXPROCS=1/2/4/8.\n\n\nI think you need to extend CL description a bit (for such a significant change). Please also include fresh benchmark results.",
+			"disapproval": false,
+			"date": "2013-06-26 10:24:59.954320",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/26 10:24:59, dvyukov wrote:\n> \n> I think you need to extend CL description a bit (for such a significant change)...\n\nI cannot think of what else to say. Do you have a suggestion? It is kind of all the same, but using netpoll functionality.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-26 23:09:01.840280",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-06-27 06:53:15.757710",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jun 27, 2013 at 10:52 AM,  <alex.brainman@gmail.com> wrote:\r\n> On 2013/06/26 10:23:22, dvyukov wrote:\r\n>\r\n>> Hope you've done stress testing with GOARCH=386/amd64\r\n>\r\n> GOMAXPROCS=1/2/4/8.\r\n>\r\n> Done as much as I could.\r\n>\r\n>> Please set the maximum number of threads to something very large.\r\n> Set to 0xffffffff. But now I have a problem - TestVariousDeadlines1Proc\r\n> fails on amd64:\r\n>\r\n> ...\r\n> --- FAIL: TestVariousDeadlines1Proc (5.87 seconds)\r\n>         timeout_test.go:483: 1ns run 1/3\r\n>         timeout_test.go:503: for 1ns run 1/3, good client timeout after\r\n> 2.9292ms, reading 0 bytes\r\n>                 ...\r\n>         timeout_test.go:483: 750ns run 1/3\r\n>         timeout_test.go:508: for 750ns run 1/3: timeout (2s) waiting for\r\n> client to timeout (750ns) reading\r\n> FAIL\r\n\r\nIs it started happening when you set max threads to 0xffffffff? Or it\r\nwas happening before?\r\n\r\n\r\n> I looked high and low, and I cannot see any flaws in our changes. Also,\r\n> If I change TestVariousDeadlines1Proc timeout time from 2s up to 10s,\r\n> then problem goes away (but test sometimes runs for too long). So, to\r\n> me, that proves our netpoll code is correct, it just scheduler is not\r\n> good enough for this test. Perhaps I am wrong about that. Not sure what\r\n> to do here :-(\r\n>\r\n>\r\n>\r\n>> Please also include fresh benchmark results.\r\n>\r\n>\r\n> I have collected some benchmarks\r\n> https://code.google.com/p/go/issues/detail?id=5284#c4 (there is README\r\n> to explain what is what). Like I said before, they are not conclusive.\r\n> If you insist I publish something, help me pick benchmarks to include.\r\n>\r\n> Alex\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c\r\n> File src/pkg/runtime/netpoll_windows.c (right):\r\n>\r\n> https://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c#newcode37\r\n> src/pkg/runtime/netpoll_windows.c:37: runtime\u00b7printf(\"netpoll: failed to\r\n> create cpio handle (errno=%d)\\n\", runtime\u00b7getlasterror());\r\n> On 2013/06/26 10:23:24, dvyukov wrote:\r\n>>\r\n>> s/cpio/iocp/\r\n>\r\n>\r\n> Done.\r\n>\r\n>\r\n> https://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c#newcode38\r\n> src/pkg/runtime/netpoll_windows.c:38: runtime\u00b7throw(\"netpoll: failed to\r\n> create cpio handle\");\r\n> On 2013/06/26 10:23:24, dvyukov wrote:\r\n>>\r\n>> s/cpio/iocp/\r\n>\r\n>\r\n> Done.\r\n>\r\n> https://codereview.appspot.com/8670044/\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 11:25:45.660260",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jun 27, 2013 at 3:25 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n> On Thu, Jun 27, 2013 at 10:52 AM,  <alex.brainman@gmail.com> wrote:\r\n>> On 2013/06/26 10:23:22, dvyukov wrote:\r\n>>\r\n>>> Hope you've done stress testing with GOARCH=386/amd64\r\n>>\r\n>> GOMAXPROCS=1/2/4/8.\r\n>>\r\n>> Done as much as I could.\r\n>>\r\n>>> Please set the maximum number of threads to something very large.\r\n>> Set to 0xffffffff. But now I have a problem - TestVariousDeadlines1Proc\r\n>> fails on amd64:\r\n>>\r\n>> ...\r\n>> --- FAIL: TestVariousDeadlines1Proc (5.87 seconds)\r\n>>         timeout_test.go:483: 1ns run 1/3\r\n>>         timeout_test.go:503: for 1ns run 1/3, good client timeout after\r\n>> 2.9292ms, reading 0 bytes\r\n>>                 ...\r\n>>         timeout_test.go:483: 750ns run 1/3\r\n>>         timeout_test.go:508: for 750ns run 1/3: timeout (2s) waiting for\r\n>> client to timeout (750ns) reading\r\n>> FAIL\r\n>\r\n> Is it started happening when you set max threads to 0xffffffff? Or it\r\n> was happening before?\r\n\r\nWhat if you set max threads to 10000?\r\nDoes TestVariousDeadlines4Proc timeout?\r\n\r\n>> I looked high and low, and I cannot see any flaws in our changes. Also,\r\n>> If I change TestVariousDeadlines1Proc timeout time from 2s up to 10s,\r\n>> then problem goes away (but test sometimes runs for too long). So, to\r\n>> me, that proves our netpoll code is correct, it just scheduler is not\r\n>> good enough for this test. Perhaps I am wrong about that. Not sure what\r\n>> to do here :-(\r\n>>\r\n>>\r\n>>\r\n>>> Please also include fresh benchmark results.\r\n>>\r\n>>\r\n>> I have collected some benchmarks\r\n>> https://code.google.com/p/go/issues/detail?id=5284#c4 (there is README\r\n>> to explain what is what). Like I said before, they are not conclusive.\r\n>> If you insist I publish something, help me pick benchmarks to include.\r\n>>\r\n>> Alex\r\n>>\r\n>>\r\n>>\r\n>> https://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c\r\n>> File src/pkg/runtime/netpoll_windows.c (right):\r\n>>\r\n>> https://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c#newcode37\r\n>> src/pkg/runtime/netpoll_windows.c:37: runtime\u00b7printf(\"netpoll: failed to\r\n>> create cpio handle (errno=%d)\\n\", runtime\u00b7getlasterror());\r\n>> On 2013/06/26 10:23:24, dvyukov wrote:\r\n>>>\r\n>>> s/cpio/iocp/\r\n>>\r\n>>\r\n>> Done.\r\n>>\r\n>>\r\n>> https://codereview.appspot.com/8670044/diff/90001/src/pkg/runtime/netpoll_windows.c#newcode38\r\n>> src/pkg/runtime/netpoll_windows.c:38: runtime\u00b7throw(\"netpoll: failed to\r\n>> create cpio handle\");\r\n>> On 2013/06/26 10:23:24, dvyukov wrote:\r\n>>>\r\n>>> s/cpio/iocp/\r\n>>\r\n>>\r\n>> Done.\r\n>>\r\n>> https://codereview.appspot.com/8670044/\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 11:27:19.822410",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/28 02:43:12, brainman wrote:\n> \n> I have collected some benchmarks\n> https://code.google.com/p/go/issues/detail?id=5284#c4 (there is README to\n> explain what is what). Like I said before, they are not conclusive. If you\n> insist I publish something, help me pick benchmarks to include.\n> \n\nI have problem with my benchmark script, so I updated them to https://code.google.com/p/go/issues/detail?id=5284#c5. Not that they are much different.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-28 06:31:48.701560",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/27 11:25:45, dvyukov wrote:\n> \n> Is it started happening when you set max threads to 0xffffffff? Or it\n> was happening before?\n> \n\nThe former. Maybe it was broken before, but I didn't notice. Maybe give enough stress it will fail too. With max threads 0xffffffff it fails pretty much every second time. This is on amd64 only, 386 works fine.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-27 11:36:11.208650",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jun 27, 2013 at 3:26 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n> On Thu, Jun 27, 2013 at 3:25 PM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n>> On Thu, Jun 27, 2013 at 10:52 AM,  <alex.brainman@gmail.com> wrote:\r\n>>> On 2013/06/26 10:23:22, dvyukov wrote:\r\n>>>\r\n>>>> Hope you've done stress testing with GOARCH=386/amd64\r\n>>>\r\n>>> GOMAXPROCS=1/2/4/8.\r\n>>>\r\n>>> Done as much as I could.\r\n>>>\r\n>>>> Please set the maximum number of threads to something very large.\r\n>>> Set to 0xffffffff. But now I have a problem - TestVariousDeadlines1Proc\r\n>>> fails on amd64:\r\n>>>\r\n>>> ...\r\n>>> --- FAIL: TestVariousDeadlines1Proc (5.87 seconds)\r\n>>>         timeout_test.go:483: 1ns run 1/3\r\n>>>         timeout_test.go:503: for 1ns run 1/3, good client timeout after\r\n>>> 2.9292ms, reading 0 bytes\r\n>>>                 ...\r\n>>>         timeout_test.go:483: 750ns run 1/3\r\n>>>         timeout_test.go:508: for 750ns run 1/3: timeout (2s) waiting for\r\n>>> client to timeout (750ns) reading\r\n>>> FAIL\r\n>>\r\n>> Is it started happening when you set max threads to 0xffffffff? Or it\r\n>> was happening before?\r\n>\r\n> What if you set max threads to 10000?\r\n> Does TestVariousDeadlines4Proc timeout?\r\n\r\nDoes it happen deterministically or not? Please post several failure logs.\r\nI suspect it can be due to some fairness issues in the scheduler --\r\nthe test requires timer goroutine to run, but client and server\r\ngoroutines never give up CPU. I mean that it's similar to:\r\n\r\ngo func() {\r\n  stop = 1\r\n}()\r\nfor stop == 0 {\r\n}\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 11:37:15.774060",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/27 11:27:19, dvyukov wrote:\n> \n> What if you set max threads to 10000?\n\nWill try.\n\n> Does TestVariousDeadlines4Proc timeout?\n\nI didn't notice. Will check.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-27 11:38:36.348090",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jun 27, 2013 at 3:36 PM,  <alex.brainman@gmail.com> wrote:\r\n> On 2013/06/27 11:25:45, dvyukov wrote:\r\n>\r\n>> Is it started happening when you set max threads to 0xffffffff? Or it\r\n>> was happening before?\r\n>\r\n>\r\n>\r\n> The former. Maybe it was broken before, but I didn't notice. Maybe give\r\n> enough stress it will fail too. With max threads 0xffffffff it fails\r\n> pretty much every second time. This is on amd64 only, 386 works fine.\r\n\r\nI would not be surprised if kernel uses int16 to store the value.\r\nPlease try 10000.\r\n\r\nAlso please try adding runtime.Gosched() into client and server goroutines.\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 11:39:26.118170",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/27 11:37:15, dvyukov wrote:\n> \n> Does it happen deterministically or not? ...\n\nAs I said. It happens about every second time. Same problem - connection keeps going and ignore timeout set. And test times out.\n\n> ... Please post several failure logs.\n\nLike I said above, they all look similar. Sometimes it fails early, sometimes late.\n\n> I suspect it can be due to some fairness issues in the scheduler --\n> the test requires timer goroutine to run, but client and server\n> goroutines never give up CPU. ...\n\nI though as much. What can we do apart from disabling the test?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-27 11:44:14.933550",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/27 11:39:26, dvyukov wrote:\n> \n> I would not be surprised if kernel uses int16 to store the value.\n> Please try 10000.\n\nWill do.\n\n> Also please try adding runtime.Gosched() into client and server goroutines.\n\nWhere exactly should I put it?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-27 11:45:44.126370",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/27 11:45:44, brainman wrote:\n> On 2013/06/27 11:39:26, dvyukov wrote:\n> > \n> > I would not be surprised if kernel uses int16 to store the value.\n> > Please try 10000.\n> \n> Will do.\n> \n> > Also please try adding runtime.Gosched() into client and server goroutines.\n> \n> Where exactly should I put it?\n\n\nYeah, there is no good to add them, because the test uses io.Copy.\nPlease try to inline io.Copy, and add runtime.Gosched() into the loop, so that it yields every 4K or so.\n\n\nAlso please try this patch:\nhttps://codereview.appspot.com/10683044",
+			"disapproval": false,
+			"date": "2013-06-27 12:12:23.562870",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/27 12:12:23, dvyukov wrote:\n> \n> Yeah, there is no good to add them, because the test uses io.Copy.\n> Please try to inline io.Copy, and add runtime.Gosched() into the loop, so that\n> it yields every 4K or so.\n> \n> \n> Also please try this patch:\n> https://codereview.appspot.com/10683044\n\nSounds like a plan. Thank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-27 12:14:48.103780",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> ... TestVariousDeadlines4Proc timeout too?\n\nYes.\n\n> ... set max threads to 10000, see if that helps ...\n\nNo difference. It acts just like 0xffffffff.\n\nI was mistaken yesterday to say that TestVariousDeadlines1Proc works with max threads set to 0 - it only works if test is run with -short flag (do 1, not 3 runs each, and skip tests that go longer then 500*time.Microsecond). It also works with max threads set to 0, if I run ALL tests, not just TestVariousDeadlines1Proc, -short or no -short.\n\nIt works unconditionally on windows/386, regardless of max threads value ot -short flag or running together or single TestVariousDeadlines1Proc test.\n\n> ... try this patch: https://codereview.appspot.com/10683044\n\nIt does not help. TestVariousDeadlines1Proc breaks as before.\n\n> ... inline io.Copy, and add runtime.Gosched() into the loop, so that it yields every 4K or so ...\n\nThat did the trick. Here https://codereview.appspot.com/10690045/ is my changed test.\n\n> ... I think you need to extend CL description a bit (for such a significant change)...\n\nI cannot think of what else to say. Do you have a suggestion? It is kind of all the same, but using netpoll functionality.\n\n> ... Please also include fresh benchmark results.\n\nI have collected some benchmarks https://code.google.com/p/go/issues/detail?id=5284#c4 (there is README to explain what is what). Like I said before, they are not conclusive. If you insist I publish something, help me pick benchmarks to include.\n\nThank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-28 02:43:12.200960",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/28 02:43:12, brainman wrote:\n> > ... TestVariousDeadlines4Proc timeout too?\n> \n> Yes.\n\nOK, so it's not related to GOMAXPROCS value.\n\n> > ... set max threads to 10000, see if that helps ...\n> \n> No difference. It acts just like 0xffffffff.\n> \n> I was mistaken yesterday to say that TestVariousDeadlines1Proc works with max\n> threads set to 0 - it only works if test is run with -short flag (do 1, not 3\n> runs each, and skip tests that go longer then 500*time.Microsecond). It also\n> works with max threads set to 0, if I run ALL tests, not just\n> TestVariousDeadlines1Proc, -short or no -short.\n> \n> It works unconditionally on windows/386, regardless of max threads value ot\n> -short flag or running together or single TestVariousDeadlines1Proc test.\n\nand it's not related to NumberOfConcurrentThreads value\n\n> > ... try this patch: https://codereview.appspot.com/10683044\n> \n> It does not help. TestVariousDeadlines1Proc breaks as before.\n\nand it's not a problem with scheduler (at least with this particular part of the scheduler)\n\n> > ... inline io.Copy, and add runtime.Gosched() into the loop, so that it yields\n> every 4K or so ...\n> \n> That did the trick. Here https://codereview.appspot.com/10690045/ is my changed\n> test.\n\nOK\n\n> > ... I think you need to extend CL description a bit (for such a significant\n> change)...\n> \n> I cannot think of what else to say. Do you have a suggestion? It is kind of all\n> the same, but using netpoll functionality.\n> \n> > ... Please also include fresh benchmark results.\n> \n> I have collected some benchmarks\n> https://code.google.com/p/go/issues/detail?id=5284#c4 (there is README to\n> explain what is what). Like I said before, they are not conclusive. If you\n> insist I publish something, help me pick benchmarks to include.\n\nsay that it moves the network poller from net package into runtime\nI would include the following benchmarks:\nBenchmarkTCP4OneShot\t     500\t    296856 ns/op\nBenchmarkTCP4OneShot-2\t     500\t    324198 ns/op\nBenchmarkTCP4OneShot-3\t     500\t    312480 ns/op\nBenchmarkTCP4OneShotTimeout\t    1000\t    294903 ns/op\nBenchmarkTCP4OneShotTimeout-2\t    1000\t    343728 ns/op\nBenchmarkTCP4OneShotTimeout-3\t     500\t    355446 ns/op\nBenchmarkTCP4Persistent\t    5000\t     33396 ns/op\nBenchmarkTCP4Persistent-2\t    5000\t     34763 ns/op\nBenchmarkTCP4Persistent-3\t    5000\t     36911 ns/op\nBenchmarkTCP4PersistentTimeout\t    5000\t     34177 ns/op\nBenchmarkTCP4PersistentTimeout-2\t    5000\t     35739 ns/op\nBenchmarkTCP4PersistentTimeout-3\t    5000\t     36130 ns/op",
+			"disapproval": false,
+			"date": "2013-06-28 11:15:14.937140",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Regarding the test failure, I don't have any good ideas now...\nYou've said that if you increase timeout to 10 seconds, then it passes, but sometimes takes long time, right?\nI do not understand what is the potential difference between amd64 and 386...\n\nI would add debug prints into netpoller and timers, and try to understand what exactly happens wrong.\nE.g. (1) client/server just continue the communication, timeout does not fire\nor (2) client/server just continue the communication, timeout fire but take no effect\nor (3) client/server hang, where?\nor (4) something else",
+			"disapproval": false,
+			"date": "2013-06-28 11:22:28.348220",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/28 11:15:14, dvyukov wrote:\n> I would include the following benchmarks:\n> BenchmarkTCP4OneShot\t     500\t    296856 ns/op\n> BenchmarkTCP4OneShot-2\t     500\t    324198 ns/op\n> BenchmarkTCP4OneShot-3\t     500\t    312480 ns/op\n> BenchmarkTCP4OneShotTimeout\t    1000\t    294903 ns/op\n> BenchmarkTCP4OneShotTimeout-2\t    1000\t    343728 ns/op\n> BenchmarkTCP4OneShotTimeout-3\t     500\t    355446 ns/op\n> BenchmarkTCP4Persistent\t    5000\t     33396 ns/op\n> BenchmarkTCP4Persistent-2\t    5000\t     34763 ns/op\n> BenchmarkTCP4Persistent-3\t    5000\t     36911 ns/op\n> BenchmarkTCP4PersistentTimeout\t    5000\t     34177 ns/op\n> BenchmarkTCP4PersistentTimeout-2\t    5000\t     35739 ns/op\n> BenchmarkTCP4PersistentTimeout-3\t    5000\t     36130 ns/op\n\nNo \"old to new comparisons\"?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-28 12:00:55.519230",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Maybe it correlates with some cold error paths, e.g. WSARecv returns\r\nnil instead of ERROR_IO_PENDING (or vice versa); or CancelIOEx()\r\nreturns ERROR_NOT_FOUND.\r\n\r\n\r\nOn Fri, Jun 28, 2013 at 4:32 PM,  <alex.brainman@gmail.com> wrote:\r\n> On 2013/06/28 12:28:27, dvyukov wrote:\r\n>>\r\n>> What other things can it do? There must be not much other things...\r\n>\r\n>\r\n> Fair enough. I will run that test again and see if I can find out more.\r\n>\r\n> Alex\r\n>\r\n> https://codereview.appspot.com/8670044/\r\n",
+			"disapproval": false,
+			"date": "2013-06-28 12:51:15.764900",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Jun 28, 2013 at 4:00 PM,  <alex.brainman@gmail.com> wrote:\r\n> On 2013/06/28 11:15:14, dvyukov wrote:\r\n>>\r\n>> I would include the following benchmarks:\r\n>> BenchmarkTCP4OneShot         500            296856 ns/op\r\n>> BenchmarkTCP4OneShot-2       500            324198 ns/op\r\n>> BenchmarkTCP4OneShot-3       500            312480 ns/op\r\n>> BenchmarkTCP4OneShotTimeout         1000            294903 ns/op\r\n>> BenchmarkTCP4OneShotTimeout-2       1000            343728 ns/op\r\n>> BenchmarkTCP4OneShotTimeout-3        500            355446 ns/op\r\n>> BenchmarkTCP4Persistent     5000             33396 ns/op\r\n>> BenchmarkTCP4Persistent-2           5000             34763 ns/op\r\n>> BenchmarkTCP4Persistent-3           5000             36911 ns/op\r\n>> BenchmarkTCP4PersistentTimeout      5000             34177 ns/op\r\n>> BenchmarkTCP4PersistentTimeout-2            5000             35739 ns/op\r\n>> BenchmarkTCP4PersistentTimeout-3            5000             36130 ns/op\r\n>\r\n>\r\n> No \"old to new comparisons\"?\r\n\r\n\r\nIncluding \"old to new comparisons\".\r\n",
+			"disapproval": false,
+			"date": "2013-06-28 12:10:15.931040",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/28 11:22:28, dvyukov wrote:\n> Regarding the test failure, I don't have any good ideas now...\n\nHow about changing the test as per my new CL?\n\n> You've said that if you increase timeout to 10 seconds, then it passes, but\n> sometimes takes long time, right?\n\nYes, but what is the limit? 2s? 10s? 1m? 1h? Who came up with 2s? Why should it end in 2s? Also, there are many short tests there (start with 1ns or something). If each takes 10s, the total test takes too long.\n\n> I do not understand what is the potential difference between amd64 and 386...\n\nIt is not really the arch, but the way OS works. Remember old OS version (386) does not have CancelEx function, so the execution path is completely different. For example on 386 all IO is started and canceled on single thread. So all thread switching pattern is very different.\n\nI am just guessing. :-)\n\n> I would add debug prints into netpoller and timers, and try to understand what\n> exactly happens wrong.\n> E.g. (1) client/server just continue the communication, timeout does not fire\n> or (2) client/server just continue the communication, timeout fire but take no\n> effect\n> or (3) client/server hang, where?\n> or (4) something else\n\nI put panic(\"CRASH\") in the test where t.Fatal is, so I can see stack trace. I can see goroutine waiting in park() in runtime inside runtime_WaitCancelled (or whatever it is called). So, it means, timeout is fired, and we called CancelIO and now we waiting for IO to get canceled, but it has not happened yet. But, given that it works if I extend wait till 10s it works, it means that IO eventually competes. So, I would say it is (3), but it does not hang, just takes longer then we expect it to. Probably, because it is busy doing other things.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-28 12:14:30.770100",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Jun 28, 2013 at 4:14 PM,  <alex.brainman@gmail.com> wrote:\r\n> On 2013/06/28 11:22:28, dvyukov wrote:\r\n>>\r\n>> Regarding the test failure, I don't have any good ideas now...\r\n>\r\n> How about changing the test as per my new CL?\r\n\r\nWell, if it's a bug in implementation, it's not a good idea to just\r\nupdate the test to account for the bug.\r\n\r\n\r\n>> You've said that if you increase timeout to 10 seconds, then it\r\n>\r\n> passes, but\r\n>>\r\n>> sometimes takes long time, right?\r\n>\r\n>\r\n> Yes, but what is the limit? 2s? 10s? 1m? 1h? Who came up with 2s? Why\r\n> should it end in 2s? Also, there are many short tests there (start with\r\n> 1ns or something). If each takes 10s, the total test takes too long.\r\n\r\nI think it's 2s, because the max timeout in the test is 1s. So 2s must\r\nbe enough for the timeout to happen.\r\n\r\n\r\n\r\n>> I do not understand what is the potential difference between amd64 and\r\n>\r\n> 386...\r\n>\r\n> It is not really the arch, but the way OS works. Remember old OS version\r\n> (386) does not have CancelEx function, so the execution path is\r\n> completely different. For example on 386 all IO is started and canceled\r\n> on single thread. So all thread switching pattern is very different.\r\n\r\nAh, I see, makes sense.\r\n\r\n\r\n> I am just guessing. :-)\r\n>\r\n>\r\n>> I would add debug prints into netpoller and timers, and try to\r\n>\r\n> understand what\r\n>>\r\n>> exactly happens wrong.\r\n>> E.g. (1) client/server just continue the communication, timeout does\r\n>\r\n> not fire\r\n>>\r\n>> or (2) client/server just continue the communication, timeout fire but\r\n>\r\n> take no\r\n>>\r\n>> effect\r\n>> or (3) client/server hang, where?\r\n>> or (4) something else\r\n>\r\n>\r\n> I put panic(\"CRASH\") in the test where t.Fatal is, so I can see stack\r\n> trace. I can see goroutine waiting in park() in runtime inside\r\n> runtime_WaitCancelled (or whatever it is called). So, it means, timeout\r\n> is fired, and we called CancelIO and now we waiting for IO to get\r\n> canceled, but it has not happened yet. But, given that it works if I\r\n> extend wait till 10s it works, it means that IO eventually competes. So,\r\n> I would say it is (3), but it does not hang, just takes longer then we\r\n> expect it to. Probably, because it is busy doing other things.\r\n\r\n\r\nIt's already something.\r\nWhat other things can it do? There must be not much other things...\r\n",
+			"disapproval": false,
+			"date": "2013-06-28 12:28:27.308470",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/28 12:28:27, dvyukov wrote:\n> What other things can it do? There must be not much other things...\n\nFair enough. I will run that test again and see if I can find out more.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-28 12:32:28.702840",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/05 02:58:58, brainman wrote:\n> message: On 2013/06/28 12:28:27, dvyukov wrote:\n> > ...\n> > What other things can it do? There must be not much other things...\n> \n> I can see that net timeouts aren't fired. They fired but they take longer then\n> they should. So I started looking at what they do, and they happened to be\n> sitting in WaitForSingleObject in runtime.semasleep for much longer then they\n> should - WaitForSingleObject gets passed *timeout* parameters, but it times out\n> after much longer time then *timeout* says. I was thinking about why, and the\n> only good idea I had is that something else is hogging CPU while we waiting in\n> WaitForSingleObject. So I started looking for any new busy loops that my change\n> could introduce, and the only thing that I could come up with is\n> GetQueuedCompletionStatus function. I changed GetQueuedCompletionStatus \"wait\"\n> parameter from 0 to 1, and that fixes broken test. Here\n> \n> 79c79,80\n> < \t\twait = 0;\n> ---\n> > \t\t// TODO(brainman): should use 0 here instead, but scheduler hogs CPU\n> > \t\twait = 1;\n> \n> is the netpoll_windows.c change. Perhaps when GetQueuedCompletionStatus gets\n> called with 0 (do-not-wait) it is very quick when data is not there, but calling\n> it with 1 (wait for 1ms) makes it go into OS scheduler or something.\n> \n> I am not convinced it is correct solution. So I put TODO to look at it later.\n> Perhaps Go scheduler needs to be adjusted to accommodate for what is happening\n> here. Why should we wait in GetQueuedCompletionStatus unless we deliberately\n> want to do so? One thing I did noticed is that windows runtime.nanotime works in\n> ~15ms increments - maybe that confuses Go scheduler.\n> \n> Anyway, I am happy to submit the CL with the latest change. There is still\n> plenty more work to do, but we have something that works for the moment. I have\n> updated CL description and added benchmark output.\n> \n> Please let me now what to do next. Thank you.\n\n\nGood idea about busy loops.\nscheduler sysmon thread can potentially call netpoll() in an almost busy loop. However in between it calls usleep(). Probably windows ignores small values in usleep() and lets it run all the time. Different runnable thread still should be alternated at 15ms intervals, so probably IO priority boosting cames into picture (however sysmon does not do any IO, but it calls GQCS, so probably OS thinks that it's IO thread). And it all makes sense only if you run on a single core machine, because otherwise different threads should run in parallel. Is the machine single core?\n\nIn any case please try the following patch, and temporary change wait to 0 for non-blocking netpoll calls, and check if it helps.\n\ndiff -r dc24634de6c5 src/pkg/runtime/proc.c\n--- a/src/pkg/runtime/proc.c\tWed Jul 17 11:04:34 2013 +0200\n+++ b/src/pkg/runtime/proc.c\tWed Jul 17 14:40:15 2013 +0400\n@@ -2086,6 +2086,7 @@\n \t\tlastpoll = runtime\u00b7atomicload64(&runtime\u00b7sched.lastpoll);\n \t\tnow = runtime\u00b7nanotime();\n \t\tif(lastpoll != 0 && lastpoll + 10*1000*1000 > now) {\n+\t\t\truntime\u00b7cas64(&runtime\u00b7sched.lastpoll, lastpoll, now);\n \t\t\tgp = runtime\u00b7netpoll(false);  // non-blocking\n \t\t\tinjectglist(gp);\n \t\t}\n\nIf it does not help, we will land current version.",
+			"disapproval": false,
+			"date": "2013-07-17 10:42:15.206020",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/17 10:42:15, dvyukov wrote:\n> ... Different runnable thread still should be\n> alternated at 15ms intervals, so probably IO priority boosting cames into\n> picture (however sysmon does not do any IO, but it calls GQCS, so probably OS\n> thinks that it's IO thread).\n\nWindows threads can be assigned different priorities. Can we use these to provide better control?\n\n> ... And it all makes sense only if you run on a single\n> core machine, because otherwise different threads should run in parallel. Is the\n> machine single core?\n\nIt is. All other pcs I have are multiple cpus. It is the only pc that fails TestVariousDeadlines1Proc.\n\n> In any case please try the following patch, and temporary change wait to 0 for\n> non-blocking netpoll calls, and check if it helps.\n> \n\nIt does not help. Your change does not build, so I had to change it to:\n\ndiff -r 2bbca155a87f src/pkg/runtime/proc.c\n--- a/src/pkg/runtime/proc.c\tThu Jul 04 14:24:21 2013 +1000\n+++ b/src/pkg/runtime/proc.c\tFri Jul 19 14:37:43 2013 +1000\n@@ -2043,7 +2043,7 @@\n sysmon(void)\n {\n \tuint32 idle, delay;\n-\tint64 now, lastpoll;\n+\tuint64 now, lastpoll;\n \tG *gp;\n \tuint32 ticks[MaxGomaxprocs];\n \n@@ -2073,6 +2073,7 @@\n \t\tlastpoll = runtime\u00b7atomicload64(&runtime\u00b7sched.lastpoll);\n \t\tnow = runtime\u00b7nanotime();\n \t\tif(lastpoll != 0 && lastpoll + 10*1000*1000 > now) {\n+\t\t\truntime\u00b7cas64(&runtime\u00b7sched.lastpoll, &lastpoll, now);\n \t\t\tgp = runtime\u00b7netpoll(false);  // non-blocking\n \t\t\tinjectglist(gp);\n \t\t}\n> \n> If it does not help, we will land current version.\n\nSounds good. What should I do now?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-07-19 04:50:16.243130",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/19 04:50:16, brainman wrote:\n> On 2013/07/17 10:42:15, dvyukov wrote:\n> > ... Different runnable thread still should be\n> > alternated at 15ms intervals, so probably IO priority boosting cames into\n> > picture (however sysmon does not do any IO, but it calls GQCS, so probably OS\n> > thinks that it's IO thread).\n> \n> Windows threads can be assigned different priorities. Can we use these to\n> provide better control?\n\n\nI would like to avoid thread priorities.\n\n\n> > ... And it all makes sense only if you run on a single\n> > core machine, because otherwise different threads should run in parallel. Is\n> the\n> > machine single core?\n> \n> It is. All other pcs I have are multiple cpus. It is the only pc that fails\n> TestVariousDeadlines1Proc.\n\n\nAha!\nThen it's a busy loop with high probability.\n\n\n\n> > In any case please try the following patch, and temporary change wait to 0 for\n> > non-blocking netpoll calls, and check if it helps.\n> > \n> \n> It does not help. Your change does not build, so I had to change it to:\n> \n> diff -r 2bbca155a87f src/pkg/runtime/proc.c\n> --- a/src/pkg/runtime/proc.c\tThu Jul 04 14:24:21 2013 +1000\n> +++ b/src/pkg/runtime/proc.c\tFri Jul 19 14:37:43 2013 +1000\n> @@ -2043,7 +2043,7 @@\n>  sysmon(void)\n>  {\n>  \tuint32 idle, delay;\n> -\tint64 now, lastpoll;\n> +\tuint64 now, lastpoll;\n>  \tG *gp;\n>  \tuint32 ticks[MaxGomaxprocs];\n>  \n> @@ -2073,6 +2073,7 @@\n>  \t\tlastpoll = runtime\u00b7atomicload64(&runtime\u00b7sched.lastpoll);\n>  \t\tnow = runtime\u00b7nanotime();\n>  \t\tif(lastpoll != 0 && lastpoll + 10*1000*1000 > now) {\n> +\t\t\truntime\u00b7cas64(&runtime\u00b7sched.lastpoll, &lastpoll, now);\n>  \t\t\tgp = runtime\u00b7netpoll(false);  // non-blocking\n>  \t\t\tinjectglist(gp);\n>  \t\t}\n> > \n> > If it does not help, we will land current version.\n> \n> Sounds good. What should I do now?\n\n\nit LGTM\nit would be nice if somebody else take a look, but if not run the tests once again and submit in a day or two",
+			"disapproval": false,
+			"date": "2013-07-19 12:00:02.720950",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=e6a6dc0d9c22 ***\n\nnet: implement netpoll for windows\n\nMoves the network poller from net package into runtime.\n\nbenchmark                           old ns/op    new ns/op    delta\nBenchmarkTCP4OneShot                   316386       287061   -9.27%\nBenchmarkTCP4OneShot-2                 339822       313424   -7.77%\nBenchmarkTCP4OneShot-3                 330057       306589   -7.11%\nBenchmarkTCP4OneShotTimeout            341775       287061  -16.01%\nBenchmarkTCP4OneShotTimeout-2          380835       295849  -22.32%\nBenchmarkTCP4OneShotTimeout-3          398412       328070  -17.66%\nBenchmarkTCP4Persistent                 40622        33392  -17.80%\nBenchmarkTCP4Persistent-2               44528        35736  -19.74%\nBenchmarkTCP4Persistent-3               44919        36907  -17.84%\nBenchmarkTCP4PersistentTimeout          45309        33588  -25.87%\nBenchmarkTCP4PersistentTimeout-2        50289        38079  -24.28%\nBenchmarkTCP4PersistentTimeout-3        51559        37103  -28.04%\nBenchmarkTCP6OneShot                   361305       345645   -4.33%\nBenchmarkTCP6OneShot-2                 361305       331976   -8.12%\nBenchmarkTCP6OneShot-3                 376929       347598   -7.78%\nBenchmarkTCP6OneShotTimeout            361305       322212  -10.82%\nBenchmarkTCP6OneShotTimeout-2          378882       333928  -11.86%\nBenchmarkTCP6OneShotTimeout-3          388647       335881  -13.58%\nBenchmarkTCP6Persistent                 47653        35345  -25.83%\nBenchmarkTCP6Persistent-2               49215        35736  -27.39%\nBenchmarkTCP6Persistent-3               38474        37493   -2.55%\nBenchmarkTCP6PersistentTimeout          56637        34369  -39.32%\nBenchmarkTCP6PersistentTimeout-2        42575        38079  -10.56%\nBenchmarkTCP6PersistentTimeout-3        44137        37689  -14.61%\n\nR=dvyukov\nCC=golang-dev\nhttps://codereview.appspot.com/8670044",
+			"disapproval": false,
+			"date": "2013-07-22 02:50:04.854460",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "message: On 2013/06/28 12:28:27, dvyukov wrote:\n> ...\n> What other things can it do? There must be not much other things...\n\nI can see that net timeouts aren't fired. They fired but they take longer then they should. So I started looking at what they do, and they happened to be sitting in WaitForSingleObject in runtime.semasleep for much longer then they should - WaitForSingleObject gets passed *timeout* parameters, but it times out after much longer time then *timeout* says. I was thinking about why, and the only good idea I had is that something else is hogging CPU while we waiting in WaitForSingleObject. So I started looking for any new busy loops that my change could introduce, and the only thing that I could come up with is GetQueuedCompletionStatus function. I changed GetQueuedCompletionStatus \"wait\" parameter from 0 to 1, and that fixes broken test. Here\n\n79c79,80\n< \t\twait = 0;\n---\n> \t\t// TODO(brainman): should use 0 here instead, but scheduler hogs CPU\n> \t\twait = 1;\n\nis the netpoll_windows.c change. Perhaps when GetQueuedCompletionStatus gets called with 0 (do-not-wait) it is very quick when data is not there, but calling it with 1 (wait for 1ms) makes it go into OS scheduler or something.\n\nI am not convinced it is correct solution. So I put TODO to look at it later. Perhaps Go scheduler needs to be adjusted to accommodate for what is happening here. Why should we wait in GetQueuedCompletionStatus unless we deliberately want to do so? One thing I did noticed is that windows runtime.nanotime works in ~15ms increments - maybe that confuses Go scheduler.\n\nAnyway, I am happy to submit the CL with the latest change. There is still plenty more work to do, but we have something that works for the moment. I have updated CL description and added benchmark output.\n\nPlease let me now what to do next. Thank you.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-07-05 02:58:58.038480",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-07-05 02:59:33.201080",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 8670044: net: implement netpoll for windows",
+	"created": "2013-04-18 07:32:57.830290",
+	"patchsets": [
+		1,
+		2001,
+		12001,
+		26001,
+		44001,
+		57001,
+		73001,
+		81001,
+		90001,
+		102001,
+		111002,
+		126001,
+		139001
+	],
+	"modified": "2013-07-22 02:50:10.909030",
+	"closed": true,
+	"issue": 8670044
+}

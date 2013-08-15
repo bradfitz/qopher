@@ -1,0 +1,81 @@
+{
+	"description": "runtime/pprof: add block profile test\nFixes issue 5993.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-09 15:59:44.176760",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Will the regexps break\\on\\windows?\r\n\r\n\r\n\r\nOn Fri, Aug 9, 2013 at 8:59 AM, <dvyukov@google.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://dvyukov%40google.com@**code.google.com/p/go/<http://40google.com@code.google.com/p/go/>\r\n>\r\n>\r\n> Description:\r\n> runtime/pprof: add block profile test\r\n> Fixes issue 5993.\r\n>\r\n> Please review this at https://codereview.appspot.**com/12665046/<https://codereview.appspot.com/12665046/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/pprof/pprof_**test.go\r\n>\r\n>\r\n> Index: src/pkg/runtime/pprof/pprof_**test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/runtime/pprof/pprof_**test.go\r\n> +++ b/src/pkg/runtime/pprof/pprof_**test.go\r\n> @@ -11,10 +11,13 @@\r\n>         \"bytes\"\r\n>         \"hash/crc32\"\r\n>         \"os/exec\"\r\n> +       \"regexp\"\r\n>         \"runtime\"\r\n>         . \"runtime/pprof\"\r\n>         \"strings\"\r\n> +       \"sync\"\r\n>         \"testing\"\r\n> +       \"time\"\r\n>         \"unsafe\"\r\n>  )\r\n>\r\n> @@ -148,3 +151,55 @@\r\n>         \"netbsd\":  true,\r\n>         \"openbsd\": true,\r\n>  }\r\n> +\r\n> +func TestBlockProfile(t *testing.T) {\r\n> +       runtime.SetBlockProfileRate(1)\r\n> +       defer runtime.SetBlockProfileRate(0)\r\n> +       produceChanContention()\r\n> +       produceMutexContention()\r\n> +       var w bytes.Buffer\r\n> +       Lookup(\"block\").WriteTo(&w, 1)\r\n> +       prof := w.String()\r\n> +\r\n> +       if !strings.HasPrefix(prof, \"--- contention:\\ncycles/second=\") {\r\n> +               t.Fatalf(\"Bad profile header:\\n%v\", prof)\r\n> +       }\r\n> +\r\n> +       reChan := regexp.MustCompile(`\r\n> +[0-9]+ [0-9]+ @ 0x[0-9,a-f]+ 0x[0-9,a-f]+ 0x[0-9,a-f]+ 0x[0-9,a-f]+\r\n> 0x[0-9,a-f]+\r\n> +#      0x[0-9,a-f]+    runtime/pprof_test\\.**\r\n> produceChanContention\\+0x[0-9,**a-f]+ .*/src/pkg/runtime/pprof/**\r\n> pprof_test.go:[0-9]+\r\n> +#      0x[0-9,a-f]+    runtime/pprof_test\\.**TestBlockProfile\\+0x[0-9,a-f]+\r\n>      .*/src/pkg/runtime/pprof/**pprof_test.go:[0-9]+\r\n> +`)\r\n> +       if !reChan.MatchString(prof) {\r\n> +               t.Fatalf(\"Bad chan entry, expect:\\n%v\\ngot:\\n%v\", reChan,\r\n> prof)\r\n> +       }\r\n> +\r\n> +       reMutex := regexp.MustCompile(`\r\n> +[0-9]+ [0-9]+ @ 0x[0-9,a-f]+ 0x[0-9,a-f]+ 0x[0-9,a-f]+ 0x[0-9,a-f]+\r\n> 0x[0-9,a-f]+\r\n> +#      0x[0-9,a-f]+    sync\\.\\(\\*Mutex\\)\\.Lock\\+0x[0-**9,a-f]+\r\n> .*/src/pkg/sync/mutex\\.go:[0-**9]+\r\n> +#      0x[0-9,a-f]+    runtime/pprof_test\\.**\r\n> produceMutexContention\\+0x[0-**9,a-f]+        .*/src/pkg/runtime/pprof/**\r\n> pprof_test.go:[0-9]+\r\n> +#      0x[0-9,a-f]+    runtime/pprof_test\\.**TestBlockProfile\\+0x[0-9,a-f]+\r\n>      .*/src/pkg/runtime/pprof/**pprof_test.go:[0-9]+\r\n> +`)\r\n> +       if !reMutex.MatchString(prof) {\r\n> +               t.Fatalf(\"Bad mutex entry, expect:\\n%v\\ngot:\\n%v\",\r\n> reMutex, prof)\r\n> +       }\r\n> +}\r\n> +\r\n> +func produceChanContention() {\r\n> +       c := make(chan bool)\r\n> +       go func() {\r\n> +               time.Sleep(10 * time.Millisecond)\r\n> +               c <- true\r\n> +       }()\r\n> +       <-c\r\n> +}\r\n> +\r\n> +func produceMutexContention() {\r\n> +       var mu sync.Mutex\r\n> +       mu.Lock()\r\n> +       go func() {\r\n> +               time.Sleep(10 * time.Millisecond)\r\n> +               mu.Unlock()\r\n> +       }()\r\n> +       mu.Lock()\r\n> +}\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 16:12:48.981670",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Aug 9, 2013 at 8:12 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> Will the regexps break\\on\\windows?\r\n\r\nIt should work. The paths are generated by Go runtime. Windows crash dumps use /\r\nSee an example of windows stacks here:\r\nhttps://code.google.com/p/go/issues/detail?id=5831\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 16:18:02.082570",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\n\r\n\r\nOn Fri, Aug 9, 2013 at 9:17 AM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> On Fri, Aug 9, 2013 at 8:12 PM, Brad Fitzpatrick <bradfitz@golang.org>\r\n> wrote:\r\n> > Will the regexps break\\on\\windows?\r\n>\r\n> It should work. The paths are generated by Go runtime. Windows crash dumps\r\n> use /\r\n> See an example of windows stacks here:\r\n> https://code.google.com/p/go/issues/detail?id=5831\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 16:19:09.867590",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=60cfb46cd233 ***\n\nruntime/pprof: add block profile test\nFixes issue 5993.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/12665046",
+			"disapproval": false,
+			"date": "2013-08-11 09:05:57.970210",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 12665046: runtime/pprof: add block profile test",
+	"created": "2013-08-09 13:52:49.972990",
+	"patchsets": [
+		1,
+		3001,
+		5001,
+		5002,
+		14001
+	],
+	"modified": "2013-08-11 09:05:59.751400",
+	"closed": true,
+	"issue": 12665046
+}

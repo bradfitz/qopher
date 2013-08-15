@@ -1,0 +1,93 @@
+{
+	"description": "cmd/ld, runtime: adjust symbol table representation\n\nThis CL changes the encoding used for the Go symbol table,\nstored in the binary and used at run time. It does not change\nany of the semantics or structure: the bits are just packed\na little differently.\n\nThe comment at the top of runtime/symtab.c describes the new format.\n\nCompared to the Go 1.0 format, the main changes are:\n\n* Store symbol addresses as full-pointer-sized host-endian values.\n  (For 6g, this means addresses are 64-bit little-endian.)\n\n* Store other values (frame sizes and so on) varint-encoded.\n\nThe second change more than compensates for the first:\nfor the godoc binary on OS X/amd64, the new symbol table\nis 8% smaller than the old symbol table (1,425,668 down from 1,546,276).\n\nThis is a required step for allowing the host linker (gcc) to write\nthe final Go binary, since it will have to fill in the symbol address slots\n(so the slots must be host-endian) and on 64-bit systems it may\nchoose addresses above 4 GB.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"iant@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-02-26 22:37:05.340330",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=6b06c70f12ca ***\n\ncmd/ld, runtime: adjust symbol table representation\n\nThis CL changes the encoding used for the Go symbol table,\nstored in the binary and used at run time. It does not change\nany of the semantics or structure: the bits are just packed\na little differently.\n\nThe comment at the top of runtime/symtab.c describes the new format.\n\nCompared to the Go 1.0 format, the main changes are:\n\n* Store symbol addresses as full-pointer-sized host-endian values.\n  (For 6g, this means addresses are 64-bit little-endian.)\n\n* Store other values (frame sizes and so on) varint-encoded.\n\nThe second change more than compensates for the first:\nfor the godoc binary on OS X/amd64, the new symbol table\nis 8% smaller than the old symbol table (1,425,668 down from 1,546,276).\n\nThis is a required step for allowing the host linker (gcc) to write\nthe final Go binary, since it will have to fill in the symbol address slots\n(so the slots must be host-endian) and on 64-bit systems it may\nchoose addresses above 4 GB.\n\nR=golang-dev, iant\nCC=golang-dev\nhttps://codereview.appspot.com/7403054",
+			"disapproval": false,
+			"date": "2013-02-27 03:38:22.968550",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/7403054/diff/10001/src/cmd/ld/symtab.c\nFile src/cmd/ld/symtab.c (right):\n\nhttps://codereview.appspot.com/7403054/diff/10001/src/cmd/ld/symtab.c#newcode339\nsrc/cmd/ld/symtab.c:339: v1 = v;\nIt seems to me that v can be a negative value, e.g., for a D_AUTO symbol.  If that is the case, then this code is doing a right shift of a negative signed value, which is implementation defined in C and probably best avoided.\n\nhttps://codereview.appspot.com/7403054/diff/10001/src/cmd/ld/symtab.c#newcode355\nsrc/cmd/ld/symtab.c:355: rel->off = symt->size;\nNote that on some platforms relocations must be naturally aligned.  The host linker will crash if it tries to relocate an unaligned value.",
+			"disapproval": false,
+			"date": "2013-02-27 00:05:22.181860",
+			"approval": true
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FYI\n\nhttps://codereview.appspot.com/7403054/diff/10001/src/cmd/ld/symtab.c\nFile src/cmd/ld/symtab.c (right):\n\nhttps://codereview.appspot.com/7403054/diff/10001/src/cmd/ld/symtab.c#newcode355\nsrc/cmd/ld/symtab.c:355: rel->off = symt->size;\nOn 2013/02/27 02:30:37, rsc wrote:\n> On 2013/02/27 00:05:22, iant wrote:\n> > Note that on some platforms relocations must be naturally aligned.  The host\n> > linker will crash if it tries to relocate an unaligned value.\n> \n> I wondered about that. I assume that by \"some\" you mean \"all non-x86\". If we\n> need to, we can define that 0xFF is a padding byte between entries (it certainly\n> cannot start an entry) and allow insertion of padding as needed in host object\n> mode on those systems. We'll probably hit this soon on ARM.\n\nThinking about it more, platforms do have ways to perform relocations on DWARF debug info which can be unaligned.  It may require Go to emit different relocations, but that is not a big deal.\n\nARM relocations do not need to be aligned, but PPC and SPARC do.  But PPC and SPARC provide a few unaligned relocs that will probably suffice.",
+			"disapproval": false,
+			"date": "2013-02-27 05:06:04.202170",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks.\n\nhttps://codereview.appspot.com/7403054/diff/10001/src/cmd/ld/symtab.c\nFile src/cmd/ld/symtab.c (right):\n\nhttps://codereview.appspot.com/7403054/diff/10001/src/cmd/ld/symtab.c#newcode339\nsrc/cmd/ld/symtab.c:339: v1 = v;\nOn 2013/02/27 00:05:22, iant wrote:\n> It seems to me that v can be a negative value, e.g., for a D_AUTO symbol.  If\n> that is the case, then this code is doing a right shift of a negative signed\n> value, which is implementation defined in C and probably best avoided.\n\nThankfully not.  There are separate symbols 'a' for automatic and 'p' for parameter; both use positive offsets.\n\nI dumped the entire symbol table of a godoc binary with go tool nm -a -t -s and found no negative numbers.\n\nI will add a check for negative v and make the linker give up.\n\nhttps://codereview.appspot.com/7403054/diff/10001/src/cmd/ld/symtab.c#newcode355\nsrc/cmd/ld/symtab.c:355: rel->off = symt->size;\nOn 2013/02/27 00:05:22, iant wrote:\n> Note that on some platforms relocations must be naturally aligned.  The host\n> linker will crash if it tries to relocate an unaligned value.\n\nI wondered about that. I assume that by \"some\" you mean \"all non-x86\". If we need to, we can define that 0xFF is a padding byte between entries (it certainly cannot start an entry) and allow insertion of padding as needed in host object mode on those systems. We'll probably hit this soon on ARM.",
+			"disapproval": false,
+			"date": "2013-02-27 02:30:37.381960",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 7403054: cmd/ld, runtime: adjust symbol table representation",
+	"created": "2013-02-26 22:04:07.315910",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		7001,
+		8001,
+		10001,
+		16001
+	],
+	"modified": "2013-02-27 05:06:04.368020",
+	"closed": true,
+	"issue": 7403054
+}

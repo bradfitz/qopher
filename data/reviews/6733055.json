@@ -1,0 +1,267 @@
+{
+	"description": "cmd/5g, cmd/6g: fix out of registers with array indexing.\n\nCompiling expressions like:\n    s[s[s[s[s[s[s[s[s[s[s[s[i]]]]]]]]]]]]\nmake 5g and 6g run out of registers. Such expressions can arise\nif a slice is used to represent a permutation and the user wants\nto iterate it.\n\nThis is due to the usual problem of allocating registers before\ngoing down the expression tree, instead of allocating them in a\npostfix way.\n\nThe functions cgenr and agenr (that generate a value to a newly\nallocated register instead of an existing location), are either\nintroduced or modified when they already existed to allocate\nthe new register as late as possible, and sudoaddable is disabled\nfor OINDEX nodes so that igen/agenr is used instead.\n\nUpdate issue 4207.",
+	"cc": [
+		"dave@cheney.net",
+		"daniel.morsing@gmail.com",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "./all.bash does not pass nilptr.go\n\n# ../test\nrun        nilptr.go           : incorrect output\n0\npanic: memory reference did not panic\n\ngoroutine 1 [running]:\nmain.func\u00b7001(0x1c0e8, 0x10d84)\n        /home/dfc/go/test/nilptr.go:46 +0x78\nmain.shouldPanic(0x10d84, 0x2)\n        /home/dfc/go/test/nilptr.go:49 +0x50\nmain.main()\n        /home/dfc/go/test/nilptr.go:31 +0x7c\n\ngoroutine 2 [syscall]:\ncreated by runtime.main\n        /home/dfc/go/src/pkg/runtime/proc.c:224\nexit status 2\n\nrun        recover3.go         : incorrect output\nunexpected fault address 0x4e20\nthrow: fault\n[signal 0xb code=0x1 addr=0x4e20 pc=0x11550]\n\ngoroutine 1 [running]:\nmain.func\u00b7006(0xb6f49fb4, 0x10e74)\n        /home/dfc/go/test/recover3.go:63 +0x2c\nmain.check(0x2cc44, 0xd, 0x10519900, 0x2d1c0, 0x17, ...)\n        /home/dfc/go/test/recover3.go:48 +0x60\nmain.main()\n        /home/dfc/go/test/recover3.go:63 +0x204\n\ngoroutine 2 [syscall]:\ncreated by runtime.main\n        /home/dfc/go/src/pkg/runtime/proc.c:224\nexit status 2",
+			"disapproval": false,
+			"date": "2012-10-21 10:15:31.771210",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-10-20 19:24:27.280190",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I'm surprised to see a noticeable performance improvement.\n\nCould this be an improvement in stack usage ? If this is truly unexpected, I can investigate further, but I am happy that there is no performance regression.\n \n> sudoaddable is essentially unused after this patch. Its role is essentially to\n> implement something similar to igen for OINDEX nodes (the ODOT and ODOTPTR cases\n> are redundant with igen), and allow 6g to generate instructions like \"MOVQ\n> (R8)(8*R9), R10\".\n\nI am very happy to see sudoaddable on its way out the door.",
+			"disapproval": false,
+			"date": "2012-10-30 09:45:26.058000",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6733055/diff/15002/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttps://codereview.appspot.com/6733055/diff/15002/src/cmd/5g/cgen.c#newcode834\nsrc/cmd/5g/cgen.c:834: *  newreg = &n\nIn agenr the parameter that has the register that needs freeing is the second and is called 'a'.\n\nIt would be nice if cgenr used the same convention\n\nvoid cgenr(Node *n, Node *a, Node *dst)\n\nand also mention the need to call regfree in the comment, like in the agenr comment.",
+			"disapproval": false,
+			"date": "2012-11-01 17:54:26.542910",
+			"approval": true
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you.\r\n\r\nOn Mon, Oct 29, 2012 at 6:50 PM,  <remyoudompheng@gmail.com> wrote:\r\n> On 2012/10/21 10:15:31, dfc wrote:\r\n>>\r\n>> ./all.bash does not pass nilptr.go\r\n>\r\n>\r\n> The old code in agen never checked for explicit nils for large arrays. I\r\n> have added the check.\r\n>\r\n> R\u00e9my.\r\n>\r\n> http://codereview.appspot.com/6733055/\r\n",
+			"disapproval": false,
+			"date": "2012-10-29 07:51:33.249230",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6733055/diff/14001/src/cmd/5g/cgen.c\nFile src/cmd/5g/cgen.c (right):\n\nhttp://codereview.appspot.com/6733055/diff/14001/src/cmd/5g/cgen.c#newcode599\nsrc/cmd/5g/cgen.c:599: USED(nr);\nIf nr is not used, can it be removed?",
+			"disapproval": false,
+			"date": "2012-10-29 16:51:51.847290",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On arm the difference is very small. I think the difference on amd64 is just a manifestation of a deeper problem. See http://codereview.appspot.com/6821052",
+			"disapproval": false,
+			"date": "2012-10-31 05:28:51.301710",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/21 10:15:31, dfc wrote:\n> ./all.bash does not pass nilptr.go\n\nThe old code in agen never checked for explicit nils for large arrays. I have added the check.\n\nR\u00e9my.",
+			"disapproval": false,
+			"date": "2012-10-29 07:50:16.927660",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/30 09:45:26, dfc wrote:\n> Could this be an improvement in stack usage ?\n\nMy immediate guess would be that postfix allocation of registers causes some of the registers to be reused when they otherwise wouldn't. Makes the job of regopt significantly easier.",
+			"disapproval": false,
+			"date": "2012-10-30 10:41:05.855780",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Here is an analysis of the difference in stack usage between\r\n3312fddeb739 without and with this CL applied. From my reading, the\r\ndifferences are all increases in stack usage.\r\n\r\nThere is no difference in escape analysis for the same sample, non was expected.\r\n\r\nOn Tue, Oct 30, 2012 at 9:41 PM,  <daniel.morsing@gmail.com> wrote:\r\n> On 2012/10/30 09:45:26, dfc wrote:\r\n>>\r\n>> Could this be an improvement in stack usage ?\r\n>\r\n>\r\n> My immediate guess would be that postfix allocation of registers causes\r\n> some of the registers to be reused when they otherwise wouldn't. Makes\r\n> the job of regopt significantly easier.\r\n>\r\n> https://codereview.appspot.com/6733055/\r\n",
+			"disapproval": false,
+			"date": "2012-10-30 14:40:14.470900",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-10-29 07:55:35.653010",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/10/29 08:37:57, dfc wrote:\n> linux/arm, omap4:\n> \n> benchmark                 old ns/op    new ns/op    delta\n> BenchmarkBinaryTree17   46192261000  45795379000   -0.86%\n> BenchmarkFannkuch11     34446014000  34150849000   -0.86%\n> BenchmarkGobDecode        115428150    113720700   -1.48%\n> BenchmarkGobEncode         57655040     56268920   -2.40%\n> BenchmarkGzip            5620087000   5498596000   -2.16%\n> BenchmarkGunzip          1077423000   1008453000   -6.40%\n> BenchmarkJSONEncode       678076200    677569600   -0.07%\n> BenchmarkJSONDecode      1585084000   1570160000   -0.94%\n> BenchmarkMandelbrot200     45711060     45711680   +0.00%\n> BenchmarkParse             60339960     56372060   -6.58%\n> BenchmarkRevcomp          126818850    128361500   +1.22%\n> BenchmarkTemplate        1731140000   1724090000   -0.41%\n\nI'm surprised to see a noticeable performance improvement.\n\nsudoaddable is essentially unused after this patch. Its role is essentially to implement something similar to igen for OINDEX nodes (the ODOT and ODOTPTR cases are redundant with igen), and allow 6g to generate instructions like \"MOVQ (R8)(8*R9), R10\".",
+			"disapproval": false,
+			"date": "2012-10-30 07:32:58.753150",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6733055/diff/14001/src/cmd/5g/gsubr.c\nFile src/cmd/5g/gsubr.c (right):\n\nhttp://codereview.appspot.com/6733055/diff/14001/src/cmd/5g/gsubr.c#newcode1809\nsrc/cmd/5g/gsubr.c:1809: // disabled.\ncould you please leave a small comment explaining why this is disabled.\n\nhttp://codereview.appspot.com/6733055/diff/14001/src/cmd/6g/gsubr.c\nFile src/cmd/6g/gsubr.c (right):\n\nhttp://codereview.appspot.com/6733055/diff/14001/src/cmd/6g/gsubr.c#newcode1953\nsrc/cmd/6g/gsubr.c:1953: if(n->left->type->etype == TSTRING)\nis this dead code ?",
+			"disapproval": false,
+			"date": "2012-10-29 08:04:15.183330",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "linux/arm, omap4:\n\nbenchmark                 old ns/op    new ns/op    delta\nBenchmarkBinaryTree17   46192261000  45795379000   -0.86%\nBenchmarkFannkuch11     34446014000  34150849000   -0.86%\nBenchmarkGobDecode        115428150    113720700   -1.48%\nBenchmarkGobEncode         57655040     56268920   -2.40%\nBenchmarkGzip            5620087000   5498596000   -2.16%\nBenchmarkGunzip          1077423000   1008453000   -6.40%\nBenchmarkJSONEncode       678076200    677569600   -0.07%\nBenchmarkJSONDecode      1585084000   1570160000   -0.94%\nBenchmarkMandelbrot200     45711060     45711680   +0.00%\nBenchmarkParse             60339960     56372060   -6.58%\nBenchmarkRevcomp          126818850    128361500   +1.22%\nBenchmarkTemplate        1731140000   1724090000   -0.41%\n\nbenchmark                  old MB/s     new MB/s  speedup\nBenchmarkGobDecode             6.65         6.75    1.02x\nBenchmarkGobEncode            13.31        13.64    1.02x\nBenchmarkGzip                  3.45         3.53    1.02x\nBenchmarkGunzip               18.01        19.24    1.07x\nBenchmarkJSONEncode            2.86         2.86    1.00x\nBenchmarkJSONDecode            1.22         1.24    1.02x\nBenchmarkParse                 0.96         1.03    1.07x\nBenchmarkRevcomp              20.04        19.80    0.99x\nBenchmarkTemplate              1.12         1.13    1.01x",
+			"disapproval": false,
+			"date": "2012-10-29 08:37:57.298450",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-10-30 07:14:02.041740",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "For clarity, this analysis was on linux/amd64 (not arm)",
+			"disapproval": false,
+			"date": "2012-10-30 14:41:39.469740",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"dave@cheney.net",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=0167b45ce063 ***\n\ncmd/5g, cmd/6g: fix out of registers with array indexing.\n\nCompiling expressions like:\n    s[s[s[s[s[s[s[s[s[s[s[s[i]]]]]]]]]]]]\nmake 5g and 6g run out of registers. Such expressions can arise\nif a slice is used to represent a permutation and the user wants\nto iterate it.\n\nThis is due to the usual problem of allocating registers before\ngoing down the expression tree, instead of allocating them in a\npostfix way.\n\nThe functions cgenr and agenr (that generate a value to a newly\nallocated register instead of an existing location), are either\nintroduced or modified when they already existed to allocate\nthe new register as late as possible, and sudoaddable is disabled\nfor OINDEX nodes so that igen/agenr is used instead.\n\nUpdate issue 4207.\n\nR=dave, daniel.morsing, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/6733055",
+			"disapproval": false,
+			"date": "2012-11-02 06:51:09.603770",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 6733055: cmd/5g, cmd/6g: fix out of registers with array indexing.",
+	"created": "2012-10-20 19:24:04.513330",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		7001,
+		7002,
+		14001,
+		17002,
+		15002,
+		20002,
+		8020
+	],
+	"modified": "2012-11-03 08:39:17.860290",
+	"closed": true,
+	"issue": 6733055
+}

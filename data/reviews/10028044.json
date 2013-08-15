@@ -1,0 +1,77 @@
+{
+	"description": "[release-branch.go1.1] runtime: fix heap corruption during GC\n\n\u00ab\u00ab\u00ab CL 9831043 / e84e7204b01b\nruntime: fix heap corruption during GC\nThe 'n' variable is used during rescan initiation in GC_END case,\nbut it's overwritten with chan capacity in GC_CHAN case.\nAs the result rescan is done with the wrong object size.\nFixes issue 5554.\n\nR=golang-dev, khr\nCC=golang-dev\nhttps://codereview.appspot.com/9831043\n\u00bb\u00bb\u00bb\n",
+	"cc": [
+		"dvyukov@google.com",
+		"khr@golang.org",
+		"dave@cheney.net",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"dvyukov@google.com",
+				"khr@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dvyukov, khr (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-06-05 01:09:26.225810",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\r\n\r\nOn Wed, Jun 5, 2013 at 11:09 AM,  <adg@golang.org> wrote:\r\n> Reviewers: dvyukov, khr,\r\n>\r\n> Message:\r\n> Hello dvyukov, khr (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> [release-branch.go1.1] runtime: fix heap corruption during GC\r\n>\r\n> \u00ab\u00ab\u00ab CL 9831043 / e84e7204b01b\r\n> runtime: fix heap corruption during GC\r\n> The 'n' variable is used during rescan initiation in GC_END case,\r\n> but it's overwritten with chan capacity in GC_CHAN case.\r\n> As the result rescan is done with the wrong object size.\r\n> Fixes issue 5554.\r\n>\r\n> R=golang-dev, khr\r\n> CC=golang-dev\r\n> https://codereview.appspot.com/9831043\r\n> \u00bb\u00bb\u00bb\r\n>\r\n>\r\n> Please review this at https://codereview.appspot.com/10028044/\r\n>\r\n> Affected files:\r\n>   M src/pkg/runtime/gc_test.go\r\n>   M src/pkg/runtime/mgc0.c\r\n>\r\n>\r\n> Index: src/pkg/runtime/gc_test.go\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/gc_test.go\r\n> +++ b/src/pkg/runtime/gc_test.go\r\n> @@ -121,3 +121,31 @@\r\n>                 }\r\n>         }\r\n>  }\r\n> +\r\n> +func TestGcRescan(t *testing.T) {\r\n> +       type X struct {\r\n> +               c     chan error\r\n> +               nextx *X\r\n> +       }\r\n> +       type Y struct {\r\n> +               X\r\n> +               nexty *Y\r\n> +               p     *int\r\n> +       }\r\n> +       var head *Y\r\n> +       for i := 0; i < 10; i++ {\r\n> +               p := &Y{}\r\n> +               p.c = make(chan error)\r\n> +               p.nextx = &head.X\r\n> +               p.nexty = head\r\n> +               p.p = new(int)\r\n> +               *p.p = 42\r\n> +               head = p\r\n> +               runtime.GC()\r\n> +       }\r\n> +       for p := head; p != nil; p = p.nexty {\r\n> +               if *p.p != 42 {\r\n> +                       t.Fatal(\"corrupted heap\")\r\n> +               }\r\n> +       }\r\n> +}\r\n> Index: src/pkg/runtime/mgc0.c\r\n> ===================================================================\r\n> --- a/src/pkg/runtime/mgc0.c\r\n> +++ b/src/pkg/runtime/mgc0.c\r\n> @@ -623,7 +623,7 @@\r\n>         byte *b, *arena_start, *arena_used;\r\n>         uintptr n, i, end_b, elemsize, size, ti, objti, count, type;\r\n>         uintptr *pc, precise_type, nominal_size;\r\n> -       uintptr *map_ret, mapkey_size, mapval_size, mapkey_ti, mapval_ti,\r\n> *chan_ret;\r\n> +       uintptr *map_ret, mapkey_size, mapval_size, mapkey_ti, mapval_ti,\r\n> *chan_ret, chancap;\r\n>         void *obj;\r\n>         Type *t;\r\n>         Slice *sliceptr;\r\n> @@ -1062,13 +1062,13 @@\r\n>                         if(!(chantype->elem->kind & KindNoPointers)) {\r\n>                                 // Channel's buffer follows Hchan\r\n> immediately in memory.\r\n>                                 // Size of buffer (cap(c)) is second int in\r\n> the chan struct.\r\n> -                               n = ((uintgo*)chan)[1];\r\n> -                               if(n > 0) {\r\n> +                               chancap = ((uintgo*)chan)[1];\r\n> +                               if(chancap > 0) {\r\n>                                         // TODO(atom): split into two chunks\r\n> so that only the\r\n>                                         // in-use part of the circular\r\n> buffer is scanned.\r\n>                                         // (Channel routines zero the unused\r\n> part, so the current\r\n>                                         // code does not lead to leaks, it's\r\n> just a little inefficient.)\r\n> -                                       *objbufpos++ =\r\n> (Obj){(byte*)chan+runtime\u00b7Hchansize, n*chantype->elem->size,\r\n> +                                       *objbufpos++ =\r\n> (Obj){(byte*)chan+runtime\u00b7Hchansize, chancap*chantype->elem->size,\r\n>                                                 (uintptr)chantype->elem->gc\r\n> | PRECISE | LOOP};\r\n>                                         if(objbufpos == objbuf_end)\r\n>                                                 flushobjbuf(objbuf,\r\n> &objbufpos, &wp, &wbuf, &nobj);\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-05 01:10:18.557620",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"dvyukov@google.com",
+				"khr@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=b88e87d911e1 ***\n\n[release-branch.go1.1] runtime: fix heap corruption during GC\n\n\u00ab\u00ab\u00ab CL 9831043 / e84e7204b01b\nruntime: fix heap corruption during GC\nThe 'n' variable is used during rescan initiation in GC_END case,\nbut it's overwritten with chan capacity in GC_CHAN case.\nAs the result rescan is done with the wrong object size.\nFixes issue 5554.\n\nR=golang-dev, khr\nCC=golang-dev\nhttps://codereview.appspot.com/9831043\n\u00bb\u00bb\u00bb\n\nR=dvyukov, khr, dave\nCC=golang-dev\nhttps://codereview.appspot.com/10028044",
+			"disapproval": false,
+			"date": "2013-06-05 01:12:53.552740",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2013-06-10 11:50:39.613170",
+			"approval": true
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 10028044: [release-branch.go1.1] runtime: fix heap corruption dur...",
+	"created": "2013-06-05 01:08:49.257190",
+	"patchsets": [
+		1,
+		2001,
+		6001
+	],
+	"modified": "2013-06-10 11:50:39.656900",
+	"closed": true,
+	"issue": 10028044
+}

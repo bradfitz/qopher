@@ -1,0 +1,143 @@
+{
+	"description": "net, os, syscall: Plan 9: adjust error handling\n\nsyscall: Use NewError for all system errors and introduce\n        some new errors for compatibility with other packages\n        and proper error handling in net. Also introduce\n        Temporary and Timeout methods on ErrorString.\n\nnet: Make errors from dial, accept, listen functions follow the\n        OpError standard and discern whether the underlying\n        error came from syscall. Since Plan 9 uses a correspondence\n        between file and network operations, all system error\n        reporting happens through the underlying file operation.\n        In Go code, we go through package os for file operations,\n        so there is another level of indirection in error types.\n        This change allows us to compare the errors with those in\n        package syscall, when appropriate.\n\nos: Just use the error string already present in package os,\n        instead of calling out to package syscall.",
+	"cc": [
+		"rsc@golang.org",
+		"ality@pbrane.org",
+		"rminnich@gmail.com",
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, ality@pbrane.org, rminnich@gmail.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-02-27 06:37:31.265230",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Tue, Feb 26, 2013 at 10:37 PM, <seed@mail.nanosouffle.net> wrote:\r\n\r\n> Reviewers: rsc, ality, rminnich, bradfitz,\r\n>\r\n> Message:\r\n> Hello rsc@golang.org, ality@pbrane.org, rminnich@gmail.com,\r\n> bradfitz@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> net, os, syscall: Plan 9: adjust error handling\r\n>\r\n> syscall: Use NewError for all system errors and introduce\r\n>         some new errors for compatibility with other packages\r\n>         and proper error handling in net. Also introduce\r\n>         Temporary and Timeout methods on ErrorString.\r\n>\r\n> net: Make errors from dial, accept, listen functions follow the\r\n>         OpError standard.\r\n>\r\n> os: Just use the error string already present in package os,\r\n>         instead of calling out to package syscall.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7398054/<https://codereview.appspot.com/7398054/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/ipsock_plan9.go\r\n>   M src/pkg/os/exec/lp_plan9.go\r\n>   M src/pkg/syscall/syscall_plan9.**go\r\n>   M src/pkg/syscall/zerrors_plan9_**386.go\r\n>   M src/pkg/syscall/zerrors_plan9_**amd64.go\r\n>\r\n>\r\n> Index: src/pkg/net/ipsock_plan9.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ipsock_plan9.go\r\n> +++ b/src/pkg/net/ipsock_plan9.go\r\n> @@ -107,29 +107,23 @@\r\n>  func dialPlan9(net string, laddr, raddr Addr) (*netFD, error) {\r\n>         f, dest, proto, name, err := startPlan9(net, raddr)\r\n>         if err != nil {\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"dial\", net, raddr, err}\r\n>         }\r\n>         _, err = f.WriteString(\"connect \" + dest)\r\n>         if err != nil {\r\n>                 f.Close()\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"dial\", f.Name(), raddr, err}\r\n>         }\r\n>         data, err := os.OpenFile(\"/net/\"+proto+\"/\"+**name+\"/data\",\r\n> os.O_RDWR, 0)\r\n>         if err != nil {\r\n>                 f.Close()\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"dial\", data.Name(), raddr, err}\r\n>         }\r\n>         laddr, err = readPlan9Addr(proto, \"/net/\"+proto+\"/\"+name+\"/**\r\n> local\")\r\n>         if err != nil {\r\n>                 data.Close()\r\n>                 f.Close()\r\n> -               return nil, err\r\n> -       }\r\n> -       raddr, err = readPlan9Addr(proto, \"/net/\"+proto+\"/\"+name+\"/**\r\n> remote\")\r\n> -       if err != nil {\r\n> -               data.Close()\r\n> -               f.Close()\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"dial\", proto, raddr, err}\r\n>         }\r\n>         return newFD(proto, name, f, data, laddr, raddr), nil\r\n>  }\r\n> @@ -137,17 +131,17 @@\r\n>  func listenPlan9(net string, laddr Addr) (*netFD, error) {\r\n>         f, dest, proto, name, err := startPlan9(net, laddr)\r\n>         if err != nil {\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"listen\", net, laddr, err}\r\n>         }\r\n>         _, err = f.WriteString(\"announce \" + dest)\r\n>         if err != nil {\r\n>                 f.Close()\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"announce\", proto, laddr, err}\r\n>         }\r\n>         laddr, err = readPlan9Addr(proto, \"/net/\"+proto+\"/\"+name+\"/**\r\n> local\")\r\n>         if err != nil {\r\n>                 f.Close()\r\n> -               return nil, err\r\n> +               return nil, &OpError{Op: \"listen\", Net: net, Err: err}\r\n>         }\r\n>         return newFD(proto, name, f, nil, laddr, nil), nil\r\n>  }\r\n> @@ -159,25 +153,25 @@\r\n>  func (l *netFD) acceptPlan9() (*netFD, error) {\r\n>         f, err := os.Open(l.dir + \"/listen\")\r\n>         if err != nil {\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"accept\", l.dir + \"/listen\", l.laddr,\r\n> err}\r\n>         }\r\n>         var buf [16]byte\r\n>         n, err := f.Read(buf[:])\r\n>         if err != nil {\r\n>                 f.Close()\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"accept\", l.dir + \"/listen\", l.laddr,\r\n> err}\r\n>         }\r\n>         name := string(buf[:n])\r\n>         data, err := os.OpenFile(\"/net/\"+l.proto+\"/**\"+name+\"/data\",\r\n> os.O_RDWR, 0)\r\n>         if err != nil {\r\n>                 f.Close()\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"accept\", data.Name(), l.laddr, err}\r\n>         }\r\n>         raddr, err := readPlan9Addr(l.proto, \"/net/\"+l.proto+\"/\"+name+\"/**\r\n> remote\")\r\n>         if err != nil {\r\n>                 data.Close()\r\n>                 f.Close()\r\n> -               return nil, err\r\n> +               return nil, &OpError{\"accept\", l.proto, l.laddr, err}\r\n>         }\r\n>         return newFD(l.proto, name, f, data, l.laddr, raddr), nil\r\n>  }\r\n> Index: src/pkg/os/exec/lp_plan9.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/os/exec/lp_plan9.go\r\n> +++ b/src/pkg/os/exec/lp_plan9.go\r\n> @@ -8,7 +8,6 @@\r\n>         \"errors\"\r\n>         \"os\"\r\n>         \"strings\"\r\n> -       \"syscall\"\r\n>  )\r\n>\r\n>  // ErrNotFound is the error resulting if a path search failed to find an\r\n> executable file.\r\n> @@ -22,7 +21,7 @@\r\n>         if m := d.Mode(); !m.IsDir() && m&0111 != 0 {\r\n>                 return nil\r\n>         }\r\n> -       return syscall.EPERM\r\n> +       return os.ErrPermission\r\n>  }\r\n>\r\n>  // LookPath searches for an executable binary named file\r\n> Index: src/pkg/syscall/syscall_plan9.**go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/syscall/syscall_**plan9.go\r\n> +++ b/src/pkg/syscall/syscall_**plan9.go\r\n> @@ -23,6 +23,14 @@\r\n>  // NewError converts s to an ErrorString, which satisfies the Error\r\n> interface.\r\n>  func NewError(s string) error { return ErrorString(s) }\r\n>\r\n> +func (e ErrorString) Temporary() bool {\r\n> +       return e == EINTR || e == EMFILE || e.Timeout()\r\n> +}\r\n> +\r\n> +func (e ErrorString) Timeout() bool {\r\n> +       return e == EBUSY || e == ETIMEDOUT\r\n> +}\r\n> +\r\n>  // A Note is a string describing a process note.\r\n>  // It implements the os.Signal interface.\r\n>  type Note string\r\n> @@ -37,9 +45,6 @@\r\n>         Stdin  = 0\r\n>         Stdout = 1\r\n>         Stderr = 2\r\n> -\r\n> -       EAFNOSUPPORT = NewError(\"address family not supported by protocol\")\r\n> -       EISDIR       = NewError(\"file is a directory\")\r\n>  )\r\n>\r\n>  // For testing: clients can set this flag to force\r\n> Index: src/pkg/syscall/zerrors_plan9_**386.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/syscall/zerrors_**plan9_386.go\r\n> +++ b/src/pkg/syscall/zerrors_**plan9_386.go\r\n> @@ -28,12 +28,23 @@\r\n>\r\n>  // Errors\r\n>  var (\r\n> -       EINVAL       = errors.New(\"bad arg in system call\")\r\n> -       ENOTDIR      = errors.New(\"not a directory\")\r\n> -       ENOENT       = errors.New(\"file does not exist\")\r\n> -       EEXIST       = errors.New(\"file already exists\")\r\n> -       EIO          = errors.New(\"i/o error\")\r\n> -       ENAMETOOLONG = errors.New(\"file name too long\")\r\n> -       EPERM        = errors.New(\"permission denied\")\r\n> -       EPLAN9       = errors.New(\"not supported by plan 9\")\r\n> +       EINVAL       = NewError(\"bad arg in system call\")\r\n> +       ENOTDIR      = NewError(\"not a directory\")\r\n> +       EISDIR       = NewError(\"file is a directory\")\r\n> +       ENOENT       = NewError(\"file does not exist\")\r\n> +       EEXIST       = NewError(\"file already exists\")\r\n> +       EMFILE       = NewError(\"no free file descriptors\")\r\n> +       EIO          = NewError(\"i/o error\")\r\n> +       ENAMETOOLONG = NewError(\"file name too long\")\r\n> +       EINTR        = NewError(\"interrupted\")\r\n> +       EPERM        = NewError(\"permission denied\")\r\n> +       EBUSY        = NewError(\"no free devices\")\r\n> +       ETIMEDOUT    = NewError(\"connection timed out\")\r\n> +       EPLAN9       = NewError(\"not supported by plan 9\")\r\n> +\r\n> +       // The following errors do not correspond to any\r\n> +       // Plan 9 system messages. Invented to support\r\n> +       // what package os and others expect.\r\n> +       EACCES       = NewError(\"access permission denied\")\r\n> +       EAFNOSUPPORT = NewError(\"address family not supported by protocol\")\r\n>  )\r\n> Index: src/pkg/syscall/zerrors_plan9_**amd64.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/syscall/zerrors_**plan9_amd64.go\r\n> +++ b/src/pkg/syscall/zerrors_**plan9_amd64.go\r\n> @@ -28,12 +28,23 @@\r\n>\r\n>  // Errors\r\n>  var (\r\n> -       EINVAL       = errors.New(\"bad arg in system call\")\r\n> -       ENOTDIR      = errors.New(\"not a directory\")\r\n> -       ENOENT       = errors.New(\"file does not exist\")\r\n> -       EEXIST       = errors.New(\"file already exists\")\r\n> -       EIO          = errors.New(\"i/o error\")\r\n> -       ENAMETOOLONG = errors.New(\"file name too long\")\r\n> -       EPERM        = errors.New(\"permission denied\")\r\n> -       EPLAN9       = errors.New(\"not supported by plan 9\")\r\n> +       EINVAL       = NewError(\"bad arg in system call\")\r\n> +       ENOTDIR      = NewError(\"not a directory\")\r\n> +       EISDIR       = NewError(\"file is a directory\")\r\n> +       ENOENT       = NewError(\"file does not exist\")\r\n> +       EEXIST       = NewError(\"file already exists\")\r\n> +       EMFILE       = NewError(\"no free file descriptors\")\r\n> +       EIO          = NewError(\"i/o error\")\r\n> +       ENAMETOOLONG = NewError(\"file name too long\")\r\n> +       EINTR        = NewError(\"interrupted\")\r\n> +       EPERM        = NewError(\"permission denied\")\r\n> +       EBUSY        = NewError(\"no free devices\")\r\n> +       ETIMEDOUT    = NewError(\"connection timed out\")\r\n> +       EPLAN9       = NewError(\"not supported by plan 9\")\r\n> +\r\n> +       // The following errors do not correspond to any\r\n> +       // Plan 9 system messages. Invented to support\r\n> +       // what package os and others expect.\r\n> +       EACCES       = NewError(\"access permission denied\")\r\n> +       EAFNOSUPPORT = NewError(\"address family not supported by protocol\")\r\n>  )\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-27 06:55:49.442400",
+			"approval": true
+		},
+		{
+			"sender": "ality@pbrane.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The net and os changes look good but the\r\nsyscall changes are just too much for me.\r\n\r\nI'm trying to get rid of all those errors\r\nand you want to add more? Why not fix the\r\ntests instead?\r\n\r\nObviously, we have different opinions on\r\nthis so we'll have to come to a consensus\r\nsomehow.\r\n\r\n  Anthony\r\n",
+			"disapproval": false,
+			"date": "2013-02-27 09:49:43.833470",
+			"approval": false
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The error strings above the comments are\r\nones that are reported by the system. It\r\nmakes sense to check against these -- the\r\nTemporary and Timeout methods are not\r\nsynthetic, as a simple test will show.\r\n\r\nAs for the strings below the comments,\r\nthe only new one is EACCES and the test\r\nit allows us to build is doing a dir creation\r\ntest in `/', which can essentially return\r\nan arbitrary error message to indicate\r\npermission error (as it is dependent upon\r\nthe fs). The test itself is disabled for this\r\nreason and the addition of this string is\r\na simple, non-aggressive way to get along\r\nfor now. Separating into POSIX vs Plan 9\r\ndidn't make sense for now, until the test\r\nitself is changed.\r\n\r\n\r\nOn 27 February 2013 09:49, Anthony Martin <ality@pbrane.org> wrote:\r\n> The net and os changes look good but the\r\n> syscall changes are just too much for me.\r\n>\r\n> I'm trying to get rid of all those errors\r\n> and you want to add more? Why not fix the\r\n> tests instead?\r\n>\r\n> Obviously, we have different opinions on\r\n> this so we'll have to come to a consensus\r\n> somehow.\r\n>\r\n>   Anthony\r\n",
+			"disapproval": false,
+			"date": "2013-02-27 14:41:45.106100",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Feb 27, 2013 at 1:49 AM, Anthony Martin <ality@pbrane.org> wrote:\r\n\r\n> The net and os changes look good but the\r\n> syscall changes are just too much for me.\r\n>\r\n> I'm trying to get rid of all those errors\r\n> and you want to add more? Why not fix the\r\n> tests instead?\r\n>\r\n> Obviously, we have different opinions on\r\n> this so we'll have to come to a consensus\r\n> somehow.\r\n>\r\n\r\nAkshat, Anthony,\r\n\r\nTo be clear, I'm not picking sides here and have no plan9 knowledge.  My\r\nLGTM was purely a quick sanity check for style & impact on the tree as a\r\nwhole.\r\n\r\nPlease always wait for a another plan9 person to LGTM also before\r\nsubmitting.\r\n",
+			"disapproval": false,
+			"date": "2013-02-27 15:50:46.394510",
+			"approval": true
+		},
+		{
+			"sender": "seed@mail.nanosouffle.net",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nUpdated error handling in package net and removed the import of \"errors\" in package syscall's z* files.",
+			"disapproval": false,
+			"date": "2013-02-27 17:08:08.819440",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM still\r\n\r\nLeaving for Anthony to submit, once he's happy.\r\n\r\nOn Wed, Feb 27, 2013 at 9:08 AM, <seed@mail.nanosouffle.net> wrote:\r\n\r\n> PTAL.\r\n>\r\n> Updated error handling in package net and removed the import of \"errors\"\r\n> in package syscall's z* files.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7398054/<https://codereview.appspot.com/7398054/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-27 23:24:20.000270",
+			"approval": true
+		},
+		{
+			"sender": "rminnich@gmail.com",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI think any remaining disagreements can be resolved with another bit of trimming, but actually I like this one as is.",
+			"disapproval": false,
+			"date": "2013-02-28 05:42:38.500770",
+			"approval": true
+		},
+		{
+			"sender": "rminnich@gmail.com",
+			"recipients": [
+				"seed@mail.nanosouffle.net",
+				"rsc@golang.org",
+				"ality@pbrane.org",
+				"rminnich@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=7a706e0f5d51 ***\n\nnet, os, syscall: Plan 9: adjust error handling\n\nsyscall: Use NewError for all system errors and introduce\n        some new errors for compatibility with other packages\n        and proper error handling in net. Also introduce\n        Temporary and Timeout methods on ErrorString.\n\nnet: Make errors from dial, accept, listen functions follow the\n        OpError standard and discern whether the underlying\n        error came from syscall. Since Plan 9 uses a correspondence\n        between file and network operations, all system error\n        reporting happens through the underlying file operation.\n        In Go code, we go through package os for file operations,\n        so there is another level of indirection in error types.\n        This change allows us to compare the errors with those in\n        package syscall, when appropriate.\n\nos: Just use the error string already present in package os,\n        instead of calling out to package syscall.\n\nR=rsc, ality, rminnich, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/7398054\n\nCommitter: Ron Minnich <rminnich@gmail.com>",
+			"disapproval": false,
+			"date": "2013-02-28 05:43:25.255200",
+			"approval": false
+		}
+	],
+	"owner_email": "seed@mail.nanosouffle.net",
+	"private": false,
+	"base_url": "",
+	"owner": "akumar",
+	"subject": "code review 7398054: net, os, syscall: Plan 9: adjust error handling",
+	"created": "2013-02-27 06:33:15.647110",
+	"patchsets": [
+		1,
+		2001,
+		1002,
+		8002,
+		13001
+	],
+	"modified": "2013-02-28 06:23:36.117400",
+	"closed": true,
+	"issue": 7398054
+}

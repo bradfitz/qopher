@@ -1,0 +1,73 @@
+{
+	"description": "fmt: speed up 10-20%\n\nThe check for Stringer etc. can only fire if the test is not a builtin, so avoid\nthe expensive check if we know there's no chance.\nAlso put in a fast path for pad, which saves a more modest amount.\n\nbenchmark                      old ns/op    new ns/op    delta\nBenchmarkSprintfEmpty                148          152   +2.70%\nBenchmarkSprintfString               585          497  -15.04%\nBenchmarkSprintfInt                  441          396  -10.20%\nBenchmarkSprintfIntInt               718          603  -16.02%\nBenchmarkSprintfPrefixedInt          676          621   -8.14%\nBenchmarkSprintfFloat               1003          953   -4.99%\nBenchmarkManyArgs                   2945         2312  -21.49%\nBenchmarkScanInts                1704152      1734441   +1.78%\nBenchmarkScanRecursiveInt        1837397      1828920   -0.46%",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=23c7da226e28 ***\n\nfmt: speed up 10-20%\n\nThe check for Stringer etc. can only fire if the test is not a builtin, so avoid\nthe expensive check if we know there's no chance.\nAlso put in a fast path for pad, which saves a more modest amount.\n\nbenchmark                      old ns/op    new ns/op    delta\nBenchmarkSprintfEmpty                148          152   +2.70%\nBenchmarkSprintfString               585          497  -15.04%\nBenchmarkSprintfInt                  441          396  -10.20%\nBenchmarkSprintfIntInt               718          603  -16.02%\nBenchmarkSprintfPrefixedInt          676          621   -8.14%\nBenchmarkSprintfFloat               1003          953   -4.99%\nBenchmarkManyArgs                   2945         2312  -21.49%\nBenchmarkScanInts                1704152      1734441   +1.78%\nBenchmarkScanRecursiveInt        1837397      1828920   -0.46%\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6245068",
+			"disapproval": false,
+			"date": "2012-05-29 22:08:12.943354",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-05-29 21:51:16.236852",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Tue, May 29, 2012 at 2:51 PM, <r@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> fmt: speed up 10-20%\r\n>\r\n> The check for Stringer etc. can only fire if the test is not a builtin,\r\n> so avoid\r\n> the expensive check if we know there's no chance.\r\n> Also put in a fast path for pad, which saves a more modest amount.\r\n>\r\n> benchmark                      old ns/op    new ns/op    delta\r\n> BenchmarkSprintfEmpty                148          152   +2.70%\r\n> BenchmarkSprintfString               585          497  -15.04%\r\n> BenchmarkSprintfInt                  441          396  -10.20%\r\n> BenchmarkSprintfIntInt               718          603  -16.02%\r\n> BenchmarkSprintfPrefixedInt          676          621   -8.14%\r\n> BenchmarkSprintfFloat               1003          953   -4.99%\r\n> BenchmarkManyArgs                   2945         2312  -21.49%\r\n> BenchmarkScanInts                1704152      1734441   +1.78%\r\n> BenchmarkScanRecursiveInt        1837397      1828920   -0.46%\r\n>\r\n> Please review this at http://codereview.appspot.com/**6245068/<http://codereview.appspot.com/6245068/>\r\n>\r\n> Affected files:\r\n>  M src/pkg/fmt/fmt_test.go\r\n>  M src/pkg/fmt/format.go\r\n>  M src/pkg/fmt/print.go\r\n>\r\n>\r\n> Index: src/pkg/fmt/fmt_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/fmt/fmt_test.go\r\n> +++ b/src/pkg/fmt/fmt_test.go\r\n> @@ -527,6 +527,14 @@\r\n>        }\r\n>  }\r\n>\r\n> +func BenchmarkManyArgs(b *testing.B) {\r\n> +       var buf bytes.Buffer\r\n> +       for i := 0; i < b.N; i++ {\r\n> +               buf.Reset()\r\n> +               Fprintf(&buf, \"%2d/%2d/%2d %d:%d:%d %s %s\\n\", 3, 4, 5, 11,\r\n> 12, 13, \"hello\", \"world\")\r\n> +       }\r\n> +}\r\n> +\r\n>  var mallocBuf bytes.Buffer\r\n>\r\n>  var mallocTest = []struct {\r\n> Index: src/pkg/fmt/format.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/fmt/format.go\r\n> +++ b/src/pkg/fmt/format.go\r\n> @@ -110,11 +110,11 @@\r\n>  // Append b to f.buf, padded on left (w > 0) or right (w < 0 or f.minus)\r\n>  // clear flags afterwards.\r\n>  func (f *fmt) pad(b []byte) {\r\n> -       var padding []byte\r\n> -       var left, right int\r\n> -       if f.widPresent && f.wid != 0 {\r\n> -               padding, left, right = f.computePadding(len(b))\r\n> +       if !f.widPresent || f.wid == 0 {\r\n> +               f.buf.Write(b)\r\n> +               return\r\n>        }\r\n> +       padding, left, right := f.computePadding(len(b))\r\n>        if left > 0 {\r\n>                f.writePadding(left, padding)\r\n>        }\r\n> @@ -127,11 +127,11 @@\r\n>  // append s to buf, padded on left (w > 0) or right (w < 0 or f.minus).\r\n>  // clear flags afterwards.\r\n>  func (f *fmt) padString(s string) {\r\n> -       var padding []byte\r\n> -       var left, right int\r\n> -       if f.widPresent && f.wid != 0 {\r\n> -               padding, left, right = f.computePadding(utf8.**\r\n> RuneCountInString(s))\r\n> +       if !f.widPresent || f.wid == 0 {\r\n> +               f.buf.WriteString(s)\r\n> +               return\r\n>        }\r\n> +       padding, left, right := f.computePadding(utf8.**\r\n> RuneCountInString(s))\r\n>        if left > 0 {\r\n>                f.writePadding(left, padding)\r\n>        }\r\n> Index: src/pkg/fmt/print.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/fmt/print.go\r\n> +++ b/src/pkg/fmt/print.go\r\n> @@ -734,10 +734,6 @@\r\n>                return false\r\n>        }\r\n>\r\n> -       if wasString, handled := p.handleMethods(verb, plus, goSyntax,\r\n> depth); handled {\r\n> -               return wasString\r\n> -       }\r\n> -\r\n>        // Some types can be done without reflection.\r\n>        switch f := field.(type) {\r\n>        case bool:\r\n> @@ -779,6 +775,10 @@\r\n>                p.fmtBytes(f, verb, goSyntax, depth)\r\n>                wasString = verb == 's'\r\n>        default:\r\n> +               // If the type is not simple, it might have methods.\r\n> +               if wasString, handled := p.handleMethods(verb, plus,\r\n> goSyntax, depth); handled {\r\n> +                       return wasString\r\n> +               }\r\n>                // Need to use reflection\r\n>                return p.printReflectValue(reflect.**ValueOf(field), verb,\r\n> plus, goSyntax, depth)\r\n>        }\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-05-29 22:04:01.596014",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\nNice.",
+			"disapproval": false,
+			"date": "2012-05-29 22:08:14.856089",
+			"approval": true
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 6245068: fmt: speed up 10-20%",
+	"created": "2012-05-29 21:51:09.664418",
+	"patchsets": [
+		1,
+		4001
+	],
+	"modified": "2012-05-29 22:08:15.046530",
+	"closed": true,
+	"issue": 6245068
+}

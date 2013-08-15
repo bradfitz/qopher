@@ -1,0 +1,84 @@
+{
+	"description": "exec: disable the ExtraFiles test on darwin\n\nStill a mystery. New issue 2603 filed.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dsymonds@golang.org",
+		"iant@google.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'll submit this, but the caveat documented in Issue 2603 is that this\nadditional TLS check I added (while a valid fear, and useful to keep in the\nlong run), doesn't actually trigger a failure on OS X 10.6 or 10.7.\n\nSo something's still mysterious.\n\n\nOn Wed, Dec 21, 2011 at 4:57 PM, Ian Lance Taylor <iant@google.com> wrote:\n\n> LGTM\n>\n> bradfitz@golang.org writes:\n>\n> > Reviewers: golang-dev_googlegroups.com,\n> >\n> > Message:\n> > Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n> >\n> > I'd like you to review this change to\n> > https://go.googlecode.com/hg/\n> >\n> >\n> > Description:\n> > exec: disable the ExtraFiles test on darwin\n> >\n> > Still a mystery. New issue 2603 filed.\n> >\n> > Please review this at http://codereview.appspot.com/5503063/\n> >\n> > Affected files:\n> >   M src/pkg/os/exec/exec.go\n> >   M src/pkg/os/exec/exec_test.go\n> >\n> >\n> > Index: src/pkg/os/exec/exec.go\n> > ===================================================================\n> > --- a/src/pkg/os/exec/exec.go\n> > +++ b/src/pkg/os/exec/exec.go\n> > @@ -67,6 +67,9 @@\n> >       // ExtraFiles specifies additional open files to be inherited by\n> the\n> >       // new process. It does not include standard input, standard\n> output, or\n> >       // standard error. If non-nil, entry i becomes file descriptor 3+i.\n> > +     //\n> > +     // BUG: on OS X 10.6, child processes may sometimes inherit extra\n> fds.\n> > +     // http://golang.org/issue/2603\n> >       ExtraFiles []*os.File\n> >\n> >       // SysProcAttr holds optional, operating system-specific\n> attributes.\n> > Index: src/pkg/os/exec/exec_test.go\n> > ===================================================================\n> > --- a/src/pkg/os/exec/exec_test.go\n> > +++ b/src/pkg/os/exec/exec_test.go\n> > @@ -11,6 +11,8 @@\n> >       \"io\"\n> >       \"io/ioutil\"\n> >       \"net\"\n> > +     \"net/http\"\n> > +     \"net/http/httptest\"\n> >       \"os\"\n> >       \"runtime\"\n> >       \"strconv\"\n> > @@ -156,6 +158,14 @@\n> >       }\n> >       defer ln.Close()\n> >\n> > +     // Force TLS root certs to be loaded (which might involve\n> > +     // cgo), to make sure none of that potential C code leaks fds.\n> > +     ts := httptest.NewTLSServer(http.HandlerFunc(func(w\n> > http.ResponseWriter, r *http.Request) {\n> > +             w.Write([]byte(\"Hello\"))\n> > +     }))\n> > +     defer ts.Close()\n> > +     http.Get(ts.URL) // ignore result; just calling to force root cert\n> loading\n> > +\n> >       tf, err := ioutil.TempFile(\"\", \"\")\n> >       if err != nil {\n> >               t.Fatalf(\"TempFile: %v\", err)\n> > @@ -256,23 +266,31 @@\n> >                       fmt.Printf(\"ReadAll from fd 3: %v\", err)\n> >                       os.Exit(1)\n> >               }\n> > -             // Now verify that there are no other open fds.\n> > -             var files []*os.File\n> > -             for wantfd := os.Stderr.Fd() + 2; wantfd <= 100; wantfd++ {\n> > -                     f, err := os.Open(os.Args[0])\n> > -                     if err != nil {\n> > -                             fmt.Printf(\"error opening file with\n> expected fd %d: %v\", wantfd, err)\n> > -                             os.Exit(1)\n> > +             switch runtime.GOOS {\n> > +             case \"darwin\":\n> > +                     // TODO(bradfitz): broken? Sometimes.\n> > +                     // http://golang.org/issue/2603\n> > +                     // Skip this additional part of the test for now.\n> > +             default:\n> > +                     // Now verify that there are no other open fds.\n> > +                     var files []*os.File\n> > +                     for wantfd := os.Stderr.Fd() + 2; wantfd <= 100;\n> wantfd++ {\n> > +                             f, err := os.Open(os.Args[0])\n> > +                             if err != nil {\n> > +                                     fmt.Printf(\"error opening file\n> with expected fd %d: %v\", wantfd, err)\n> > +                                     os.Exit(1)\n> > +                             }\n> > +                             if got := f.Fd(); got != wantfd {\n> > +                                     fmt.Printf(\"leaked parent file. fd\n> = %d; want %d\\n\", got, wantfd)\n> > +                                     out, _ := Command(\"lsof\",\n> > \"-p\", fmt.Sprint(os.Getpid())).CombinedOutput()\n> > +                                     fmt.Print(string(out))\n> > +                                     os.Exit(1)\n> > +                             }\n> > +                             files = append(files, f)\n> >                       }\n> > -                     if got := f.Fd(); got != wantfd {\n> > -                             fmt.Printf(\"leaked parent file. fd = %d;\n> want %d\", got, wantfd)\n> > -                             fmt.Println(Command(\"lsof\", \"-p\",\n> > fmt.Sprint(os.Getpid())).CombinedOutput())\n> > -                             os.Exit(1)\n> > +                     for _, f := range files {\n> > +                             f.Close()\n> >                       }\n> > -                     files = append(files, f)\n> > -             }\n> > -             for _, f := range files {\n> > -                     f.Close()\n> >               }\n> >               os.Stderr.Write(bs)\n> >       case \"exit\":\n>\n",
+			"disapproval": false,
+			"date": "2011-12-22 01:00:52.508165",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-12-22 00:42:29.428719",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dsymonds@golang.org",
+				"iant@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=0e4a52de4c96 ***\n\nexec: disable the ExtraFiles test on darwin\n\nStill a mystery. New issue 2603 filed.\n\nR=golang-dev, dsymonds, iant\nCC=golang-dev\nhttp://codereview.appspot.com/5503063",
+			"disapproval": false,
+			"date": "2011-12-22 01:08:21.062067",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nbradfitz@golang.org writes:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> exec: disable the ExtraFiles test on darwin\n>\n> Still a mystery. New issue 2603 filed.\n>\n> Please review this at http://codereview.appspot.com/5503063/\n>\n> Affected files:\n>   M src/pkg/os/exec/exec.go\n>   M src/pkg/os/exec/exec_test.go\n>\n>\n> Index: src/pkg/os/exec/exec.go\n> ===================================================================\n> --- a/src/pkg/os/exec/exec.go\n> +++ b/src/pkg/os/exec/exec.go\n> @@ -67,6 +67,9 @@\n>  \t// ExtraFiles specifies additional open files to be inherited by the\n>  \t// new process. It does not include standard input, standard output, or\n>  \t// standard error. If non-nil, entry i becomes file descriptor 3+i.\n> +\t//\n> +\t// BUG: on OS X 10.6, child processes may sometimes inherit extra fds.\n> +\t// http://golang.org/issue/2603\n>  \tExtraFiles []*os.File\n>\n>  \t// SysProcAttr holds optional, operating system-specific attributes.\n> Index: src/pkg/os/exec/exec_test.go\n> ===================================================================\n> --- a/src/pkg/os/exec/exec_test.go\n> +++ b/src/pkg/os/exec/exec_test.go\n> @@ -11,6 +11,8 @@\n>  \t\"io\"\n>  \t\"io/ioutil\"\n>  \t\"net\"\n> +\t\"net/http\"\n> +\t\"net/http/httptest\"\n>  \t\"os\"\n>  \t\"runtime\"\n>  \t\"strconv\"\n> @@ -156,6 +158,14 @@\n>  \t}\n>  \tdefer ln.Close()\n>\n> +\t// Force TLS root certs to be loaded (which might involve\n> +\t// cgo), to make sure none of that potential C code leaks fds.\n> +\tts := httptest.NewTLSServer(http.HandlerFunc(func(w\n> http.ResponseWriter, r *http.Request) {\n> +\t\tw.Write([]byte(\"Hello\"))\n> +\t}))\n> +\tdefer ts.Close()\n> +\thttp.Get(ts.URL) // ignore result; just calling to force root cert loading\n> +\n>  \ttf, err := ioutil.TempFile(\"\", \"\")\n>  \tif err != nil {\n>  \t\tt.Fatalf(\"TempFile: %v\", err)\n> @@ -256,23 +266,31 @@\n>  \t\t\tfmt.Printf(\"ReadAll from fd 3: %v\", err)\n>  \t\t\tos.Exit(1)\n>  \t\t}\n> -\t\t// Now verify that there are no other open fds.\n> -\t\tvar files []*os.File\n> -\t\tfor wantfd := os.Stderr.Fd() + 2; wantfd <= 100; wantfd++ {\n> -\t\t\tf, err := os.Open(os.Args[0])\n> -\t\t\tif err != nil {\n> -\t\t\t\tfmt.Printf(\"error opening file with expected fd %d: %v\", wantfd, err)\n> -\t\t\t\tos.Exit(1)\n> +\t\tswitch runtime.GOOS {\n> +\t\tcase \"darwin\":\n> +\t\t\t// TODO(bradfitz): broken? Sometimes.\n> +\t\t\t// http://golang.org/issue/2603\n> +\t\t\t// Skip this additional part of the test for now.\n> +\t\tdefault:\n> +\t\t\t// Now verify that there are no other open fds.\n> +\t\t\tvar files []*os.File\n> +\t\t\tfor wantfd := os.Stderr.Fd() + 2; wantfd <= 100; wantfd++ {\n> +\t\t\t\tf, err := os.Open(os.Args[0])\n> +\t\t\t\tif err != nil {\n> +\t\t\t\t\tfmt.Printf(\"error opening file with expected fd %d: %v\", wantfd, err)\n> +\t\t\t\t\tos.Exit(1)\n> +\t\t\t\t}\n> +\t\t\t\tif got := f.Fd(); got != wantfd {\n> +\t\t\t\t\tfmt.Printf(\"leaked parent file. fd = %d; want %d\\n\", got, wantfd)\n> +\t\t\t\t\tout, _ := Command(\"lsof\",\n> \"-p\", fmt.Sprint(os.Getpid())).CombinedOutput()\n> +\t\t\t\t\tfmt.Print(string(out))\n> +\t\t\t\t\tos.Exit(1)\n> +\t\t\t\t}\n> +\t\t\t\tfiles = append(files, f)\n>  \t\t\t}\n> -\t\t\tif got := f.Fd(); got != wantfd {\n> -\t\t\t\tfmt.Printf(\"leaked parent file. fd = %d; want %d\", got, wantfd)\n> -\t\t\t\tfmt.Println(Command(\"lsof\", \"-p\",\n> fmt.Sprint(os.Getpid())).CombinedOutput())\n> -\t\t\t\tos.Exit(1)\n> +\t\t\tfor _, f := range files {\n> +\t\t\t\tf.Close()\n>  \t\t\t}\n> -\t\t\tfiles = append(files, f)\n> -\t\t}\n> -\t\tfor _, f := range files {\n> -\t\t\tf.Close()\n>  \t\t}\n>  \t\tos.Stderr.Write(bs)\n>  \tcase \"exit\":\n",
+			"disapproval": false,
+			"date": "2011-12-22 00:57:43.063381",
+			"approval": true
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2011-12-22 00:50:17.862433",
+			"approval": true
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 5503063: exec: disable the ExtraFiles test on darwin",
+	"created": "2011-12-22 00:40:35.607783",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		6001,
+		7001
+	],
+	"modified": "2011-12-22 01:08:22.123043",
+	"closed": true,
+	"issue": 5503063
+}

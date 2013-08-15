@@ -1,0 +1,165 @@
+{
+	"description": "cmd/gc: enable inlining in generated method wrappers.\n\nMethod calls on interfaces with large stored values\nwill call the pointer receiver method which may be\na wrapper over a method with value receiver.\n\nThis is particularly inefficient for very small bodies.\nInlining the wrapped method body saves a potentially expensive\nfunction call.\n\nbenchmark                old ns/op    new ns/op    delta\nBenchmarkSortString1K       802295       641387  -20.06%\nBenchmarkSortInt1K          359914       238234  -33.81%\nBenchmarkSortInt64K       35764226     22803078  -36.24%\n\nFixes issue 4707.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"daniel.morsing@gmail.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Would it be possible to move genwrapper to be done earlier? That way, the normal inlining would do and you don't need to do these ugly workarounds.",
+			"disapproval": false,
+			"date": "2013-01-25 12:44:44.127640",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-01-25 10:03:49.674920",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Two problems were encountered:\n * dcls are no longer correctly sorted at this stage of compiling, which breaks an assumption of the inliner on return variables\n * inlining may generate additional statics, but globals were already dumped when we reach type information\n\nBenchmark for issue 4707 (sort.Ints with receiver []int vs receiver *[]int)\n\nBefore:\nBenchmarkSlice\t      50\t  65906921 ns/op\nBenchmarkPtr\t      50\t  45229670 ns/op\n\nAfter:\nBenchmarkSlice\t      50\t  43613033 ns/op\nBenchmarkPtr\t      50\t  45689920 ns/op\n\npackage main\n\nimport (\n\t\"math/rand\"\n\t\"sort\"\n\t\"testing\"\n)\n\ntype ints []int\n\nfunc (s *ints) Len() int           { return len(*s) }\nfunc (s *ints) Swap(a, b int)      { (*s)[a], (*s)[b] = (*s)[b], (*s)[a] }\nfunc (s *ints) Less(a, b int) bool { return (*s)[a] < (*s)[b] }\n\ntype intslice []int\n\nfunc (s intslice) Len() int           { return len(s) }\nfunc (s intslice) Swap(a, b int)      { s[a], s[b] = s[b], s[a] }\nfunc (s intslice) Less(a, b int) bool { return s[a] < s[b] }\n\nconst N = 100000\n\nvar src []int\n\nfunc init() {\n\tsrc = make([]int, N)\n\tfor i := range src {\n\t\tsrc[i] = rand.Int()\n\t}\n}\n\nfunc BenchmarkSlice(b *testing.B) {\n\tdata := make([]int, N)\n\tfor i := 0; i < b.N; i++ {\n\t\tcopy(data, src)\n\t\tsort.Sort(intslice(data))\n\t}\n}\n\nfunc BenchmarkPtr(b *testing.B) {\n\tdata := make([]int, N)\n\tfor i := 0; i < b.N; i++ {\n\t\tcopy(data, src)\n\t\tsort.Sort((*ints)(&data))\n\t}\n}",
+			"disapproval": false,
+			"date": "2013-01-25 10:09:13.447800",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please upload again. Getting the good old chunk mismatch error.",
+			"disapproval": false,
+			"date": "2013-01-25 10:27:47.760150",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/25 10:27:47, DMorsing wrote:\n> Please upload again. Getting the good old chunk mismatch error.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-01-25 10:29:09.709650",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/25 12:44:44, DMorsing wrote:\n> Would it be possible to move genwrapper to be done earlier? That way, the normal\n> inlining would do and you don't need to do these ugly workarounds.\n\nIt's a bit difficult: the wrapper for (*U).Method that defines (*T).Method when T embeds U is a assembly trampoline which belongs to the backend and not the frontend.\n\nTo move regular wrapper generation earlier we would have to separate the two kinds of wrappers.",
+			"disapproval": false,
+			"date": "2013-01-28 20:38:41.493800",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The new func representation may change what wrappers mean and when they are\r\ngenerated, so it might not be worth spending too much effort on a reorg\r\nright now. (The new CL sounds fine, haven't had a chance to look at it in\r\ndetail yet.)\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-01-28 22:50:17.236670",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, daniel.morsing@gmail.com, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-02-24 21:59:35.466180",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-03-11 16:39:28.898510",
+			"approval": true
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"daniel.morsing@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=55e75a96c9c0 ***\n\ncmd/gc: enable inlining in generated method wrappers.\n\nMethod calls on interfaces with large stored values\nwill call the pointer receiver method which may be\na wrapper over a method with value receiver.\n\nThis is particularly inefficient for very small bodies.\nInlining the wrapped method body saves a potentially expensive\nfunction call.\n\nbenchmark                old ns/op    new ns/op    delta\nBenchmarkSortString1K       802295       641387  -20.06%\nBenchmarkSortInt1K          359914       238234  -33.81%\nBenchmarkSortInt64K       35764226     22803078  -36.24%\n\nFixes issue 4707.\n\nR=golang-dev, daniel.morsing, rsc\nCC=golang-dev\nhttps://codereview.appspot.com/7214044",
+			"disapproval": false,
+			"date": "2013-03-11 20:25:09.504990",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 7214044: cmd/gc: enable inlining in generated method wrappers.",
+	"created": "2013-01-25 10:03:09.092670",
+	"patchsets": [
+		1,
+		2001,
+		4004,
+		5,
+		15001,
+		18001,
+		26001
+	],
+	"modified": "2013-03-11 20:25:12.232440",
+	"closed": true,
+	"issue": 7214044
+}

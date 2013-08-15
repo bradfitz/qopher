@@ -1,0 +1,398 @@
+{
+	"description": "os/user: faster user lookup on Windows\n\nTrying to lookup user's display name with directory services can\ntake several seconds when user's computer is not in a domain.\nAs a workaround, check if computer is joined in a domain first,\nand don't use directory services if it is not.\nAdditionally, don't leak tokens in user.Current().\nFixes issue 5298.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"lucio.dere@gmail.com"
+	],
+	"reviewers": [
+		"alex.brainman@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/18 01:51:56, brainman wrote:\n> What about using NetGetJoinInformation\n\nOh! It's actually very interesting!\n\n> if PC_domain_name != USER_LOGIN_domain_name {\n> \t// PC is part of domain, but user is logged in locally\n> \tlookup_account_localy()\n> \treturn\n> }\n\nIt is possible to have multiple domains on the network. Such a check would work for user.Current(), but would not return correct data for user.Lookup(\"OTHERDOMAIN\\\\username\").\n\nMaybe we don't even have to compare any strings, but use a much simpler logic based on BufferType: always use lookup_account_in_domain  first if BufferType==NetSetupDomainName, and never otherwise. What do you think?",
+			"disapproval": false,
+			"date": "2013-04-18 04:13:41.917320",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/18 04:20:19, lucio wrote:\n> ... what goes\n> wrong if one does an unconditional \"local lookup\" and the host is part\n> of a domain?\n\nThe api fails. Please, do not ask me why, because I do not know? :-)\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-18 04:47:01.347660",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The issue discussed a Windows API to ask whether your computer was part of\r\na domain. Why aren't you using that?\r\n\r\nIs checking whether the computer's name == domain name a good heuristic for\r\ndomain membership?  Seems non-ideal.\r\n\r\n\r\n\r\nOn Wed, Apr 17, 2013 at 9:29 AM, <snaury@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> os/user: faster user lookup on Windows\r\n>\r\n> Trying to lookup user's display name with directory services can\r\n> take a several seconds when user's computer is not in a domain.\r\n> As a workaround, check if domain name matches computer name\r\n> and don't use directory services for local user names.\r\n> Fixes issue 5298.\r\n>\r\n> Please review this at https://codereview.appspot.**com/8541047/<https://codereview.appspot.com/8541047/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/os/user/lookup_**windows.go\r\n>\r\n>\r\n> Index: src/pkg/os/user/lookup_**windows.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/os/user/lookup_**windows.go\r\n> +++ b/src/pkg/os/user/lookup_**windows.go\r\n> @@ -6,38 +6,43 @@\r\n>\r\n>  import (\r\n>         \"fmt\"\r\n> +       \"strings\"\r\n>         \"syscall\"\r\n>         \"unsafe\"\r\n>  )\r\n>\r\n>  func lookupFullName(domain, username, domainAndUser string) (string,\r\n> error) {\r\n> -       // try domain controller first\r\n> -       name, e := syscall.TranslateAccountName(**domainAndUser,\r\n> -               syscall.NameSamCompatible, syscall.NameDisplay, 50)\r\n> +       computer, e := syscall.ComputerName()\r\n> +       if e != nil || !strings.EqualFold(domain, computer) {\r\n> +               // try domain controller first\r\n> +               name, e := syscall.TranslateAccountName(**domainAndUser,\r\n> +                       syscall.NameSamCompatible, syscall.NameDisplay, 50)\r\n> +               if e == nil {\r\n> +                       return name, nil\r\n> +               }\r\n> +       }\r\n> +       // domain lookup failed or it's a local computer\r\n> +       d, e := syscall.UTF16PtrFromString(**domain)\r\n>         if e != nil {\r\n> -               // domain lookup failed, perhaps this pc is not part of\r\n> domain\r\n> -               d, e := syscall.UTF16PtrFromString(**domain)\r\n> -               if e != nil {\r\n> -                       return \"\", e\r\n> -               }\r\n> -               u, e := syscall.UTF16PtrFromString(**username)\r\n> -               if e != nil {\r\n> -                       return \"\", e\r\n> -               }\r\n> -               var p *byte\r\n> -               e = syscall.NetUserGetInfo(d, u, 10, &p)\r\n> -               if e != nil {\r\n> -                       // path executed when a domain user is\r\n> disconnected from the domain\r\n> -                       // pretend username is fullname\r\n> -                       return username, nil\r\n> -               }\r\n> -               defer syscall.NetApiBufferFree(p)\r\n> -               i := (*syscall.UserInfo10)(unsafe.**Pointer(p))\r\n> -               if i.FullName == nil {\r\n> -                       return \"\", nil\r\n> -               }\r\n> -               name = syscall.UTF16ToString((*[1024]**\r\n> uint16)(unsafe.Pointer(i.**FullName))[:])\r\n> +               return \"\", e\r\n>         }\r\n> +       u, e := syscall.UTF16PtrFromString(**username)\r\n> +       if e != nil {\r\n> +               return \"\", e\r\n> +       }\r\n> +       var p *byte\r\n> +       e = syscall.NetUserGetInfo(d, u, 10, &p)\r\n> +       if e != nil {\r\n> +               // path executed when a domain user is disconnected from\r\n> the domain\r\n> +               // pretend username is fullname\r\n> +               return username, nil\r\n> +       }\r\n> +       defer syscall.NetApiBufferFree(p)\r\n> +       i := (*syscall.UserInfo10)(unsafe.**Pointer(p))\r\n> +       if i.FullName == nil {\r\n> +               return \"\", nil\r\n> +       }\r\n> +       name := syscall.UTF16ToString((*[1024]**uint16)(unsafe.Pointer(i.*\r\n> *FullName))[:])\r\n>         return name, nil\r\n>  }\r\n>\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-17 16:30:38.573460",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/17 16:30:38, bradfitz wrote:\n> The issue discussed a Windows API to ask whether your computer was part of\n> a domain. Why aren't you using that?\n\nSeveral reasons. First, I would need to add a new API (GetNetworkParams) to syscall, rather complex structure and code to marshal that, as well as probably sync.Once to call that only once. Next, if machine is part of a domain doesn't really tell us anything: logged in user might be a local user on a home network, and the problem would be the same, trying to query domain controller when there's none.\n\nIt's very difficult to have a computer name same as a domain name, unless you are on a domain controller (I can't test what really happens then), and if you are looking up an account on a local computer, then you have to use NetUserGetInfo anyway.\n\nThe ideal solution would probably be to compare sid prefixes between user and computer, but I'm not sure which API can give us sid of a local computer.\n\n> Is checking whether the computer's name == domain name a good heuristic for\n> domain membership?  Seems non-ideal.\n\nSince user name is only remote if it's not on a current computer it's probably good, though I'm not entirely sure. :(",
+			"disapproval": false,
+			"date": "2013-04-17 16:50:09.519120",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-04-17 16:29:28.119790",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Apr 17, 2013 at 9:50 AM, <snaury@gmail.com> wrote:\r\n\r\n> On 2013/04/17 16:30:38, bradfitz wrote:\r\n>\r\n>> The issue discussed a Windows API to ask whether your computer was\r\n>>\r\n> part of\r\n>\r\n>> a domain. Why aren't you using that?\r\n>>\r\n>\r\n> Several reasons. First, I would need to add a new API (GetNetworkParams)\r\n> to syscall, rather complex structure and code to marshal that, as well\r\n> as probably sync.Once to call that only once.\r\n\r\n\r\nThose reasons alone aren't compelling enough. We can help you with those.\r\n\r\nLet's figure out what's the correct behavior first, and then worry about\r\nimplementation.\r\n\r\n\r\n> Next, if machine is part\r\n> of a domain doesn't really tell us anything: logged in user might be a\r\n> local user on a home network, and the problem would be the same, trying\r\n> to query domain controller when there's none.\r\n>\r\n> It's very difficult to have a computer name same as a domain name,\r\n> unless you are on a domain controller (I can't test what really happens\r\n> then), and if you are looking up an account on a local computer, then\r\n> you have to use NetUserGetInfo anyway.\r\n>\r\n> The ideal solution would probably be to compare sid prefixes between\r\n> user and computer, but I'm not sure which API can give us sid of a local\r\n> computer.\r\n>\r\n>\r\n>  Is checking whether the computer's name == domain name a good\r\n>>\r\n> heuristic for\r\n>\r\n>> domain membership?  Seems non-ideal.\r\n>>\r\n>\r\n> Since user name is only remote if it's not on a current computer it's\r\n> probably good, though I'm not entirely sure. :(\r\n>\r\n> https://codereview.appspot.**com/8541047/<https://codereview.appspot.com/8541047/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-17 16:53:46.811170",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/17 16:50:09, snaury wrote:\n> \n> ..., if machine is part of a domain doesn't\n> really tell us anything: logged in user might be a local user on a home network,\n> and the problem would be the same, trying to query domain controller when\n> there's none.\n> \n\nWhat about using NetGetJoinInformation (http://play.golang.org/p/bFA02H1cwE)? The function will help us to determine, if computer is part of a domain. And will tell us what the domain name is, if PC is part of a domain.\n\nHere is our logic:\n\nif !PC_is_part_of_a_domain {\n\t// PC is not part of domain\n\tlookup_account_localy()\n\treturn\n}\nif PC_domain_name != USER_LOGIN_domain_name {\n\t// PC is part of domain, but user is logged in locally\n\tlookup_account_localy()\n\treturn\n}\nlookup_account_in_domain()\nreturn\n\nPerhaps, lookup_account_in_domain could still be slow, if user is logged in without domain controller present. But, I believe, nothing we could do about that - that case is undetectable. Also, since user is logged in with some \"cached credentials\", perhaps our calls won't be slow after all. Perhaps, they will use some \"cached\" information instead of looking for domain controllers.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-18 01:51:56.138450",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/17 16:53:46, bradfitz wrote:\n> Let's figure out what's the correct behavior first, and then worry about\n> implementation.\n\nThe correct behavior is rather obvious. If username is on current or another computer, we should use NetUserGetInfo. If username is on a domain, we should use TranslateAccountName. The problem is how to distinguish between computer and domain names. :)",
+			"disapproval": false,
+			"date": "2013-04-17 17:07:42.886010",
+			"approval": false
+		},
+		{
+			"sender": "lucio.dere@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Out of curiosity from somebody who seldom uses Windows, what goes\r\nwrong if one does an unconditional \"local lookup\" and the host is part\r\nof a domain?\r\n\r\nLucio.\r\n\r\nOn 4/18/13, snaury@gmail.com <snaury@gmail.com> wrote:\r\n> On 2013/04/18 01:51:56, brainman wrote:\r\n>> What about using NetGetJoinInformation\r\n>\r\n> Oh! It's actually very interesting!\r\n>\r\n>> if PC_domain_name != USER_LOGIN_domain_name {\r\n>> \t// PC is part of domain, but user is logged in locally\r\n>> \tlookup_account_localy()\r\n>> \treturn\r\n>> }\r\n>\r\n> It is possible to have multiple domains on the network. Such a check\r\n> would work for user.Current(), but would not return correct data for\r\n> user.Lookup(\"OTHERDOMAIN\\\\username\").\r\n>\r\n> Maybe we don't even have to compare any strings, but use a much simpler\r\n> logic based on BufferType: always use lookup_account_in_domain  first if\r\n> BufferType==NetSetupDomainName, and never otherwise. What do you think?\r\n>\r\n> https://codereview.appspot.com/8541047/\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-18 04:20:19.910890",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/18 04:13:41, snaury wrote:\n> \n> Maybe we don't even have to compare any strings, but use a much simpler logic\n> based on BufferType: always use lookup_account_in_domain  first if\n> BufferType==NetSetupDomainName, and never otherwise. What do you think?\n\nSGTM. But, I think we'll be chasing our tail again year from now :-)\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-18 04:43:52.380990",
+			"approval": false
+		},
+		{
+			"sender": "lucio.dere@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The I guess it does precisely what snaury is trying to do and, in all\r\nlikelyhood, there isn't a better way.  But that's just speculation.\r\n\r\nLucio.\r\n\r\nOn 4/18/13, alex.brainman@gmail.com <alex.brainman@gmail.com> wrote:\r\n> On 2013/04/18 04:52:18, lucio wrote:\r\n>> >\r\n>> If that is a quick response, ...\r\n>\r\n> It is slow on my computer.\r\n>\r\n> Alex\r\n>\r\n> https://codereview.appspot.com/8541047/\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-18 05:42:25.932290",
+			"approval": false
+		},
+		{
+			"sender": "lucio.dere@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 4/18/13, alex.brainman@gmail.com <alex.brainman@gmail.com> wrote:\r\n> On 2013/04/18 04:20:19, lucio wrote:\r\n>> ... what goes\r\n>> wrong if one does an unconditional \"local lookup\" and the host is part\r\n>> of a domain?\r\n>\r\n> The api fails. Please, do not ask me why, because I do not know? :-)\r\n>\r\nIf that is a quick response, is it not sufficient indication that a\r\nsubsequent lookup in the domain is going to be quick?  That would\r\naddress the original problem, would it not?\r\n\r\nOr does everything fall apart instead?\r\n\r\nLucio.\r\n",
+			"disapproval": false,
+			"date": "2013-04-18 04:52:18.653750",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/18 04:52:18, lucio wrote:\n> >\n> If that is a quick response, ...\n\nIt is slow on my computer.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-18 05:05:41.523890",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think you made mistake with pointers. Your NetGetJoinInformation call always fails with \"The parameter is incorrect\" error. I moved all windows api prototypes into syscall http://code.google.com/p/go/issues/detail?id=5298#c5 (like we always do), and that helped to clear the issue. Please, accept my changes.\n\nAlex\n\nhttps://codereview.appspot.com/8541047/diff/27001/src/pkg/os/user/lookup_windows.go\nFile src/pkg/os/user/lookup_windows.go (right):\n\nhttps://codereview.appspot.com/8541047/diff/27001/src/pkg/os/user/lookup_windows.go#newcode61\nsrc/pkg/os/user/lookup_windows.go:61: // pretend username is fullname\nThis comment is misleading now. pc is not part of any domain, if we are here.\n\nhttps://codereview.appspot.com/8541047/diff/27001/src/pkg/os/user/lookup_windows.go#newcode116\nsrc/pkg/os/user/lookup_windows.go:116: defer t.Close()\nGood catch.",
+			"disapproval": false,
+			"date": "2013-04-23 00:59:25.121090",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, alex.brainman@gmail.com, lucio.dere@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-04-22 19:48:21.230440",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, alex.brainman@gmail.com, lucio.dere@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-04-23 05:40:18.889130",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, alex.brainman@gmail.com, lucio.dere@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-04-22 20:10:55.469860",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/04/23 00:59:25, brainman wrote:\n> Please, accept my changes.\n\nDone.\n\n> pc is not part of any domain, if we are here.\n\nNot necessarily. If computer is part of a domain this code is tried as well (just like before). But comment was misplaced, so I fixed it this time.\n\n> Good catch.\n\nWas looking for leaks in my changes, found a token leak instead. %)",
+			"disapproval": false,
+			"date": "2013-04-23 05:43:41.897850",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThank you very much.\n\nWe are not permitted to submit now, so leaving it for others. I suppose it can wait until after go1.1, if we are too close.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-04-24 07:00:58.854830",
+			"approval": true
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Any more reviews? Can I submit now?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-15 02:57:21.641870",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/8541047/diff/33001/src/pkg/syscall/security_windows.go\nFile src/pkg/syscall/security_windows.go (right):\n\nhttps://codereview.appspot.com/8541047/diff/33001/src/pkg/syscall/security_windows.go#newcode62\nsrc/pkg/syscall/security_windows.go:62: // do not reorder\nIf these are constants defined elsewhere (i.e. in Windows header files), then iota is the wrong mechanism.  You should instead say = 0, = 1, = 2, = 3.",
+			"disapproval": false,
+			"date": "2013-05-15 03:20:56.382730",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Submit away once you're happy with it.  I left one comment, which you can\r\nfix later in a subsequent commit if you'd like.\r\n\r\n\r\n\r\nOn Tue, May 14, 2013 at 7:57 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> Any more reviews? Can I submit now?\r\n>\r\n> Alex\r\n>\r\n> https://codereview.appspot.**com/8541047/<https://codereview.appspot.com/8541047/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-15 03:21:26.540540",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"lucio.dere@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/15 03:20:56, bradfitz wrote:\n> If these are constants defined elsewhere (i.e. in Windows header files), then\n> iota is the wrong mechanism.  You should instead say = 0, = 1, = 2, = 3.\n\nWe have a few of them\n\nsyscall # grep iota *.go\nsecurity_windows.go:    NetSetupUnknownStatus = iota\nsecurity_windows.go:    SidTypeUser = 1 + iota\nsecurity_windows.go:    TOKEN_ASSIGN_PRIMARY = 1 << iota\nsecurity_windows.go:    TokenUser = 1 + iota\nzerrors_windows.go:     E2BIG Errno = APPLICATION_ERROR + iota\nztypes_windows.go:      FILE_NOTIFY_CHANGE_FILE_NAME = 1 << iota\nztypes_windows.go:      FILE_ACTION_ADDED = iota + 1\nztypes_windows.go:      HKEY_CLASSES_ROOT = 0x80000000 + iota\nztypes_windows.go:      REG_NONE = iota\n\nI like to leave them as they are. We have comments to warn future users.\n\nBut if you insist that it is wrong, I will change them all.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-15 03:29:58.344470",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I would slightly prefer they all be changed.\r\n\r\nTo me (and I think to others?), \"iota\" generally means \"I want some unique\r\nnumbers, but I don't really care what they are\".\r\n\r\nBut I don't care enough, unless somebody else agrees.\r\n\r\n\r\n\r\n\r\nOn Tue, May 14, 2013 at 8:29 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> On 2013/05/15 03:20:56, bradfitz wrote:\r\n>\r\n>> If these are constants defined elsewhere (i.e. in Windows header\r\n>>\r\n> files), then\r\n>\r\n>> iota is the wrong mechanism.  You should instead say = 0, = 1, = 2, =\r\n>>\r\n> 3.\r\n>\r\n> We have a few of them\r\n>\r\n> syscall # grep iota *.go\r\n> security_windows.go:    NetSetupUnknownStatus = iota\r\n> security_windows.go:    SidTypeUser = 1 + iota\r\n> security_windows.go:    TOKEN_ASSIGN_PRIMARY = 1 << iota\r\n> security_windows.go:    TokenUser = 1 + iota\r\n> zerrors_windows.go:     E2BIG Errno = APPLICATION_ERROR + iota\r\n> ztypes_windows.go:      FILE_NOTIFY_CHANGE_FILE_NAME = 1 << iota\r\n> ztypes_windows.go:      FILE_ACTION_ADDED = iota + 1\r\n> ztypes_windows.go:      HKEY_CLASSES_ROOT = 0x80000000 + iota\r\n> ztypes_windows.go:      REG_NONE = iota\r\n>\r\n> I like to leave them as they are. We have comments to warn future users.\r\n>\r\n> But if you insist that it is wrong, I will change them all.\r\n>\r\n> Alex\r\n>\r\n> https://codereview.appspot.**com/8541047/<https://codereview.appspot.com/8541047/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-15 03:36:09.517670",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"alex.brainman@gmail.com",
+				"lucio.dere@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=2cf178b97603 ***\n\nos/user: faster user lookup on Windows\n\nTrying to lookup user's display name with directory services can\ntake several seconds when user's computer is not in a domain.\nAs a workaround, check if computer is joined in a domain first,\nand don't use directory services if it is not.\nAdditionally, don't leak tokens in user.Current().\nFixes issue 5298.\n\nR=golang-dev, bradfitz, alex.brainman, lucio.dere\nCC=golang-dev\nhttps://codereview.appspot.com/8541047\n\nCommitter: Alex Brainman <alex.brainman@gmail.com>",
+			"disapproval": false,
+			"date": "2013-05-15 03:25:09.358800",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"lucio.dere@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/15 03:36:09, bradfitz wrote:\n> \n> To me (and I think to others?), \"iota\" generally means \"I want some unique\n> numbers, but I don't really care what they are\".\n> \n\nI disagree. If \"iota\" means \"... I don't really care what they are\", why does Go allows \"1 + iota\" and \"1 << iota\" and such?\n\nAlex",
+			"disapproval": false,
+			"date": "2013-05-15 03:40:29.003430",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, May 14, 2013 at 8:40 PM, <alex.brainman@gmail.com> wrote:\r\n\r\n> On 2013/05/15 03:36:09, bradfitz wrote:\r\n>\r\n>  To me (and I think to others?), \"iota\" generally means \"I want some\r\n>>\r\n> unique\r\n>\r\n>> numbers, but I don't really care what they are\".\r\n>>\r\n>\r\n>\r\n> I disagree. If \"iota\" means \"... I don't really care what they are\", why\r\n> does Go allows \"1 + iota\" and \"1 << iota\" and such?\r\n>\r\n\r\nI disagree but I would prefer this thread end and the code remain unchanged.\r\n",
+			"disapproval": false,
+			"date": "2013-05-15 03:42:43.706700",
+			"approval": false
+		}
+	],
+	"owner_email": "snaury@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "snaury",
+	"subject": "code review 8541047: os/user: faster user lookup on Windows",
+	"created": "2013-04-17 16:29:00.776100",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		6002,
+		17001,
+		2003,
+		18002,
+		27001,
+		30001,
+		33001
+	],
+	"modified": "2013-05-22 20:07:07.508420",
+	"closed": true,
+	"issue": 8541047
+}

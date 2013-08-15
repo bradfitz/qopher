@@ -1,0 +1,61 @@
+{
+	"description": "godoc: simplify internal FileSystem interface\n\n- also fixed bug: ReadFile never closed the file before\n- per suggestion by bradfitz",
+	"cc": [
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=387f8f80bf20 ***\n\ngodoc: simplify internal FileSystem interface\n\n- also fixed bug: ReadFile never closed the file before\n- per suggestion by bradfitz\n\nR=bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/5092047",
+			"disapproval": false,
+			"date": "2011-09-21 22:12:08.765868",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nthanks!\n\n\nOn Wed, Sep 21, 2011 at 3:07 PM, <gri@golang.org> wrote:\n\n> Reviewers: bradfitz,\n>\n> Message:\n> Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> godoc: simplify internal FileSystem interface\n>\n> - also fixed bug: ReadFile never closed the file before\n> - per suggestion by bradfitz\n>\n> Please review this at http://codereview.appspot.com/**5092047/<http://codereview.appspot.com/5092047/>\n>\n> Affected files:\n>  M src/cmd/godoc/codewalk.go\n>  M src/cmd/godoc/filesystem.go\n>  M src/cmd/godoc/godoc.go\n>  M src/cmd/godoc/parser.go\n>  M src/cmd/godoc/zip.go\n>\n>\n> Index: src/cmd/godoc/codewalk.go\n> ==============================**==============================**=======\n> --- a/src/cmd/godoc/codewalk.go\n> +++ b/src/cmd/godoc/codewalk.go\n> @@ -129,7 +129,7 @@\n>                        i = len(st.Src)\n>                }\n>                filename := st.Src[0:i]\n> -               data, err := fs.ReadFile(absolutePath(**filename,\n> *goroot))\n> +               data, err := ReadFile(fs, absolutePath(filename, *goroot))\n>                if err != nil {\n>                        st.Err = err\n>                        continue\n> @@ -208,7 +208,7 @@\n>  // the usual godoc HTML wrapper.\n>  func codewalkFileprint(w http.ResponseWriter, r *http.Request, f string) {\n>        abspath := absolutePath(f, *goroot)\n> -       data, err := fs.ReadFile(abspath)\n> +       data, err := ReadFile(fs, abspath)\n>        if err != nil {\n>                log.Print(err)\n>                serveError(w, r, f, err)\n> Index: src/cmd/godoc/filesystem.go\n> ==============================**==============================**=======\n> --- a/src/cmd/godoc/filesystem.go\n> +++ b/src/cmd/godoc/filesystem.go\n> @@ -31,7 +31,16 @@\n>        Lstat(path string) (FileInfo, os.Error)\n>        Stat(path string) (FileInfo, os.Error)\n>        ReadDir(path string) ([]FileInfo, os.Error)\n> -       ReadFile(path string) ([]byte, os.Error)\n> +}\n> +\n> +// ReadFile reads the file named by path from fs and returns the contents.\n> +func ReadFile(fs FileSystem, path string) ([]byte, os.Error) {\n> +       rc, err := fs.Open(path)\n> +       if err != nil {\n> +               return nil, err\n> +       }\n> +       defer rc.Close()\n> +       return ioutil.ReadAll(rc)\n>  }\n>\n>  // ------------------------------**------------------------------**\n> ----------------\n> @@ -98,7 +107,3 @@\n>        }\n>        return l1, nil\n>  }\n> -\n> -func (osFS) ReadFile(path string) ([]byte, os.Error) {\n> -       return ioutil.ReadFile(path)\n> -}\n> Index: src/cmd/godoc/godoc.go\n> ==============================**==============================**=======\n> --- a/src/cmd/godoc/godoc.go\n> +++ b/src/cmd/godoc/godoc.go\n> @@ -149,7 +149,7 @@\n>  // readDirList reads a file containing a newline-separated list\n>  // of directory paths and returns the list of paths.\n>  func readDirList(filename string) ([]string, os.Error) {\n> -       contents, err := fs.ReadFile(filename)\n> +       contents, err := ReadFile(fs, filename)\n>        if err != nil {\n>                return nil, err\n>        }\n> @@ -546,7 +546,7 @@\n>\n>        // use underlying file system fs to read the template file\n>        // (cannot use template ParseFile functions directly)\n> -       data, err := fs.ReadFile(path)\n> +       data, err := ReadFile(fs, path)\n>        if err != nil {\n>                log.Fatal(\"readTemplate: \", err)\n>        }\n> @@ -636,7 +636,7 @@\n>\n>  func serveHTMLDoc(w http.ResponseWriter, r *http.Request, abspath, relpath\n> string) {\n>        // get HTML body contents\n> -       src, err := fs.ReadFile(abspath)\n> +       src, err := ReadFile(fs, abspath)\n>        if err != nil {\n>                log.Printf(\"ReadFile: %s\", err)\n>                serveError(w, r, relpath, err)\n> @@ -685,7 +685,7 @@\n>  }\n>\n>  func serveTextFile(w http.ResponseWriter, r *http.Request, abspath,\n> relpath, title string) {\n> -       src, err := fs.ReadFile(abspath)\n> +       src, err := ReadFile(fs, abspath)\n>        if err != nil {\n>                log.Printf(\"ReadFile: %s\", err)\n>                serveError(w, r, relpath, err)\n> @@ -837,7 +837,7 @@\n>  // fsReadFile implements ReadFile for the go/build package.\n>  func fsReadFile(dir, name string) (path string, data []byte, err os.Error)\n> {\n>        path = filepath.Join(dir, name)\n> -       data, err = fs.ReadFile(path)\n> +       data, err = ReadFile(fs, path)\n>        return\n>  }\n>\n> Index: src/cmd/godoc/parser.go\n> ==============================**==============================**=======\n> --- a/src/cmd/godoc/parser.go\n> +++ b/src/cmd/godoc/parser.go\n> @@ -18,7 +18,7 @@\n>  )\n>\n>  func parseFile(fset *token.FileSet, filename string, mode uint)\n> (*ast.File, os.Error) {\n> -       src, err := fs.ReadFile(filename)\n> +       src, err := ReadFile(fs, filename)\n>        if err != nil {\n>                return nil, err\n>        }\n> Index: src/cmd/godoc/zip.go\n> ==============================**==============================**=======\n> --- a/src/cmd/godoc/zip.go\n> +++ b/src/cmd/godoc/zip.go\n> @@ -22,7 +22,6 @@\n>        \"archive/zip\"\n>        \"fmt\"\n>        \"io\"\n> -       \"io/ioutil\"\n>        \"os\"\n>        \"path\"\n>        \"sort\"\n> @@ -153,14 +152,6 @@\n>        return list, nil\n>  }\n>\n> -func (fs *zipFS) ReadFile(abspath string) ([]byte, os.Error) {\n> -       rc, err := fs.Open(abspath)\n> -       if err != nil {\n> -               return nil, err\n> -       }\n> -       return ioutil.ReadAll(rc)\n> -}\n> -\n>  func NewZipFS(rc *zip.ReadCloser) FileSystem {\n>        list := make(zipList, len(rc.File))\n>        copy(list, rc.File) // sort a copy of rc.File\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-09-21 22:10:33.643514",
+			"approval": true
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"gri@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-21 22:07:48.541089",
+			"approval": false
+		}
+	],
+	"owner_email": "gri@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "gri",
+	"subject": "code review 5092047: godoc: simplify internal FileSystem interface",
+	"created": "2011-09-21 22:05:41.799912",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9001
+	],
+	"modified": "2011-09-21 22:12:09.889710",
+	"closed": true,
+	"issue": 5092047
+}

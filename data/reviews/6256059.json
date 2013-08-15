@@ -1,0 +1,59 @@
+{
+	"description": "net: make parsePort as a function",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nlittle comment above func parsePort wouldn't hurt.\r\n\r\nOn Sun, May 27, 2012 at 3:30 AM, <mikioh.mikioh@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> net: make parsePort as a function\r\n>\r\n> Please review this at http://codereview.appspot.com/**6256059/<http://codereview.appspot.com/6256059/>\r\n>\r\n> Affected files:\r\n>  M src/pkg/net/ipsock.go\r\n>  M src/pkg/net/port.go\r\n>  M src/pkg/net/port_unix.go\r\n>\r\n>\r\n> Index: src/pkg/net/ipsock.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ipsock.go\r\n> +++ b/src/pkg/net/ipsock.go\r\n> @@ -129,17 +129,10 @@\r\n>                }\r\n>        }\r\n>\r\n> -       p, i, ok := dtoi(port, 0)\r\n> -       if !ok || i != len(port) {\r\n> -               p, err = LookupPort(net, port)\r\n> -               if err != nil {\r\n> -                       return nil, 0, err\r\n> -               }\r\n> -       }\r\n> -       if p < 0 || p > 0xFFFF {\r\n> -               return nil, 0, &AddrError{\"invalid port\", port}\r\n> +       p, err := parsePort(net, port)\r\n> +       if err != nil {\r\n> +               return nil, 0, err\r\n>        }\r\n>\r\n>        return addr, p, nil\r\n> -\r\n>  }\r\n> Index: src/pkg/net/port.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/port.go\r\n> +++ b/src/pkg/net/port.go\r\n> @@ -1,69 +1,22 @@\r\n> -// Copyright 2009 The Go Authors. All rights reserved.\r\n> +// Copyright 2012 The Go Authors.  All rights reserved.\r\n>  // Use of this source code is governed by a BSD-style\r\n>  // license that can be found in the LICENSE file.\r\n>\r\n> -// +build darwin freebsd linux netbsd openbsd\r\n> -\r\n> -// Read system port mappings from /etc/services\r\n> +// Network service port manipulations\r\n>\r\n>  package net\r\n>\r\n> -import \"sync\"\r\n> -\r\n> -var services map[string]map[string]int\r\n> -var servicesError error\r\n> -var onceReadServices sync.Once\r\n> -\r\n> -func readServices() {\r\n> -       services = make(map[string]map[string]**int)\r\n> -       var file *file\r\n> -       if file, servicesError = open(\"/etc/services\"); servicesError !=\r\n> nil {\r\n> -               return\r\n> -       }\r\n> -       for line, ok := file.readLine(); ok; line, ok = file.readLine() {\r\n> -               // \"http 80/tcp www www-http # World Wide Web HTTP\"\r\n> -               if i := byteIndex(line, '#'); i >= 0 {\r\n> -                       line = line[0:i]\r\n> -               }\r\n> -               f := getFields(line)\r\n> -               if len(f) < 2 {\r\n> -                       continue\r\n> -               }\r\n> -               portnet := f[1] // \"tcp/80\"\r\n> -               port, j, ok := dtoi(portnet, 0)\r\n> -               if !ok || port <= 0 || j >= len(portnet) || portnet[j] !=\r\n> '/' {\r\n> -                       continue\r\n> -               }\r\n> -               netw := portnet[j+1:] // \"tcp\"\r\n> -               m, ok1 := services[netw]\r\n> -               if !ok1 {\r\n> -                       m = make(map[string]int)\r\n> -                       services[netw] = m\r\n> -               }\r\n> -               for i := 0; i < len(f); i++ {\r\n> -                       if i != 1 { // f[1] was port/net\r\n> -                               m[f[i]] = port\r\n> -                       }\r\n> +func parsePort(net, port string) (int, error) {\r\n> +       p, i, ok := dtoi(port, 0)\r\n> +       if !ok || i != len(port) {\r\n> +               var err error\r\n> +               p, err = LookupPort(net, port)\r\n> +               if err != nil {\r\n> +                       return 0, err\r\n>                }\r\n>        }\r\n> -       file.close()\r\n> +       if p < 0 || p > 0xFFFF {\r\n> +               return 0, &AddrError{\"invalid port\", port}\r\n> +       }\r\n> +       return p, nil\r\n>  }\r\n> -\r\n> -// goLookupPort is the native Go implementation of LookupPort.\r\n> -func goLookupPort(network, service string) (port int, err error) {\r\n> -       onceReadServices.Do(**readServices)\r\n> -\r\n> -       switch network {\r\n> -       case \"tcp4\", \"tcp6\":\r\n> -               network = \"tcp\"\r\n> -       case \"udp4\", \"udp6\":\r\n> -               network = \"udp\"\r\n> -       }\r\n> -\r\n> -       if m, ok := services[network]; ok {\r\n> -               if port, ok = m[service]; ok {\r\n> -                       return\r\n> -               }\r\n> -       }\r\n> -       return 0, &AddrError{\"unknown port\", network + \"/\" + service}\r\n> -}\r\n> Index: src/pkg/net/port_unix.go\r\n> ==============================**==============================**=======\r\n> copy from src/pkg/net/port.go\r\n> copy to src/pkg/net/port_unix.go\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-05-27 15:08:23.188001",
+			"approval": true
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-05-27 10:30:08.310892",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d35a98d35f49 ***\n\nnet: make parsePort as a function\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttp://codereview.appspot.com/6256059",
+			"disapproval": false,
+			"date": "2012-05-28 21:12:17.716201",
+			"approval": false
+		}
+	],
+	"owner_email": "mikioh.mikioh@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "mikio",
+	"subject": "code review 6256059: net: make parsePort as a function",
+	"created": "2012-05-27 09:16:07.255781",
+	"patchsets": [
+		8001,
+		4003
+	],
+	"modified": "2012-05-28 21:12:19.646415",
+	"closed": true,
+	"issue": 6256059
+}

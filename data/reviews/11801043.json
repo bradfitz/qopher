@@ -1,0 +1,130 @@
+{
+	"description": "bufio: check buffer availability before reading in ReadFrom\n\nFixes issue 5947.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-07-25 00:41:22.085560",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nbut this does change behavior mildly, probably in an unimportant way:\r\n\r\nBefore, a ReadFrom returning (bufferSize, EOF) would end up causing a\r\nflush.  Now it won't until the next Write.  If we wanted, we could check\r\nAvailable() == 0 in the err == io.EOF case to mirror that old behavior.\r\n\r\n\r\n\r\nOn Wed, Jul 24, 2013 at 5:41 PM, <adg@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> bufio: check buffer availability before reading in ReadFrom\r\n>\r\n> Fixes issue 5947.\r\n>\r\n> Please review this at https://codereview.appspot.**com/11801043/<https://codereview.appspot.com/11801043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/bufio/bufio.go\r\n>   M src/pkg/bufio/bufio_test.go\r\n>\r\n>\r\n> Index: src/pkg/bufio/bufio.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/bufio/bufio.go\r\n> +++ b/src/pkg/bufio/bufio.go\r\n> @@ -678,17 +678,17 @@\r\n>         }\r\n>         var m int\r\n>         for {\r\n> +               if b.Available() == 0 {\r\n> +                       if err1 := b.flush(); err1 != nil {\r\n> +                               return n, err1\r\n> +                       }\r\n> +               }\r\n>                 m, err = r.Read(b.buf[b.n:])\r\n>                 if m == 0 {\r\n>                         break\r\n>                 }\r\n>                 b.n += m\r\n>                 n += int64(m)\r\n> -               if b.Available() == 0 {\r\n> -                       if err1 := b.flush(); err1 != nil {\r\n> -                               return n, err1\r\n> -                       }\r\n> -               }\r\n>                 if err != nil {\r\n>                         break\r\n>                 }\r\n> Index: src/pkg/bufio/bufio_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/bufio/bufio_test.go\r\n> +++ b/src/pkg/bufio/bufio_test.go\r\n> @@ -847,6 +847,10 @@\r\n>                                 t.Errorf(\"ws[%d],rs[%d]: w.ReadFrom(r) =\r\n> %d, %v, want %d, nil\", wi, ri, n, err, len(input))\r\n>                                 continue\r\n>                         }\r\n> +                       if err := w.Flush(); err != nil {\r\n> +                               t.Errorf(\"Flush returned %v\", err)\r\n> +                               continue\r\n> +                       }\r\n>                         if got, want := b.String(), string(input); got !=\r\n> want {\r\n>                                 t.Errorf(\"ws[%d], rs[%d]:\\ngot  %q\\nwant\r\n> %q\\n\", wi, ri, got, want)\r\n>                         }\r\n> @@ -1003,6 +1007,23 @@\r\n>         }\r\n>  }\r\n>\r\n> +func TestReadFromWhileFull(t *testing.T) {\r\n> +       buf := new(bytes.Buffer)\r\n> +       w := NewWriterSize(buf, 10)\r\n> +\r\n> +       // Fill buffer exactly.\r\n> +       n, err := w.Write([]byte(\"0123456789\"))\r\n> +       if n != 10 || err != nil {\r\n> +               t.Fatalf(\"Write returned (%v, %v), want (10, nil)\", n, err)\r\n> +       }\r\n> +\r\n> +       // Use ReadFrom to read in some data.\r\n> +       n2, err := w.ReadFrom(strings.NewReader(\"**abcdef\"))\r\n> +       if n2 != 6 || err != nil {\r\n> +               t.Fatalf(\"ReadFrom returned (%v, %v), want (6, nil)\", n,\r\n> err)\r\n> +       }\r\n> +}\r\n> +\r\n>  // An onlyReader only implements io.Reader, no matter what other methods\r\n> the underlying implementation may have.\r\n>  type onlyReader struct {\r\n>         r io.Reader\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-25 00:53:07.105330",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's not behavior that should be relied upon (although our tests did), but\r\nit's easy enough to preserve it.\r\n\r\nPTAL\r\n\r\n\r\nOn 25 July 2013 10:53, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n\r\n> LGTM\r\n>\r\n> but this does change behavior mildly, probably in an unimportant way:\r\n>\r\n> Before, a ReadFrom returning (bufferSize, EOF) would end up causing a\r\n> flush.  Now it won't until the next Write.  If we wanted, we could check\r\n> Available() == 0 in the err == io.EOF case to mirror that old behavior.\r\n>\r\n>\r\n>\r\n> On Wed, Jul 24, 2013 at 5:41 PM, <adg@golang.org> wrote:\r\n>\r\n>> Reviewers: golang-dev1,\r\n>>\r\n>> Message:\r\n>> Hello golang-dev@googlegroups.com,\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://code.google.com/p/go\r\n>>\r\n>>\r\n>> Description:\r\n>> bufio: check buffer availability before reading in ReadFrom\r\n>>\r\n>> Fixes issue 5947.\r\n>>\r\n>> Please review this at https://codereview.appspot.**com/11801043/<https://codereview.appspot.com/11801043/>\r\n>>\r\n>> Affected files:\r\n>>   M src/pkg/bufio/bufio.go\r\n>>   M src/pkg/bufio/bufio_test.go\r\n>>\r\n>>\r\n>> Index: src/pkg/bufio/bufio.go\r\n>> ==============================**==============================**=======\r\n>> --- a/src/pkg/bufio/bufio.go\r\n>> +++ b/src/pkg/bufio/bufio.go\r\n>> @@ -678,17 +678,17 @@\r\n>>         }\r\n>>         var m int\r\n>>         for {\r\n>> +               if b.Available() == 0 {\r\n>> +                       if err1 := b.flush(); err1 != nil {\r\n>> +                               return n, err1\r\n>> +                       }\r\n>> +               }\r\n>>                 m, err = r.Read(b.buf[b.n:])\r\n>>                 if m == 0 {\r\n>>                         break\r\n>>                 }\r\n>>                 b.n += m\r\n>>                 n += int64(m)\r\n>> -               if b.Available() == 0 {\r\n>> -                       if err1 := b.flush(); err1 != nil {\r\n>> -                               return n, err1\r\n>> -                       }\r\n>> -               }\r\n>>                 if err != nil {\r\n>>                         break\r\n>>                 }\r\n>> Index: src/pkg/bufio/bufio_test.go\r\n>> ==============================**==============================**=======\r\n>> --- a/src/pkg/bufio/bufio_test.go\r\n>> +++ b/src/pkg/bufio/bufio_test.go\r\n>> @@ -847,6 +847,10 @@\r\n>>                                 t.Errorf(\"ws[%d],rs[%d]: w.ReadFrom(r) =\r\n>> %d, %v, want %d, nil\", wi, ri, n, err, len(input))\r\n>>                                 continue\r\n>>                         }\r\n>> +                       if err := w.Flush(); err != nil {\r\n>> +                               t.Errorf(\"Flush returned %v\", err)\r\n>> +                               continue\r\n>> +                       }\r\n>>                         if got, want := b.String(), string(input); got !=\r\n>> want {\r\n>>                                 t.Errorf(\"ws[%d], rs[%d]:\\ngot  %q\\nwant\r\n>> %q\\n\", wi, ri, got, want)\r\n>>                         }\r\n>> @@ -1003,6 +1007,23 @@\r\n>>         }\r\n>>  }\r\n>>\r\n>> +func TestReadFromWhileFull(t *testing.T) {\r\n>> +       buf := new(bytes.Buffer)\r\n>> +       w := NewWriterSize(buf, 10)\r\n>> +\r\n>> +       // Fill buffer exactly.\r\n>> +       n, err := w.Write([]byte(\"0123456789\"))\r\n>> +       if n != 10 || err != nil {\r\n>> +               t.Fatalf(\"Write returned (%v, %v), want (10, nil)\", n,\r\n>> err)\r\n>> +       }\r\n>> +\r\n>> +       // Use ReadFrom to read in some data.\r\n>> +       n2, err := w.ReadFrom(strings.NewReader(\"**abcdef\"))\r\n>> +       if n2 != 6 || err != nil {\r\n>> +               t.Fatalf(\"ReadFrom returned (%v, %v), want (6, nil)\", n,\r\n>> err)\r\n>> +       }\r\n>> +}\r\n>> +\r\n>>  // An onlyReader only implements io.Reader, no matter what other methods\r\n>> the underlying implementation may have.\r\n>>  type onlyReader struct {\r\n>>         r io.Reader\r\n>>\r\n>>\r\n>>\r\n>> --\r\n>>\r\n>> ---You received this message because you are subscribed to the Google\r\n>> Groups \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an\r\n>> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n>> .\r\n>> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n>> .\r\n>>\r\n>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-25 00:58:44.698060",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n On Jul 24, 2013 5:58 PM, \"Andrew Gerrand\" <adg@golang.org> wrote:\r\n\r\n> It's not behavior that should be relied upon (although our tests did), but\r\n> it's easy enough to preserve it.\r\n>\r\n> PTAL\r\n>\r\n>\r\n> On 25 July 2013 10:53, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n>\r\n>> LGTM\r\n>>\r\n>> but this does change behavior mildly, probably in an unimportant way:\r\n>>\r\n>> Before, a ReadFrom returning (bufferSize, EOF) would end up causing a\r\n>> flush.  Now it won't until the next Write.  If we wanted, we could check\r\n>> Available() == 0 in the err == io.EOF case to mirror that old behavior.\r\n>>\r\n>>\r\n>>\r\n>> On Wed, Jul 24, 2013 at 5:41 PM, <adg@golang.org> wrote:\r\n>>\r\n>>> Reviewers: golang-dev1,\r\n>>>\r\n>>> Message:\r\n>>> Hello golang-dev@googlegroups.com,\r\n>>>\r\n>>> I'd like you to review this change to\r\n>>> https://code.google.com/p/go\r\n>>>\r\n>>>\r\n>>> Description:\r\n>>> bufio: check buffer availability before reading in ReadFrom\r\n>>>\r\n>>> Fixes issue 5947.\r\n>>>\r\n>>> Please review this at https://codereview.appspot.**com/11801043/<https://codereview.appspot.com/11801043/>\r\n>>>\r\n>>> Affected files:\r\n>>>   M src/pkg/bufio/bufio.go\r\n>>>   M src/pkg/bufio/bufio_test.go\r\n>>>\r\n>>>\r\n>>> Index: src/pkg/bufio/bufio.go\r\n>>> ==============================**==============================**=======\r\n>>> --- a/src/pkg/bufio/bufio.go\r\n>>> +++ b/src/pkg/bufio/bufio.go\r\n>>> @@ -678,17 +678,17 @@\r\n>>>         }\r\n>>>         var m int\r\n>>>         for {\r\n>>> +               if b.Available() == 0 {\r\n>>> +                       if err1 := b.flush(); err1 != nil {\r\n>>> +                               return n, err1\r\n>>> +                       }\r\n>>> +               }\r\n>>>                 m, err = r.Read(b.buf[b.n:])\r\n>>>                 if m == 0 {\r\n>>>                         break\r\n>>>                 }\r\n>>>                 b.n += m\r\n>>>                 n += int64(m)\r\n>>> -               if b.Available() == 0 {\r\n>>> -                       if err1 := b.flush(); err1 != nil {\r\n>>> -                               return n, err1\r\n>>> -                       }\r\n>>> -               }\r\n>>>                 if err != nil {\r\n>>>                         break\r\n>>>                 }\r\n>>> Index: src/pkg/bufio/bufio_test.go\r\n>>> ==============================**==============================**=======\r\n>>> --- a/src/pkg/bufio/bufio_test.go\r\n>>> +++ b/src/pkg/bufio/bufio_test.go\r\n>>> @@ -847,6 +847,10 @@\r\n>>>                                 t.Errorf(\"ws[%d],rs[%d]: w.ReadFrom(r) =\r\n>>> %d, %v, want %d, nil\", wi, ri, n, err, len(input))\r\n>>>                                 continue\r\n>>>                         }\r\n>>> +                       if err := w.Flush(); err != nil {\r\n>>> +                               t.Errorf(\"Flush returned %v\", err)\r\n>>> +                               continue\r\n>>> +                       }\r\n>>>                         if got, want := b.String(), string(input); got\r\n>>> != want {\r\n>>>                                 t.Errorf(\"ws[%d], rs[%d]:\\ngot  %q\\nwant\r\n>>> %q\\n\", wi, ri, got, want)\r\n>>>                         }\r\n>>> @@ -1003,6 +1007,23 @@\r\n>>>         }\r\n>>>  }\r\n>>>\r\n>>> +func TestReadFromWhileFull(t *testing.T) {\r\n>>> +       buf := new(bytes.Buffer)\r\n>>> +       w := NewWriterSize(buf, 10)\r\n>>> +\r\n>>> +       // Fill buffer exactly.\r\n>>> +       n, err := w.Write([]byte(\"0123456789\"))\r\n>>> +       if n != 10 || err != nil {\r\n>>> +               t.Fatalf(\"Write returned (%v, %v), want (10, nil)\", n,\r\n>>> err)\r\n>>> +       }\r\n>>> +\r\n>>> +       // Use ReadFrom to read in some data.\r\n>>> +       n2, err := w.ReadFrom(strings.NewReader(\"**abcdef\"))\r\n>>> +       if n2 != 6 || err != nil {\r\n>>> +               t.Fatalf(\"ReadFrom returned (%v, %v), want (6, nil)\", n,\r\n>>> err)\r\n>>> +       }\r\n>>> +}\r\n>>> +\r\n>>>  // An onlyReader only implements io.Reader, no matter what other\r\n>>> methods the underlying implementation may have.\r\n>>>  type onlyReader struct {\r\n>>>         r io.Reader\r\n>>>\r\n>>>\r\n>>>\r\n>>> --\r\n>>>\r\n>>> ---You received this message because you are subscribed to the Google\r\n>>> Groups \"golang-dev\" group.\r\n>>> To unsubscribe from this group and stop receiving emails from it, send\r\n>>> an email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n>>> .\r\n>>> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n>>> .\r\n>>>\r\n>>>\r\n>>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-25 01:27:30.036170",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=3ffbc06b4874 ***\n\nbufio: check buffer availability before reading in ReadFrom\n\nFixes issue 5947.\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/11801043",
+			"disapproval": false,
+			"date": "2013-07-25 01:29:19.434610",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"adg@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/25 01:29:19, adg wrote:\n> *** Submitted as https://code.google.com/p/go/source/detail?r=3ffbc06b4874 ***\n> \n> bufio: check buffer availability before reading in ReadFrom\n> \n> Fixes issue 5947.\n> \n> R=golang-dev, bradfitz\n> CC=golang-dev\n> https://codereview.appspot.com/11801043\n\nI am worried that this change may have caused an adverse performance effect\n\n(~/go/src/pkg/bufio) % ~/go/misc/benchcmp {old,new}.txt\nbenchmark                        old ns/op    new ns/op    delta\nBenchmarkReaderCopyOptimal            3642        15417  +323.31%\nBenchmarkReaderCopyUnoptimal         24457        18296  -25.19%\nBenchmarkReaderCopyNoWriteTo         43859        37217  -15.14%\nBenchmarkWriterCopyOptimal           45784        38569  -15.76%\nBenchmarkWriterCopyUnoptimal         24205        20826  -13.96%\nBenchmarkWriterCopyNoReadFrom        19852        12327  -37.91%\nBenchmarkReaderEmpty                 17656        17624   -0.18%\nBenchmarkWriterEmpty                  1575         1765  +12.06%\nBenchmarkWriterFlush                   277          295   +6.50%\n\nbenchmark                       old allocs   new allocs    delta\nBenchmarkReaderEmpty                     3            3    0.00%\nBenchmarkWriterEmpty                     1            1    0.00%\nBenchmarkWriterFlush                     0            0     n/a%\n\nbenchmark                        old bytes    new bytes    delta\nBenchmarkReaderEmpty                 16512        16512    0.00%\nBenchmarkWriterEmpty                    82           82    0.00%\nBenchmarkWriterFlush                     0            0     n/a%\n\nMy unscientific numbers fluctuate between -15% and +300%, can someone please confirm.",
+			"disapproval": false,
+			"date": "2013-07-25 01:38:42.859230",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"adg@golang.org",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "darwin/amd64 is producing completely nonsensical results.\n\n(~/go/src/pkg/bufio) % ./bufio.golden -test.run=X -test.bench=. > old.txt && ./bufio.test -test.run=X -test.bench=. > new.txt && ~/go/misc/benchcmp {old,new}.txt\nbenchmark                        old ns/op    new ns/op    delta\nBenchmarkReaderCopyOptimal            3543        14426  +307.17%\nBenchmarkReaderCopyUnoptimal         20412        17123  -16.11%\nBenchmarkReaderCopyNoWriteTo         35081        34558   -1.49%\nBenchmarkWriterCopyOptimal           39856        31322  -21.41%\nBenchmarkWriterCopyUnoptimal         20448        16714  -18.26%\nBenchmarkWriterCopyNoReadFrom        16490        27384  +66.06%\nBenchmarkReaderEmpty                 13790        13671   -0.86%\nBenchmarkWriterEmpty                  1291         1281   -0.77%\nBenchmarkWriterFlush                   238          230   -3.36%\n\nbenchmark                       old allocs   new allocs    delta\nBenchmarkReaderEmpty                     3            3    0.00%\nBenchmarkWriterEmpty                     1            1    0.00%\nBenchmarkWriterFlush                     0            0     n/a%\n\nbenchmark                        old bytes    new bytes    delta\nBenchmarkReaderEmpty                 16512        16512    0.00%\nBenchmarkWriterEmpty                    82           82    0.00%\nBenchmarkWriterFlush                     0            0     n/a%\n(~/go/src/pkg/bufio) % ./bufio.golden -test.run=X -test.bench=. > old.txt && ./bufio.test -test.run=X -test.bench=. > new.txt && ~/go/misc/benchcmp {old,new}.txt\nbenchmark                        old ns/op    new ns/op    delta\nBenchmarkReaderCopyOptimal           14728         8748  -40.60%\nBenchmarkReaderCopyUnoptimal         16935        16534   -2.37%\nBenchmarkReaderCopyNoWriteTo         34625        34963   +0.98%\nBenchmarkWriterCopyOptimal           31549        39385  +24.84%\nBenchmarkWriterCopyUnoptimal         16122        16301   +1.11%\nBenchmarkWriterCopyNoReadFrom        10047        10054   +0.07%\nBenchmarkReaderEmpty                 13628        13819   +1.40%\nBenchmarkWriterEmpty                  1278         1276   -0.16%\nBenchmarkWriterFlush                   234          231   -1.28%\n\nbenchmark                       old allocs   new allocs    delta\nBenchmarkReaderEmpty                     3            3    0.00%\nBenchmarkWriterEmpty                     1            1    0.00%\nBenchmarkWriterFlush                     0            0     n/a%\n\nbenchmark                        old bytes    new bytes    delta\nBenchmarkReaderEmpty                 16512        16512    0.00%\nBenchmarkWriterEmpty                    82           82    0.00%\nBenchmarkWriterFlush                     0            0     n/a%\n(~/go/src/pkg/bufio) % ./bufio.golden -test.run=X -test.bench=. > old.txt && ./bufio.test -test.run=X -test.bench=. > new.txt && ~/go/misc/benchcmp {old,new}.txt\nbenchmark                        old ns/op    new ns/op    delta\nBenchmarkReaderCopyOptimal            3381         3391   +0.30%\nBenchmarkReaderCopyUnoptimal         21342        20345   -4.67%\nBenchmarkReaderCopyNoWriteTo         35173        35688   +1.46%\nBenchmarkWriterCopyOptimal           37465        39083   +4.32%\nBenchmarkWriterCopyUnoptimal         20015        20207   +0.96%\nBenchmarkWriterCopyNoReadFrom        16825        16412   -2.45%\nBenchmarkReaderEmpty                 13777        13845   +0.49%\nBenchmarkWriterEmpty                  1311         1403   +7.02%\nBenchmarkWriterFlush                   233          236   +1.29%\n\nbenchmark                       old allocs   new allocs    delta\nBenchmarkReaderEmpty                     3            3    0.00%\nBenchmarkWriterEmpty                     1            1    0.00%\nBenchmarkWriterFlush                     0            0     n/a%\n\nbenchmark                        old bytes    new bytes    delta\nBenchmarkReaderEmpty                 16512        16512    0.00%\nBenchmarkWriterEmpty                    82           82    0.00%\nBenchmarkWriterFlush                     0            0     n/a%\n\nCan someone please confirm or deny if there is a regression.",
+			"disapproval": false,
+			"date": "2013-07-25 01:44:15.413680",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "They're just really jittery benchmarks.\r\n\r\nThe wildest fluctuations you're seeing are in Reader benchmarks anyway, and\r\nthis change only affects the Writer.\r\n",
+			"disapproval": false,
+			"date": "2013-07-25 01:47:16.907440",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ok, thanks for confirming, i'll stand down from DEFCON 1\r\n\r\nOn Thu, Jul 25, 2013 at 11:46 AM, Andrew Gerrand <adg@golang.org> wrote:\r\n> They're just really jittery benchmarks.\r\n>\r\n> The wildest fluctuations you're seeing are in Reader benchmarks anyway, and\r\n> this change only affects the Writer.\r\n",
+			"disapproval": false,
+			"date": "2013-07-25 02:03:00.818370",
+			"approval": false
+		}
+	],
+	"owner_email": "adg@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "adg",
+	"subject": "code review 11801043: bufio: check buffer availability before reading in ReadFrom",
+	"created": "2013-07-25 00:41:13.434450",
+	"patchsets": [
+		1,
+		4001,
+		7001,
+		12001
+	],
+	"modified": "2013-07-25 02:03:00.891890",
+	"closed": true,
+	"issue": 11801043
+}

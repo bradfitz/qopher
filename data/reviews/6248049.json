@@ -1,0 +1,205 @@
+{
+	"description": "cmd/6g, cmd/8g: move panicindex calls out of line\n\nThe old code generated for a bounds check was\n                CMP\n                JLT ok\n                CALL panicindex\n        ok:\n                ...\n\nThe new code is (once the linker finishes with it):\n                CMP\n                JGE panic\n                ...\n        panic:\n                CALL panicindex\n\nwhich moves the calls out of line, putting more useful\ncode in each cache line.  This matters especially in tight\nloops, such as in Fannkuch.  The benefit is more modest\nelsewhere, but real.\n\nFrom test/bench/go1, amd64:\n\nbenchmark                old ns/op    new ns/op    delta\nBenchmarkBinaryTree17   6096092000   6088808000   -0.12%\nBenchmarkFannkuch11     6151404000   4020463000  -34.64%\nBenchmarkGobDecode        28990050     28894630   -0.33%\nBenchmarkGobEncode        12406310     12136730   -2.17%\nBenchmarkGzip               179923       179903   -0.01%\nBenchmarkGunzip              11219        11130   -0.79%\nBenchmarkJSONEncode       86429350     86515900   +0.10%\nBenchmarkJSONDecode      334593800    315728400   -5.64%\nBenchmarkRevcomp25M     1219763000   1180767000   -3.20%\nBenchmarkTemplate        492947600    483646800   -1.89%\n\nAnd 386:\n\nbenchmark                old ns/op    new ns/op    delta\nBenchmarkBinaryTree17   6354902000   6243000000   -1.76%\nBenchmarkFannkuch11     8043769000   7326965000   -8.91%\nBenchmarkGobDecode        19010800     18941230   -0.37%\nBenchmarkGobEncode        14077500     13792460   -2.02%\nBenchmarkGzip               194087       193619   -0.24%\nBenchmarkGunzip              12495        12457   -0.30%\nBenchmarkJSONEncode      125636400    125451400   -0.15%\nBenchmarkJSONDecode      696648600    685032800   -1.67%\nBenchmarkRevcomp25M     2058088000   2052545000   -0.27%\nBenchmarkTemplate        602140000    589876800   -2.04%\n\nTo implement this, two new instruction forms:\n\n        JLT target      // same as always\n        JLT $0, target  // branch expected not taken\n        JLT $1, target  // branch expected taken\n\nThe linker could also emit the prediction prefixes, but it\ndoes not: expected taken branches are reversed so that the\nexpected case is not taken (as in example above), and\nthe default expectaton for such a jump is not taken\nalready.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"gri@golang.org",
+		"r@golang.org",
+		"dave@cheney.net"
+	],
+	"reviewers": [
+		"mtj@google.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-05-25 06:44:59.361694",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, May 26, 2012 at 1:27 PM,  <r@golang.org> wrote:\r\n> why not 5g?\r\n\r\nonly because i don't know what the right answer is there.\r\nit seems likely that we should be using a conditional suffix\r\ninstead of a jump anyway: the optimization might be entirely\r\ndifferent.\r\n\r\nruss\r\n",
+			"disapproval": false,
+			"date": "2012-05-28 23:28:43.239525",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Did 5g get this side effect?\r\n\r\nSent from my iPad\r\n\r\nOn 30/05/2012, at 23:31, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> This CL also ended up containing an experiment that disables stack\r\n> splitting in leaf functions. The definition of leaf is very strict: if\r\n> the function evaluates x[i], then it might need to call panicindex, so\r\n> it's not a leaf.\r\n",
+			"disapproval": false,
+			"date": "2012-05-30 13:44:18.936576",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"gri@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "why not 5g?",
+			"disapproval": false,
+			"date": "2012-05-26 17:27:34.610342",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 30, 2012 at 9:44 AM, Dave Cheney <dave@cheney.net> wrote:\r\n> Did 5g get this side effect?\r\n\r\nNo. It was an experiment that I did not intend to submit. Because of\r\nx[i] making something a non-leaf I expect the effect to be minimal. I\r\ndo want to do this in general later, but until more bounds checks are\r\ngone it's not too useful.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-30 14:11:56.489948",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 30, 2012 at 9:42 AM, Michael Jones <mtj@google.com> wrote:\r\n> Dave suggests that \"Each access the ith element of e requires the\r\n> compiler to insert an array bounds checks.\" I believe this to be an\r\n> overstatement. Does the compiler now know enough to realize that only\r\n> one check is needed in this body?\r\n>\r\n> If not, this seems low-hanging fruit on performance...\r\n\r\nIt's not exactly low-hanging but it is definitely the most important.\r\nOnce I finish fighting floating point performance step functions I do\r\nplan to address that.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-30 14:12:57.506048",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, May 30, 2012 at 7:48 PM, Michael Jones <mtj@google.com> wrote:\r\n> Metaphorical fruit seems lower the further one is from picking it. ;-)\r\n>\r\n> Another question about Go -- why is range not useful to get addresses?\r\n> Maybe a mark (*) added to the value argument would seem sufficient.\r\n\r\nThere are definitely times when I would have used that syntax, but\r\nthey've never seemed often enough to invent something.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-05-30 23:57:09.328635",
+			"approval": false
+		},
+		{
+			"sender": "mtj@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "for i := range z.cols {\r\n                z.cols[i].L = &z.cols[(i+g4-1)%g4]\r\n                z.cols[i].R = &z.cols[(i+1)%g4]\r\n                z.cols[i].u = &z.cols[i].node\r\n                z.cols[i].d = &z.cols[i].node\r\n                z.cols[i].size = 0\r\n                z.cols[i].covered = false\r\n        }\r\n\r\nvs\r\n\r\nfor i,*c := range z.cols {\r\n                c.L = &z.cols[(i+g4-1)%g4]\r\n                c.R = &z.cols[(i+1)%g4]\r\n                c.u = &c.node\r\n                c.d = &c.node\r\n                c.size = 0\r\n                c.covered = false\r\n        }\r\n\r\nOn Thu, May 31, 2012 at 1:56 AM, Russ Cox <rsc@golang.org> wrote:\r\n> On Wed, May 30, 2012 at 7:48 PM, Michael Jones <mtj@google.com> wrote:\r\n>> Metaphorical fruit seems lower the further one is from picking it. ;-)\r\n>>\r\n>> Another question about Go -- why is range not useful to get addresses?\r\n>> Maybe a mark (*) added to the value argument would seem sufficient.\r\n>\r\n> There are definitely times when I would have used that syntax, but\r\n> they've never seemed often enough to invent something.\r\n>\r\n> Russ\r\n\r\n\r\n\r\n-- \r\nMichael T. Jones\u00a0|\u00a0Chief Technology Advocate \u00a0|\u00a0mtj@google.com\u00a0|\u00a0 +1\r\n650-335-5765\r\n",
+			"disapproval": false,
+			"date": "2012-05-31 00:00:43.868471",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"gri@golang.org",
+				"r@golang.org",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> only because i don't know what the right answer is there.\n> it seems likely that we should be using a conditional suffix\n> instead of a jump anyway: the optimization might be entirely\n> different.\n> \n> russ\n\nThe current bound check looks like this \n\nCMP R3, R1\nBLO good\nBL runtime.panic\n:good \n\nIdeally the condition should be inverted so the BL is conditional on the result of the comparison. \n\nCMP R3, R1\nBL.HI runtime.panic\n:good\n\nIf nothing else, you save a word for each bounds check.\n\nCheers\n\nDave",
+			"disapproval": false,
+			"date": "2012-05-29 01:23:25.757630",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This CL also ended up containing an experiment that disables stack\r\nsplitting in leaf functions. The definition of leaf is very strict: if\r\nthe function evaluates x[i], then it might need to call panicindex, so\r\nit's not a leaf.\r\n",
+			"disapproval": false,
+			"date": "2012-05-30 13:32:19.917350",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This is great.\r\n\r\nI've done this in the code gens of V8 and the JVM in the past - always\r\nmoved every code branch that was unlikely to be executed the end. The\r\nIR had a special mechanism just for that (and often those stubs - of\r\nwhich there were many - could be shared as well, thus reducing the\r\noverall code size).\r\n\r\nResults look good. Don't know what happened to Mandelbrot. It doesn't\r\nuse complex numbers (the one in shootout).\r\n\r\n- gri\r\n\r\n\r\n\r\nOn Thu, May 24, 2012 at 11:44 PM,  <rsc@golang.org> wrote:\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> cmd/6g, cmd/8g: move panicindex calls out of line\r\n>\r\n> The old code generated for a bounds check was\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0CMP\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0JLT ok\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0CALL panicindex\r\n> \u00a0 \u00a0 \u00a0 \u00a0ok:\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0...\r\n>\r\n> The new code is (once the linker finishes with it):\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0CMP\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0JGE panic\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0...\r\n> \u00a0 \u00a0 \u00a0 \u00a0panic:\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0CALL panicindex\r\n>\r\n> which moves the calls out of line, putting more useful\r\n> code in each cache line. \u00a0This matters especially in tight\r\n> loops, such as in Fannkuch. \u00a0The benefit is more modest\r\n> elsewhere, but real.\r\n>\r\n> From test/bench/go1, amd64:\r\n>\r\n> benchmark \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0old ns/op \u00a0 \u00a0new ns/op \u00a0 \u00a0delta\r\n> BenchmarkBinaryTree17 \u00a0 6096092000 \u00a0 6088808000 \u00a0 -0.12%\r\n> BenchmarkFannkuch11 \u00a0 \u00a0 6151404000 \u00a0 4020463000 \u00a0-34.64%\r\n> BenchmarkGobDecode \u00a0 \u00a0 \u00a0 \u00a028990050 \u00a0 \u00a0 28894630 \u00a0 -0.33%\r\n> BenchmarkGobEncode \u00a0 \u00a0 \u00a0 \u00a012406310 \u00a0 \u00a0 12136730 \u00a0 -2.17%\r\n> BenchmarkGzip \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 179923 \u00a0 \u00a0 \u00a0 179903 \u00a0 -0.01%\r\n> BenchmarkGunzip \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a011219 \u00a0 \u00a0 \u00a0 \u00a011130 \u00a0 -0.79%\r\n> BenchmarkJSONEncode \u00a0 \u00a0 \u00a0 86429350 \u00a0 \u00a0 86515900 \u00a0 +0.10%\r\n> BenchmarkJSONDecode \u00a0 \u00a0 \u00a0334593800 \u00a0 \u00a0315728400 \u00a0 -5.64%\r\n> BenchmarkRevcomp25M \u00a0 \u00a0 1219763000 \u00a0 1180767000 \u00a0 -3.20%\r\n> BenchmarkTemplate \u00a0 \u00a0 \u00a0 \u00a0492947600 \u00a0 \u00a0483646800 \u00a0 -1.89%\r\n>\r\n> And 386:\r\n>\r\n> benchmark \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0old ns/op \u00a0 \u00a0new ns/op \u00a0 \u00a0delta\r\n> BenchmarkBinaryTree17 \u00a0 6354902000 \u00a0 6243000000 \u00a0 -1.76%\r\n> BenchmarkFannkuch11 \u00a0 \u00a0 8043769000 \u00a0 7326965000 \u00a0 -8.91%\r\n> BenchmarkGobDecode \u00a0 \u00a0 \u00a0 \u00a019010800 \u00a0 \u00a0 18941230 \u00a0 -0.37%\r\n> BenchmarkGobEncode \u00a0 \u00a0 \u00a0 \u00a014077500 \u00a0 \u00a0 13792460 \u00a0 -2.02%\r\n> BenchmarkGzip \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 194087 \u00a0 \u00a0 \u00a0 193619 \u00a0 -0.24%\r\n> BenchmarkGunzip \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a012495 \u00a0 \u00a0 \u00a0 \u00a012457 \u00a0 -0.30%\r\n> BenchmarkJSONEncode \u00a0 \u00a0 \u00a0125636400 \u00a0 \u00a0125451400 \u00a0 -0.15%\r\n> BenchmarkJSONDecode \u00a0 \u00a0 \u00a0696648600 \u00a0 \u00a0685032800 \u00a0 -1.67%\r\n> BenchmarkRevcomp25M \u00a0 \u00a0 2058088000 \u00a0 2052545000 \u00a0 -0.27%\r\n> BenchmarkTemplate \u00a0 \u00a0 \u00a0 \u00a0602140000 \u00a0 \u00a0589876800 \u00a0 -2.04%\r\n>\r\n> To implement this, two new instruction forms:\r\n>\r\n> \u00a0 \u00a0 \u00a0 \u00a0JLT target \u00a0 \u00a0 \u00a0// same as always\r\n> \u00a0 \u00a0 \u00a0 \u00a0JLT $0, target \u00a0// branch expected not taken\r\n> \u00a0 \u00a0 \u00a0 \u00a0JLT $1, target \u00a0// branch expected taken\r\n>\r\n> The linker could also emit the prediction prefixes, but it\r\n> does not: expected taken branches are reversed so that the\r\n> expected case is not taken (as in example above), and\r\n> the default expectaton for such a jump is not taken\r\n> already.\r\n>\r\n> Please review this at http://codereview.appspot.com/6248049/\r\n>\r\n> Affected files:\r\n> \u00a0M src/cmd/6a/a.y\r\n> \u00a0M src/cmd/6a/y.tab.c\r\n> \u00a0M src/cmd/6a/y.tab.h\r\n> \u00a0M src/cmd/6g/cgen.c\r\n> \u00a0M src/cmd/6g/gg.h\r\n> \u00a0M src/cmd/6g/ggen.c\r\n> \u00a0M src/cmd/6g/gsubr.c\r\n> \u00a0M src/cmd/6l/optab.c\r\n> \u00a0M src/cmd/6l/pass.c\r\n> \u00a0M src/cmd/8a/a.y\r\n> \u00a0M src/cmd/8a/y.tab.c\r\n> \u00a0M src/cmd/8g/cgen.c\r\n> \u00a0M src/cmd/8g/gg.h\r\n> \u00a0M src/cmd/8g/ggen.c\r\n> \u00a0M src/cmd/8g/gsubr.c\r\n> \u00a0M src/cmd/8l/optab.c\r\n> \u00a0M src/cmd/8l/pass.c\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-05-25 17:37:11.357973",
+			"approval": false
+		},
+		{
+			"sender": "mtj@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Russ, speaking of x[i] and possible panics, I have a question about\r\nbounds checking. In this post:\r\n\r\nhttp://dave.cheney.net/?tag=golang\r\n\r\nDave suggests that \"Each access the ith element of e requires the\r\ncompiler to insert an array bounds checks.\" I believe this to be an\r\noverstatement. Does the compiler now know enough to realize that only\r\none check is needed in this body?\r\n\r\nIf not, this seems low-hanging fruit on performance...\r\n\r\nMichael\r\n\r\nOn Wed, May 30, 2012 at 3:31 PM, Russ Cox <rsc@golang.org> wrote:\r\n> This CL also ended up containing an experiment that disables stack\r\n> splitting in leaf functions. The definition of leaf is very strict: if\r\n> the function evaluates x[i], then it might need to call panicindex, so\r\n> it's not a leaf.\r\n\r\n\r\n\r\n-- \r\nMichael T. Jones\u00a0|\u00a0Chief Technology Advocate \u00a0|\u00a0mtj@google.com\u00a0|\u00a0 +1\r\n650-335-5765\r\n",
+			"disapproval": false,
+			"date": "2012-05-30 13:43:13.630003",
+			"approval": false
+		},
+		{
+			"sender": "mtj@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'll try that and see if it sits well with me.\r\n\r\nJust debugged a subtle problem porting a Sudoku solver from C++ to Go.\r\nUndoing the subclassing using embedding was not hard at all; undoing a\r\nsubtle error flowing from the lack of chained assignments (a = b = c)\r\nin Go took two half-days (nights) in the hotel room. ;-)\r\n\r\nOn Thu, May 31, 2012 at 2:10 AM, Robert Griesemer <gri@golang.org> wrote:\r\n> this is not too bad:\r\n>\r\n> for i := range z.cols {\r\n> \u00a0 \u00a0c := &z.cols[i]\r\n> \u00a0 \u00a0...\r\n> }\r\n>\r\n> (that said, sometimes I wished I could get the reference directly, but\r\n> then again, it's not really making a big difference and probably not\r\n> worth the complication)\r\n>\r\n> - gri\r\n>\r\n>\r\n>\r\n>\r\n> On Wed, May 30, 2012 at 5:00 PM, Michael Jones <mtj@google.com> wrote:\r\n>> for i := range z.cols {\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].L = &z.cols[(i+g4-1)%g4]\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].R = &z.cols[(i+1)%g4]\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].u = &z.cols[i].node\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].d = &z.cols[i].node\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].size = 0\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].covered = false\r\n>> \u00a0 \u00a0 \u00a0 \u00a0}\r\n>>\r\n>> vs\r\n>>\r\n>> for i,*c := range z.cols {\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.L = &z.cols[(i+g4-1)%g4]\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.R = &z.cols[(i+1)%g4]\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.u = &c.node\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.d = &c.node\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.size = 0\r\n>> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.covered = false\r\n>> \u00a0 \u00a0 \u00a0 \u00a0}\r\n>>\r\n>> On Thu, May 31, 2012 at 1:56 AM, Russ Cox <rsc@golang.org> wrote:\r\n>>> On Wed, May 30, 2012 at 7:48 PM, Michael Jones <mtj@google.com> wrote:\r\n>>>> Metaphorical fruit seems lower the further one is from picking it. ;-)\r\n>>>>\r\n>>>> Another question about Go -- why is range not useful to get addresses?\r\n>>>> Maybe a mark (*) added to the value argument would seem sufficient.\r\n>>>\r\n>>> There are definitely times when I would have used that syntax, but\r\n>>> they've never seemed often enough to invent something.\r\n>>>\r\n>>> Russ\r\n>>\r\n>>\r\n>>\r\n>> --\r\n>> Michael T. Jones\u00a0|\u00a0Chief Technology Advocate \u00a0|\u00a0mtj@google.com\u00a0|\u00a0 +1\r\n>> 650-335-5765\r\n\r\n\r\n\r\n-- \r\nMichael T. Jones\u00a0|\u00a0Chief Technology Advocate \u00a0|\u00a0mtj@google.com\u00a0|\u00a0 +1\r\n650-335-5765\r\n",
+			"disapproval": false,
+			"date": "2012-05-31 01:17:59.430231",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"gri@golang.org",
+				"r@golang.org",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=a1ecb826e0eb ***\n\ncmd/6g, cmd/8g: move panicindex calls out of line\n\nThe old code generated for a bounds check was\n                CMP\n                JLT ok\n                CALL panicindex\n        ok:\n                ...\n\nThe new code is (once the linker finishes with it):\n                CMP\n                JGE panic\n                ...\n        panic:\n                CALL panicindex\n\nwhich moves the calls out of line, putting more useful\ncode in each cache line.  This matters especially in tight\nloops, such as in Fannkuch.  The benefit is more modest\nelsewhere, but real.\n\nFrom test/bench/go1, amd64:\n\nbenchmark                old ns/op    new ns/op    delta\nBenchmarkBinaryTree17   6096092000   6088808000   -0.12%\nBenchmarkFannkuch11     6151404000   4020463000  -34.64%\nBenchmarkGobDecode        28990050     28894630   -0.33%\nBenchmarkGobEncode        12406310     12136730   -2.17%\nBenchmarkGzip               179923       179903   -0.01%\nBenchmarkGunzip              11219        11130   -0.79%\nBenchmarkJSONEncode       86429350     86515900   +0.10%\nBenchmarkJSONDecode      334593800    315728400   -5.64%\nBenchmarkRevcomp25M     1219763000   1180767000   -3.20%\nBenchmarkTemplate        492947600    483646800   -1.89%\n\nAnd 386:\n\nbenchmark                old ns/op    new ns/op    delta\nBenchmarkBinaryTree17   6354902000   6243000000   -1.76%\nBenchmarkFannkuch11     8043769000   7326965000   -8.91%\nBenchmarkGobDecode        19010800     18941230   -0.37%\nBenchmarkGobEncode        14077500     13792460   -2.02%\nBenchmarkGzip               194087       193619   -0.24%\nBenchmarkGunzip              12495        12457   -0.30%\nBenchmarkJSONEncode      125636400    125451400   -0.15%\nBenchmarkJSONDecode      696648600    685032800   -1.67%\nBenchmarkRevcomp25M     2058088000   2052545000   -0.27%\nBenchmarkTemplate        602140000    589876800   -2.04%\n\nTo implement this, two new instruction forms:\n\n        JLT target      // same as always\n        JLT $0, target  // branch expected not taken\n        JLT $1, target  // branch expected taken\n\nThe linker could also emit the prediction prefixes, but it\ndoes not: expected taken branches are reversed so that the\nexpected case is not taken (as in example above), and\nthe default expectaton for such a jump is not taken\nalready.\n\nR=golang-dev, gri, r, dave\nCC=golang-dev\nhttp://codereview.appspot.com/6248049",
+			"disapproval": false,
+			"date": "2012-05-29 16:09:36.287539",
+			"approval": false
+		},
+		{
+			"sender": "mtj@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Metaphorical fruit seems lower the further one is from picking it. ;-)\r\n\r\nAnother question about Go -- why is range not useful to get addresses?\r\nMaybe a mark (*) added to the value argument would seem sufficient.\r\n\r\nOn Wed, May 30, 2012 at 4:12 PM, Russ Cox <rsc@golang.org> wrote:\r\n> On Wed, May 30, 2012 at 9:42 AM, Michael Jones <mtj@google.com> wrote:\r\n>> Dave suggests that \"Each access the ith element of e requires the\r\n>> compiler to insert an array bounds checks.\" I believe this to be an\r\n>> overstatement. Does the compiler now know enough to realize that only\r\n>> one check is needed in this body?\r\n>>\r\n>> If not, this seems low-hanging fruit on performance...\r\n>\r\n> It's not exactly low-hanging but it is definitely the most important.\r\n> Once I finish fighting floating point performance step functions I do\r\n> plan to address that.\r\n>\r\n> Russ\r\n\r\n\r\n\r\n-- \r\nMichael T. Jones\u00a0|\u00a0Chief Technology Advocate \u00a0|\u00a0mtj@google.com\u00a0|\u00a0 +1\r\n650-335-5765\r\n",
+			"disapproval": false,
+			"date": "2012-05-30 23:48:59.674520",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "this is not too bad:\r\n\r\nfor i := range z.cols {\r\n    c := &z.cols[i]\r\n    ...\r\n}\r\n\r\n(that said, sometimes I wished I could get the reference directly, but\r\nthen again, it's not really making a big difference and probably not\r\nworth the complication)\r\n\r\n- gri\r\n\r\n\r\n\r\n\r\nOn Wed, May 30, 2012 at 5:00 PM, Michael Jones <mtj@google.com> wrote:\r\n> for i := range z.cols {\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].L = &z.cols[(i+g4-1)%g4]\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].R = &z.cols[(i+1)%g4]\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].u = &z.cols[i].node\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].d = &z.cols[i].node\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].size = 0\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0z.cols[i].covered = false\r\n> \u00a0 \u00a0 \u00a0 \u00a0}\r\n>\r\n> vs\r\n>\r\n> for i,*c := range z.cols {\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.L = &z.cols[(i+g4-1)%g4]\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.R = &z.cols[(i+1)%g4]\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.u = &c.node\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.d = &c.node\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.size = 0\r\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0c.covered = false\r\n> \u00a0 \u00a0 \u00a0 \u00a0}\r\n>\r\n> On Thu, May 31, 2012 at 1:56 AM, Russ Cox <rsc@golang.org> wrote:\r\n>> On Wed, May 30, 2012 at 7:48 PM, Michael Jones <mtj@google.com> wrote:\r\n>>> Metaphorical fruit seems lower the further one is from picking it. ;-)\r\n>>>\r\n>>> Another question about Go -- why is range not useful to get addresses?\r\n>>> Maybe a mark (*) added to the value argument would seem sufficient.\r\n>>\r\n>> There are definitely times when I would have used that syntax, but\r\n>> they've never seemed often enough to invent something.\r\n>>\r\n>> Russ\r\n>\r\n>\r\n>\r\n> --\r\n> Michael T. Jones\u00a0|\u00a0Chief Technology Advocate \u00a0|\u00a0mtj@google.com\u00a0|\u00a0 +1\r\n> 650-335-5765\r\n",
+			"disapproval": false,
+			"date": "2012-05-31 00:10:32.655795",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6248049: cmd/6g, cmd/8g: move panicindex calls out of line",
+	"created": "2012-05-25 05:13:13.604433",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		10001
+	],
+	"modified": "2012-05-30 13:43:13.943878",
+	"closed": true,
+	"issue": 6248049
+}

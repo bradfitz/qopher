@@ -1,0 +1,210 @@
+{
+	"description": "net: fix {FileConn, FileListener, FilePacketConn} fd leak to child process.\n\nAll of them call `newFileFD' which must properly restore close-on-exec on\nduplicated fds.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"mikioh.mikioh@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6445081/diff/6001/src/pkg/os/exec/exec_test.go\nFile src/pkg/os/exec/exec_test.go (right):\n\nhttp://codereview.appspot.com/6445081/diff/6001/src/pkg/os/exec/exec_test.go#newcode177\nsrc/pkg/os/exec/exec_test.go:177: syscall.SetNonblock(int(f.Fd()), true)\nWhat is this line doing here?  syscall shouldn't be needed in the tests.",
+			"disapproval": false,
+			"date": "2012-08-07 12:00:05.476470",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'll be able to update the CL itself around 1 pm CET, but if you want to \r\napply the patch right now as to complete the issue before you holidays, \r\nit's definitely fine with me too.\r\n\r\nSebastien\r\n\r\nOn Tuesday, August 7, 2012 8:33:26 AM UTC+2, Brad Fitzpatrick wrote:\r\n>\r\n>\r\n>\r\n> On Tue, Aug 7, 2012 at 4:31 PM, Sebastien Paolacci wrote:\r\n>\r\n>> Hello Brad,\r\n>>\r\n>>\r\n>> > LGTM but I'd prefer a new test that fails without this patch, but \r\n>> passes with it.\r\n>> Fair enough ;)...\r\n>>\r\n>> I just can't update the CL right now, but I'll go with the here-below \r\n>> patch later today if it's fine with you.\r\n>>\r\n>\r\n> Our tools require a certain workflow.  This is good for discussion, but I \r\n> can't submit this.\r\n>\r\n>",
+			"disapproval": false,
+			"date": "2012-08-07 06:56:35.825990",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL. Completes http://codereview.appspot.com/6457080/ which fixes net.conn.File() calls.",
+			"disapproval": false,
+			"date": "2012-08-06 22:11:01.588000",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM but I'd prefer a new test that fails without this patch, but passes\r\nwith it.\r\n\r\nI'm leaving on vacation shortly, so I'll leave for Russ or Ian to submit.\r\n\r\n\r\nOn Tue, Aug 7, 2012 at 8:11 AM, <sebastien.paolacci@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> PTAL. Completes http://codereview.appspot.com/**6457080/<http://codereview.appspot.com/6457080/>which fixes\r\n> net.conn.File() calls.\r\n>\r\n> Description:\r\n> net: fix {FileConn, FileListener, FilePacketConn} fd leak to child\r\n> process.\r\n>\r\n> All of them call `newFileFD' which must properly restore close-on-exec\r\n> on\r\n> duplicated fds.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6445081/<http://codereview.appspot.com/6445081/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/file.go\r\n>\r\n>\r\n> Index: src/pkg/net/file.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/file.go\r\n> +++ b/src/pkg/net/file.go\r\n> @@ -12,10 +12,14 @@\r\n>  )\r\n>\r\n>  func newFileFD(f *os.File) (*netFD, error) {\r\n> +       syscall.ForkLock.RLock()\r\n>         fd, err := syscall.Dup(int(f.Fd()))\r\n>         if err != nil {\r\n> +               syscall.ForkLock.RUnlock()\r\n>                 return nil, os.NewSyscallError(\"dup\", err)\r\n>         }\r\n> +       syscall.CloseOnExec(fd)\r\n> +       syscall.ForkLock.RUnlock()\r\n>\r\n>         sotype, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET,\r\n> syscall.SO_TYPE)\r\n>         if err != nil {\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-08-07 04:05:22.244670",
+			"approval": true
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello Brad,\r\n\r\n> LGTM but I'd prefer a new test that fails without this patch, but passes \r\nwith it.\r\nFair enough ;)...\r\n\r\nI just can't update the CL right now, but I'll go with the here-below patch \r\nlater today if it's fine with you.\r\n\r\nThe `SetNonblock' call is not mandatory to provoke the failure, but since \r\nnetFD's accept() read-hold ForkLock across syscalls on the assumption that \r\nthe socket is in non-blocking mode, I feel better with that wording.\r\n\r\nSebastien\r\n\r\n\r\n--- a/src/pkg/os/exec/exec_test.go      Mon Aug 06 14:56:39 2012 +1000\r\n+++ b/src/pkg/os/exec/exec_test.go      Tue Aug 07 08:16:20 2012 +0200\r\n@@ -17,6 +17,7 @@\r\n        \"runtime\"\r\n        \"strconv\"\r\n        \"strings\"\r\n+       \"syscall\"\r\n        \"testing\"\r\n )\r\n \r\n@@ -167,6 +168,19 @@\r\n        }\r\n        defer ln.Close()\r\n \r\n+       // Make sure duplicated fds don't leak to the child.\r\n+       f, err := ln.(*net.TCPListener).File()\r\n+       if err != nil {\r\n+               t.Fatal(err)\r\n+       }\r\n+       defer f.Close()\r\n+       syscall.SetNonblock(int(f.Fd()), true)\r\n+       ln2, err := net.FileListener(f)\r\n+       if err != nil {\r\n+               t.Fatal(err)\r\n+       }\r\n+       defer ln2.Close()\r\n+\r\n        // Force TLS root certs to be loaded (which might involve\r\n        // cgo), to make sure none of that potential C code leaks fds.\r\n        ts := httptest.NewTLSServer(http.HandlerFunc(func(w \r\nhttp.ResponseWriter, r *http.Request) {\r\n\r\n\r\n\r\n\r\nOn Tuesday, August 7, 2012 6:05:16 AM UTC+2, Brad Fitzpatrick wrote:\r\n>\r\n> LGTM but I'd prefer a new test that fails without this patch, but passes \r\n> with it.\r\n>\r\n> I'm leaving on vacation shortly, so I'll leave for Russ or Ian to submit. \r\n>\r\n>\r\n> On Tue, Aug 7, 2012 at 8:11 AM, pao wrote:\r\n>\r\n>> Reviewers: golang-dev_googlegroups.com,\r\n>>\r\n>> Message:\r\n>> PTAL. Completes http://codereview.appspot.com/**6457080/<http://codereview.appspot.com/6457080/>which fixes\r\n>> net.conn.File() calls.\r\n>>\r\n>> Description:\r\n>> net: fix {FileConn, FileListener, FilePacketConn} fd leak to child\r\n>> process.\r\n>>\r\n>> All of them call `newFileFD' which must properly restore close-on-exec\r\n>> on\r\n>> duplicated fds.\r\n>>\r\n>> Please review this at http://codereview.appspot.com/**6445081/<http://codereview.appspot.com/6445081/>\r\n>>\r\n>> Affected files:\r\n>>   M src/pkg/net/file.go\r\n>>\r\n>>\r\n>> Index: src/pkg/net/file.go\r\n>> ==============================**==============================**=======\r\n>> --- a/src/pkg/net/file.go\r\n>> +++ b/src/pkg/net/file.go\r\n>> @@ -12,10 +12,14 @@\r\n>>  )\r\n>>\r\n>>  func newFileFD(f *os.File) (*netFD, error) {\r\n>> +       syscall.ForkLock.RLock()\r\n>>         fd, err := syscall.Dup(int(f.Fd()))\r\n>>         if err != nil {\r\n>> +               syscall.ForkLock.RUnlock()\r\n>>                 return nil, os.NewSyscallError(\"dup\", err)\r\n>>         }\r\n>> +       syscall.CloseOnExec(fd)\r\n>> +       syscall.ForkLock.RUnlock()\r\n>>\r\n>>         sotype, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, \r\n>> syscall.SO_TYPE)\r\n>>         if err != nil {\r\n>>\r\n>>\r\n>>\r\n>",
+			"disapproval": false,
+			"date": "2012-08-07 06:31:39.198320",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Aug 7, 2012 at 4:31 PM, Sebastien Paolacci <\r\nsebastien.paolacci@gmail.com> wrote:\r\n\r\n> Hello Brad,\r\n>\r\n>\r\n> > LGTM but I'd prefer a new test that fails without this patch, but passes\r\n> with it.\r\n> Fair enough ;)...\r\n>\r\n> I just can't update the CL right now, but I'll go with the here-below\r\n> patch later today if it's fine with you.\r\n>\r\n\r\nOur tools require a certain workflow.  This is good for discussion, but I\r\ncan't submit this.\r\n",
+			"disapproval": false,
+			"date": "2012-08-07 06:33:27.311190",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-08-07 11:04:19.347400",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> On Tuesday, August 7, 2012 12:11:01 AM UTC+2, Sebastien Paolacci wrote:\r\n(...)\r\n> The `SetNonblock' call is not mandatory to provoke the failure, but since \r\n> netFD's accept() read-hold ForkLock across syscalls on the assumption\r\n> that the socket is in non-blocking mode, I feel better with that wording.\r\n\r\nAgreed that it's more a matter of \"taste\" than of making the test success, \r\nbut call to `ln.(*net.TCPListener).File()` mess-up underlying socket in an \r\nincompatible way with subsequent calls to `Accept()'.\r\n\r\n603 func (fd *netFD) accept(toAddr func(syscall.Sockaddr) Addr) (netfd \r\n*netFD, err error) {\r\n(...)\r\n609         // See ../syscall/exec.go for description of ForkLock.\r\n610         // It is okay to hold the lock across syscall.Accept\r\n611         // because we have put fd.sysfd into non-blocking mode.\r\n\r\nRemoving the `SetNonblock' is therefore valid as far as the test is \r\nconcerned, but dangerous as far as those tests can be considered as \r\npotential examples.\r\n\r\nUltimately, it's obviously up to you, removing that statement still make \r\nthe test fail without the associated fix.\r\n\r\nSebastien\r\n\r\nOn Tuesday, August 7, 2012 2:00:05 PM UTC+2, Brad Fitzpatrick wrote:\r\n>\r\n>\r\n>\r\n> http://codereview.appspot.com/6445081/diff/6001/src/pkg/os/exec/exec_test.go \r\n> File src/pkg/os/exec/exec_test.go (right): \r\n>\r\n> http://codereview.appspot.com/6445081/diff/6001/src/pkg/os/exec/exec_test.go#newcode177 \r\n>\r\n> src/pkg/os/exec/exec_test.go:177<http://codereview.appspot.com/6445081/diff/6001/src/pkg/os/exec/exec_test.go#newcode177src/pkg/os/exec/exec_test.go:177>: \r\n> syscall.SetNonblock(int(f.Fd()), true) \r\n> What is this line doing here?  syscall shouldn't be needed in the tests. \r\n>\r\n> http://codereview.appspot.com/6445081/ \r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-08-07 12:43:49.377840",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ping.\r\n\r\nI've no hard preference about the `SetNonblock' here, I think it's just\r\nthat I had never been comfortable with net's File() altering the blocking\r\nmode.\r\n\r\nThe test is there, it checks the patch (even without the extra syscall)\r\nwhich ultimately fixes the fd leak. Whatever preferred wording should just\r\nbe chosen such that this CL can then be submitted.\r\n\r\nThanks,\r\nSebastien\r\nOn Aug 7, 2012 2:43 PM, \"Sebastien Paolacci\" <sebastien.paolacci@gmail.com>\r\nwrote:\r\n\r\n> > On Tuesday, August 7, 2012 12:11:01 AM UTC+2, Sebastien Paolacci wrote:\r\n> (...)\r\n> > The `SetNonblock' call is not mandatory to provoke the failure, but\r\n> since\r\n> > netFD's accept() read-hold ForkLock across syscalls on the assumption\r\n> > that the socket is in non-blocking mode, I feel better with that wording.\r\n>\r\n> Agreed that it's more a matter of \"taste\" than of making the test success,\r\n> but call to `ln.(*net.TCPListener).File()` mess-up underlying socket in\r\n> an incompatible way with subsequent calls to `Accept()'.\r\n>\r\n> 603 func (fd *netFD) accept(toAddr func(syscall.Sockaddr) Addr) (netfd\r\n> *netFD, err error) {\r\n> (...)\r\n> 609         // See ../syscall/exec.go for description of ForkLock.\r\n> 610         // It is okay to hold the lock across syscall.Accept\r\n> 611         // because we have put fd.sysfd into non-blocking mode.\r\n>\r\n> Removing the `SetNonblock' is therefore valid as far as the test is\r\n> concerned, but dangerous as far as those tests can be considered as\r\n> potential examples.\r\n>\r\n> Ultimately, it's obviously up to you, removing that statement still make\r\n> the test fail without the associated fix.\r\n>\r\n> Sebastien\r\n>\r\n> On Tuesday, August 7, 2012 2:00:05 PM UTC+2, Brad Fitzpatrick wrote:\r\n>>\r\n>>\r\n>> http://codereview.appspot.com/**6445081/diff/6001/src/pkg/os/**\r\n>> exec/exec_test.go<http://codereview.appspot.com/6445081/diff/6001/src/pkg/os/exec/exec_test.go>\r\n>> File src/pkg/os/exec/exec_test.go (right):\r\n>>\r\n>> http://codereview.appspot.com/**6445081/diff/6001/src/pkg/os/**exec/exec_test.go#newcode177\r\n>>\r\n>> src/pkg/os/exec/exec_test.go:**177<http://codereview.appspot.com/6445081/diff/6001/src/pkg/os/exec/exec_test.go#newcode177src/pkg/os/exec/exec_test.go:177>:\r\n>> syscall.SetNonblock(int(f.Fd()**), true)\r\n>> What is this line doing here?  syscall shouldn't be needed in the tests.\r\n>>\r\n>> http://codereview.appspot.com/**6445081/<http://codereview.appspot.com/6445081/>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-08-26 08:12:21.913960",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6445081/diff/6001/src/pkg/os/exec/exec_test.go\nFile src/pkg/os/exec/exec_test.go (right):\n\nhttp://codereview.appspot.com/6445081/diff/6001/src/pkg/os/exec/exec_test.go#newcode177\nsrc/pkg/os/exec/exec_test.go:177: syscall.SetNonblock(int(f.Fd()), true)\nunfortunately this line doesn't compile on windows same as\nthe CL 6445070.\n\nint or uintptr(Handle), os.File then net.Conn/Listener.\nhmm...",
+			"disapproval": false,
+			"date": "2012-08-26 08:31:05.349600",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, mikioh.mikioh@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-26 10:45:49.023260",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/26 08:31:05, mikio wrote:\n> src/pkg/os/exec/exec_test.go:177: syscall.SetNonblock(int(f.Fd()), true)\n> unfortunately this line doesn't compile on windows same as\n> the CL 6445070.\n\nThat's indeed a very good argument. Statement removed, sorry for not having thought about that at first. It moreover makes the test more compliant with Brad's initial position regarding the `syscall' import.\n\nThanks for the test.\n\nSebastien",
+			"disapproval": false,
+			"date": "2012-08-26 10:50:13.300670",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/26 10:45:49, Sebastien Paolacci wrote:\n> Hello mailto:golang-dev@googlegroups.com, mailto:bradfitz@golang.org, mailto:mikioh.mikioh@gmail.com\n> (cc: mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nPing. Brad maybe?\n\nSebastien",
+			"disapproval": false,
+			"date": "2012-09-04 11:39:33.281570",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nOn Tue, Sep 4, 2012 at 4:39 AM, <sebastien.paolacci@gmail.com> wrote:\r\n\r\n> On 2012/08/26 10:45:49, Sebastien Paolacci wrote:\r\n>\r\n>> Hello mailto:golang-dev@**googlegroups.com <golang-dev@googlegroups.com>,\r\n>> mailto:bradfitz@golang.org,\r\n>>\r\n> mailto:mikioh.mikioh@gmail.com\r\n>\r\n>> (cc: mailto:golang-dev@**googlegroups.com <golang-dev@googlegroups.com>),\r\n>>\r\n>\r\n>  Please take another look.\r\n>>\r\n>\r\n> Ping. Brad maybe?\r\n>\r\n> Sebastien\r\n>\r\n> http://codereview.appspot.com/**6445081/<http://codereview.appspot.com/6445081/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-09-04 19:30:56.134160",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"sebastien.paolacci@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=d694b1866058 ***\n\nnet: fix {FileConn, FileListener, FilePacketConn} fd leak to child process.\n\nAll of them call `newFileFD' which must properly restore close-on-exec on\nduplicated fds.\n\nR=golang-dev, bradfitz, mikioh.mikioh\nCC=golang-dev\nhttp://codereview.appspot.com/6445081\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2012-09-04 19:39:34.199200",
+			"approval": false
+		}
+	],
+	"owner_email": "sebastien.paolacci@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Sebastien Paolacci",
+	"subject": "code review 6445081: net: fix {FileConn, FileListener, FilePacketConn} fd le...",
+	"created": "2012-08-06 22:02:40.476650",
+	"patchsets": [
+		1,
+		2001,
+		6001,
+		13001
+	],
+	"modified": "2012-09-11 19:06:30.274990",
+	"closed": true,
+	"issue": 6445081
+}

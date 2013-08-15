@@ -1,0 +1,116 @@
+{
+	"description": "http: shut up a false Transport warning on Windows\n\nFixes issue 2057",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [
+		"hcwfrichter@gmail.com",
+		"alex.brainman@gmail.com",
+		"hectorchu@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-10-14 18:10:10.121080",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I'm sure this isn't comprehensive but it fixes it for my Windows system, and\nit at least makes forward progress.\n\nOnce this is in, the Windows team can expand on it to add symbols for the\ncouple other errors that can come up (NET_NAME_DELETED, etc?).  I only see\nthis one on Windows 7, though, but I can't find the symbol.\n\n\nOn Fri, Oct 14, 2011 at 11:10 AM, <bradfitz@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> http: shut up a false Transport warning on Windows\n>\n> Fixes issue 2057\n>\n> Please review this at http://codereview.appspot.com/**5269044/<http://codereview.appspot.com/5269044/>\n>\n> Affected files:\n>  M src/pkg/http/Makefile\n>  M src/pkg/http/transport.go\n>  A src/pkg/http/transport_**windows.go\n>\n>\n> Index: src/pkg/http/Makefile\n> ==============================**==============================**=======\n> --- a/src/pkg/http/Makefile\n> +++ b/src/pkg/http/Makefile\n> @@ -24,4 +24,9 @@\n>        transfer.go\\\n>        transport.go\\\n>\n> +GOFILES_windows=\\\n> +       transport_windows.go\\\n> +\n> +GOFILES+=$(GOFILES_$(GOOS))\n> +\n>  include ../../Make.pkg\n> Index: src/pkg/http/transport.go\n> ==============================**==============================**=======\n> --- a/src/pkg/http/transport.go\n> +++ b/src/pkg/http/transport.go\n> @@ -489,12 +489,24 @@\n>        return pc.numExpectedResponses > 0\n>  }\n>\n> +var remoteSideClosedFunc func(os.Error) bool // or nil to use default\n> +\n> +func remoteSideClosed(err os.Error) bool {\n> +       if err == os.EOF || err == os.EINVAL {\n> +               return true\n> +       }\n> +       if remoteSideClosedFunc != nil {\n> +               return remoteSideClosedFunc(err)\n> +       }\n> +       return false\n> +}\n> +\n>  func (pc *persistConn) readLoop() {\n>        alive := true\n>        for alive {\n>                pb, err := pc.br.Peek(1)\n>                if err != nil {\n> -                       if (err == os.EOF || err == os.EINVAL) &&\n> !pc.expectingResponse() {\n> +                       if remoteSideClosed(err) && !pc.expectingResponse()\n> {\n>                                // Remote side closed on us.  (We probably\n> hit their\n>                                // max idle timeout)\n>                                pc.close()\n> Index: src/pkg/http/transport_**windows.go\n> ==============================**==============================**=======\n> new file mode 100644\n> --- /dev/null\n> +++ b/src/pkg/http/transport_**windows.go\n> @@ -0,0 +1,21 @@\n> +// Copyright 2011 The Go Authors. All rights reserved.\n> +// Use of this source code is governed by a BSD-style\n> +// license that can be found in the LICENSE file.\n> +\n> +package http\n> +\n> +import (\n> +       \"os\"\n> +       \"net\"\n> +)\n> +\n> +func init() {\n> +       remoteSideClosedFunc = func(err os.Error) (out bool) {\n> +               op, ok := err.(*net.OpError)\n> +               if ok && op.Op == \"WSARecv\" && op.Net == \"tcp\" && op.Error\n> == os.Errno(10058) {\n> +                       // TODO(bradfitz): find the symbol for 10058\n> +                       return true\n> +               }\n> +               return false\n> +       }\n> +}\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-10-14 18:12:16.078191",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM i guess\n",
+			"disapproval": false,
+			"date": "2011-10-14 18:24:34.784030",
+			"approval": true
+		},
+		{
+			"sender": "hectorchu@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"hcwfrichter@gmail.com",
+				"alex.brainman@gmail.com",
+				"hectorchu@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Might want to add ECONNRESET to the common case as well.",
+			"disapproval": false,
+			"date": "2011-10-15 11:05:53.307832",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=461aaa349934 ***\n\nhttp: shut up a false Transport warning on Windows\n\nFixes issue 2057\n\nR=golang-dev, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/5269044",
+			"disapproval": false,
+			"date": "2011-10-14 18:31:03.209996",
+			"approval": false
+		},
+		{
+			"sender": "hcwfrichter@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "FYI - from  http://msdn.microsoft.com/en-us/library/ms819775.aspx\n\n//\n// MessageId: WSAESHUTDOWN\n//\n// MessageText:\n//\n//  A request to send or receive data was disallowed because the socket had already been shut down in that direction with a previous shutdown call.\n//#define WSAESHUTDOWN                     10058L\n\n\n",
+			"disapproval": false,
+			"date": "2011-10-15 05:27:39.073325",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"hcwfrichter@gmail.com",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttp://codereview.appspot.com/5269044/diff/3004/src/pkg/http/transport_windows.go\nFile src/pkg/http/transport_windows.go (right):\n\nhttp://codereview.appspot.com/5269044/diff/3004/src/pkg/http/transport_windows.go#newcode16\nsrc/pkg/http/transport_windows.go:16: // TODO(bradfitz): find the symbol for 10058\nIt is WSAESHUTDOWN. (I just googled for \"10058 sockets\"). I will fix it later.",
+			"disapproval": false,
+			"date": "2011-10-15 05:33:27.123753",
+			"approval": true
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 5269044: http: shut up a false Transport warning on Windows",
+	"created": "2011-10-14 18:09:46.354149",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		3004
+	],
+	"modified": "2011-10-15 11:05:53.387258",
+	"closed": true,
+	"issue": 5269044
+}

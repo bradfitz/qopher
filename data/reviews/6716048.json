@@ -1,0 +1,93 @@
+{
+	"description": "math/big: add 4-bit, fixed window exponentiation.\n\nA 4-bit window is convenient because 4 divides both 32 and 64,\ntherefore we never have a window spanning words of the exponent.\nAdditionaly, the benefit of a 5-bit window is only 2.6% at 1024-bits\nand 3.3% at 2048-bits.\n\nThis code is still not constant time, however.\n\nbenchmark                        old ns/op    new ns/op    delta\nBenchmarkRSA2048Decrypt           17108590     11180370  -34.65%\nBenchmark3PrimeRSA2048Decrypt     13003720      7680390  -40.94%",
+	"cc": [
+		"gri@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello gri@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-10-16 20:34:35.419240",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Some suggestions.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go\nFile src/pkg/math/big/nat.go (right):\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1251\nsrc/pkg/math/big/nat.go:1251: // If the exponent is large and the base is non-trivial, we use a\ns/we use a/we use/\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1256\nsrc/pkg/math/big/nat.go:1256: if len(y) > 1 && len(x) > 1 && len(m) > 0 {\nperhaps check the values in the order they appear in the signature:\n\nif len(x) > 1 && len(y) > 1 && len(m) > 0 ...\n\nand adjust the comment accordingly:\n\nIf the base is non-trivial and the exponent large, we use\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1321\nsrc/pkg/math/big/nat.go:1321: \nCan we make 4 a constant?\n\nconst n = 4\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1323\nsrc/pkg/math/big/nat.go:1323: var powers [16]nat\ns/16/1<<n/\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1324\nsrc/pkg/math/big/nat.go:1324: powers[0] = powers[0].make(1)\npowers[0] = natOne\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1325\nsrc/pkg/math/big/nat.go:1325: powers[0][0] = 1\nget rid of this line\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1327\nsrc/pkg/math/big/nat.go:1327: for i := 2; i < 16; i += 2 {\ns/16/1<<n/\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1328\nsrc/pkg/math/big/nat.go:1328: powers[i] = powers[i].mul(powers[i/2], powers[i/2])\n\tfor i := 2; i < 1<<n; i += 2 {\n\t\tp2, p, p1 := &powers[i/2], &powers[i], &powers[i+1]\n\t\t*p = p.mul(*p2, *p2)\n\t\tzz, r = zz.div(r, *p, m)\n\t\t*p, r = r, *p\n\t\t*p1 = p1.mul(*p, x)\n\t\tzz, r = zz.div(r, *p1, m)\n\t\t*p1, r = r, *p1\n\t}\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1336\nsrc/pkg/math/big/nat.go:1336: z = z.make(1)\nz = z.setWord(1)\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1337\nsrc/pkg/math/big/nat.go:1337: z[0] = 1\nget rid of this line\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1340\nsrc/pkg/math/big/nat.go:1340: word := y[i]\ns/word/yi/\n\nword is almost Word and yi is saying more and shorter\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1341\nsrc/pkg/math/big/nat.go:1341: for j := 0; j < _W; j += 4 {\ns/4/n/\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1343\nsrc/pkg/math/big/nat.go:1343: // Manually unrolling this speeds the code up by ~15%.\nReally?\n\nfor k := 0; k < n; k++ {\n\tzz = zz.mul(z, z)\n\tzz, z = z, zz\n\tzz, r = zz.div(r, z, m)\n\tz, r = r, z\n}\n\nThe loop overhead should be neglible compared to the mul/div stuff\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1365\nsrc/pkg/math/big/nat.go:1365: zz = zz.mul(z, powers[word>>(_W-4)])\ns/4/n/\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1370\nsrc/pkg/math/big/nat.go:1370: word <<= 4\ns/4/n/",
+			"disapproval": false,
+			"date": "2012-10-16 21:24:30.291410",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=95b8a6011b40 ***\n\nmath/big: add 4-bit, fixed window exponentiation.\n\nA 4-bit window is convenient because 4 divides both 32 and 64,\ntherefore we never have a window spanning words of the exponent.\nAdditionaly, the benefit of a 5-bit window is only 2.6% at 1024-bits\nand 3.3% at 2048-bits.\n\nThis code is still not constant time, however.\n\nbenchmark                        old ns/op    new ns/op    delta\nBenchmarkRSA2048Decrypt           17108590     11180370  -34.65%\nBenchmark3PrimeRSA2048Decrypt     13003720      7680390  -40.94%\n\nR=gri\nCC=golang-dev\nhttp://codereview.appspot.com/6716048\n\nhttp://codereview.appspot.com/6716048/diff/10001/src/pkg/math/big/nat.go\nFile src/pkg/math/big/nat.go (right):\n\nhttp://codereview.appspot.com/6716048/diff/10001/src/pkg/math/big/nat.go#newcode1343\nsrc/pkg/math/big/nat.go:1343: zz = zz.mul(z, z)\nOn 2012/10/16 23:56:06, gri wrote:\n> I'd leave a comment here, something along the lines:\n> \n> // Unrolled loop for significant performance gain.\n> // Use go test -bench=XXX to check performance before making changes.\n> \n> (fill in XXX)\n\nDone.",
+			"disapproval": false,
+			"date": "2012-10-17 15:19:36.698700",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go\nFile src/pkg/math/big/nat.go (right):\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1251\nsrc/pkg/math/big/nat.go:1251: // If the exponent is large and the base is non-trivial, we use a\nOn 2012/10/16 21:24:30, gri wrote:\n> s/we use a/we use/\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1256\nsrc/pkg/math/big/nat.go:1256: if len(y) > 1 && len(x) > 1 && len(m) > 0 {\nOn 2012/10/16 21:24:30, gri wrote:\n> perhaps check the values in the order they appear in the signature:\n> \n> if len(x) > 1 && len(y) > 1 && len(m) > 0 ...\n> \n> and adjust the comment accordingly:\n> \n> If the base is non-trivial and the exponent large, we use\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1321\nsrc/pkg/math/big/nat.go:1321: \nOn 2012/10/16 21:24:30, gri wrote:\n> Can we make 4 a constant?\n> \n> const n = 4\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1323\nsrc/pkg/math/big/nat.go:1323: var powers [16]nat\nOn 2012/10/16 21:24:30, gri wrote:\n> s/16/1<<n/\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1324\nsrc/pkg/math/big/nat.go:1324: powers[0] = powers[0].make(1)\nOn 2012/10/16 21:24:30, gri wrote:\n> powers[0] = natOne\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1325\nsrc/pkg/math/big/nat.go:1325: powers[0][0] = 1\nOn 2012/10/16 21:24:30, gri wrote:\n> get rid of this line\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1327\nsrc/pkg/math/big/nat.go:1327: for i := 2; i < 16; i += 2 {\nOn 2012/10/16 21:24:30, gri wrote:\n> s/16/1<<n/\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1328\nsrc/pkg/math/big/nat.go:1328: powers[i] = powers[i].mul(powers[i/2], powers[i/2])\nOn 2012/10/16 21:24:30, gri wrote:\n> \tfor i := 2; i < 1<<n; i += 2 {\n> \t\tp2, p, p1 := &powers[i/2], &powers[i], &powers[i+1]\n> \t\t*p = p.mul(*p2, *p2)\n> \t\tzz, r = zz.div(r, *p, m)\n> \t\t*p, r = r, *p\n> \t\t*p1 = p1.mul(*p, x)\n> \t\tzz, r = zz.div(r, *p1, m)\n> \t\t*p1, r = r, *p1\n> \t}\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1336\nsrc/pkg/math/big/nat.go:1336: z = z.make(1)\nOn 2012/10/16 21:24:30, gri wrote:\n> z = z.setWord(1)\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1337\nsrc/pkg/math/big/nat.go:1337: z[0] = 1\nOn 2012/10/16 21:24:30, gri wrote:\n> get rid of this line\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1340\nsrc/pkg/math/big/nat.go:1340: word := y[i]\nOn 2012/10/16 21:24:30, gri wrote:\n> s/word/yi/\n> \n> word is almost Word and yi is saying more and shorter\n\nDone.\n\nhttps://codereview.appspot.com/6716048/diff/7001/src/pkg/math/big/nat.go#newcode1343\nsrc/pkg/math/big/nat.go:1343: // Manually unrolling this speeds the code up by ~15%.\nOn 2012/10/16 21:24:30, gri wrote:\n> Really?\n> \n> for k := 0; k < n; k++ {\n> \tzz = zz.mul(z, z)\n> \tzz, z = z, zz\n> \tzz, r = zz.div(r, z, m)\n> \tz, r = r, z\n> }\n> \n> The loop overhead should be neglible compared to the mul/div stuff\n\nYea, I know. And yet, when I put it in a loop as you've written:\n\nbenchmark                        old ns/op    new ns/op    delta\nBenchmarkRSA2048Decrypt           11243420     13158090  +17.03%\nBenchmark3PrimeRSA2048Decrypt      7870770     10122080  +28.60%\n\nMaybe inlining is kicking in and doing more than we expect?",
+			"disapproval": false,
+			"date": "2012-10-16 22:22:56.238860",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"agl@golang.org",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nhttps://codereview.appspot.com/6716048/diff/10001/src/pkg/math/big/nat.go\nFile src/pkg/math/big/nat.go (right):\n\nhttps://codereview.appspot.com/6716048/diff/10001/src/pkg/math/big/nat.go#newcode1343\nsrc/pkg/math/big/nat.go:1343: zz = zz.mul(z, z)\nI'd leave a comment here, something along the lines:\n\n// Unrolled loop for significant performance gain.\n// Use go test -bench=XXX to check performance before making changes.\n\n(fill in XXX)",
+			"disapproval": false,
+			"date": "2012-10-16 23:56:06.488390",
+			"approval": true
+		}
+	],
+	"owner_email": "agl@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "agl1",
+	"subject": "code review 6716048: math/big: add 4-bit, fixed window exponentiation.",
+	"created": "2012-10-16 20:01:42.404470",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		3004,
+		7001,
+		10001,
+		13002
+	],
+	"modified": "2012-10-17 15:19:38.087980",
+	"closed": true,
+	"issue": 6716048
+}

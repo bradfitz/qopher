@@ -1,0 +1,88 @@
+{
+	"description": "net/http: only call client SetCookie when needed",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-12-19 23:27:48.330290",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think that test is a little large.  It only needs to test the new\r\nbehavior you introduced, not the entire cookie system.\r\n\r\nOn Wed, Dec 19, 2012 at 3:27 PM, <serbaut@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> net/http: only call client SetCookie when needed\r\n>\r\n> Also: a test of a typical cookie based session that verifies\r\n> the client cookie jar.\r\n>\r\n> Please review this at https://codereview.appspot.**com/6968049/<https://codereview.appspot.com/6968049/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/http/client.go\r\n>   M src/pkg/net/http/client_test.**go\r\n>\r\n>\r\n> Index: src/pkg/net/http/client.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/http/client.go\r\n> +++ b/src/pkg/net/http/client.go\r\n> @@ -98,7 +98,9 @@\r\n>                 return nil, err\r\n>         }\r\n>         if c.Jar != nil {\r\n> -               c.Jar.SetCookies(req.URL, resp.Cookies())\r\n> +               if rc := resp.Cookies(); len(rc) > 0 {\r\n> +                       c.Jar.SetCookies(req.URL, rc)\r\n> +               }\r\n>         }\r\n>         return resp, err\r\n>  }\r\n> Index: src/pkg/net/http/client_test.**go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/http/client_**test.go\r\n> +++ b/src/pkg/net/http/client_**test.go\r\n> @@ -415,6 +415,68 @@\r\n>         }\r\n>  }\r\n>\r\n> +// TestCookieSession verifies that a typical cookie based session works\r\n> +func TestCookieSession(t *testing.T) {\r\n> +       ts := httptest.NewServer(**HandlerFunc(func(w ResponseWriter, r\r\n> *Request) {\r\n> +               switch r.RequestURI {\r\n> +               case \"/login\":\r\n> +                       SetCookie(w, &Cookie{Name: \"ssid\", Value: \"hash\"})\r\n> +                       Redirect(w, r, \"/\", 302)\r\n> +               case \"/logout\":\r\n> +                       SetCookie(w, &Cookie{Name: \"ssid\"})\r\n> +               default:\r\n> +                       if c := r.Cookies(); len(c) == 1 && c[0].Name ==\r\n> \"ssid\" && c[0].Value == \"hash\" {\r\n> +                               w.Write([]byte(\"ok\"))\r\n> +                       } else {\r\n> +                               Error(w, \"401 unauthorized\",\r\n> StatusUnauthorized)\r\n> +                       }\r\n> +               }\r\n> +       }))\r\n> +       defer ts.Close()\r\n> +\r\n> +       c := &Client{Jar: &TestJar{}}\r\n> +\r\n> +       if r, err := c.Get(ts.URL); err != nil {\r\n> +               t.Fatal(err)\r\n> +       } else {\r\n> +               if got, want := r.StatusCode, StatusUnauthorized; got !=\r\n> want {\r\n> +                       t.Errorf(\"get: got %d, expected %d\", got, want)\r\n> +               }\r\n> +       }\r\n> +\r\n> +       if r, err := c.PostForm(ts.URL+\"/login\", nil); err != nil {\r\n> +               t.Fatal(err)\r\n> +       } else {\r\n> +               if got, want := r.StatusCode, StatusOK; got != want {\r\n> +                       t.Errorf(\"/login: got %d, expected %d\", got, want)\r\n> +               }\r\n> +               if sc := c.Jar.Cookies(r.Request.URL); len(sc) == 1 {\r\n> +                       got, want := sc[0], Cookie{Name: \"ssid\", Value:\r\n> \"hash\"}\r\n> +                       if got.Name != want.Name || got.Value !=\r\n> want.Value {\r\n> +                               t.Errorf(\"client jar: got %#v, expected\r\n> %#v\", got, want)\r\n> +                       }\r\n> +               } else {\r\n> +                       t.Errorf(\"client jar: got %d cookies, expected 1\",\r\n> len(sc))\r\n> +               }\r\n> +       }\r\n> +\r\n> +       if r, err := c.Get(ts.URL + \"/logout\"); err != nil {\r\n> +               t.Fatal(err)\r\n> +       } else {\r\n> +               if got, want := r.StatusCode, StatusOK; got != want {\r\n> +                       t.Errorf(\"/logout: got %d, exptected %d\", got,\r\n> want)\r\n> +               }\r\n> +               if sc := c.Jar.Cookies(r.Request.URL); len(sc) == 1 {\r\n> +                       got, want := sc[0], Cookie{Name: \"ssid\", Value: \"\"}\r\n> +                       if got.Name != want.Name || got.Value !=\r\n> want.Value {\r\n> +                               t.Errorf(\"client jar: got %#v, expected\r\n> %#v\", got, want)\r\n> +                       }\r\n> +               } else {\r\n> +                       t.Errorf(\"client jar: got %d cookies, expected 1\",\r\n> len(sc))\r\n> +               }\r\n> +       }\r\n> +}\r\n> +\r\n>  func TestJarCalls(t *testing.T) {\r\n>         ts := httptest.NewServer(**HandlerFunc(func(w ResponseWriter, r\r\n> *Request) {\r\n>                 pathSuffix := r.RequestURI[1:]\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-19 23:29:28.533740",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-12-19 23:50:12.451170",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nMuch nicer test!",
+			"disapproval": false,
+			"date": "2012-12-20 00:04:19.568610",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=5acb449b2a67 ***\n\nnet/http: only call client SetCookie when needed\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/6968049\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2012-12-20 00:24:45.419230",
+			"approval": false
+		}
+	],
+	"owner_email": "serbaut@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "serbaut",
+	"subject": "code review 6968049: net/http: only call client SetCookie when needed",
+	"created": "2012-12-19 23:14:26.968310",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		8001
+	],
+	"modified": "2012-12-20 07:48:40.330960",
+	"closed": true,
+	"issue": 6968049
+}

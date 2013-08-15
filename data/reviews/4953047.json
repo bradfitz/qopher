@@ -1,0 +1,116 @@
+{
+	"description": "    net: return error from Accept when Listener is closed\n\nFixes issue 1898",
+	"cc": [
+		"adg@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"rsc@golang.org",
+		"bradfitz@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "jeff@somethingsimilar.com",
+			"recipients": [
+				"jeff@somethingsimilar.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: adg@golang.org, golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-08-26 09:43:21.923589",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"jeff@somethingsimilar.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4953047/diff/5001/src/pkg/net/net_test.go\nFile src/pkg/net/net_test.go (right):\n\nhttp://codereview.appspot.com/4953047/diff/5001/src/pkg/net/net_test.go#newcode131\nsrc/pkg/net/net_test.go:131: runtime.Gosched()\nRather than a Gosched, I'd probably run the Accept in a goroutine too, with both the Acceptor goroutine and the Closer goroutine waiting first on their own unbuffered channels, then your main test goroutine can:\n\nacceptc <- true\nclosec <- true\n\n*shrug*\n\nHappy to see this fixed, though!",
+			"disapproval": false,
+			"date": "2011-08-26 09:50:57.980031",
+			"approval": false
+		},
+		{
+			"sender": "jeff@somethingsimilar.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Two things:\n\n1) I can't quite figure out how to get an EAGAIN in the Write and Read\npaths given the net API and I'm pretty sure they also need to be\ntested (esp. *netfd.Write, since it means adding  `fd.cw <- true` to\nClose()). Any ideas?\n\n2) Adding those channels to this test doubles the code size and\nrequires the addition of a third channel to signal that the test\npassed. Otherwise, the Accept goroutine dies off and the tests always\n\"pass\". I'm not sure it's a win, but I recognize that futzing with the\nscheduler is less good than using the primitives of the language. I'll\ndefer to y'all if you say it's better:\n\nfunc TestCloseCausesAcceptError(t *testing.T) {\n\tacceptc := make(chan bool)\n\tclosec := make(chan bool)\n\tokayc := make(chan bool)\n\tl, err := Listen(\"tcp\", \"localhost:0\")\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tgo func(ll Listener) {\n\t\t<-closec\n\t\tll.Close()\n\t}(l)\n\tgo func(ll Listener) {\n\t\t<-acceptc\n\t\t_, err = ll.Accept()\n\t\tif err != os.EINVAL {\n\t\t\tt.Errorf(\"expected %q, got %q\", os.EINVAL, err)\n\t\t}\n\t\t// necessary else this goroutine simply dies off and the test always\n\t\t// \"passes\"\n\t\tokayc <- true\n\t}(l)\n\tacceptc <- true\n\tclosec <- true\n\t<-okayc\n}\n\nOn Fri, Aug 26, 2011 at 2:50 AM,  <bradfitz@golang.org> wrote:\n>\n> http://codereview.appspot.com/4953047/diff/5001/src/pkg/net/net_test.go\n> File src/pkg/net/net_test.go (right):\n>\n> http://codereview.appspot.com/4953047/diff/5001/src/pkg/net/net_test.go#newcode131\n> src/pkg/net/net_test.go:131: runtime.Gosched()\n> Rather than a Gosched, I'd probably run the Accept in a goroutine too,\n> with both the Acceptor goroutine and the Closer goroutine waiting first\n> on their own unbuffered channels, then your main test goroutine can:\n>\n> acceptc <- true\n> closec <- true\n>\n> *shrug*\n>\n> Happy to see this fixed, though!\n>\n> http://codereview.appspot.com/4953047/\n>\n",
+			"disapproval": false,
+			"date": "2011-08-26 10:43:12.869354",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Aug 26, 2011 at 2:42 PM, Jeff Hodges <jeff@somethingsimilar.com>wrote:\n\n>\n> 2) Adding those channels to this test doubles the code size and\n> requires the addition of a third channel to signal that the test\n> passed. Otherwise, the Accept goroutine dies off and the tests always\n> \"pass\". I'm not sure it's a win, but I recognize that futzing with the\n> scheduler is less good than using the primitives of the language. I'll\n> defer to y'all if you say it's better:\n>\n> func TestCloseCausesAcceptError(t *testing.T) {\n>         acceptc := make(chan bool)\n>        closec := make(chan bool)\n>        okayc := make(chan bool)\n>\n\nThose three could go on one line\n\n\n>         l, err := Listen(\"tcp\", \"localhost:0\")\n>        if err != nil {\n>                t.Fatal(err)\n>        }\n>        go func(ll Listener) {\n>\n\nno need to take a listener.  it's a closure... just use \"l\" directly.  it's\nguaranteed to be initialized when you need it below.\n\n\n>                 <-closec\n>                ll.Close()\n>        }(l)\n>        go func(ll Listener) {\n>\n\nlikewise\n\n\n>                <-acceptc\n>                _, err = ll.Accept()\n>                 if err != os.EINVAL {\n>                        t.Errorf(\"expected %q, got %q\", os.EINVAL, err)\n>                }\n>                 // necessary else this goroutine simply dies off and the\n> test always\n>                // \"passes\"\n>                okayc <- true\n>        }(l)\n>        acceptc <- true\n>        closec <- true\n>        <-okayc\n>\n\nI like this version more, despite the extra length.\n\nThis also means that you can switch your final <-okayc into:\n\nselect {\ncase <-donec:\ncase <-time.After(5e9):\n   t.Fatalf(\"Accept hung\")\n}\n\nThen when the test does fail on some operating system (inevitably), we get a\ngood error message, not an actual test hang.\n",
+			"disapproval": false,
+			"date": "2011-08-26 10:53:30.385274",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jeff@somethingsimilar.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4953047/diff/5001/src/pkg/net/fd.go\nFile src/pkg/net/fd.go (right):\n\nhttp://codereview.appspot.com/4953047/diff/5001/src/pkg/net/fd.go#newcode356\nsrc/pkg/net/fd.go:356: fd.cr <- true\nI don't think this code can just fiddle with fd.cr here.\nThe poll server tracks the number of pending reads\nand is careful to issue only that many sends on fd.cr.\nOtherwise you might get blocked here if you're out of sync.\nThis should call into the poll server to record the close.\nHonestly I am a bit surprised that a Shutdown on fd.sysfd\ndoes not wake up epoll already.",
+			"disapproval": false,
+			"date": "2011-08-26 20:49:03.921908",
+			"approval": false
+		},
+		{
+			"sender": "jeff@somethingsimilar.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Fri, Aug 26, 2011 at 1:49 PM,  <rsc@golang.org> wrote:\n>\n> http://codereview.appspot.com/4953047/diff/5001/src/pkg/net/fd.go\n> File src/pkg/net/fd.go (right):\n>\n> http://codereview.appspot.com/4953047/diff/5001/src/pkg/net/fd.go#newcode356\n> src/pkg/net/fd.go:356: fd.cr <- true\n> I don't think this code can just fiddle with fd.cr here.\n> The poll server tracks the number of pending reads\n> and is careful to issue only that many sends on fd.cr.\n> Otherwise you might get blocked here if you're out of sync.\n> This should call into the poll server to record the close.\n> Honestly I am a bit surprised that a Shutdown on fd.sysfd\n> does not wake up epoll already.\n>\n> http://codereview.appspot.com/4953047/\n>\n\nIt doesn't and neither does kevent. I've cleaned up the test code, but\nthere is much more work needed to be done. The way I hear others try\nto do this is set a timeout on them and try to read from the socket to\ndetect closure. I'm still fumbling through and talking to people about\nit. Ideas welcome.\n",
+			"disapproval": false,
+			"date": "2011-08-28 00:18:13.691377",
+			"approval": false
+		},
+		{
+			"sender": "jeff@somethingsimilar.com",
+			"recipients": [
+				"jeff@somethingsimilar.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2011-09-12 00:58:54.768721",
+			"approval": false
+		}
+	],
+	"owner_email": "jeff@somethingsimilar.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jmhodges",
+	"subject": "code review 4953047:     net: return error from Accept when Listener is closed",
+	"created": "2011-08-26 09:42:48.965294",
+	"patchsets": [
+		1,
+		2001,
+		5001
+	],
+	"modified": "2011-09-12 00:58:56.615426",
+	"closed": true,
+	"issue": 4953047
+}
