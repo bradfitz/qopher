@@ -32,10 +32,8 @@ const (
 
 	rvTimeFormat = "2006-01-02 15:04:05"
 
-	// queryTmpl = "https://codereview.appspot.com/search?closed=3&{{CC_OR_REVIEWER}}=golang-dev%40googlegroups.com&private=1&modified_before={{DATE_BEFORE}}&modifed_after={{DATE_AFTER}}&order=-modified&keys_only=False&with_messages=False&cursor={{CURSOR}}&limit={{LIMIT}}&format=json"
-
 	// closed=1 means "unknown"
-	queryTmpl = "https://codereview.appspot.com/search?closed=1&owner=&{{CC_OR_REVIEWER}}=golang-dev&cc=&repo_guid=&base=&private=1&created_before=&created_after=&modified_before=&modified_after=&order=-modified&format=json&keys_only=False&with_messages=False&cursor={{CURSOR}}&limit={{LIMIT}}"
+	queryTmpl = "https://codereview.appspot.com/search?closed=1&owner=&{{CC_OR_REVIEWER}}=golang-dev@googlegroups.com&repo_guid=&base=&private=1&created_before=&created_after=&modified_before=&modified_after=&order=-modified&format=json&keys_only=False&with_messages=False&cursor={{CURSOR}}&limit={{LIMIT}}"
 
 	// JSON with the text of messages. e.g.
 	// https://codereview.appspot.com/api/6454085?messages=true
@@ -57,7 +55,7 @@ func main() {
 		log.Fatalf("Directory %q needs to exist.", *dir)
 	}
 
-	for _, to := range []string{"reviewer"} { // needs index: , "cc"
+	for _, to := range []string{"reviewer", "cc"} {
 		updatewg.Add(1)
 		go loadReviews(to, updatewg)
 	}
