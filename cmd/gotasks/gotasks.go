@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -49,6 +50,9 @@ func main() {
 	if *dir == "" {
 		log.Fatalf("--dir flag is required.")
 	}
+	if fi, err := os.Stat(*dir); err != nil || !fi.IsDir() {
+		log.Fatalf("Directory %q needs to exist.", *dir)
+	}
 
 	for _, to := range []string{"reviewer", "cc"} {
 		updatewg.Add(1)
@@ -84,7 +88,7 @@ func loadReviews(to string, wg *sync.WaitGroup) {
 			go updateReview(r, wg)
 		}
 		res.Body.Close()
-		if cursor == "" || len(reviews) < itemsPerPage {
+		if cursor == "" || len(reviews) == 0 {
 			break
 		}
 	}
@@ -112,24 +116,38 @@ func updateReview(r *Review, wg *sync.WaitGroup) {
 		log.Fatalf("Error fetching %s: %+v, %v", url, res, err)
 	}
 	defer res.Body.Close()
-	tf, err := ioutil.TempFile(*dir, "issue")
+	all, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, err = io.Copy(tf, res.Body)
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, all, "", "\t"); err != nil {
+		log.Fatal(err)
+	}
+
+	dstFile := issueDiskPath(r.Issue)
+	dir := filepath.Dir(dstFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Fatal(err)
+	}
+	tf, err := ioutil.TempFile(dir, "issue")
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = tf.Write(buf.Bytes())
 	if err != nil {
 		log.Fatal(err)
 	}
 	if err := tf.Close(); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Rename(tf.Name(), issueDiskPath(r.Issue)); err != nil {
+	if err := os.Rename(tf.Name(), dstFile); err != nil {
 		log.Fatal(err)
 	}
 }
 
 func issueDiskPath(id int) string {
-	return filepath.Join(*dir, fmt.Sprintf("%d.json", id))
+	return filepath.Join(*dir, "reviews", fmt.Sprintf("%d.json", id))
 }
 
 func loadDiskFullReview(id int) (*Review, error) {
