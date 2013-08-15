@@ -1,0 +1,153 @@
+{
+	"description": "crypto/sha1: remove an allocation in Sum\nsha1.Sum does two allocations; this CL removes one of them\nby placing a small array in the digest that it can use as a\ntemporary, and by moving the large constant padding array\nto a global.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"iant@golang.org",
+		"bradfitz@golang.org",
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-06-24 23:03:13.878980",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-06-24 23:40:24.398100",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What causes var tmp [64]byte to escape? It's only passed to\r\n(*digest).Write, a concrete type, and block?\r\n\r\nOh, I think we just need to flag block as no-escape in sha1block_amd64.s\r\nand friends.\r\n\r\n\r\n\r\nOn Mon, Jun 24, 2013 at 4:03 PM, <r@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> crypto/sha1: remove an allocation in Sum\r\n> sha1.Sum does two allocations; this CL removes one of them\r\n> by placing a small array in the digest that it can use as a\r\n> temporary, and by moving the large constant padding array\r\n> to a global.\r\n>\r\n> Please review this at https://codereview.appspot.**com/10524044/<https://codereview.appspot.com/10524044/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/crypto/sha1/sha1.go\r\n>\r\n>\r\n> Index: src/pkg/crypto/sha1/sha1.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/crypto/sha1/sha1.go\r\n> +++ b/src/pkg/crypto/sha1/sha1.go\r\n> @@ -33,6 +33,7 @@\r\n>  type digest struct {\r\n>         h   [5]uint32\r\n>         x   [chunk]byte\r\n> +       tmp [8]byte\r\n>         nx  int\r\n>         len uint64\r\n>  }\r\n> @@ -87,26 +88,29 @@\r\n>         return\r\n>  }\r\n>\r\n> +// padding is used to fill up to 56 bytes mod 64; it is never modified.\r\n> +var padding = [64]byte{\r\n> +       0: 0x80, // A 1 bit followed by many 0 bits.\r\n> +}\r\n> +\r\n>  func (d0 *digest) Sum(in []byte) []byte {\r\n>         // Make a copy of d0 so that caller can keep writing and summing.\r\n>         d := *d0\r\n>\r\n>         // Padding.  Add a 1 bit and 0 bits until 56 bytes mod 64.\r\n>         len := d.len\r\n> -       var tmp [64]byte\r\n> -       tmp[0] = 0x80\r\n>         if len%64 < 56 {\r\n> -               d.Write(tmp[0 : 56-len%64])\r\n> +               d.Write(padding[0 : 56-len%64])\r\n>         } else {\r\n> -               d.Write(tmp[0 : 64+56-len%64])\r\n> +               d.Write(padding[0 : 64+56-len%64])\r\n>         }\r\n>\r\n>         // Length in bits.\r\n>         len <<= 3\r\n>         for i := uint(0); i < 8; i++ {\r\n> -               tmp[i] = byte(len >> (56 - 8*i))\r\n> +               d.tmp[i] = byte(len >> (56 - 8*i))\r\n>         }\r\n> -       d.Write(tmp[0:8])\r\n> +       d.Write(d.tmp[0:8])\r\n>\r\n>         if d.nx != 0 {\r\n>                 panic(\"d.nx != 0\")\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-24 23:40:58.455410",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I tried that without success, although I may have done it wrong.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-06-24 23:53:05.372730",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Like this:\r\n\r\n//go:noescape\r\n\r\nfunc block(dig *digest, p []byte)\r\n",
+			"disapproval": false,
+			"date": "2013-06-24 23:54:46.956460",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I was also just trying.\r\n\r\nI looked at at a diff of go build -gcflags '-m' -a crypto/sha1 before and\r\nafter that annotation, and it does affect whether block's arguments escape,\r\nbut it still thinks Write's p []byte escapes to the heap, which I'm not\r\nseeing.\r\n\r\nIt seems like the escape analysis is too conservative somehow, unless\r\nthere's something I'm not seeing.\r\n\r\n\r\n\r\nOn Mon, Jun 24, 2013 at 4:52 PM, Rob Pike <r@golang.org> wrote:\r\n\r\n> I tried that without success, although I may have done it wrong.\r\n>\r\n> -rob\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-24 23:56:18.277230",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I just did the same experiment with cshapiro watching. Here's what I have:\r\n\r\ngo build -gcflags=-m\r\n# crypto/sha1\r\n./sha1.go:57: can inline (*digest).Size\r\n./sha1.go:59: can inline (*digest).BlockSize\r\n./sha1.go:40: (*digest).Reset d does not escape\r\n./sha1.go:52: new(digest) escapes to heap\r\n./sha1.go:57: (*digest).Size d does not escape\r\n./sha1.go:59: (*digest).BlockSize d does not escape\r\n./sha1.go:61: leaking param: d\r\n./sha1.go:74: d.x escapes to heap\r\n./sha1.go:61: leaking param: d\r\n./sha1.go:61: (*digest).Write p does not escape\r\n./sha1.go:85: (*digest).Write d.x does not escape\r\n./sha1.go:92: moved to heap: d\r\n./sha1.go:99: d escapes to heap\r\n./sha1.go:101: d escapes to heap\r\n./sha1.go:109: d escapes to heap\r\n./sha1.go:90: leaking param: in to result ~anon1\r\n./sha1.go:90: (*digest).Sum d0 does not escape\r\n./sha1.go:99: (*digest).Sum tmp does not escape\r\n./sha1.go:101: (*digest).Sum tmp does not escape\r\n./sha1.go:109: (*digest).Sum tmp does not escape\r\n./sha1.go:123: (*digest).Sum digest does not escape\r\n./sha1block_decl.go:11: block dig does not escape\r\n./sha1block_decl.go:11: block p does not escape\r\ntubenose=% hg diff .\r\ndiff -r f6de76ff41a3 src/pkg/crypto/sha1/sha1block_decl.go\r\n--- a/src/pkg/crypto/sha1/sha1block_decl.go Mon Jun 24 16:53:13 2013 -0700\r\n+++ b/src/pkg/crypto/sha1/sha1block_decl.go Mon Jun 24 17:18:52 2013 -0700\r\n@@ -6,4 +6,6 @@\r\n\r\n package sha1\r\n\r\n+//go:noescape\r\n+\r\n func block(dig *digest, p []byte)\r\ntubenose=%\r\n\r\n\r\nThe two calls to block in Write are each responsible for one of the\r\ntwo remaining allocations. When I used the pure Go version, the escape\r\nanalysis works, so it seems the bug is that the annotation on the\r\nassembler, even though the -m output says it works, isn't working.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-06-25 00:20:49.795560",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ha, it's a bug. If you compile sha1block_decl.go BEFORE sha1.go, it\r\nall works. So the decision about the leak calling block is made before\r\nwe know whether block is a leaker. It's a compiler bug, and I suspect\r\none responsible for other leakages.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-06-25 00:24:03.833510",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-06-25 00:24:25.693870",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What a wonderful bug! A workaround would be to create a placeholder\r\nsha1block_arm.s file, then merge sha1block_decl.go into sha1.go. I\r\ncan't think of a better more generic solution unless the spec is\r\nchanged to say files in a package are compiled in order.\r\n\r\nOn Tue, Jun 25, 2013 at 10:23 AM, Rob Pike <r@golang.org> wrote:\r\n> Ha, it's a bug. If you compile sha1block_decl.go BEFORE sha1.go, it\r\n> all works. So the decision about the leak calling block is made before\r\n> we know whether block is a leaker. It's a compiler bug, and I suspect\r\n> one responsible for other leakages.\r\n>\r\n> -rob\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-25 00:27:15.768860",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Issue 5773\r\n",
+			"disapproval": false,
+			"date": "2013-06-25 00:28:23.168180",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Nice. You saved me some debugging time trying to come up with a minimal\r\nrepro. I probably wouldn't have guessed that too soon.  :-)\r\n\r\n\r\n\r\nOn Mon, Jun 24, 2013 at 5:28 PM, Rob Pike <r@golang.org> wrote:\r\n\r\n> Issue 5773\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-25 00:30:40.895710",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 10524044: crypto/sha1: remove an allocation in Sum",
+	"created": "2013-06-24 23:03:10.147710",
+	"patchsets": [
+		1
+	],
+	"modified": "2013-06-25 00:30:40.980490",
+	"closed": true,
+	"issue": 10524044
+}

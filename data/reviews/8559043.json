@@ -1,0 +1,102 @@
+{
+	"description": "undo CL 8318044 / c40f15e9e5ca\n\nAppears to break the darwin build. I'd rather not fight fires like this while\nwe're in the final stages of cutting a release candidate.\n\n\u00ab\u00ab\u00ab original CL description\nnet: fix possible runtime.PollDesc leak when connect or listen fails\n\nMakes it possible to return the spent runtime.PollDesc to\nruntime.pollcache descriptor pool when netFD.connect or\nsyscall.Listen fails.\n\nFixes issue 5219.\n\nR=dvyukov, dave, bradfitz, adg\nCC=golang-dev\nhttps://codereview.appspot.com/8318044\n\u00bb\u00bb\u00bb",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"adg@golang.org",
+		"dvyukov@google.com"
+	],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-04-09 04:04:07.859870",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Considering Andrew's inability to reproduce even on the same machine, I'd\r\nrather not revert yet until there's more (any) evidence.\r\n On Apr 8, 2013 9:04 PM, <r@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> undo CL 8318044 / c40f15e9e5ca\r\n>\r\n> Appears to break the darwin build. I'd rather not fight fires like this\r\n> while\r\n> we're in the final stages of cutting a release candidate.\r\n>\r\n> \u00ab\u00ab\u00ab original CL description\r\n> net: fix possible runtime.PollDesc leak when connect or listen fails\r\n>\r\n> Makes it possible to return the spent runtime.PollDesc to\r\n> runtime.pollcache descriptor pool when netFD.connect or\r\n> syscall.Listen fails.\r\n>\r\n> Fixes issue 5219.\r\n>\r\n> R=dvyukov, dave, bradfitz, adg\r\n> CC=golang-dev\r\n> https://codereview.appspot.**com/8318044<https://codereview.appspot.com/8318044>\r\n> \u00bb\u00bb\u00bb\r\n>\r\n> Please review this at https://codereview.appspot.**com/8559043/<https://codereview.appspot.com/8559043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/fd_unix.go\r\n>   M src/pkg/net/sock_posix.go\r\n>   M src/pkg/net/tcpsock_posix.go\r\n>   M src/pkg/net/unixsock_posix.go\r\n>\r\n>\r\n> Index: src/pkg/net/fd_unix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/fd_unix.go\r\n> +++ b/src/pkg/net/fd_unix.go\r\n> @@ -122,16 +122,12 @@\r\n>  func (fd *netFD) decref() {\r\n>         fd.sysmu.Lock()\r\n>         fd.sysref--\r\n> -       if fd.closing && fd.sysref == 0 {\r\n> +       if fd.closing && fd.sysref == 0 && fd.sysfile != nil {\r\n>                 // Poller may want to unregister fd in readiness\r\n> notification mechanism,\r\n>                 // so this must be executed before sysfile.Close().\r\n>                 fd.pd.Close()\r\n> -               if fd.sysfile != nil {\r\n> -                       fd.sysfile.Close()\r\n> -                       fd.sysfile = nil\r\n> -               } else {\r\n> -                       closesocket(fd.sysfd)\r\n> -               }\r\n> +               fd.sysfile.Close()\r\n> +               fd.sysfile = nil\r\n>                 fd.sysfd = -1\r\n>         }\r\n>         fd.sysmu.Unlock()\r\n> Index: src/pkg/net/sock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/sock_posix.go\r\n> +++ b/src/pkg/net/sock_posix.go\r\n> @@ -58,7 +58,7 @@\r\n>                         setWriteDeadline(fd, deadline)\r\n>                 }\r\n>                 if err = fd.connect(ursa); err != nil {\r\n> -                       fd.Close()\r\n> +                       closesocket(s)\r\n>                         return nil, err\r\n>                 }\r\n>                 fd.isConnected = true\r\n> Index: src/pkg/net/tcpsock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/tcpsock_posix.go\r\n> +++ b/src/pkg/net/tcpsock_posix.go\r\n> @@ -288,7 +288,7 @@\r\n>         }\r\n>         err = syscall.Listen(fd.sysfd, listenerBacklog)\r\n>         if err != nil {\r\n> -               fd.Close()\r\n> +               closesocket(fd.sysfd)\r\n>                 return nil, &OpError{\"listen\", net, laddr, err}\r\n>         }\r\n>         return &TCPListener{fd}, nil\r\n> Index: src/pkg/net/unixsock_posix.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/unixsock_posix.**go\r\n> +++ b/src/pkg/net/unixsock_posix.**go\r\n> @@ -271,7 +271,7 @@\r\n>         }\r\n>         err = syscall.Listen(fd.sysfd, listenerBacklog)\r\n>         if err != nil {\r\n> -               fd.Close()\r\n> +               closesocket(fd.sysfd)\r\n>                 return nil, &OpError{Op: \"listen\", Net: net, Addr: laddr,\r\n> Err: err}\r\n>         }\r\n>         return &UnixListener{fd, laddr.Name}, nil\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-09 04:20:53.481180",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Still not able to reproduce:\r\n\r\nok   runtime 15.109s\r\nok   runtime 15.532s\r\nok   runtime 15.073s\r\nok   runtime 15.426s\r\nok   runtime 15.222s\r\nok   runtime 15.079s\r\nok   runtime 15.116s\r\nok   runtime 15.081s\r\nok   runtime 15.496s\r\nok   runtime 15.132s\r\nok   runtime 15.063s\r\nok   runtime 15.159s\r\nok   runtime 15.351s\r\nok   runtime 17.043s\r\nok   runtime 15.065s\r\nok   runtime 15.115s\r\nok   runtime 16.739s\r\nok   runtime 15.577s\r\nok   runtime 15.143s\r\nok   runtime 15.081s\r\nok   runtime 16.522s\r\nok   runtime 15.542s\r\nok   runtime 15.110s\r\nok   runtime 15.135s\r\nok   runtime 16.326s\r\nok   runtime 15.343s\r\nok   runtime 15.420s\r\nok   runtime 18.588s\r\nok   runtime 15.118s\r\nok   runtime 15.119s\r\nok   runtime 15.466s\r\nok   runtime 16.625s\r\nok   runtime 15.089s\r\nok   runtime 15.175s\r\nok   runtime 15.485s\r\nok   runtime 15.184s\r\nok   runtime 15.266s\r\nok   runtime 15.096s\r\n\r\nI don't think the rollback is warranted\r\n\r\n\r\nOn 9 April 2013 14:20, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n\r\n> Considering Andrew's inability to reproduce even on the same machine, I'd\r\n> rather not revert yet until there's more (any) evidence.\r\n>  On Apr 8, 2013 9:04 PM, <r@golang.org> wrote:\r\n>\r\n>> Reviewers: golang-dev1,\r\n>>\r\n>> Message:\r\n>> Hello golang-dev@googlegroups.com,\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://code.google.com/p/go/\r\n>>\r\n>>\r\n>> Description:\r\n>> undo CL 8318044 / c40f15e9e5ca\r\n>>\r\n>> Appears to break the darwin build. I'd rather not fight fires like this\r\n>> while\r\n>> we're in the final stages of cutting a release candidate.\r\n>>\r\n>> \u00ab\u00ab\u00ab original CL description\r\n>> net: fix possible runtime.PollDesc leak when connect or listen fails\r\n>>\r\n>> Makes it possible to return the spent runtime.PollDesc to\r\n>> runtime.pollcache descriptor pool when netFD.connect or\r\n>> syscall.Listen fails.\r\n>>\r\n>> Fixes issue 5219.\r\n>>\r\n>> R=dvyukov, dave, bradfitz, adg\r\n>> CC=golang-dev\r\n>> https://codereview.appspot.**com/8318044<https://codereview.appspot.com/8318044>\r\n>> \u00bb\u00bb\u00bb\r\n>>\r\n>> Please review this at https://codereview.appspot.**com/8559043/<https://codereview.appspot.com/8559043/>\r\n>>\r\n>> Affected files:\r\n>>   M src/pkg/net/fd_unix.go\r\n>>   M src/pkg/net/sock_posix.go\r\n>>   M src/pkg/net/tcpsock_posix.go\r\n>>   M src/pkg/net/unixsock_posix.go\r\n>>\r\n>>\r\n>> Index: src/pkg/net/fd_unix.go\r\n>> ==============================**==============================**=======\r\n>> --- a/src/pkg/net/fd_unix.go\r\n>> +++ b/src/pkg/net/fd_unix.go\r\n>> @@ -122,16 +122,12 @@\r\n>>  func (fd *netFD) decref() {\r\n>>         fd.sysmu.Lock()\r\n>>         fd.sysref--\r\n>> -       if fd.closing && fd.sysref == 0 {\r\n>> +       if fd.closing && fd.sysref == 0 && fd.sysfile != nil {\r\n>>                 // Poller may want to unregister fd in readiness\r\n>> notification mechanism,\r\n>>                 // so this must be executed before sysfile.Close().\r\n>>                 fd.pd.Close()\r\n>> -               if fd.sysfile != nil {\r\n>> -                       fd.sysfile.Close()\r\n>> -                       fd.sysfile = nil\r\n>> -               } else {\r\n>> -                       closesocket(fd.sysfd)\r\n>> -               }\r\n>> +               fd.sysfile.Close()\r\n>> +               fd.sysfile = nil\r\n>>                 fd.sysfd = -1\r\n>>         }\r\n>>         fd.sysmu.Unlock()\r\n>> Index: src/pkg/net/sock_posix.go\r\n>> ==============================**==============================**=======\r\n>> --- a/src/pkg/net/sock_posix.go\r\n>> +++ b/src/pkg/net/sock_posix.go\r\n>> @@ -58,7 +58,7 @@\r\n>>                         setWriteDeadline(fd, deadline)\r\n>>                 }\r\n>>                 if err = fd.connect(ursa); err != nil {\r\n>> -                       fd.Close()\r\n>> +                       closesocket(s)\r\n>>                         return nil, err\r\n>>                 }\r\n>>                 fd.isConnected = true\r\n>> Index: src/pkg/net/tcpsock_posix.go\r\n>> ==============================**==============================**=======\r\n>> --- a/src/pkg/net/tcpsock_posix.go\r\n>> +++ b/src/pkg/net/tcpsock_posix.go\r\n>> @@ -288,7 +288,7 @@\r\n>>         }\r\n>>         err = syscall.Listen(fd.sysfd, listenerBacklog)\r\n>>         if err != nil {\r\n>> -               fd.Close()\r\n>> +               closesocket(fd.sysfd)\r\n>>                 return nil, &OpError{\"listen\", net, laddr, err}\r\n>>         }\r\n>>         return &TCPListener{fd}, nil\r\n>> Index: src/pkg/net/unixsock_posix.go\r\n>> ==============================**==============================**=======\r\n>> --- a/src/pkg/net/unixsock_posix.**go\r\n>> +++ b/src/pkg/net/unixsock_posix.**go\r\n>> @@ -271,7 +271,7 @@\r\n>>         }\r\n>>         err = syscall.Listen(fd.sysfd, listenerBacklog)\r\n>>         if err != nil {\r\n>> -               fd.Close()\r\n>> +               closesocket(fd.sysfd)\r\n>>                 return nil, &OpError{Op: \"listen\", Net: net, Addr: laddr,\r\n>> Err: err}\r\n>>         }\r\n>>         return &UnixListener{fd, laddr.Name}, nil\r\n>>\r\n>>\r\n>> --\r\n>>\r\n>> ---You received this message because you are subscribed to the Google\r\n>> Groups \"golang-dev\" group.\r\n>> To unsubscribe from this group and stop receiving emails from it, send an\r\n>> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n>> .\r\n>> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n>> .\r\n>>\r\n>>\r\n>>  --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-04-09 04:23:34.200710",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Agree. I prepped it just to have it, and it's looking like an\r\nunrelated failure. Is there a way to search the builder to find a\r\nsimilar failure in the past?\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-04-09 05:09:58.671130",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 9 April 2013 15:09, Rob Pike <r@golang.org> wrote:\r\n\r\n> Is there a way to search the builder to find a\r\n> similar failure in the past?\r\n>\r\n\r\nNo. Nice feature idea though.\r\n",
+			"disapproval": false,
+			"date": "2013-04-09 05:19:03.519160",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Apr 8, 2013 at 10:18 PM, Andrew Gerrand <adg@golang.org> wrote:\r\n\r\n>\r\n> On 9 April 2013 15:09, Rob Pike <r@golang.org> wrote:\r\n>\r\n>> Is there a way to search the builder to find a\r\n>> similar failure in the past?\r\n>>\r\n>\r\n> No. Nice feature idea though.\r\n>\r\n>\r\n\r\nwww.lmgtfy.com?q=\"darwin-amd64 broken by\" \"fatal\"\r\n",
+			"disapproval": false,
+			"date": "2013-04-09 05:25:16.559060",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"adg@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-04-12 14:51:33.794290",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 8559043: undo CL 8318044 / c40f15e9e5ca",
+	"created": "2013-04-09 04:00:35.840140",
+	"patchsets": [
+		1,
+		2001
+	],
+	"modified": "2013-04-12 14:51:35.782180",
+	"closed": true,
+	"issue": 8559043
+}

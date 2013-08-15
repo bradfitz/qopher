@@ -1,0 +1,128 @@
+{
+	"description": "cmd/go: fix data race on exitStatus\nFixes issue 2709.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"mpimenov@google.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/16 07:24:36, dvyukov wrote:\n> On 2012/01/16 07:17:26, bradfitz wrote:\n> > The go command isn't where one expects to find low-level atomic ops.\n> > \n> > Can this be fixed in a higher-level way?\n> \n> Makes sense. build.go uses a mutex to protect shared state. I will look into\n> this.\n\nbuild.go protects exitStatus as follows:\n\n\t\t// The actions run in parallel but all the updates to the\n\t\t// shared work state are serialized through b.exec.\n\t\tb.exec.Lock()\n\t\tdefer b.exec.Unlock()\n\n\t\tif err != nil {\n\t\t\tif err == errPrintedOutput {\n\t\t\t\texitStatus = 2\n\t\t\t} else {\n\t\t\t\terrorf(\"%s\", err)\n\t\t\t}\n\t\t\ta.failed = true\n\t\t}\n\nI can replace\n\t\tatomic.StoreInt32(&exitStatus, 1)\nwith\n\t\tb.exec.Lock()\n\t\texitStatus = 1\n\t\tb.exec.Unlock()\nDoes it make sense?",
+			"disapproval": false,
+			"date": "2012-01-16 07:39:24.833244",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 15, 2012 at 11:39 PM, <dvyukov@google.com> wrote:\n\n> On 2012/01/16 07:24:36, dvyukov wrote:\n>\n>> On 2012/01/16 07:17:26, bradfitz wrote:\n>> > The go command isn't where one expects to find low-level atomic ops.\n>> >\n>> > Can this be fixed in a higher-level way?\n>>\n>\n>  Makes sense. build.go uses a mutex to protect shared state. I will\n>>\n> look into\n>\n>> this.\n>>\n>\n> build.go protects exitStatus as follows:\n>\n>                // The actions run in parallel but all the updates to the\n>                // shared work state are serialized through b.exec.\n>                b.exec.Lock()\n>                defer b.exec.Unlock()\n>\n>                if err != nil {\n>                        if err == errPrintedOutput {\n>                                exitStatus = 2\n>                        } else {\n>                                errorf(\"%s\", err)\n>                        }\n>                        a.failed = true\n>                }\n>\n> I can replace\n>                atomic.StoreInt32(&exitStatus, 1)\n> with\n>                b.exec.Lock()\n>                exitStatus = 1\n>                b.exec.Unlock()\n> Does it make sense?\n>\n\nYeah, but be sure to document the locking rules somewhere, if they're not\nalready.\n",
+			"disapproval": false,
+			"date": "2012-01-16 17:12:49.923245",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-01-17 07:58:43.492215",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The go command isn't where one expects to find low-level atomic ops.\n\nCan this be fixed in a higher-level way?\n\n\nOn Sun, Jan 15, 2012 at 11:14 PM, <dvyukov@google.com> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com,\n> mpimenov@google.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> cmd/go: fix data race on exitStatus\n> Fixes issue 2709.\n>\n> Please review this at http://codereview.appspot.com/**5545064/<http://codereview.appspot.com/5545064/>\n>\n> Affected files:\n>  M src/cmd/go/main.go\n>  M src/cmd/go/test.go\n>\n>\n> Index: src/cmd/go/main.go\n> ==============================**==============================**=======\n> --- a/src/cmd/go/main.go\n> +++ b/src/cmd/go/main.go\n> @@ -82,7 +82,7 @@\n>        helpTestfunc,\n>  }\n>\n> -var exitStatus = 0\n> +var exitStatus int32 = 0\n>\n>  func main() {\n>        flag.Usage = usage\n> @@ -215,7 +215,7 @@\n>        for _, f := range atexitFuncs {\n>                f()\n>        }\n> -       os.Exit(exitStatus)\n> +       os.Exit(int(exitStatus))\n>  }\n>\n>  func fatalf(format string, args ...interface{}) {\n> Index: src/cmd/go/test.go\n> ==============================**==============================**=======\n> --- a/src/cmd/go/test.go\n> +++ b/src/cmd/go/test.go\n> @@ -15,6 +15,7 @@\n>        \"os/exec\"\n>        \"path/filepath\"\n>        \"strings\"\n> +       \"sync/atomic\"\n>        \"text/template\"\n>        \"time\"\n>        \"unicode\"\n> @@ -455,7 +456,7 @@\n>                // We were unable to build the binary.\n>                a.failed = false\n>                fmt.Fprintf(a.testOutput, \"FAIL\\t%s [build failed]\\n\",\n> a.p.ImportPath)\n> -               exitStatus = 1\n> +               atomic.StoreInt32(&exitStatus, 1)\n>                return nil\n>        }\n>\n> @@ -501,7 +502,7 @@\n>        }\n>\n>        fmt.Fprintf(a.testOutput, \"FAIL\\t%s\\t%s\\n\", a.p.ImportPath, t)\n> -       exitStatus = 1\n> +       atomic.StoreInt32(&exitStatus, 1)\n>        if len(out) > 0 {\n>                a.testOutput.Write(out)\n>                // assume printing the test binary's exit status is\n> superfluous\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-16 07:17:26.327782",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jan 17, 2012 at 12:30 AM, Russ Cox <rsc@golang.org> wrote:\n\n> Please leave this for me to fix.\n>\n\nAs you wish.\n",
+			"disapproval": false,
+			"date": "2012-01-17 07:58:27.396819",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, mpimenov@google.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-16 07:14:17.708893",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please leave this for me to fix.\n",
+			"disapproval": false,
+			"date": "2012-01-16 20:30:11.904111",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"mpimenov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/16 07:17:26, bradfitz wrote:\n> The go command isn't where one expects to find low-level atomic ops.\n> \n> Can this be fixed in a higher-level way?\n\nMakes sense. build.go uses a mutex to protect shared state. I will look into this.",
+			"disapproval": false,
+			"date": "2012-01-16 07:24:36.383860",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 5545064: cmd/go: fix data race on exitStatus",
+	"created": "2012-01-16 06:46:58.054517",
+	"patchsets": [
+		1,
+		2001,
+		4001
+	],
+	"modified": "2012-01-17 07:58:44.649685",
+	"closed": true,
+	"issue": 5545064
+}

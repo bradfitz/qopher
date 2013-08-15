@@ -1,0 +1,95 @@
+{
+	"description": "cmd/gc: Introduce per package symbol tables.\n\nThis takes the pressure off one of the most hot paths in the compiler. Profiling shows that samples in pkglookup go from 13% to 5% of the samples gathered.\n\n'time go build -a ./...' in pkg goes from\n\nreal    0m3.025s\nuser    0m7.142s\nsys     0m1.600s\n\nto\n\nreal    0m3.296s\nuser    0m7.006s\nsys     0m1.652s",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org",
+		"remyoudompheng@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-10-31 19:41:49.714880",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for looking into this.\r\n\r\nIf multiple hash tables are better than one hash table, that usually\r\nmeans that either the hash table is too small and not being expanded,\r\nor else we have a terrible hash function. We're certainly not\r\nexpanding the size of the hash table - it's fixed at NHASH - but I\r\ndon't know whether the reality is that the table is too small that we\r\nhave a bad hash function. I think it might make better use of memory\r\nto try to address whichever of those is true instead of splitting into\r\nmultiple hash tables.\r\n\r\nIf the hash function is full, I think it would be fine to set NHASH to\r\na power of two and then double it when the load factor gets too high\r\nand rehash.\r\n",
+			"disapproval": false,
+			"date": "2012-11-01 17:16:35.130700",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Nov 1, 2012 at 6:16 PM, Russ Cox <rsc@golang.org> wrote:\r\n> Thanks for looking into this.\r\n>\r\n> If multiple hash tables are better than one hash table, that usually\r\n> means that either the hash table is too small and not being expanded,\r\n> or else we have a terrible hash function. We're certainly not\r\n> expanding the size of the hash table - it's fixed at NHASH - but I\r\n> don't know whether the reality is that the table is too small that we\r\n> have a bad hash function. I think it might make better use of memory\r\n> to try to address whichever of those is true instead of splitting into\r\n> multiple hash tables.\r\n>\r\n> If the hash function is full, I think it would be fine to set NHASH to\r\n> a power of two and then double it when the load factor gets too high\r\n> and rehash.\r\n\r\nI took a closer look at this. Seems like the shared hash table is\r\nmostly filled with localpkg and runtimepkg symbols. Since the number\r\nof symbols per package varies wildly, having a fixed size per package\r\nhash table might not make sense.\r\n\r\nI also did some debugging using the printf hammer, printing the return\r\nvalue from the hash function every time a new symbol table entry is\r\nadded. It looks like there is some uneven distribution. I've attached\r\nthe output from gnuplot for others to see.\r\n",
+			"disapproval": false,
+			"date": "2012-11-01 22:34:23.185780",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/11/1 Daniel Morsing <daniel.morsing@gmail.com> wrote:\r\n> On Thu, Nov 1, 2012 at 6:16 PM, Russ Cox <rsc@golang.org> wrote:\r\n>> Thanks for looking into this.\r\n>>\r\n>> If multiple hash tables are better than one hash table, that usually\r\n>> means that either the hash table is too small and not being expanded,\r\n>> or else we have a terrible hash function. We're certainly not\r\n>> expanding the size of the hash table - it's fixed at NHASH - but I\r\n>> don't know whether the reality is that the table is too small that we\r\n>> have a bad hash function. I think it might make better use of memory\r\n>> to try to address whichever of those is true instead of splitting into\r\n>> multiple hash tables.\r\n>>\r\n>> If the hash function is full, I think it would be fine to set NHASH to\r\n>> a power of two and then double it when the load factor gets too high\r\n>> and rehash.\r\n>\r\n> I took a closer look at this. Seems like the shared hash table is\r\n> mostly filled with localpkg and runtimepkg symbols. Since the number\r\n> of symbols per package varies wildly, having a fixed size per package\r\n> hash table might not make sense.\r\n>\r\n> I also did some debugging using the printf hammer, printing the return\r\n> value from the hash function every time a new symbol table entry is\r\n> added. It looks like there is some uneven distribution. I've attached\r\n> the output from gnuplot for others to see.\r\n\r\nIn the symbol autotmp_0xyz, the characters x, y, z have a weight of 9,\r\n3, 1 in the hash function. That's a very small variability for a\r\ncommon name (more than 1000 temporaries in exp/types). Choosing a\r\nlarger value for PRIME1 (like 13 or 17) should be enough.\r\n",
+			"disapproval": false,
+			"date": "2012-11-01 22:54:23.166890",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> In the symbol autotmp_0xyz, the characters x, y, z have a weight of 9,\r\n> 3, 1 in the hash function. That's a very small variability for a\r\n> common name (more than 1000 temporaries in exp/types). Choosing a\r\n> larger value for PRIME1 (like 13 or 17) should be enough.\r\n\r\nI think the hash function is showing its age. I would suggest trying\r\nsomething like FNV1 and then use NHASH a power of two. If you do that\r\nand you record the full 32-bit hash in the symbol then you can also\r\ngrow the table to the next power of two when it gets too full.\r\n\r\nThanks.\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-11-06 19:12:04.101820",
+			"approval": false
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-11-18 17:46:07.532350",
+			"approval": false
+		}
+	],
+	"owner_email": "daniel.morsing@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "DMorsing",
+	"subject": "code review 6818070: cmd/gc: Introduce per package symbol tables.",
+	"created": "2012-10-31 19:38:15.178000",
+	"patchsets": [
+		1,
+		2001,
+		5001
+	],
+	"modified": "2012-11-18 17:46:09.345750",
+	"closed": true,
+	"issue": 6818070
+}

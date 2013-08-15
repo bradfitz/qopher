@@ -1,0 +1,79 @@
+{
+	"description": "strconv: do not submit",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"r@google.com"
+	],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-03-06 05:07:11.914666",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I like where this is heading.\n\nOn Mon, Mar 5, 2012 at 9:07 PM, <r@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://code.google.com/p/go/\n>\n>\n> Description:\n> strconv: do not submit\n>\n> Please review this at http://codereview.appspot.com/**5758046/<http://codereview.appspot.com/5758046/>\n>\n> Affected files:\n>  A src/pkg/strconv/export_test.go\n>  A src/pkg/strconv/makeisprint.go\n>  M src/pkg/strconv/quote.go\n>  M src/pkg/strconv/quote_test.go\n>  M src/pkg/unicode/Makefile\n>  M src/pkg/unicode/maketables.go\n>\n>\n> Index: src/pkg/strconv/export_test.go\n> ==============================**==============================**=======\n> new file mode 100644\n> --- /dev/null\n> +++ b/src/pkg/strconv/export_test.**go\n> @@ -0,0 +1,10 @@\n> +// Copyright 2009 The Go Authors. All rights reserved.\n> +// Use of this source code is governed by a BSD-style\n> +// license that can be found in the LICENSE file.\n> +\n> +package strconv\n> +\n> +// Export isPrint\n> +func IsPrint(r rune) bool {\n> +       return isPrint(r)\n> +}\n> Index: src/pkg/strconv/makeisprint.go\n> ==============================**==============================**=======\n> new file mode 100644\n> --- /dev/null\n> +++ b/src/pkg/strconv/makeisprint.**go\n> @@ -0,0 +1,28 @@\n> +// Copyright 2012 The Go Authors. All rights reserved.\n> +// Use of this source code is governed by a BSD-style\n> +// license that can be found in the LICENSE file.\n> +\n> +// +build ignore\n> +\n> +// Generate the properties table\n> +\n> +package main\n> +\n> +import (\n> +       \"unicode\"\n> +       \"fmt\"\n> +)\n> +\n> +func main() {\n> +       var p [256>>3]byte\n> +       for i := 0; i < 256; i++ {\n> +               if unicode.IsPrint(rune(i)) {\n> +                       p[i>>3] |= 1<<(uint(i)&7)\n> +               }\n> +       }\n> +       fmt.Printf(\"var isPrintable = [256>>3]byte{\\n\\t\")\n> +       for c := range p {\n> +               fmt.Printf(\"0x%.2x, \", p[c])\n> +       }\n> +       fmt.Printf(\"\\n}\\n\")\n> +}\n> Index: src/pkg/strconv/quote.go\n> ==============================**==============================**=======\n> --- a/src/pkg/strconv/quote.go\n> +++ b/src/pkg/strconv/quote.go\n> @@ -6,7 +6,6 @@\n>\n>  import (\n>        \"strings\"\n> -       \"unicode\"\n>        \"unicode/utf8\"\n>  )\n>\n> @@ -34,11 +33,11 @@\n>                        continue\n>                }\n>                if ASCIIonly {\n> -                       if r <= unicode.MaxASCII && unicode.IsPrint(r) {\n> +                       if r < utf8.RuneSelf && isPrint(r) {\n>                                buf = append(buf, byte(r))\n>                                continue\n>                        }\n> -               } else if unicode.IsPrint(r) {\n> +               } else if isPrint(r) {\n>                        n := utf8.EncodeRune(runeTmp[:], r)\n>                        buf = append(buf, runeTmp[:n]...)\n>                        continue\n> @@ -64,7 +63,7 @@\n>                                buf = append(buf, `\\x`...)\n>                                buf = append(buf, lowerhex[s[0]>>4])\n>                                buf = append(buf, lowerhex[s[0]&0xF])\n> -                       case r > unicode.MaxRune:\n> +                       case r > utf8.MaxRune:\n>                                r = 0xFFFD\n>                                fallthrough\n>                        case r < 0x10000:\n> @@ -246,7 +245,7 @@\n>                        value = v\n>                        break\n>                }\n> -               if v > unicode.MaxRune {\n> +               if v > utf8.MaxRune {\n>                        err = ErrSyntax\n>                        return\n>                }\n> Index: src/pkg/strconv/quote_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/strconv/quote_test.**go\n> +++ b/src/pkg/strconv/quote_test.**go\n> @@ -7,8 +7,18 @@\n>  import (\n>        . \"strconv\"\n>        \"testing\"\n> +       \"unicode\"\n>  )\n>\n> +// Verify that our isPrint agrees with unicode.IsPrint\n> +func TestIsPrint(t *testing.T) {\n> +       for r := rune(0); r <= unicode.MaxRune; r++ {\n> +               if IsPrint(r) != unicode.IsPrint(r) {\n> +                       t.Errorf(\"IsPrint(%U)=%t incorrect\", r, IsPrint(r))\n> +               }\n> +       }\n> +}\n> +\n>  type quoteTest struct {\n>        in    string\n>        out   string\n> Index: src/pkg/unicode/Makefile\n> ==============================**==============================**=======\n> --- a/src/pkg/unicode/Makefile\n> +++ b/src/pkg/unicode/Makefile\n> @@ -6,9 +6,14 @@\n>        go build maketables.go\n>\n>  tables:        maketables\n> -       ./maketables --tables=all > tables.go\n> +       ./maketables -local -tables=all > tables.go\n>        gofmt -w tables.go\n>\n> +isprint:       maketables\n> +       # The isprint tables, so strconv doesn't depend on the whole kit\n> and kaboodle.\n> +       ./maketables -local -tables=IsPrint -scripts=\"\" -props=\"\"\n> -cases=false -folds=false > isprint\n> +       gofmt -w isprint\n> +\n>  # Downloads from www.unicode.org, so not part\n>  # of standard test scripts.\n>  testtables: maketables\n> Index: src/pkg/unicode/maketables.go\n> ==============================**==============================**=======\n> --- a/src/pkg/unicode/maketables.**go\n> +++ b/src/pkg/unicode/maketables.**go\n> @@ -45,7 +45,7 @@\n>        \"URL of Unicode database directory\")\n>  var tablelist = flag.String(\"tables\",\n>        \"all\",\n> -       \"comma-separated list of which tables to generate; can be letter\")\n> +       \"comma-separated list of which tables to generate; can be letter;\n> or just IsPrint\")\n>  var scriptlist = flag.String(\"scripts\",\n>        \"all\",\n>        \"comma-separated list of which script tables to generate\")\n> @@ -55,6 +55,9 @@\n>  var cases = flag.Bool(\"cases\",\n>        true,\n>        \"generate case tables\")\n> +var folds = flag.Bool(\"folds\",\n> +       true,\n> +       \"generate fold tables\")\n>  var test = flag.Bool(\"test\",\n>        false,\n>        \"test existing tables; can be used to compare web data with package\n> data\")\n> @@ -404,6 +407,11 @@\n>        if *tablelist == \"\" {\n>                return\n>        }\n> +       if *tablelist == \"IsPrint\" {\n> +               category[\"IsPrint\"] = true // Go IsPrint: L M N P S plus '\n> '\n> +               println(\"IS PRINT\")\n> +               // Otherwise we don't generate it.\n> +       }\n>        // Find out which categories to dump\n>        list := strings.Split(*tablelist, \",\")\n>        if *tablelist == \"all\" {\n> @@ -431,7 +439,7 @@\n>        ndecl := 0\n>        for _, name := range list {\n>                if _, ok := category[name]; !ok {\n> -                       logger.Fatal(\"unknown category\", name)\n> +                       logger.Fatal(\"unknown category \", name)\n>                }\n>                // We generate an UpperCase name to serve as concise\n> documentation and an _UnderScored\n>                // name to store the data.  This stops godoc dumping all\n> the tables but keeps them\n> @@ -476,6 +484,17 @@\n>                }\n>                decl[ndecl] = varDecl\n>                ndecl++\n> +               if *tablelist == \"IsPrint\" {\n> +                       if name == \"IsPrint\" {\n> +                               // special case for IsPrint\n> +                               decl := fmt.Sprintf(\"var _%s =\n> &RangeTable{\\n\", name)\n> +                               dumpRange(\n> +                                       decl,\n> +                                       isPrint)\n> +                       }\n> +                       continue // ignore the rest; keep the output small\n> +\n> +               }\n>                if len(name) == 1 { // unified categories\n>                        decl := fmt.Sprintf(\"var _%s = &RangeTable{\\n\",\n> name)\n>                        dumpRange(\n> @@ -500,6 +519,10 @@\n>\n>  const format = \"\\t\\t{0x%04x, 0x%04x, %d},\\n\"\n>\n> +func isPrint(code rune) bool {\n> +       return unicode.IsPrint(code)\n> +}\n> +\n>  func dumpRange(header string, inCategory Op) {\n>        fmt.Print(header)\n>        next := rune(0)\n> @@ -1009,7 +1032,7 @@\n>  }\n>\n>  func printLatinProperties() {\n> -       if *test {\n> +       if *test || *proplist == \"\" {\n>                return\n>        }\n>        fmt.Println(\"var properties = [MaxLatin1+1]uint8{\")\n> @@ -1051,6 +1074,9 @@\n>  func (p runeSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }\n>\n>  func printCasefold() {\n> +       if !*folds {\n> +               return\n> +       }\n>        // Build list of case-folding groups attached to each canonical\n> folded char (typically lower case).\n>        var caseOrbit = make([][]rune, MaxChar+1)\n>        for j := range chars {\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-03-06 05:09:43.170116",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "do not review either\n\ni forgot this went to codereview. it's not intended to be looked at yet\n\n",
+			"disapproval": false,
+			"date": "2012-03-06 05:12:52.444353",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I didn't see anything. What CL?\n\nOn Mon, Mar 5, 2012 at 9:12 PM, Rob 'Commander' Pike <r@google.com> wrote:\n\n> do not review either\n>\n> i forgot this went to codereview. it's not intended to be looked at yet\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-03-06 05:13:14.961086",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-03-06 05:33:41.778196",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 5758046: strconv: do not submit",
+	"created": "2012-03-06 05:07:01.292304",
+	"patchsets": [
+		1
+	],
+	"modified": "2012-03-06 05:33:44.734163",
+	"closed": true,
+	"issue": 5758046
+}

@@ -1,0 +1,241 @@
+{
+	"description": "runtime: make GC stack scanning understand whether the function has started or not\nIt is required for preemptive scheduler, because the top frame function in a preempted\ngoroutine has not yet started (has not decremented SP), and so requires special handling.\nCurrently it happens only with runtime.goexit, but it is handled specially in several places (traceback, GC).\nThat special handling can be removed later.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"cshapiro@google.com",
+		"iant@golang.org",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have not tested it on arm.",
+			"disapproval": false,
+			"date": "2013-05-30 09:49:03.845850",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: cshapiro@google.com, iant@golang.org),\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-30 09:48:38.699920",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c\nFile src/pkg/runtime/traceback_x86.c (right):\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c#newcode86\nsrc/pkg/runtime/traceback_x86.c:86: started = pc > f->entry && f->frame >= sizeof(uintptr);\nI am not sure what \"f->frame >= sizeof(uintptr)\" means here.",
+			"disapproval": false,
+			"date": "2013-05-30 09:49:54.766600",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/mgc0.c#newcode1415\nsrc/pkg/runtime/mgc0.c:1415: // scan only args in this case.\nThis case is already handled below...\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/mgc0.c#newcode1485\nsrc/pkg/runtime/mgc0.c:1485: // The goroutine has not started. However, its incoming\n...right here.\n\nIs this somehow not working for you?",
+			"disapproval": false,
+			"date": "2013-05-30 19:03:39.704590",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c\nFile src/pkg/runtime/traceback_x86.c (right):\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c#newcode86\nsrc/pkg/runtime/traceback_x86.c:86: started = pc > f->entry && f->frame >= sizeof(uintptr);\nI tripped over this code a while ago.  I believe tries to determine if the function has executed beyond the prologue.",
+			"disapproval": false,
+			"date": "2013-05-30 19:07:24.294350",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/mgc0.c#newcode1415\nsrc/pkg/runtime/mgc0.c:1415: // scan only args in this case.\nOn 2013/05/30 19:03:39, cshapiro1 wrote:\n> This case is already handled below...\n\nI mean the *function*, not the *goroutine*.\nWith preemptive scheduler there will be other functions that \"not started\" (preempted before SUB SP). Current code does not handle that, \"fp = sp + f->frame\" is incorrect for them.\nI think that current handling of goexit is incorrect as well. You correctly handle not started goroutines below, but bottom frame of a running goroutine is goexit as well. For that goexit frame of a running goroutine you offset fp and scan locals, both things are incorrect.\nGeneric handling of \"not started\" function will allow to eliminate some corner cases as well, e.g. that special handling of not started goroutines below can be removed, and similar handling in gentraceback.\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c\nFile src/pkg/runtime/traceback_x86.c (right):\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c#newcode86\nsrc/pkg/runtime/traceback_x86.c:86: started = pc > f->entry && f->frame >= sizeof(uintptr);\nOn 2013/05/30 19:07:24, cshapiro1 wrote:\n> I tripped over this code a while ago.  I believe tries to determine if the\n> function has executed beyond the prologue.\n\nf->frame is static constant, it can't possibly do that...",
+			"disapproval": false,
+			"date": "2013-05-31 05:51:39.631290",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c\nFile src/pkg/runtime/traceback_x86.c (right):\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c#newcode86\nsrc/pkg/runtime/traceback_x86.c:86: started = pc > f->entry && f->frame >= sizeof(uintptr);\nOn 2013/05/30 09:49:54, dvyukov wrote:\n> I am not sure what \"f->frame >= sizeof(uintptr)\" means here.\n\nI think this is to avoid doing the wrong thing for functions with no frame information at all, for which f->frame will be 0.  In that case this code assumes that the frame size is simply sizeof(uintptr), for the return address.  That's a reasonable guess for the adjustment to fp.  But you shouldn't be using it to set the started variable.",
+			"disapproval": false,
+			"date": "2013-06-01 00:34:02.557950",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c\nFile src/pkg/runtime/traceback_x86.c (right):\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/traceback_x86.c#newcode86\nsrc/pkg/runtime/traceback_x86.c:86: started = pc > f->entry && f->frame >= sizeof(uintptr);\nOn 2013/06/01 00:34:02, iant wrote:\n> On 2013/05/30 09:49:54, dvyukov wrote:\n> > I am not sure what \"f->frame >= sizeof(uintptr)\" means here.\n> \n> I think this is to avoid doing the wrong thing for functions with no frame\n> information at all, for which f->frame will be 0.  In that case this code\n> assumes that the frame size is simply sizeof(uintptr), for the return address. \n> That's a reasonable guess for the adjustment to fp.  But you shouldn't be using\n> it to set the started variable.\n\nAha!\nI've fixed the code and added the comment.",
+			"disapproval": false,
+			"date": "2013-06-01 19:19:24.359490",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nWait for cshapiro.",
+			"disapproval": false,
+			"date": "2013-06-03 04:43:45.815030",
+			"approval": true
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/mgc0.c#newcode1415\nsrc/pkg/runtime/mgc0.c:1415: // scan only args in this case.\nOn 2013/05/31 05:51:39, dvyukov wrote:\n> I mean the *function*, not the *goroutine*.\n> With preemptive scheduler there will be other functions that \"not started\"\n> (preempted before SUB SP). Current code does not handle that, \"fp = sp +\n> f->frame\" is incorrect for them.\n\nOkay, I understand the difference.  I am somewhat unhappy with adding more complexity to gentraceback and having this spill over into addframeroots.\n\nThe big loop in gentraceback handles two significant cases.  The first is having a good values for the pc and sp.  Unwinding is easy.  The second is having pc and sp values which serve as an estimate.  Unwinding requires some effort.  The latter case happens at most once.  The former case happens sometimes for the first iteration and always for any remaining iterations.\n\nSimilarly, the new started case is false at most once and at the topmost frame.  I would prefer to have only one opportunity for it to fire.  I understand that the unstarted goroutine case cannot directly accomodate this situation but a one off handling around line 1508 is preferable to me.\n\nOverally, gentraceback needs to be cleaned up but this is not the change to do it in.\n\n> I think that current handling of goexit is incorrect as well. You correctly\n> handle not started goroutines below, but bottom frame of a running goroutine is\n> goexit as well. For that goexit frame of a running goroutine you offset fp and\n> scan locals, both things are incorrect.\n\nThere are 0 locals in runtime.goexit but frame is reported as 16.  This seems correct as runtime.goexit does a call.  The top 8 bytes will be scanned from sp covering the  argument to runtime.mcall and the 8 bytes below it will be ignored.  I am not sure how the fp is relevant as it is not used when scanning the locals.\n\nWhat am I missing?\n\n> Generic handling of \"not started\" function will allow to eliminate some corner\n> cases as well, e.g. that special handling of not started goroutines below can be\n> removed, and similar handling in gentraceback.\n\nIt would be nice to fold this all together.  I believe the not started goroutine case is partially obsolete.  The unknown arguments case can no longer occur.  I would be happy to see this folded into code around line 1508.",
+			"disapproval": false,
+			"date": "2013-06-04 01:17:15.114750",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/04 01:17:15, cshapiro1 wrote:\n> https://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/mgc0.c\n> File src/pkg/runtime/mgc0.c (right):\n> \n> https://codereview.appspot.com/9873045/diff/5001/src/pkg/runtime/mgc0.c#newcode1415\n> src/pkg/runtime/mgc0.c:1415: // scan only args in this case.\n> On 2013/05/31 05:51:39, dvyukov wrote:\n> > I mean the *function*, not the *goroutine*.\n> > With preemptive scheduler there will be other functions that \"not started\"\n> > (preempted before SUB SP). Current code does not handle that, \"fp = sp +\n> > f->frame\" is incorrect for them.\n> \n> Okay, I understand the difference.  I am somewhat unhappy with adding more\n> complexity to gentraceback and having this spill over into addframeroots.\n> \n> The big loop in gentraceback handles two significant cases.  The first is having\n> a good values for the pc and sp.  Unwinding is easy.  The second is having pc\n> and sp values which serve as an estimate.  Unwinding requires some effort.  The\n> latter case happens at most once.  The former case happens sometimes for the\n> first iteration and always for any remaining iterations.\n> \n> Similarly, the new started case is false at most once and at the topmost frame. \n> I would prefer to have only one opportunity for it to fire.  I understand that\n> the unstarted goroutine case cannot directly accomodate this situation but a one\n> off handling around line 1508 is preferable to me.\n\n\nIt can happen twice -- for the top frame and for the bottom frame (goexit).\n\nIf we handle the top non-started function specially in addstackroots, it will dup another piece of hardcode code from gentraceback. And that code will be platform-dependent, the current handling of non-started goroutines references thechar.\nMoreover, gentraceback will call the callback for the top non-started function anyway (or you propose to not call it?), so it will require some handling the callback anyway.\n\nI think it's better to move in the opposite direction -- remove special handling of non-started goroutines from addstackroots, and instead handle them on the general basis in the gentraceback callback. However, this requires https://codereview.appspot.com/9868044/, but Russ seem to be against it.\n\nOK, can you write the alternative CL that does what you suggest? Probably I just do not understand what you suggest and how it will look.\n\nMy next step was intended to be:\n\n-started = pc > f->entry;\n+started = pc > f->entry && (!topframe || !gp->preempted);\n\n\n\n> Overally, gentraceback needs to be cleaned up but this is not the change to do\n> it in.\n> \n> > I think that current handling of goexit is incorrect as well. You correctly\n> > handle not started goroutines below, but bottom frame of a running goroutine\n> is\n> > goexit as well. For that goexit frame of a running goroutine you offset fp and\n> > scan locals, both things are incorrect.\n> \n> There are 0 locals in runtime.goexit but frame is reported as 16.  This seems\n> correct as runtime.goexit does a call.  The top 8 bytes will be scanned from sp\n> covering the  argument to runtime.mcall and the 8 bytes below it will be\n> ignored.  I am not sure how the fp is relevant as it is not used when scanning\n> the locals.\n> \n> What am I missing?\n\nI am not saying that it does not work now. But it looks to me that it's only by coincidence. E.g. if we add some locals to goexit(), the callback will scan them, while it must not (it's not even started).\n\n\n\n> > Generic handling of \"not started\" function will allow to eliminate some corner\n> > cases as well, e.g. that special handling of not started goroutines below can\n> be\n> > removed, and similar handling in gentraceback.\n> \n> It would be nice to fold this all together.  I believe the not started goroutine\n> case is partially obsolete.  The unknown arguments case can no longer occur.  I\n> would be happy to see this folded into code around line 1508.",
+			"disapproval": false,
+			"date": "2013-06-04 08:39:10.330740",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Jun 4, 2013 at 1:39 AM, <dvyukov@google.com> wrote:\r\n\r\n> I think it's better to move in the opposite direction -- remove special\r\n> handling of non-started goroutines from addstackroots, and instead\r\n> handle them on the general basis in the gentraceback callback. However,\r\n> this requires https://codereview.appspot.**com/9868044/<https://codereview.appspot.com/9868044/>,\r\n> but Russ seem to\r\n> be against it.\r\n>\r\n\r\nOkay.  In the (hopefully) near future we will have one pointer map for each\r\ncall.  That includes the call generated by the linker to morestack in the\r\nfunction prologue.  With that information we should not have the special\r\ncase for unstarted goroutines or function calls when scanning the stack.\r\n\r\nOK, can you write the alternative CL that does what you suggest?\r\n> Probably I just do not understand what you suggest and how it will look.\r\n>\r\n\r\nI am going to be gone for 2 weeks starting tomorrow.  We seem to have an\r\nunderstanding that this change is not idea, but it if you need it to move\r\nforward in the mean time it is LGTM by me.  Maybe a TODO would be enough\r\nfor now.  I think we can revisit this once the GC information is available.\r\n\r\n\r\n> I am not saying that it does not work now. But it looks to me that it's\r\n> only by coincidence. E.g. if we add some locals to goexit(), the\r\n> callback will scan them, while it must not (it's not even started).\r\n>\r\n\r\nI see.  This will also be acommodated by better pointer maps.  The PC for\r\nthe goexit routine is at the start of its prologue.  Only the arguments to\r\ngoexit can be live.\r\n",
+			"disapproval": false,
+			"date": "2013-06-05 21:26:29.003110",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This CL will need to be revised if Dmitriy cleans up my CL tweaking the\r\ngoroutine representation. In that CL there is no longer a concept of a\r\nnon-started goroutine. There are just functions on the stack that haven't\r\nyet bumped the SP to allocate a frame (those are identified by pc ==\r\nf->entry). It should be very easy to adjust the code in that CL. I'm happy\r\nto do that review while Carl is away. When Carl comes back perhaps we'll\r\nhave fewer special cases in general.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-06-05 21:37:33.600020",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Jun 5, 2013 at 2:37 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> This CL will need to be revised if Dmitriy cleans up my CL tweaking the\r\n> goroutine representation. In that CL there is no longer a concept of a\r\n> non-started goroutine. There are just functions on the stack that haven't\r\n> yet bumped the SP to allocate a frame (those are identified by pc ==\r\n> f->entry). It should be very easy to adjust the code in that CL. I'm happy\r\n> to do that review while Carl is away. When Carl comes back perhaps we'll\r\n> have fewer special cases in general.\r\n\r\n\r\nThat all sounds good to me.  As an aside, is the pc==f->entry\r\ncorrespondence correct on the ARM?  I remember having some issues with that\r\na while ago.  I might be completely wrong but it should be easy to check as\r\npart of the aforementioned change.\r\n",
+			"disapproval": false,
+			"date": "2013-06-05 22:03:26.723580",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, pc==f->entry is the right test even on ARM.\nHowever, on the ARM, on entry to a function, there is no pushed return PC, so the arguments begin at the stack pointer, not one word later as on the x86.",
+			"disapproval": false,
+			"date": "2013-06-10 17:57:44.055330",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"cshapiro@google.com",
+				"iant@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-06-14 14:23:57.547880",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 9873045: runtime: make GC stack scanning understand whether the ...",
+	"created": "2013-05-30 09:45:28.940120",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		15001
+	],
+	"modified": "2013-06-14 14:23:59.091150",
+	"closed": true,
+	"issue": 9873045
+}

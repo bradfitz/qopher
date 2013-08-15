@@ -1,0 +1,197 @@
+{
+	"description": "text/template: Fix nil pointer dereference\n\nHandle *parse.IdentifierNode in evalArg(). This\nbug happens when evaluating a field or method\non an object returned from a template function\n(e.g. {{ MyFunction.Field1 }}))",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"r@golang.org",
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please add a test.",
+			"disapproval": false,
+			"date": "2013-03-22 15:55:29.812780",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "NOT LGTM\nThis is a can of worms that has been opened and closed multiple times.\nIf you're getting a crash, we can fix that, but you should not be assuming\na field is a function to be invoked unless it's the argument to an explicit\n\"call\" action. Otherwise it's impossible to distinguish a function value from\na function call, and things get hopelessly confusing.",
+			"disapproval": true,
+			"date": "2013-03-22 16:33:52.562560",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "To make things more clear, I've written this test:\n\n\npackage template\n\nimport (\n\t\"bytes\"\n\t\"testing\"\n\t\"text/template\"\n)\n\ntype Object struct {\n\tAttribute string\n}\n\nfunc (o *Object) Function() string {\n\treturn \"Function\"\n}\n\nfunc test7712050(t *testing.T, tmpl1 string, tmpl2 string) {\n\to := &Object{\"Attribute\"}\n\t// Create template which uses the object passed as an argument\n\tt1 := template.New(\"t1\")\n\tt1 = template.Must(t1.Parse(tmpl1))\n\tvar out1 bytes.Buffer\n\tt1.Execute(&out1, o)\n\ts1 := string(out1.Bytes())\n\n\t// Create another template which gets the object from a function\n\tt2 := template.New(\"t2\")\n\tt2.Funcs(template.FuncMap{\n\t\t\"GetObject\": func() interface{} {\n\t\t\treturn o\n\t\t},\n\t})\n\tt2 = template.Must(t2.Parse(tmpl2))\n\tvar out2 bytes.Buffer\n\tt2.Execute(&out2, o)\n\ts2 := string(out2.Bytes())\n\tif s1 != s2 {\n\t\tt.Error(\"%s != %s\", s1, s2)\n\t}\n}\n\nfunc Test7712050Attribute(t *testing.T) {\n\ttest7712050(t, \"{{ .Attribute }}\", \"{{ GetObject.Attribute }}\")\n}\n\nfunc Test7712050Func(t *testing.T) {\n\ttest7712050(t, \"{{ .Function }}\", \"{{ GetObject.Function }}\")\n}\n\nfunc Test7712050Both(t *testing.T) {\n\ttest7712050(t, \"{{ .Attribute }} {{ .Function }}\", \"{{ GetObject.Attribute }} {{ GetObject.Function }}\")\n}\n\nRunning it with the current go tip I get this result:\n\n=== RUN Test7712050Attribute\n--- PASS: Test7712050Attribute (0.00 seconds)\npanic: runtime error: invalid memory address or nil pointer dereference [recovered]\n\tpanic: runtime error: invalid memory address or nil pointer dereference [recovered]\n\tpanic: runtime error: invalid memory address or nil pointer dereference\n[signal 0xb code=0x1 addr=0x98 pc=0x490d73]\n\ngoroutine 3 [running]:\ntesting.func\u00b7004()\n\t/home/fiam/go/src/pkg/testing/testing.go:341 +0xbc\ntemplate.errRecover(0x7f97d3b5ee40)\n\t/home/fiam/gocode/src/template/exec.go:100 +0xb7\ntemplate.(*state).evalArg(0xc200088500, 0x5248a0, 0xc20007a330, 0x160, 0x0, ...)\n\t/home/fiam/gocode/src/template/exec.go:624 +0x413\ntemplate.(*state).evalChainNode(0xc200088500, 0x5248a0, 0xc20007a330, 0x160, 0xc2000884c0, ...)\n\t/home/fiam/gocode/src/template/exec.go:410 +0xbc\ntemplate.(*state).evalCommand(0xc200088500, 0x5248a0, 0xc20007a330, 0x160, 0xc20007b690, ...)\n\t/home/fiam/gocode/src/template/exec.go:348 +0x2b0\ntemplate.(*state).evalPipeline(0xc200088500, 0x5248a0, 0xc20007a330, 0x160, 0xc20006b320, ...)\n\t/home/fiam/gocode/src/template/exec.go:324 +0x150\ntemplate.(*state).walk(0xc200088500, 0x5248a0, 0xc20007a330, 0x160, 0xc20006b230, ...)\n\t/home/fiam/gocode/src/template/exec.go:159 +0x105\ntemplate.(*state).walk(0xc200088500, 0x5248a0, 0xc20007a330, 0x160, 0xc20006b280, ...)\n\t/home/fiam/gocode/src/template/exec.go:167 +0x6f1\ntemplate.(*Template).Execute(0xc200088480, 0xc20007b600, 0xc20006e460, 0x5248a0, 0xc20007a330, ...)\n\t/home/fiam/gocode/src/template/exec.go:147 +0x2e5\ntest4.test7712050(0xc20007c090, 0x56b9d0, 0x10, 0x5743d0, 0x19, ...)\n\t/home/fiam/gocode/src/test4/7712050_test.go:35 +0x3a5\ntest4.Test7712050Attribute(0xc20007c090)\n\t/home/fiam/gocode/src/test4/7712050_test.go:43 +0x50\ntesting.tRunner(0xc20007c090, 0x61f160)\n\t/home/fiam/go/src/pkg/testing/testing.go:346 +0x8a\ncreated by testing.RunTests\n\t/home/fiam/go/src/pkg/testing/testing.go:426 +0x86b\n\ngoroutine 1 [chan receive]:\ntesting.RunTests(0x5861e8, 0x61f160, 0x3, 0x3, 0x1, ...)\n\t/home/fiam/go/src/pkg/testing/testing.go:427 +0x88e\ntesting.Main(0x5861e8, 0x61f160, 0x3, 0x3, 0x623740, ...)\n\t/home/fiam/go/src/pkg/testing/testing.go:358 +0x8a\nmain.main()\n\ttest4/_test/_testmain.go:47 +0x9a\nexit status 2\nFAIL\ttest4\t0.089s\n\nThe nil pointer dereference happens on line 626 in exec.go, because typ is nil when switch typ.Kind() is reached. It is my understanding that in this code path with typ == nil, n can only represent a function call (I might be wrong on that, since the template pkg is quite complex), so with the following patch both this test and all the tests in text/template pass:\n\ndiff -r d040d5f08d5d src/pkg/text/template/exec.go\n--- a/src/pkg/text/template/exec.go\tWed Mar 27 05:59:06 2013 -0700\n+++ b/src/pkg/text/template/exec.go\tWed Mar 27 17:16:36 2013 +0100\n@@ -619,6 +619,10 @@\n \t\treturn s.validateType(s.evalVariableNode(dot, arg, nil, zero), typ)\n \tcase *parse.PipeNode:\n \t\treturn s.validateType(s.evalPipeline(dot, arg), typ)\n+\tcase *parse.IdentifierNode:\n+\t\tif typ == nil {\n+\t\t\treturn s.evalFunction(dot, arg, arg, nil, zero)\n+\t\t}\n \t}\n \tswitch typ.Kind() {\n \tcase reflect.Bool:\n\n\n=== RUN Test7712050Attribute\n--- PASS: Test7712050Attribute (0.00 seconds)\n=== RUN Test7712050Func\n--- PASS: Test7712050Func (0.00 seconds)\n=== RUN Test7712050Both\n--- PASS: Test7712050Both (0.00 seconds)\nPASS\nok  \ttest4\t0.037s\n\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-03-27 16:18:42.786370",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On a tangential note, you need to start checking the error returns\r\nfrom template.Execute.\r\n\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-03-27 20:11:21.116670",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "As I said before, you may have a crash and there is clearly a bug in\r\nthe template executor but the fix is not correct. GetObject is a\r\nfunction you must invoke. You cannot write\r\n  f.x\r\nwhere f is a function that must be called. You must use the \"call\"\r\nbuiltin to call the function and with the value it returns, you can\r\naddress the field.\r\n\r\nNow that you have provided an example of the crash I will look into\r\nthe correct fix.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-03-27 17:03:03.195570",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Rob,\n\nCould you please clarify why using \"call\" is required? I was under the impression that call was only needed when you wanted to pass arguments. Take a look at the following test:\n\npackage template\n\nimport (\n\t\"fmt\"\n\t\"bytes\"\n\t\"template\"\n\t\"testing\"\n)\n\ntype Object struct {\n\tAttribute string\n}\n\nfunc (o *Object) Function() string {\n\treturn \"Function\"\n}\n\nfunc (o *Object) Object() *Object {\n\treturn o\n}\n\nfunc execute(t *testing.T, o *Object, tmpl string) string {\n\tt1 := template.New(\"t1\")\n\tt1.Funcs(template.FuncMap{\n\t\t\"GetObject\": func() interface{} {\n\t\t\treturn o\n\t\t},\n\t})\n\tt1 = template.Must(t1.Parse(tmpl))\n\tvar out1 bytes.Buffer\n\tt1.Execute(&out1, o)\n\treturn string(out1.Bytes())\n}\n\nfunc testTemplates(t *testing.T, tmpl1 string, tmpl2 string) {\n\to := &Object{\"Attribute\"}\n\ts1 := execute(t, o, tmpl1)\n\ts2 := execute(t, o, tmpl2)\n\tif s1 != s2 {\n\t\tt.Errorf(\"\\\"%s\\\" != \\\"%s\\\" (templates were \\\"%s\\\" and \\\"%s\\\"\", s1, s2, tmpl1, tmpl2)\n\t} else {\n\t    fmt.Printf(\"Templates \\\"%s\\\" and \\\"%s\\\" produced and equal result: \\\"%s\\\" \\n\", tmpl1, tmpl2, s1)\n\t}\n}\n\nfunc Test7712050(t *testing.T) {\n\ttestTemplates(t, \"{{ .Attribute }}\", \"{{ .Object.Attribute }}\")\n\ttestTemplates(t, \"{{ .Function }}\", \"{{ .Object.Function }}\")\n\ttestTemplates(t, \"{{ .Attribute }}\", \"{{ GetObject.Attribute }}\")\n\ttestTemplates(t, \"{{ .Function }}\", \"{{ GetObject.Function }}\")\n}\n\n=== RUN Test7712050\nTemplates \"{{ .Attribute }}\" and \"{{ .Object.Attribute }}\" produced and equal result: \"Attribute\" \nTemplates \"{{ .Function }}\" and \"{{ .Object.Function }}\" produced and equal result: \"Function\" \n--- PASS: Test7712050 (0.00 seconds)\npanic: runtime error: invalid memory address or nil pointer dereference [recovered]\n\tpanic: runtime error: invalid memory address or nil pointer dereference [recovered]\n\tpanic: runtime error: invalid memory address or nil pointer dereference\n[signal 0xb code=0x1 addr=0x98 pc=0x490ee3]\n\ngoroutine 3 [running]:\ntesting.func\u00b7004()\n\t/home/fiam/go/src/pkg/testing/testing.go:341 +0xbc\ntemplate.errRecover(0x7f231bd0adc8)\n\t/home/fiam/gocode/src/template/exec.go:100 +0xb7\ntemplate.(*state).evalArg(0xc20007f740, 0x52cca0, 0xc200068610, 0x160, 0x0, ...)\n\t/home/fiam/gocode/src/template/exec.go:628 +0x413\ntemplate.(*state).evalChainNode(0xc20007f740, 0x52cca0, 0xc200068610, 0x160, 0xc20007f700, ...)\n\t/home/fiam/gocode/src/template/exec.go:410 +0xbc\ntemplate.(*state).evalCommand(0xc20007f740, 0x52cca0, 0xc200068610, 0x160, 0xc2000972a0, ...)\n\t/home/fiam/gocode/src/template/exec.go:348 +0x2b0\ntemplate.(*state).evalPipeline(0xc20007f740, 0x52cca0, 0xc200068610, 0x160, 0xc20006c4b0, ...)\n\t/home/fiam/gocode/src/template/exec.go:324 +0x150\ntemplate.(*state).walk(0xc20007f740, 0x52cca0, 0xc200068610, 0x160, 0xc20006c230, ...)\n\t/home/fiam/gocode/src/template/exec.go:159 +0x105\ntemplate.(*state).walk(0xc20007f740, 0x52cca0, 0xc200068610, 0x160, 0xc20006c280, ...)\n\t/home/fiam/gocode/src/template/exec.go:167 +0x6f1\ntemplate.(*Template).Execute(0xc20007f6c0, 0xc20006f9c0, 0xc20007e380, 0x52cca0, 0xc200068610, ...)\n\t/home/fiam/gocode/src/template/exec.go:147 +0x2e5\ntest4.execute(0xc200086000, 0xc200068610, 0x575430, 0x19, 0xc200068690, ...)\n\t/home/fiam/gocode/src/test4/7712050_test.go:31 +0x1ec\ntest4.testTemplates(0xc200086000, 0x56ca70, 0x10, 0x575430, 0x19, ...)\n\t/home/fiam/gocode/src/test4/7712050_test.go:38 +0xd0\ntest4.Test7712050(0xc200086000)\n\t/home/fiam/gocode/src/test4/7712050_test.go:49 +0xc2\ntesting.tRunner(0xc200086000, 0x61da80)\n\t/home/fiam/go/src/pkg/testing/testing.go:346 +0x8a\ncreated by testing.RunTests\n\t/home/fiam/go/src/pkg/testing/testing.go:426 +0x86b\n\ngoroutine 1 [chan receive]:\ntesting.RunTests(0x587290, 0x61da80, 0x1, 0x1, 0x1, ...)\n\t/home/fiam/go/src/pkg/testing/testing.go:427 +0x88e\ntesting.Main(0x587290, 0x61da80, 0x1, 0x1, 0x625600, ...)\n\t/home/fiam/go/src/pkg/testing/testing.go:358 +0x8a\nmain.main()\n\ttest4/_test/_testmain.go:43 +0x9a\nexit status 2\nFAIL\ttest4\t0.028s\n\nCalling the function on the object without using the call builtin (e.g. .Object.Function ) seems to work just fine. The problem happens when evaluating a pipeline with the first element being an identifier (GetObject in this case), because the executor doesn't seem to be prepared to deal with that. Keep in mind that the crash happens when evalArg() tries to evaluate \"GetObject\", not when evalArg() tries to evaluate \"Function\".\n\nSince any fields/functions on the object passed to the template must be prefixed with a dot, I think that if the executor finds an identifier without a dot in it MUST be a function which was previously added using template.Funcs(). In fact, looking at like parse.go:591 (function term()) it seems that the parser assumes exactly that:\n\n       case itemIdentifier:\n                if !t.hasFunction(token.val) {\n                        t.errorf(\"function %q not defined\", token.val)\n                }   \n                return NewIdentifier(token.val).SetPos(token.pos)\n\nWhile the fix I provided might not be correct, the code in parse.go suggest that the test cases in this message should pass without any modifications (e.g. without adding \"call\").\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-03-27 18:48:06.667610",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7861046 shows the way. You need\r\nparentheses to chain a function call.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-03-27 20:03:05.870390",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Also see issue 3999.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-03-27 20:03:40.610370",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The use of templates is incorrect, but there is a bug in the template\r\npackage, fixed at https://codereview.appspot.com/7861046/ .\r\n\r\nTo avoid ambiguity in execution, in a function invocation starting a\r\nfield chain, such as fn.field1.field2,\r\nthe function must be parenthesized: (fn).field1.field2.  It's\r\nessentially the same issue as distinguishing a function value from a\r\nfunction call in Go, made more confusing by the autoevaluations\r\nperformed by the template package.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-03-27 20:14:42.122820",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/27 20:03:40, r wrote:\n> Also see issue 3999.\n> \n> -rob\n\nhttps://codereview.appspot.com/3999/ says there's no such issue.\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-03-27 21:10:58.692710",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/27 20:11:21, r wrote:\n> On a tangential note, you need to start checking the error returns\n> from template.Execute.\n> \n> \n> -rob\n\nI do check them, but the point of that test was demostrating the nil pointer deference. No need to complicate the code with (in that case) useless error checking.\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-03-27 21:00:22.656870",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> To avoid ambiguity in execution, in a function invocation starting a\n> field chain, such as fn.field1.field2,\n> the function must be parenthesized: (fn).field1.field2.  It's\n> essentially the same issue as distinguishing a function value from a\n> function call in Go, made more confusing by the autoevaluations\n> performed by the template package.\n\nRegarding templates, I really can't see any ambiguity in fn.field1.field2, since functions don't have attributes. Also, .field1.fn.field2 is correctly executed without any parenthesis. I think that's pretty inconsistent and not intuitive at all. Parenthesis should be either always required or never required, and the fact that the pipe starts with a field or a function should be irrelevant.\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-03-27 21:05:17.702230",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Try golang.org/issue/3999\r\n\r\nOn 28/03/2013, at 8:10, alberto.garcia.hierro@gmail.com wrote:\r\n\r\n> On 2013/03/27 20:03:40, r wrote:\r\n>> Also see issue 3999.\r\n> \r\n>> -rob\r\n> \r\n> https://codereview.appspot.com/3999/ says there's no such issue.\r\n> \r\n> Regards,\r\n> Alberto\r\n> \r\n> https://codereview.appspot.com/7712050/\r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-03-27 21:13:13.125880",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"r@golang.org",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/27 21:13:13, dfc wrote:\n> Try golang.org/issue/3999\n\nThanks!",
+			"disapproval": false,
+			"date": "2013-03-27 21:27:07.504600",
+			"approval": false
+		}
+	],
+	"owner_email": "alberto.garcia.hierro@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Hierro",
+	"subject": "text/template: Fix nil pointer dereference",
+	"created": "2013-03-19 19:36:00.741750",
+	"patchsets": [
+		1,
+		2001
+	],
+	"modified": "2013-03-27 22:54:51.927710",
+	"closed": true,
+	"issue": 7712050
+}

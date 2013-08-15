@@ -1,0 +1,160 @@
+{
+	"description": "crypto/tls: use windows's lazy root fetching\n\nFixes issue 2997.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"kalthorn@gmail.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"agl@golang.org",
+		"rsc@golang.org",
+		"alex.brainman@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kalthorn@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/26 21:18:09, agl1 wrote:\n> Thank you for doing the work but I'm afraid that I must admit to feeling that\n> this isn't right. It's also crypto/tls specific rather than being available to\n> any users of crypto/x509.\n> \n> My feeling is that crypto/x509 can export a *CertPool on Windows meaning `the\n> system roots' and then crypto/x509.*Certificate.Verify can recognise this magic\n> and have CAPI build the chains directly. CAPI is generally very good code.\n> \n> I think this reuses much of this CL and hopefully the result is cleaner and more\n> general.\n\nSGTM, but can we do this without adding exports to crypto/x509 (I suppose that would break the API freeze)?\n\nI suppose we could overload a nil CertPool to mean system roots for Windows, and change it after Go 1. Any better suggestions?",
+			"disapproval": false,
+			"date": "2012-02-26 21:35:07.901733",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kalthorn@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/26 21:41:01, agl1 wrote:\n> On Sun, Feb 26, 2012 at 4:35 PM,  <mailto:krautz@gmail.com> wrote:\n> > I suppose we could overload a nil CertPool to mean system roots for\n> > Windows, and change it after Go 1. Any better suggestions?\n> \n> Oh yes, absolutely. I think nil should mean system roots in\n> crypto/tls. Simply adding exports doesn't break an API, even if other\n> packages in the core use them, it's only when existing, external, code\n> would have to change that it's an issue.\n\nI actually meant in crypto/x509 -- to avoid adding an export. But if adding one is fine, I'll do that.\n\nShould I just move all root fetchers to crypto/x509 and export their pools via x509.*SystemRootPool while I'm there?",
+			"disapproval": false,
+			"date": "2012-02-26 21:55:10.210211",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Feb 26, 2012 at 4:35 PM,  <krautz@gmail.com> wrote:\n> I suppose we could overload a nil CertPool to mean system roots for\n> Windows, and change it after Go 1. Any better suggestions?\n\nOh yes, absolutely. I think nil should mean system roots in\ncrypto/tls. Simply adding exports doesn't break an API, even if other\npackages in the core use them, it's only when existing, external, code\nwould have to change that it's an issue.\n\n\nCheers\n\nAGL\n",
+			"disapproval": false,
+			"date": "2012-02-26 21:41:01.486703",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kalthorn@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/26 23:03:10, brainman wrote:\n> Thank you for doing it. I am not expert in this area, so take my comments with a\n> grain of salt.\n> \n> Alex\n\nHi Alex,\n\nI'll abandon this prepare a CL that moves this to crypto/x509 intsead.\n\n> \n> http://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/handshake_client.go\n> File src/pkg/crypto/tls/handshake_client.go (left):\n> \n> http://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/handshake_client.go#oldcode103\n> src/pkg/crypto/tls/handshake_client.go:103: if !c.config.InsecureSkipVerify {\n> What about similar code in handshake_server.go?\n> \n> http://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/handshake_client.go#oldcode117\n> src/pkg/crypto/tls/handshake_client.go:117: c.verifiedChains, err =\n> certs[0].Verify(opts)\n> I think your logic is flawed here (for windows). You are checking against root\n> certificates that you have loaded at the start of your program. Well, if you\n> program runs for a while, these could change. Also, as we discovered\n> (http://code.google.com/p/go/issues/detail?id=2997), root certificate could be\n> missing - how do you know that one of these certificates is not been revoked (or\n> something) and should be invalid.\n> \n> I would not even bother loading root certificates at any stage on windows, but\n> just use Windows api when needed. Just have verifyCert function that you call to\n> validate certificate. The function will load root certs and use\n> certs[0].Verify(opts) on unix, but on windows, it will call correspondent\n> Windows api.\n\nWhen we move this to crypto/x509, it will not load the root certs. It will just use CAPI calls to fetch the chains.\n\nIn this CL, the only functionality that the call to CAPI gives us, is the ability to force Windows to update its stores (if possible).\n\n> \n> http://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/root_windows.go\n> File src/pkg/crypto/tls/root_windows.go (right):\n> \n> http://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/root_windows.go#newcode49\n> src/pkg/crypto/tls/root_windows.go:49: para.RequestedUsage.Usage.UsageIdentifier\n> = nil\n> I think you need to be more selective at what certificates you consider. See\n> http://stackoverflow.com/questions/7340504/whats-the-correct-way-to-verify-an-ssl-certificate-in-win32\n> or http://www.coastrd.com/c-schannel-smtp for examples.\n\nIn this CL, it's just attempting to update the root store, so any usage will do. The Go code is still doing the verification.\n\n> http://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/root_windows.go#newcode58\n> src/pkg/crypto/tls/root_windows.go:58: if chain.TrustStatus.ErrorStatus !=\n> syscall.CERT_TRUST_NO_ERROR {\n> Why aren't you using CertVerifyCertificateChainPolicy to decide on the outcome?\n> (http://stackoverflow.com/questions/7340504/whats-the-correct-way-to-verify-an-ssl-certificate-in-win32)\n\nFor this CL it's just a flag telling us whether a fetch might have occurred.",
+			"disapproval": false,
+			"date": "2012-02-26 23:18:21.273410",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kalthorn@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-02-26 23:19:35.675508",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"krautz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kalthorn@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for doing the work but I'm afraid that I must admit to feeling that this isn't right. It's also crypto/tls specific rather than being available to any users of crypto/x509.\n\nMy feeling is that crypto/x509 can export a *CertPool on Windows meaning `the system roots' and then crypto/x509.*Certificate.Verify can recognise this magic and have CAPI build the chains directly. CAPI is generally very good code.\n\nI think this reuses much of this CL and hopefully the result is cleaner and more general.",
+			"disapproval": false,
+			"date": "2012-02-26 21:18:09.888385",
+			"approval": false
+		},
+		{
+			"sender": "krautz@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kalthorn@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, agl@golang.org, rsc@golang.org, alex.brainman@gmail.com (cc: golang-dev@googlegroups.com, kalthorn@gmail.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-25 16:52:48.094354",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"krautz@gmail.com",
+				"golang-dev@googlegroups.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"kalthorn@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thank you for doing it. I am not expert in this area, so take my comments with a grain of salt.\n\nAlex\n\nhttp://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/handshake_client.go\nFile src/pkg/crypto/tls/handshake_client.go (left):\n\nhttp://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/handshake_client.go#oldcode103\nsrc/pkg/crypto/tls/handshake_client.go:103: if !c.config.InsecureSkipVerify {\nWhat about similar code in handshake_server.go?\n\nhttp://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/handshake_client.go#oldcode117\nsrc/pkg/crypto/tls/handshake_client.go:117: c.verifiedChains, err = certs[0].Verify(opts)\nI think your logic is flawed here (for windows). You are checking against root certificates that you have loaded at the start of your program. Well, if you program runs for a while, these could change. Also, as we discovered (http://code.google.com/p/go/issues/detail?id=2997), root certificate could be missing - how do you know that one of these certificates is not been revoked (or something) and should be invalid.\n\nI would not even bother loading root certificates at any stage on windows, but just use Windows api when needed. Just have verifyCert function that you call to validate certificate. The function will load root certs and use certs[0].Verify(opts) on unix, but on windows, it will call correspondent Windows api.\n\nhttp://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/root_windows.go\nFile src/pkg/crypto/tls/root_windows.go (right):\n\nhttp://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/root_windows.go#newcode49\nsrc/pkg/crypto/tls/root_windows.go:49: para.RequestedUsage.Usage.UsageIdentifier = nil\nI think you need to be more selective at what certificates you consider. See http://stackoverflow.com/questions/7340504/whats-the-correct-way-to-verify-an-ssl-certificate-in-win32 or http://www.coastrd.com/c-schannel-smtp for examples.\n\nhttp://codereview.appspot.com/5694078/diff/2023/src/pkg/crypto/tls/root_windows.go#newcode58\nsrc/pkg/crypto/tls/root_windows.go:58: if chain.TrustStatus.ErrorStatus != syscall.CERT_TRUST_NO_ERROR {\nWhy aren't you using CertVerifyCertificateChainPolicy to decide on the outcome? (http://stackoverflow.com/questions/7340504/whats-the-correct-way-to-verify-an-ssl-certificate-in-win32)",
+			"disapproval": false,
+			"date": "2012-02-26 23:03:10.339169",
+			"approval": false
+		}
+	],
+	"owner_email": "krautz@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "mkrautz",
+	"subject": "code review 5694078: crypto/tls: use windows's lazy root fetching",
+	"created": "2012-02-25 15:54:40.209631",
+	"patchsets": [
+		1,
+		2001,
+		3001,
+		3002,
+		2023
+	],
+	"modified": "2012-02-26 23:19:36.995401",
+	"closed": true,
+	"issue": 5694078
+}

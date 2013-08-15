@@ -1,0 +1,119 @@
+{
+	"description": "5l,6l: Implement -shared in terms of external linking (linux/adm64+linux/arm)\r\n\r\nThe -shared flag to 6l outputs a shared library, implemented in Go\r\nand callable from non-Go programs such as C.\r\n\r\nThe main part of this CL change the thread local storage model.\r\nGo uses the fastest and least general mode, local exec. TLS data in shared\r\nlibraries normally requires at least the local dynamic mode, however, this CL\r\ninstead opts for using the initial exec mode. Initial exec mode is faster than\r\nlocal dynamic mode and can be used in linux since the linker has reserved a\r\nlimited amount of TLS space for performance sensitive TLS code.\r\n\r\nInitial exec mode requires an extra load from the GOT table to determine the\r\nTLS offset. This penalty will not be paid if ld is not in -shared mode, since\r\nTLS accesses will be reduced to local exec.\r\n\r\nThe elf sections .init_array and .rela.init_array are added to register the Go\r\nruntime entry with cgo at library load time.\r\n\r\nThe \"hidden\" attribute is added to Cgo functions called from Go, since Go\r\ndoes not generate call through the GOT table, and adding non-GOT relocations for\r\na global function is not supported by gcc. Cgo symbols don't need to be global\r\nand avoiding the GOT table is also faster.\r\n\r\nThe changes to 8l are only removes code relevant to the old -shared mode where internal linking was used.\r\n\r\nThis CL only address the low level linker work. It can be submitted by itself, but to be useful, the runtime changes in CL 9738047 is also needed.\r\n\r\nDesign discussion at https://groups.google.com/forum/?fromgroups#!topic/golang-nuts/zmjXkGrEx6Q",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-05-29 20:19:08.589870",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for working on this. I have the same reservations about this code as I do about the runtime. We really need to know what the end target is before we start making changes again. Let's continue the discussion on the golang-nuts thread.\n\n",
+			"disapproval": false,
+			"date": "2013-06-03 20:20:02.248450",
+			"approval": false
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Added linux/arm support and updated to apply to tip.",
+			"disapproval": false,
+			"date": "2013-06-24 15:23:05.874880",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9733044/diff/29027/src/cmd/5l/span.c\nFile src/cmd/5l/span.c (right):\n\nhttps://codereview.appspot.com/9733044/diff/29027/src/cmd/5l/span.c#newcode580\nsrc/cmd/5l/span.c:580: return C_LCONADDR;\nBefore there was a -shared flag, this was C_LCON, not C_LCONADDR.\nWhy is it changing behavior?\n\nhttps://codereview.appspot.com/9733044/diff/29027/src/cmd/6a/a.y\nFile src/cmd/6a/a.y (right):\n\nhttps://codereview.appspot.com/9733044/diff/29027/src/cmd/6a/a.y#newcode497\nsrc/cmd/6a/a.y:497: |\tcon '(' LLREG ')' '(' LSREG '*' con ')'\nI don't know what this means, but it can't mean what it says.\nLet's talk about what you need to encode and what it should look like.\n\nhttps://codereview.appspot.com/9733044/diff/29027/src/cmd/6l/obj.c\nFile src/cmd/6l/obj.c (right):\n\nhttps://codereview.appspot.com/9733044/diff/29027/src/cmd/6l/obj.c#newcode370\nsrc/cmd/6l/obj.c:370: if(t == D_INDIR+D_GS || a->index == D_GS)\nThis is probably related to my comment in a.y.\n\nhttps://codereview.appspot.com/9733044/diff/29027/src/cmd/6l/pass.c\nFile src/cmd/6l/pass.c (right):\n\nhttps://codereview.appspot.com/9733044/diff/29027/src/cmd/6l/pass.c#newcode286\nsrc/cmd/6l/pass.c:286: s = lookup(\"init_array\", 0);\nWhat is init_array?",
+			"disapproval": false,
+			"date": "2013-07-29 17:38:08.782360",
+			"approval": false
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for reviewing this.\n\nOn 2013/07/29 17:38:08, rsc wrote:\n> https://codereview.appspot.com/9733044/diff/29027/src/cmd/5l/span.c\n> File src/cmd/5l/span.c (right):\n> \n> https://codereview.appspot.com/9733044/diff/29027/src/cmd/5l/span.c#newcode580\n> src/cmd/5l/span.c:580: return C_LCONADDR;\n> Before there was a -shared flag, this was C_LCON, not C_LCONADDR.\n> Why is it changing behavior?\n> \n\nIt's a fix for a semantic problem with the earlier -shared flag code. AFAIU, the C_LCON* enums classify assembler constants, and I added C_LCONADDR to be able to distinguish regular LCON (long constant?) from (long) constants that are addresses. With that in mind, I think it makes sense to always make that distinction, regardless of flag_shared. If you'd disagree or emphasize as strict separation as possible between flag_shared and !flag_shared, I can revert.\n\n> https://codereview.appspot.com/9733044/diff/29027/src/cmd/6a/a.y\n> File src/cmd/6a/a.y (right):\n> \n> https://codereview.appspot.com/9733044/diff/29027/src/cmd/6a/a.y#newcode497\n> src/cmd/6a/a.y:497: |\tcon '(' LLREG ')' '(' LSREG '*' con ')'\n> I don't know what this means, but it can't mean what it says.\n> Let's talk about what you need to encode and what it should look like.\n> \n\nI need the \"r\" register used in m(r) and g(r), because it contains the dynamic offset of runtime\u00b7tlsgm. In cmd/dist/buildruntime.c, the TLS functions are changed from\n\n\t\t\"#define\tget_tls(r)\\n\"\n\t\t\"#define\tg(r) 0(GS)\\n\"\n\t\t\"#define\tm(r) 8(GS)\\n\"\n\nto\n\n\t\t\"#define\tget_tls(r) MOVQ runtime\u00b7tlsgm(SB), r\\n\"\n\t\t\"#define\tg(r) 0(r)(GS*1)\\n\"\n\t\t\"#define\tm(r) 8(r)(GS*1)\\n\"\n\nto include exactly information\n\n(If !flag_shared, cmd/6l/pass.c will eliminate the get_tls(r) MOV entirely, and eliminate r from the m(r) and g(r) address expression.)\n\nThe addressing mode I'm interested in, as printed by objdump is:\n\n%fs:<constant>(%register)\n\nwhich is the address constant+%register in the %fs segment. I made the changes to a.y to include a register in addition to the constant TLS offset already supported. Please point me to a more appropriate way of encoding the register in TLS addressing.\n\n> https://codereview.appspot.com/9733044/diff/29027/src/cmd/6l/obj.c\n> File src/cmd/6l/obj.c (right):\n> \n> https://codereview.appspot.com/9733044/diff/29027/src/cmd/6l/obj.c#newcode370\n> src/cmd/6l/obj.c:370: if(t == D_INDIR+D_GS || a->index == D_GS)\n> This is probably related to my comment in a.y.\n> \n\nYes.\n\n> https://codereview.appspot.com/9733044/diff/29027/src/cmd/6l/pass.c\n> File src/cmd/6l/pass.c (right):\n> \n> https://codereview.appspot.com/9733044/diff/29027/src/cmd/6l/pass.c#newcode286\n> src/cmd/6l/pass.c:286: s = lookup(\"init_array\", 0);\n> What is init_array?\n\ninit_array is a symbol containing a list of addresses of initializer functions that will be called by the dynamic linker when the shared library is loaded. I use it to call the shared library initializers runtime\u00b7lib_init (see for example asm_amd64.s in https://codereview.appspot.com/9738047/patch/37001/38008). init_array is where __attribute__((constructor)) functions end up.\n\nI added a comment to dodata in cmd/ld/data.c (\"/* shared library initializer */\"), would you like this comment expanded or moved somewhere else?\n\nPTAL",
+			"disapproval": false,
+			"date": "2013-07-29 19:34:34.678460",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI think the new assembly syntax is bizarre, but apparently I came up with it for 8a, so I won't hold it against you.",
+			"disapproval": false,
+			"date": "2013-08-13 19:20:05.759230",
+			"approval": true
+		},
+		{
+			"sender": "elias.naur@gmail.com",
+			"recipients": [
+				"elias.naur@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/13 19:20:05, rsc wrote:\n> LGTM\n> \n> I think the new assembly syntax is bizarre, but apparently I came up with it for\n> 8a, so I won't hold it against you.\n\nThanks :) I'll update this CL when the two other CLs are in.",
+			"disapproval": false,
+			"date": "2013-08-13 22:12:49.310520",
+			"approval": false
+		}
+	],
+	"owner_email": "elias.naur@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "elias.naur",
+	"subject": "code review 9733044: 6l: Implement -shared in terms of external linking (lin...",
+	"created": "2013-05-29 16:51:21.092140",
+	"patchsets": [
+		1,
+		1001,
+		3001,
+		7001,
+		10001,
+		13001,
+		16001,
+		25001,
+		22006,
+		29027,
+		39001
+	],
+	"modified": "2013-08-14 21:11:57.423920",
+	"closed": true,
+	"issue": 9733044
+}

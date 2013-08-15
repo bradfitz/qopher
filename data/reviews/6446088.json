@@ -1,0 +1,120 @@
+{
+	"description": "cmd/6g: backport byte mov optimization from 8g.\n\nbenchmark           old ns/op    new ns/op    delta\nBenchmarkLoop8            342          294  -14.04%\nBenchmarkRange8           560          306  -45.36%\nBenchmarkLoop16           346          293  -15.32%\nBenchmarkRange16          564          304  -46.10%\n\nFixes issue 3909.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"remy@archlinux.org"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "A patch suggestion could be: http://codereview.appspot.com/6459046\r\n",
+			"disapproval": false,
+			"date": "2012-08-05 18:18:06.263600",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, remy@archlinux.org),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-08-05 08:46:24.422370",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Shold I also include the movb elimination part? I am not sure what is its purpose.\n\nThe microbenchmarks measure the performances of the following functions:\n\nvar slice8 = make([]byte, 256)\nvar slice16 = make([]uint16, 256)\n\nfunc loop8() byte {\n      t := byte(0)\n      for i := 0; i < len(slice8); i++ {\n            t ^= slice8[i]\n      }\n      return t\n}\n\nfunc rangeloop8() byte {\n      t := byte(0)\n      for _, b := range slice8 {\n            t ^= b\n      }\n      return t\n}\n\nfunc loop16() uint16 {\n      t := uint16(0)\n      for i := 0; i < len(slice16); i++ {\n            t ^= slice16[i]\n      }\n      return t\n}\n\nfunc rangeloop16() uint16 {\n      t := uint16(0)\n      for _, b := range slice16 {\n            t ^= b\n      }\n      return t\n}",
+			"disapproval": false,
+			"date": "2012-08-05 08:47:12.227850",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "There's a bigger issue here. The optimizer gets confused because it is\r\nstuck in the C world. In 8c in particular, all ephemeral values stored\r\nin registers are 32-bit, because that's the C word-based math model.\r\nThere's no need for MOVB or MOVW between registers because those sized\r\nvalues cannot be manipulated in C. Partly because of that, hardware\r\ndoesn't have good support for moving those smaller values around. The\r\nreason this CL makes things faster is that the hardware MOVB or MOVW\r\nmust preserve the high bits of the destination register, even though\r\nthe Go compiler doesn't actually need it to. That makes the operations\r\na read-modify-write for the destination instead of just a write.\r\nSwitching to MOVBL makes it a write again.\r\n\r\nAnyway, I have been wondering if we should instead switch to only\r\nworking with 32-bit registers at the minimum, with no 8- or 16-bit\r\nregister usage. For the most part we can just use 32-bit ops in place\r\nof 8- or 16-bit ops. The exceptions are the ones that reduce the size\r\nof values: division, modulus, and right-shift. But those are\r\nexceptions anyway.\r\n\r\nI haven't had time to try that, but if you want to give it a try, I'd\r\nbe interested to see how well it works.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-08-05 22:12:08.386180",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "There are some bugs in this part of the optimizer involving getting\r\nconfused by short moves vs full-width moves (test/bugs/bug440.go). I\r\nam not comfortable adding more short moves here until those bugs are\r\neliminated, because I don't want to give the bugs more opportunities\r\nto cause problems.\r\n\r\nI haven't sat down yet to fully understand it. The bug440 is in 8g but\r\nI think 6g has the same problem under the right circumstances. I\r\ncreated issue 3910 so I remember it.\r\n",
+			"disapproval": false,
+			"date": "2012-08-05 17:00:07.167030",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/8/5 Russ Cox <rsc@golang.org>:\r\n> There are some bugs in this part of the optimizer involving getting\r\n> confused by short moves vs full-width moves (test/bugs/bug440.go). I\r\n> am not comfortable adding more short moves here until those bugs are\r\n> eliminated, because I don't want to give the bugs more opportunities\r\n> to cause problems.\r\n>\r\n> I haven't sat down yet to fully understand it. The bug440 is in 8g but\r\n> I think 6g has the same problem under the right circumstances. I\r\n> created issue 3910 so I remember it.\r\n\r\nI can write a reproducer for 6g (happens with 1.0.2 but not at tip due\r\nto the use of a MOVQL). The issue is that subprop may substitute\r\nregisters for a mov that is actually a truncation (MOVB, MOVW, and\r\nMOVL on amd64).\r\n\r\npackage main\r\n\r\nfunc split64(ce uint64) (index uint32, offset uint64) {\r\n      h := uint32(ce)\r\n      return h >> 5, ce + 1\r\n}\r\n\r\nfunc main() {\r\n      ce := uint64(1234<<32 | 5678)\r\n      a, b := split64(ce)\r\n      println(\"got\", a, b)\r\n      println(\"expect\", 5678>>5, ce+1)\r\n}\r\n",
+			"disapproval": false,
+			"date": "2012-08-05 18:15:44.595920",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/8/6 Russ Cox <rsc@golang.org> wrote:\r\n> Anyway, I have been wondering if we should instead switch to only\r\n> working with 32-bit registers at the minimum, with no 8- or 16-bit\r\n> register usage. For the most part we can just use 32-bit ops in place\r\n> of 8- or 16-bit ops. The exceptions are the ones that reduce the size\r\n> of values: division, modulus, and right-shift. But those are\r\n> exceptions anyway.\r\n>\r\n> I haven't had time to try that, but if you want to give it a try, I'd\r\n> be interested to see how well it works.\r\n\r\nI have the impression we caannot do that for\r\nmemory-to-register/register-to-memory operationss and that doing the\r\ntransformation in cgen.c would cause great confusion.\r\nDoes it sound right to add a pass in peep.c that does the rewriting\r\n(and would extend the existing \"movb elimination\") ?\r\n",
+			"disapproval": false,
+			"date": "2012-08-06 10:12:36.516110",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"remyoudompheng@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"remy@archlinux.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-09-01 14:43:41.670490",
+			"approval": false
+		}
+	],
+	"owner_email": "remyoudompheng@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "remyoudompheng",
+	"subject": "code review 6446088: cmd/6g: backport byte mov optimization from 8g.",
+	"created": "2012-08-05 08:45:17.169940",
+	"patchsets": [
+		1,
+		2001,
+		4002
+	],
+	"modified": "2012-09-01 14:43:42.641340",
+	"closed": true,
+	"issue": 6446088
+}

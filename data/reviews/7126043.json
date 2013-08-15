@@ -1,0 +1,222 @@
+{
+	"description": "syscall: introduce WriteNB\n\nUpdate issue 3412.\n\nThis proposal introduces the underlying syscall.WriteNB mechanism to be used by net.Conn.Write as discussed in CL 6813046. The WriteNB function is defined for all platforms, but for the moment only issues a RawSyscall on linux.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"iant@golang.org",
+		"bradfitz@golang.org",
+		"sebastien.paolacci@gmail.com",
+		"dvyukov@google.com",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Given that I made independently made the same tests & bench one few weeks\r\n> ago, with the same conclusion I doubt you have. Tagging accept and connect\r\n> as non-blocking has the same adverse effect.\r\n\r\nIndeed, from the profiles I've taken the CPU time does move, as\r\nexpected, from syscall.Syscall to syscall.RawSyscall, but the effect\r\non the bottom line runtime and throughput is unaffected.\r\n\r\n>> My best (guess-only) explanations are still that syscalls switched to\r\n> non-blocking\r\n>  - do occasionally block (suggested by Iant)\r\n\r\nYes, and even if they don't block under a specific version of Linux,\r\nI'd struggle to believe that guarentee exists for all supported POSIX\r\nsystems.\r\n\r\n>  - happen to adversely disturb the scheduler (by offering less/different\r\n> resumption points)\r\n>  - are not cheap enough (whilst being non-blocking) and parking goroutines\r\n> actually masquerades part of that cost.\r\n\r\nIf you are suggesting the cost of the syscall event is more than the\r\ngoroutine park/handoff, I could buy that.\r\n\r\n> Blaming the scheduler is tempting, but I can't see any other rational\r\n> explanation.\r\n\r\nOr maybe we should be blaming our TCP stacks ? Maybe that is just as\r\nfast as we can push data through the syscall interface. I don't know.\r\n\r\n> Dmitriy may however have a deeper insight/feeling on the subject..\r\n>\r\n> Cheers,\r\n> Sebastien\r\n>\r\n>\r\n> On Jan 17, 2013, at 12:04 PM, Dave Cheney <dave@cheney.net> wrote:\r\n>\r\n> Hi Sebastien,\r\n>\r\n> Thank you for taking the time to benchmark this change. I've done some\r\n> benchmarking on a small 4 core 386 system and found results that are\r\n> equally unimpressive. In summary (see results.txt), I can see no\r\n> benefit large enought to offset the code and Symbol bloat this change\r\n> would cost -- which really sucks. On paper it makes sense, but in\r\n> practice, right now, it just doesn't pay its way.\r\n>\r\n> Do you think that there is anything I have missed ?\r\n>\r\n> Cheers\r\n>\r\n> Dave\r\n>\r\n> On Wed, Jan 16, 2013 at 9:02 PM,  <sebastien.paolacci@gmail.com> wrote:\r\n>\r\n> As Remy judiciously noted, actually using the WriteNB call might help in\r\n> getting useful results.\r\n>\r\n> I shouldn't run benchmarks on the early morning, sorry for the noise.\r\n>\r\n> Here's an updated run, I've double check the assembly to make sure the\r\n> correct RawSyscall was made:\r\n>\r\n> BenchmarkTCPOneShot                  173746       142280  -18.11%\r\n> BenchmarkTCPOneShot-2                 87490       96902  +10.76%\r\n> BenchmarkTCPOneShot-4                 45649       47590   +4.25%\r\n> BenchmarkTCPOneShot-8                 32219       31521   -2.17%\r\n> BenchmarkTCPOneShot-10               302213      301983   -0.08%\r\n> BenchmarkTCPOneShot-12               304442      317153   +4.18%\r\n> BenchmarkTCPOneShot-16               309886      312512   +0.85%\r\n>\r\n> BenchmarkTCPOneShotTimeout           198172      214151   +8.06%\r\n> BenchmarkTCPOneShotTimeout-2          92151      101076   +9.69%\r\n> BenchmarkTCPOneShotTimeout-4          45978       48018   +4.44%\r\n> BenchmarkTCPOneShotTimeout-8          32311       31608   -2.18%\r\n> BenchmarkTCPOneShotTimeout-10        322381      320882   -0.46%\r\n> BenchmarkTCPOneShotTimeout-12        302204      312676   +3.47%\r\n> BenchmarkTCPOneShotTimeout-16        315046      305763   -2.95%\r\n>\r\n> BenchmarkTCPPersistent                55874       56794   +1.65%\r\n> BenchmarkTCPPersistent-2              28429       32224  +13.35%\r\n> BenchmarkTCPPersistent-4              17330       16939   -2.26%\r\n> BenchmarkTCPPersistent-8              18793       14062  -25.17%\r\n> BenchmarkTCPPersistent-10            303544      302887   -0.22%\r\n> BenchmarkTCPPersistent-12            306567      304997   -0.51%\r\n> BenchmarkTCPPersistent-16            310066      308193   -0.60%\r\n>\r\n> BenchmarkTCPPersistentTimeout         59690       56994   -4.52%\r\n> BenchmarkTCPPersistentTimeout-2       28978       30653   +5.78%\r\n> BenchmarkTCPPersistentTimeout-4       17356       17080   -1.59%\r\n> BenchmarkTCPPersistentTimeout-8       18847       14125  -25.05%\r\n> BenchmarkTCPPersistentTimeout-10     303528      302658   -0.29%\r\n> BenchmarkTCPPersistentTimeout-12     306600      304994   -0.52%\r\n> BenchmarkTCPPersistentTimeout-16     309747      307902   -0.60%\r\n>\r\n> Results are bit more interesting, provided you're using at least 8 cores\r\n> (and not more than eight due to the spurious behavior then) restricted\r\n> to the `TCPPersistent' use-case..\r\n>\r\n> As a side note, whilst some syscall are non-blocking, they're still not\r\n> free. The performance deterioration might just come from not \"cheating\"\r\n> by artificially increasing the thread count.\r\n>\r\n> Sebastien\r\n>\r\n> https://codereview.appspot.com/7126043/\r\n>\r\n> <results.txt>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 22:40:58.145760",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"bradfitz@golang.org",
+				"sebastien.paolacci@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "As Remy judiciously noted, actually using the WriteNB call might help in getting useful results.\n\nI shouldn't run benchmarks on the early morning, sorry for the noise.\n\nHere's an updated run, I've double check the assembly to make sure the correct RawSyscall was made:\n\nBenchmarkTCPOneShot                  173746       142280  -18.11%\nBenchmarkTCPOneShot-2                 87490       96902  +10.76%\nBenchmarkTCPOneShot-4                 45649       47590   +4.25%\nBenchmarkTCPOneShot-8                 32219       31521   -2.17%\nBenchmarkTCPOneShot-10               302213      301983   -0.08%\nBenchmarkTCPOneShot-12               304442      317153   +4.18%\nBenchmarkTCPOneShot-16               309886      312512   +0.85%\n\nBenchmarkTCPOneShotTimeout           198172      214151   +8.06%\nBenchmarkTCPOneShotTimeout-2          92151      101076   +9.69%\nBenchmarkTCPOneShotTimeout-4          45978       48018   +4.44%\nBenchmarkTCPOneShotTimeout-8          32311       31608   -2.18%\nBenchmarkTCPOneShotTimeout-10        322381      320882   -0.46%\nBenchmarkTCPOneShotTimeout-12        302204      312676   +3.47%\nBenchmarkTCPOneShotTimeout-16        315046      305763   -2.95%\n\nBenchmarkTCPPersistent                55874       56794   +1.65%\nBenchmarkTCPPersistent-2              28429       32224  +13.35%\nBenchmarkTCPPersistent-4              17330       16939   -2.26%\nBenchmarkTCPPersistent-8              18793       14062  -25.17%\nBenchmarkTCPPersistent-10            303544      302887   -0.22%\nBenchmarkTCPPersistent-12            306567      304997   -0.51%\nBenchmarkTCPPersistent-16            310066      308193   -0.60%\n\nBenchmarkTCPPersistentTimeout         59690       56994   -4.52%\nBenchmarkTCPPersistentTimeout-2       28978       30653   +5.78%\nBenchmarkTCPPersistentTimeout-4       17356       17080   -1.59%\nBenchmarkTCPPersistentTimeout-8       18847       14125  -25.05%\nBenchmarkTCPPersistentTimeout-10     303528      302658   -0.29%\nBenchmarkTCPPersistentTimeout-12     306600      304994   -0.52%\nBenchmarkTCPPersistentTimeout-16     309747      307902   -0.60%\n\nResults are bit more interesting, provided you're using at least 8 cores (and not more than eight due to the spurious behavior then) restricted to the `TCPPersistent' use-case..\n\nAs a side note, whilst some syscall are non-blocking, they're still not free. The performance deterioration might just come from not \"cheating\" by artificially increasing the thread count.\n\nSebastien",
+			"disapproval": false,
+			"date": "2013-01-16 10:02:16.708880",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I agree Windows should have WriteNB for consistency.\n\n> A random thought: the syscall package knows which\n> descriptors are non-blocking:\n> they are the ones that have been passed to SetNonblock\n> but not Close.  We could in principle track that\n> and automatically use non-blocking system calls if the\n> descriptor is non-blocking.\n\nI thought of that too, but any way I could imagine to do that bookkeeping feels too expensive for what should be just a syscall.",
+			"disapproval": false,
+			"date": "2013-01-16 01:18:33.993290",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-01-16 00:13:48.904460",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Oh, if package net can remain a one line patch I'm fine with pkg syscall\r\ninconsistency.\r\n\r\nI had forgotten where in net the call site was.\r\n\r\nI just didn't want to +build-split up net for one call.\r\n\r\nI withdraw my confusion.\r\n On Jan 15, 2013 5:38 PM, \"Dave Cheney\" <dave@cheney.net> wrote:\r\n\r\n> I would like to disagreed. This change is intended to work hand in hand\r\n> with the change to fd_unix.go in the net package.  If I updated the\r\n> description to say this was only for Unix platforms would that help make my\r\n> case.\r\n>\r\n> That is not saying windows may be able to implement a WriteNB syscall\r\n> later on, but I don't want to make the scope of this change larger than\r\n> necessary if possible.\r\n> On 16 Jan 2013 12:18, <bradfitz@golang.org> wrote:\r\n>\r\n>> I agree Windows should have WriteNB for consistency.\r\n>>\r\n>>  A random thought: the syscall package knows which\r\n>>> descriptors are non-blocking:\r\n>>> they are the ones that have been passed to SetNonblock\r\n>>> but not Close.  We could in principle track that\r\n>>> and automatically use non-blocking system calls if the\r\n>>> descriptor is non-blocking.\r\n>>>\r\n>>\r\n>> I thought of that too, but any way I could imagine to do that\r\n>> bookkeeping feels too expensive for what should be just a syscall.\r\n>>\r\n>>\r\n>> https://codereview.appspot.**com/7126043/<https://codereview.appspot.com/7126043/>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-16 01:42:41.234960",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Dave,\r\n\r\n> Do you think that there is anything I have missed ?\r\n\r\nGiven that I made independently made the same tests & bench one few weeks ago, with the same conclusion I doubt you have. Tagging accept and connect as non-blocking has the same adverse effect.\r\n\r\nMy best (guess-only) explanations are still that syscalls switched to non-blocking\r\n - do occasionally block (suggested by Iant)\r\n - happen to adversely disturb the scheduler (by offering less/different resumption points)\r\n - are not cheap enough (whilst being non-blocking) and parking goroutines actually masquerades part of that cost.\r\n\r\nBlaming the scheduler is tempting, but I can't see any other rational explanation.\r\n\r\nDmitriy may however have a deeper insight/feeling on the subject..\r\n\r\nCheers,\r\nSebastien\r\n\r\n\r\nOn Jan 17, 2013, at 12:04 PM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> Hi Sebastien,\r\n> \r\n> Thank you for taking the time to benchmark this change. I've done some\r\n> benchmarking on a small 4 core 386 system and found results that are\r\n> equally unimpressive. In summary (see results.txt), I can see no\r\n> benefit large enought to offset the code and Symbol bloat this change\r\n> would cost -- which really sucks. On paper it makes sense, but in\r\n> practice, right now, it just doesn't pay its way.\r\n> \r\n> Do you think that there is anything I have missed ?\r\n> \r\n> Cheers\r\n> \r\n> Dave\r\n> \r\n> On Wed, Jan 16, 2013 at 9:02 PM,  <sebastien.paolacci@gmail.com> wrote:\r\n>> As Remy judiciously noted, actually using the WriteNB call might help in\r\n>> getting useful results.\r\n>> \r\n>> I shouldn't run benchmarks on the early morning, sorry for the noise.\r\n>> \r\n>> Here's an updated run, I've double check the assembly to make sure the\r\n>> correct RawSyscall was made:\r\n>> \r\n>> BenchmarkTCPOneShot                  173746       142280  -18.11%\r\n>> BenchmarkTCPOneShot-2                 87490       96902  +10.76%\r\n>> BenchmarkTCPOneShot-4                 45649       47590   +4.25%\r\n>> BenchmarkTCPOneShot-8                 32219       31521   -2.17%\r\n>> BenchmarkTCPOneShot-10               302213      301983   -0.08%\r\n>> BenchmarkTCPOneShot-12               304442      317153   +4.18%\r\n>> BenchmarkTCPOneShot-16               309886      312512   +0.85%\r\n>> \r\n>> BenchmarkTCPOneShotTimeout           198172      214151   +8.06%\r\n>> BenchmarkTCPOneShotTimeout-2          92151      101076   +9.69%\r\n>> BenchmarkTCPOneShotTimeout-4          45978       48018   +4.44%\r\n>> BenchmarkTCPOneShotTimeout-8          32311       31608   -2.18%\r\n>> BenchmarkTCPOneShotTimeout-10        322381      320882   -0.46%\r\n>> BenchmarkTCPOneShotTimeout-12        302204      312676   +3.47%\r\n>> BenchmarkTCPOneShotTimeout-16        315046      305763   -2.95%\r\n>> \r\n>> BenchmarkTCPPersistent                55874       56794   +1.65%\r\n>> BenchmarkTCPPersistent-2              28429       32224  +13.35%\r\n>> BenchmarkTCPPersistent-4              17330       16939   -2.26%\r\n>> BenchmarkTCPPersistent-8              18793       14062  -25.17%\r\n>> BenchmarkTCPPersistent-10            303544      302887   -0.22%\r\n>> BenchmarkTCPPersistent-12            306567      304997   -0.51%\r\n>> BenchmarkTCPPersistent-16            310066      308193   -0.60%\r\n>> \r\n>> BenchmarkTCPPersistentTimeout         59690       56994   -4.52%\r\n>> BenchmarkTCPPersistentTimeout-2       28978       30653   +5.78%\r\n>> BenchmarkTCPPersistentTimeout-4       17356       17080   -1.59%\r\n>> BenchmarkTCPPersistentTimeout-8       18847       14125  -25.05%\r\n>> BenchmarkTCPPersistentTimeout-10     303528      302658   -0.29%\r\n>> BenchmarkTCPPersistentTimeout-12     306600      304994   -0.52%\r\n>> BenchmarkTCPPersistentTimeout-16     309747      307902   -0.60%\r\n>> \r\n>> Results are bit more interesting, provided you're using at least 8 cores\r\n>> (and not more than eight due to the spurious behavior then) restricted\r\n>> to the `TCPPersistent' use-case..\r\n>> \r\n>> As a side note, whilst some syscall are non-blocking, they're still not\r\n>> free. The performance deterioration might just come from not \"cheating\"\r\n>> by artificially increasing the thread count.\r\n>> \r\n>> Sebastien\r\n>> \r\n>> https://codereview.appspot.com/7126043/\r\n> <results.txt>\r\n\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 21:34:02.339220",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "exec_windows.go has a SetNonblock call; should Windows also have WriteNB for consistency?\n\nA random thought: the syscall package knows which descriptors are non-blocking: they are the ones that have been passed to SetNonblock but not Close.  We could in principle track that and automatically use non-blocking system calls if the descriptor is non-blocking.\n\nhttps://codereview.appspot.com/7126043/diff/3019/src/pkg/syscall/syscall_darwin.go\nFile src/pkg/syscall/syscall_darwin.go (right):\n\nhttps://codereview.appspot.com/7126043/diff/3019/src/pkg/syscall/syscall_darwin.go#newcode195\nsrc/pkg/syscall/syscall_darwin.go:195: // TODO(dfc) check if writeNB is truly non blocking on darwin\nThis TODO seems a bit obscure.  You probably mean something like \"check if writes to descriptors with O_NONBLOCK set can never block on Darwin.\"\n\nhttps://codereview.appspot.com/7126043/diff/3019/src/pkg/syscall/syscall_unix.go\nFile src/pkg/syscall/syscall_unix.go (right):\n\nhttps://codereview.appspot.com/7126043/diff/3019/src/pkg/syscall/syscall_unix.go#newcode154\nsrc/pkg/syscall/syscall_unix.go:154: // non-blocking mode. Do not call this with a descriptor in blocking mode.\n\"set to non-blocking mode\" by SetNonblock.",
+			"disapproval": false,
+			"date": "2013-01-16 00:57:44.512920",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I would like to disagreed. This change is intended to work hand in hand\r\nwith the change to fd_unix.go in the net package.  If I updated the\r\ndescription to say this was only for Unix platforms would that help make my\r\ncase.\r\n\r\nThat is not saying windows may be able to implement a WriteNB syscall later\r\non, but I don't want to make the scope of this change larger than necessary\r\nif possible.\r\nOn 16 Jan 2013 12:18, <bradfitz@golang.org> wrote:\r\n\r\n> I agree Windows should have WriteNB for consistency.\r\n>\r\n>  A random thought: the syscall package knows which\r\n>> descriptors are non-blocking:\r\n>> they are the ones that have been passed to SetNonblock\r\n>> but not Close.  We could in principle track that\r\n>> and automatically use non-blocking system calls if the\r\n>> descriptor is non-blocking.\r\n>>\r\n>\r\n> I thought of that too, but any way I could imagine to do that\r\n> bookkeeping feels too expensive for what should be just a syscall.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7126043/<https://codereview.appspot.com/7126043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-16 01:38:59.652620",
+			"approval": false
+		},
+		{
+			"sender": "sebastien.paolacci@gmail.com",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"bradfitz@golang.org",
+				"sebastien.paolacci@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Dave,\n\nHere's a bench on a \"representative\" (to us) box.\n\nMedian of 10 runs, 12 cores @ 2.27GHz, linux-2.6.32/amd64:\n\nBenchmarkTCPOneShot                  173746      167022   -3.87%\nBenchmarkTCPOneShot-2                 87490       89568   +2.38%\nBenchmarkTCPOneShot-4                 45649       45761   +0.25%\nBenchmarkTCPOneShot-8                 32219       32217   -0.01%\nBenchmarkTCPOneShot-12               304442      304319   -0.04%\nBenchmarkTCPOneShot-16               309886      309437   -0.14%\n\nBenchmarkTCPOneShotTimeout           198172      197808   -0.18%\nBenchmarkTCPOneShotTimeout-2          92151       91371   -0.85%\nBenchmarkTCPOneShotTimeout-4          45978       46050   +0.16%\nBenchmarkTCPOneShotTimeout-8          32311       32381   +0.22%\nBenchmarkTCPOneShotTimeout-12        302204      304874   +0.88%\nBenchmarkTCPOneShotTimeout-16        315046      305314   -3.09%\n\nBenchmarkTCPPersistent                55874       56666   +1.42%\nBenchmarkTCPPersistent-2              28429       28297   -0.46%\nBenchmarkTCPPersistent-4              17330       17380   +0.29%\nBenchmarkTCPPersistent-8              18793       18872   +0.42%\nBenchmarkTCPPersistent-12            306567      306536   -0.01%\nBenchmarkTCPPersistent-16            310066      309814   -0.08%\n\nBenchmarkTCPPersistentTimeout         59690       59889   +0.33%\nBenchmarkTCPPersistentTimeout-2       28978       28883   -0.33%\nBenchmarkTCPPersistentTimeout-4       17356       17421   +0.37%\nBenchmarkTCPPersistentTimeout-8       18847       18815   -0.17%\nBenchmarkTCPPersistentTimeout-12     306600      306463   -0.04%\nBenchmarkTCPPersistentTimeout-16     309747      310213   +0.15%\n\nSo not really conclusive, but not really damaging either.\n\nSebastien",
+			"disapproval": false,
+			"date": "2013-01-16 08:27:12.690680",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, we're lucky that this can be a surgical incision. Plan9 and Windows\r\nmay be able to use a similar approach, but it isn't proven to work on Unix,\r\nand may not work the same way on non Unix platforms.\r\nOn 16 Jan 2013 12:42, \"Brad Fitzpatrick\" <bradfitz@golang.org> wrote:\r\n\r\n> Oh, if package net can remain a one line patch I'm fine with pkg syscall\r\n> inconsistency.\r\n>\r\n> I had forgotten where in net the call site was.\r\n>\r\n> I just didn't want to +build-split up net for one call.\r\n>\r\n> I withdraw my confusion.\r\n>  On Jan 15, 2013 5:38 PM, \"Dave Cheney\" <dave@cheney.net> wrote:\r\n>\r\n>> I would like to disagreed. This change is intended to work hand in hand\r\n>> with the change to fd_unix.go in the net package.  If I updated the\r\n>> description to say this was only for Unix platforms would that help make my\r\n>> case.\r\n>>\r\n>> That is not saying windows may be able to implement a WriteNB syscall\r\n>> later on, but I don't want to make the scope of this change larger than\r\n>> necessary if possible.\r\n>> On 16 Jan 2013 12:18, <bradfitz@golang.org> wrote:\r\n>>\r\n>>> I agree Windows should have WriteNB for consistency.\r\n>>>\r\n>>>  A random thought: the syscall package knows which\r\n>>>> descriptors are non-blocking:\r\n>>>> they are the ones that have been passed to SetNonblock\r\n>>>> but not Close.  We could in principle track that\r\n>>>> and automatically use non-blocking system calls if the\r\n>>>> descriptor is non-blocking.\r\n>>>>\r\n>>>\r\n>>> I thought of that too, but any way I could imagine to do that\r\n>>> bookkeeping feels too expensive for what should be just a syscall.\r\n>>>\r\n>>>\r\n>>> https://codereview.appspot.**com/7126043/<https://codereview.appspot.com/7126043/>\r\n>>>\r\n>>\r\n",
+			"disapproval": false,
+			"date": "2013-01-16 01:45:33.886900",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please take another look\n\n@iant. as discussed I have avoided adding support for windows at this time. I like the idea of keeping a record of the blocking state of fds in the syscall package, and making write/writeNB based on that. If we can successfully activate writeNB for all unix's, then lets investigate it then.\n\nhttps://codereview.appspot.com/7126043/diff/3019/src/pkg/syscall/syscall_darwin.go\nFile src/pkg/syscall/syscall_darwin.go (right):\n\nhttps://codereview.appspot.com/7126043/diff/3019/src/pkg/syscall/syscall_darwin.go#newcode195\nsrc/pkg/syscall/syscall_darwin.go:195: // TODO(dfc) check if writeNB is truly non blocking on darwin\nOn 2013/01/16 00:57:45, iant wrote:\n> This TODO seems a bit obscure.  You probably mean something like \"check if\n> writes to descriptors with O_NONBLOCK set can never block on Darwin.\"\n\nDone.\n\nhttps://codereview.appspot.com/7126043/diff/3019/src/pkg/syscall/syscall_unix.go\nFile src/pkg/syscall/syscall_unix.go (right):\n\nhttps://codereview.appspot.com/7126043/diff/3019/src/pkg/syscall/syscall_unix.go#newcode154\nsrc/pkg/syscall/syscall_unix.go:154: // non-blocking mode. Do not call this with a descriptor in blocking mode.\nOn 2013/01/16 00:57:45, iant wrote:\n> \"set to non-blocking mode\" by SetNonblock.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-01-16 02:40:41.677490",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Sebastien,\r\n\r\nThank you for taking the time to benchmark this change. I've done some\r\nbenchmarking on a small 4 core 386 system and found results that are\r\nequally unimpressive. In summary (see results.txt), I can see no\r\nbenefit large enought to offset the code and Symbol bloat this change\r\nwould cost -- which really sucks. On paper it makes sense, but in\r\npractice, right now, it just doesn't pay its way.\r\n\r\nDo you think that there is anything I have missed ?\r\n\r\nCheers\r\n\r\nDave\r\n\r\nOn Wed, Jan 16, 2013 at 9:02 PM,  <sebastien.paolacci@gmail.com> wrote:\r\n> As Remy judiciously noted, actually using the WriteNB call might help in\r\n> getting useful results.\r\n>\r\n> I shouldn't run benchmarks on the early morning, sorry for the noise.\r\n>\r\n> Here's an updated run, I've double check the assembly to make sure the\r\n> correct RawSyscall was made:\r\n>\r\n> BenchmarkTCPOneShot                  173746       142280  -18.11%\r\n> BenchmarkTCPOneShot-2                 87490       96902  +10.76%\r\n> BenchmarkTCPOneShot-4                 45649       47590   +4.25%\r\n> BenchmarkTCPOneShot-8                 32219       31521   -2.17%\r\n> BenchmarkTCPOneShot-10               302213      301983   -0.08%\r\n> BenchmarkTCPOneShot-12               304442      317153   +4.18%\r\n> BenchmarkTCPOneShot-16               309886      312512   +0.85%\r\n>\r\n> BenchmarkTCPOneShotTimeout           198172      214151   +8.06%\r\n> BenchmarkTCPOneShotTimeout-2          92151      101076   +9.69%\r\n> BenchmarkTCPOneShotTimeout-4          45978       48018   +4.44%\r\n> BenchmarkTCPOneShotTimeout-8          32311       31608   -2.18%\r\n> BenchmarkTCPOneShotTimeout-10        322381      320882   -0.46%\r\n> BenchmarkTCPOneShotTimeout-12        302204      312676   +3.47%\r\n> BenchmarkTCPOneShotTimeout-16        315046      305763   -2.95%\r\n>\r\n> BenchmarkTCPPersistent                55874       56794   +1.65%\r\n> BenchmarkTCPPersistent-2              28429       32224  +13.35%\r\n> BenchmarkTCPPersistent-4              17330       16939   -2.26%\r\n> BenchmarkTCPPersistent-8              18793       14062  -25.17%\r\n> BenchmarkTCPPersistent-10            303544      302887   -0.22%\r\n> BenchmarkTCPPersistent-12            306567      304997   -0.51%\r\n> BenchmarkTCPPersistent-16            310066      308193   -0.60%\r\n>\r\n> BenchmarkTCPPersistentTimeout         59690       56994   -4.52%\r\n> BenchmarkTCPPersistentTimeout-2       28978       30653   +5.78%\r\n> BenchmarkTCPPersistentTimeout-4       17356       17080   -1.59%\r\n> BenchmarkTCPPersistentTimeout-8       18847       14125  -25.05%\r\n> BenchmarkTCPPersistentTimeout-10     303528      302658   -0.29%\r\n> BenchmarkTCPPersistentTimeout-12     306600      304994   -0.52%\r\n> BenchmarkTCPPersistentTimeout-16     309747      307902   -0.60%\r\n>\r\n> Results are bit more interesting, provided you're using at least 8 cores\r\n> (and not more than eight due to the spurious behavior then) restricted\r\n> to the `TCPPersistent' use-case..\r\n>\r\n> As a side note, whilst some syscall are non-blocking, they're still not\r\n> free. The performance deterioration might just come from not \"cheating\"\r\n> by artificially increasing the thread count.\r\n>\r\n> Sebastien\r\n>\r\n> https://codereview.appspot.com/7126043/\r\n",
+			"disapproval": false,
+			"date": "2013-01-17 11:04:19.927000",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"bradfitz@golang.org",
+				"sebastien.paolacci@gmail.com",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/18 22:40:58, dfc wrote:\n> > Given that I made independently made the same tests & bench one few weeks\n> > ago, with the same conclusion I doubt you have. Tagging accept and connect\n> > as non-blocking has the same adverse effect.\n> \n> Indeed, from the profiles I've taken the CPU time does move, as\n> expected, from syscall.Syscall to syscall.RawSyscall, but the effect\n> on the bottom line runtime and throughput is unaffected.\n> \n> >> My best (guess-only) explanations are still that syscalls switched to\n> > non-blocking\n> >  - do occasionally block (suggested by Iant)\n> \n> Yes, and even if they don't block under a specific version of Linux,\n> I'd struggle to believe that guarentee exists for all supported POSIX\n> systems.\n> \n> >  - happen to adversely disturb the scheduler (by offering less/different\n> > resumption points)\n> >  - are not cheap enough (whilst being non-blocking) and parking goroutines\n> > actually masquerades part of that cost.\n> \n> If you are suggesting the cost of the syscall event is more than the\n> goroutine park/handoff, I could buy that.\n> \n> > Blaming the scheduler is tempting, but I can't see any other rational\n> > explanation.\n> \n> Or maybe we should be blaming our TCP stacks ? Maybe that is just as\n> fast as we can push data through the syscall interface. I don't know.\n> \n> > Dmitriy may however have a deeper insight/feeling on the subject..\n\n\nThere are other scalability bottlenecks (scheduler, epoll poller), so it can be the case that contention increases in other bottlenecks, they degrade and net result is small.\n\nEventually we need to handle net read/write calls better one way or another. This looks like the simplest option.",
+			"disapproval": false,
+			"date": "2013-01-23 07:56:27.295660",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"bradfitz@golang.org",
+				"sebastien.paolacci@gmail.com",
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "NOT LGTM\n\nSee my comment on the CL using this.",
+			"disapproval": true,
+			"date": "2013-01-30 16:59:25.434540",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"bradfitz@golang.org",
+				"sebastien.paolacci@gmail.com",
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-01-30 23:48:12.195430",
+			"approval": false
+		}
+	],
+	"owner_email": "dave@cheney.net",
+	"private": false,
+	"base_url": "",
+	"owner": "dfc",
+	"subject": "code review 7126043: syscall: introduce WriteNB",
+	"created": "2013-01-15 23:40:02.843570",
+	"patchsets": [
+		1,
+		2001,
+		3019,
+		12001
+	],
+	"modified": "2013-01-30 23:48:16.008260",
+	"closed": true,
+	"issue": 7126043
+}

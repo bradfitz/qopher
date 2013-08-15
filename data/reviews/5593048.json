@@ -1,0 +1,121 @@
+{
+	"description": "cmd/goapi: include embedded interfaces\n\nFixes issue 2801",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"dsymonds@golang.org",
+		"iant@google.com",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Jan 28, 2012 at 3:21 PM, David Symonds <dsymonds@golang.org> wrote:\n\n> On Sun, Jan 29, 2012 at 5:57 AM, Brad Fitzpatrick <bradfitz@golang.org>\n> wrote:\n>\n> > I'm redoing this to expand things.\n>\n> You only need to expand unexported intra-package embeddings.\n>\n> There are three cases for embedding:\n> (1) same package, exported\n> (2) same package, unexported\n> (3) other package, exported\n>\n> For (1) and (3), the thing that is embedded is part of the overall API\n> too, so it suffices to merely name the embedded thing (e.g. saying\n> \"+Namer\" or \"+io.Reader\" in your example), since they can't change.\n> Case (2) is the the interesting one (e.g. testing.common embedded in\n> testing.T and testing.B), since unexported things can normally change,\n> but embedding them in something exported locks them down.\n>\n\nThe +io.Reader thing doesn't work.\n\nIf I have,\n\npackage foo\nimport \"io\"\ntype I interface {\n    Bar()\n    io.Reader\n}\n\nThere's no difference between that and:\n\npackage foo\ntype I interface {\n    Bar()\n    Read([]byte) (int, error)\n}\n\nIf Go 1.1 switches to the latter, that's not a regression.  Perhaps we were\njust rearranging package deps: imagine that package foo only depended on\npackage \"io\" to embed io.Reader, but we instead wanted package \"io\" to\ndepend on package \"foo\" instead, so we explicitly wrote out the foo.I\ninterface.\n\nHaving goapi expand them isn't as bad as I'd initially assumed.  I'll be\nsending it out soon.\n",
+			"disapproval": false,
+			"date": "2012-01-29 02:37:34.386367",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Okay, hold on reviewing.\n\nI'm redoing this to expand things.\n\n\nOn Sat, Jan 28, 2012 at 10:06 AM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\n\n> I don't really like this, though.\n>\n> The fact that io.ReadCloser in Go 1 embeds io.Reader and io.Closer is not\n> relevant like it is for structs.  What's actually relevant is that\n> io.ReadCloser has the Read and Close methods.  I really need to expand\n> interfaces, including cross-package.\n>\n>\n> On Sat, Jan 28, 2012 at 10:01 AM, <bradfitz@golang.org> wrote:\n>\n>> Reviewers: golang-dev_googlegroups.com,\n>>\n>> Message:\n>> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>>\n>> I'd like you to review this change to\n>> https://go.googlecode.com/hg/\n>>\n>>\n>> Description:\n>> cmd/goapi: include embedded interfaces\n>>\n>> Fixes issue 2801\n>>\n>> Please review this at http://codereview.appspot.com/**5593048/<http://codereview.appspot.com/5593048/>\n>>\n>> Affected files:\n>>  M src/cmd/goapi/goapi.go\n>>  M src/cmd/goapi/testdata/p1/**golden.txt\n>>  M src/cmd/goapi/testdata/p1/p1.**go\n>>\n>>\n>> Index: src/cmd/goapi/goapi.go\n>> ==============================**==============================**=======\n>> --- a/src/cmd/goapi/goapi.go\n>> +++ b/src/cmd/goapi/goapi.go\n>> @@ -587,13 +587,31 @@\n>>\n>>        pop := w.pushScope(\"type \" + name + \" interface\")\n>>        for _, f := range t.Methods.List {\n>> +               log.Printf(\"for interface, %q, got method\", name)\n>>                typ := f.Type\n>> -               for _, name := range f.Names {\n>> -                       if ast.IsExported(name.Name) {\n>> -                               ft := typ.(*ast.FuncType)\n>> -                               w.emitFeature(fmt.Sprintf(\"%s%**s\",\n>> name, w.funcSigString(ft)))\n>> -                               methods = append(methods, name.Name)\n>> +               switch typ.(type) {\n>> +               case *ast.FuncType:\n>> +                       for _, mname := range f.Names {\n>> +                               log.Printf(\"for interface, %q, ....\n>> name=%q\", name, mname)\n>> +                               if ast.IsExported(mname.Name) {\n>> +                                       ft := typ.(*ast.FuncType)\n>> +                                       w.emitFeature(fmt.Sprintf(\"%s%**s\",\n>> mname, w.funcSigString(ft)))\n>> +                                       methods = append(methods,\n>> mname.Name)\n>> +                               }\n>>                        }\n>> +               case *ast.Ident:\n>> +                       embedded := typ.(*ast.Ident).Name\n>> +                       if !ast.IsExported(embedded) && embedded !=\n>> \"error\" {\n>> +                               log.Fatalf(\"unexported embedded interface\n>> %q in exported interface %q; confused\", embedded, name)\n>> +                       }\n>> +                       w.emitFeature(fmt.Sprintf(\"**embedded %s\",\n>> embedded))\n>> +                       methods = append(methods, \"+\"+embedded)\n>> +               case *ast.SelectorExpr:\n>> +                       embedded := w.nodeString(typ)\n>> +                       w.emitFeature(fmt.Sprintf(\"**embedded %s\",\n>> embedded))\n>> +                       methods = append(methods, \"+\"+embedded)\n>> +               default:\n>> +                       log.Fatalf(\"unknown type %T in interface field\",\n>> typ)\n>>                }\n>>        }\n>>        pop()\n>> Index: src/cmd/goapi/testdata/p1/**golden.txt\n>> ==============================**==============================**=======\n>> --- a/src/cmd/goapi/testdata/p1/**golden.txt\n>> +++ b/src/cmd/goapi/testdata/p1/**golden.txt\n>> @@ -31,11 +31,15 @@\n>>  pkg p1, type EmbedURLPtr struct\n>>  pkg p1, type EmbedURLPtr struct, embedded *url.URL\n>>  pkg p1, type Embedded struct\n>> -pkg p1, type I interface { Get, GetNamed, Set }\n>> +pkg p1, type I interface { +Namer, +io.Reader, Get, GetNamed, Set }\n>>  pkg p1, type I interface, Get(string) int64\n>>  pkg p1, type I interface, GetNamed(string) int64\n>>  pkg p1, type I interface, Set(string, int64)\n>> +pkg p1, type I interface, embedded Namer\n>> +pkg p1, type I interface, embedded io.Reader\n>>  pkg p1, type MyInt int\n>> +pkg p1, type Namer interface { Name }\n>> +pkg p1, type Namer interface, Name() string\n>>  pkg p1, type S struct\n>>  pkg p1, type S struct, Public *int\n>>  pkg p1, type S struct, PublicTime time.Time\n>> Index: src/cmd/goapi/testdata/p1/p1.**go\n>> ==============================**==============================**=======\n>> --- a/src/cmd/goapi/testdata/p1/**p1.go\n>> +++ b/src/cmd/goapi/testdata/p1/**p1.go\n>> @@ -1,6 +1,7 @@\n>>  package foo\n>>\n>>  import (\n>> +       \"io\"\n>>        \"time\"\n>>        \"url\"\n>>  )\n>> @@ -47,7 +48,13 @@\n>>        X I // todo: resolve this to foo.I? probably doesn't matter.\n>>  )\n>>\n>> +type Namer interface {\n>> +       Name() string\n>> +}\n>> +\n>>  type I interface {\n>> +       Namer\n>> +       io.Reader\n>>        Set(name string, balance int64)\n>>        Get(string) int64\n>>        GetNamed(string) (balance int64)\n>>\n>>\n>>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-28 18:58:00.316772",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-28 18:01:11.446002",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't really like this, though.\n\nThe fact that io.ReadCloser in Go 1 embeds io.Reader and io.Closer is not\nrelevant like it is for structs.  What's actually relevant is that\nio.ReadCloser has the Read and Close methods.  I really need to expand\ninterfaces, including cross-package.\n\n\nOn Sat, Jan 28, 2012 at 10:01 AM, <bradfitz@golang.org> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> cmd/goapi: include embedded interfaces\n>\n> Fixes issue 2801\n>\n> Please review this at http://codereview.appspot.com/**5593048/<http://codereview.appspot.com/5593048/>\n>\n> Affected files:\n>  M src/cmd/goapi/goapi.go\n>  M src/cmd/goapi/testdata/p1/**golden.txt\n>  M src/cmd/goapi/testdata/p1/p1.**go\n>\n>\n> Index: src/cmd/goapi/goapi.go\n> ==============================**==============================**=======\n> --- a/src/cmd/goapi/goapi.go\n> +++ b/src/cmd/goapi/goapi.go\n> @@ -587,13 +587,31 @@\n>\n>        pop := w.pushScope(\"type \" + name + \" interface\")\n>        for _, f := range t.Methods.List {\n> +               log.Printf(\"for interface, %q, got method\", name)\n>                typ := f.Type\n> -               for _, name := range f.Names {\n> -                       if ast.IsExported(name.Name) {\n> -                               ft := typ.(*ast.FuncType)\n> -                               w.emitFeature(fmt.Sprintf(\"%s%**s\", name,\n> w.funcSigString(ft)))\n> -                               methods = append(methods, name.Name)\n> +               switch typ.(type) {\n> +               case *ast.FuncType:\n> +                       for _, mname := range f.Names {\n> +                               log.Printf(\"for interface, %q, ....\n> name=%q\", name, mname)\n> +                               if ast.IsExported(mname.Name) {\n> +                                       ft := typ.(*ast.FuncType)\n> +                                       w.emitFeature(fmt.Sprintf(\"%s%**s\",\n> mname, w.funcSigString(ft)))\n> +                                       methods = append(methods,\n> mname.Name)\n> +                               }\n>                        }\n> +               case *ast.Ident:\n> +                       embedded := typ.(*ast.Ident).Name\n> +                       if !ast.IsExported(embedded) && embedded !=\n> \"error\" {\n> +                               log.Fatalf(\"unexported embedded interface\n> %q in exported interface %q; confused\", embedded, name)\n> +                       }\n> +                       w.emitFeature(fmt.Sprintf(\"**embedded %s\",\n> embedded))\n> +                       methods = append(methods, \"+\"+embedded)\n> +               case *ast.SelectorExpr:\n> +                       embedded := w.nodeString(typ)\n> +                       w.emitFeature(fmt.Sprintf(\"**embedded %s\",\n> embedded))\n> +                       methods = append(methods, \"+\"+embedded)\n> +               default:\n> +                       log.Fatalf(\"unknown type %T in interface field\",\n> typ)\n>                }\n>        }\n>        pop()\n> Index: src/cmd/goapi/testdata/p1/**golden.txt\n> ==============================**==============================**=======\n> --- a/src/cmd/goapi/testdata/p1/**golden.txt\n> +++ b/src/cmd/goapi/testdata/p1/**golden.txt\n> @@ -31,11 +31,15 @@\n>  pkg p1, type EmbedURLPtr struct\n>  pkg p1, type EmbedURLPtr struct, embedded *url.URL\n>  pkg p1, type Embedded struct\n> -pkg p1, type I interface { Get, GetNamed, Set }\n> +pkg p1, type I interface { +Namer, +io.Reader, Get, GetNamed, Set }\n>  pkg p1, type I interface, Get(string) int64\n>  pkg p1, type I interface, GetNamed(string) int64\n>  pkg p1, type I interface, Set(string, int64)\n> +pkg p1, type I interface, embedded Namer\n> +pkg p1, type I interface, embedded io.Reader\n>  pkg p1, type MyInt int\n> +pkg p1, type Namer interface { Name }\n> +pkg p1, type Namer interface, Name() string\n>  pkg p1, type S struct\n>  pkg p1, type S struct, Public *int\n>  pkg p1, type S struct, PublicTime time.Time\n> Index: src/cmd/goapi/testdata/p1/p1.**go\n> ==============================**==============================**=======\n> --- a/src/cmd/goapi/testdata/p1/**p1.go\n> +++ b/src/cmd/goapi/testdata/p1/**p1.go\n> @@ -1,6 +1,7 @@\n>  package foo\n>\n>  import (\n> +       \"io\"\n>        \"time\"\n>        \"url\"\n>  )\n> @@ -47,7 +48,13 @@\n>        X I // todo: resolve this to foo.I? probably doesn't matter.\n>  )\n>\n> +type Namer interface {\n> +       Name() string\n> +}\n> +\n>  type I interface {\n> +       Namer\n> +       io.Reader\n>        Set(name string, balance int64)\n>        Get(string) int64\n>        GetNamed(string) (balance int64)\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-28 18:06:37.878569",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 29, 2012 at 5:57 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n\n> I'm redoing this to expand things.\n\nYou only need to expand unexported intra-package embeddings.\n\nThere are three cases for embedding:\n(1) same package, exported\n(2) same package, unexported\n(3) other package, exported\n\nFor (1) and (3), the thing that is embedded is part of the overall API\ntoo, so it suffices to merely name the embedded thing (e.g. saying\n\"+Namer\" or \"+io.Reader\" in your example), since they can't change.\nCase (2) is the the interesting one (e.g. testing.common embedded in\ntesting.T and testing.B), since unexported things can normally change,\nbut embedding them in something exported locks them down.\n\n\nDave.\n",
+			"disapproval": false,
+			"date": "2012-01-28 23:21:32.965155",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't know whether it is distinguishable by reflection. If so, though, I\nI don't think it counts. I thought the Go 1 definition was closer to \"your\ncode still compiling and working\", not \"whether you can tell what version\nyou're running on\".  If it were the latter, runtime.Version() would be a\ncompatibility break.\n\nOn Sat, Jan 28, 2012 at 6:58 PM, David Symonds <dsymonds@golang.org> wrote:\n\n> Those are distinguishable by reflection (I think). Does that not count?\n>\n",
+			"disapproval": false,
+			"date": "2012-01-29 03:05:23.498475",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Those are distinguishable by reflection (I think). Does that not count?\n",
+			"disapproval": false,
+			"date": "2012-01-29 02:58:01.772925",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Jan 28, 2012 6:58 PM, \"David Symonds\" <dsymonds@golang.org> wrote:\n>\n> Those are distinguishable by reflection (I think).\n\nInterface embedding is not represented in reflection info.  Just the final\nmethod set after embedding is resolved.\n\nIan\n",
+			"disapproval": false,
+			"date": "2012-01-29 04:29:29.835038",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Jan 28, 2012 at 21:37, Brad Fitzpatrick <bradfitz@golang.org> wrote:\n> The +io.Reader thing doesn't work.\n\nI think it works well enough.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-29 16:32:19.808343",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 5593048: cmd/goapi: include embedded interfaces",
+	"created": "2012-01-28 18:01:00.367981",
+	"patchsets": [
+		1,
+		2001,
+		4001
+	],
+	"modified": "2012-01-31 21:16:43.170502",
+	"closed": true,
+	"issue": 5593048
+}

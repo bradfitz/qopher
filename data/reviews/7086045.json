@@ -1,0 +1,363 @@
+{
+	"description": "os/signal: implement Change() function\n\nThis new function replaces the signal handler of a list of signals or resets\nit to the default handler and returns a function that will undo this change.\n\nTo accomplish this, the new Go-callable function signal_disable() is\nadded to the runtime. For the special case of a handler that receives\nall signals, a new struct member keeps track of which signals should\nnot be forwarded.\n\nFixes issue 4268.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"iant@golang.org",
+		"minux.ma@gmail.com",
+		"kevlar@google.com",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It just occured to me that ResetDefault should be added as well in case a \r\nprogram needs to reset the handler to the default one permanently.",
+			"disapproval": false,
+			"date": "2013-01-12 16:03:45.139720",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jan 14, 2013 at 8:19 AM, Kyle Lemons <kevlar@google.com> wrote:\r\n\r\n> You could return an opaque interface { Restore() }; this would probably\r\n> even prevent you from having to have an internal stack, you'd just ferret\r\n> the channels away inside the opaque value and re-add them on Restore.\r\n>\r\nok, I propose this (only the signature and semantics, but not the name, as\r\nthis obviously not a good name):\r\n\r\n// Update overrides the current notifier for signals sigs as channel c, and\r\nreturns a function which when called,\r\n// will restore the notifier channels for signal s to the state before\r\nUpdate takes effect.\r\n// when c is nil, it will restore the default OS behavior for signal sigs.\r\nfunc  Update(c chan<- os.Signal, sigs ...os.Signal) func()\r\n\r\nthe example use case is now:\r\nfunc client() {\r\n    defer signal.Update(nil, syscall.SIGINT)()\r\n    // now SIGINT is restored to its default behavior...\r\n    // do things\r\n}\r\nwith the added benefits that if the client ignores the return value, it\r\neffectively removes all the existing signal\r\nhandlers and we don't need to maintain any explicit stacks in os/signal.\r\n\r\nthe docs is not comprehensive, if we adopt it, we'd need to rewrite it, but\r\ni think you can get the idea. :-)\r\nof course, I'm open to suggestion about proper name for this API.\r\n",
+			"disapproval": false,
+			"date": "2013-01-14 17:09:44.418130",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"guelfey@gmail.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/reset_unix_test.go\nFile src/pkg/os/signal/reset_unix_test.go (right):\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/reset_unix_test.go#newcode16\nsrc/pkg/os/signal/reset_unix_test.go:16: const source = `\nOn 2013/01/12 02:15:14, iant wrote:\n> This is cute but don't do it.  Instead have the test run itself after setting\n> environment variables.  See syscall/passfd_test.go for an example.\n\nI'm sorry; this kind of thing was done in signal_windows_test.go, so I thought this was the usual practice.\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/signal.go\nFile src/pkg/os/signal/signal.go (right):\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/signal.go#newcode30\nsrc/pkg/os/signal/signal.go:30: // It returns a (possibly empty) slice of channels that\nOn 2013/01/12 02:15:14, iant wrote:\n> Why is it useful to return the channels?  The channels were passed in by the\n> program anyhow; if the program needs to keep track, it can do so.  In\n> particular, returning the channels is not useful if we don't distinguish between\n> channels for a specific signal and channels for all signals.  Since we don't\n> want to bother distinguishing them, let's just not return them.\n\nThis is only the case if Notify and Reset are called from the same package. But it is also possible that another package might temporarily reset the default handler or make sure that its handler is the only one, so it needs a way to restore the previous handler(s). In fact, issue 4268 shows a concrete issue where the default handler for SIGINT must be established temporarily. In such cases, it doesn't matter whether one of the returned channels received all signals or just one before Reset was called; the only important thing is that it previously received that signal, but will not do so afterwards. Furthermore, it mirrors the behaviour of the sigaction and signal syscalls, which both return the previous handler.\n\nIf there is a case where you need to distinguish between handlers for a single signal / all signals, we could always just return a little sigaction-like struct.",
+			"disapproval": false,
+			"date": "2013-01-12 09:24:06.484770",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Saturday, January 12, 2013 3:34:26 PM UTC+1, minux wrote:\r\n\r\n> my api proposal:\r\n>\r\n> // Push saves the original channel for signal sig into an internal stack, \r\n> and from now on\r\n> // until next Pop(sig), c and only c is used for notification of sig if c \r\n> is not nil;\r\n> // if c is nil, the default behavior of sig is restored until the \r\n> correspondent Pop(sig).\r\n> func Push(c chan<- os.Signal, sig os.Signal)\r\n>\r\n> // Pop restores signal channel saved by Push, if the stack underflows, it \r\n> will panic.\r\n> func Pop(sig os.Signal)\r\n>\r\n> In this way, we don't need to return the original channel (to avoid the \r\n> single vs. multiple signal\r\n> channel problem), and it can also achieve the goal of temporarily \r\n> change signal handle like this:\r\n> func client() {\r\n>    c := make(chan os.Signal, 2)\r\n>    // take over SIGINT\r\n>    signal.Push(c, SIGINT)\r\n>    defer signal.Pop(SIGINT)\r\n>    // blah blah\r\n> }\r\n>\r\n> For implementation, we just need to place a override entry in front of \r\n> handlers.list for Push.\r\n>\r\n\r\nI don't really see how this is different from my approach, except that the \r\nold handlers are saved\r\nin the signal package, which seems to me like it would make things more \r\ncomplicated unnecessarily. Do you have an example where this API would be \r\nsuited better?\r\n",
+			"disapproval": false,
+			"date": "2013-01-12 15:08:51.583610",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Jan 12, 2013 at 11:08 PM, <guelfey@gmail.com> wrote:\r\n\r\n> I don't really see how this is different from my approach, except that the\r\n> old handlers are saved\r\n> in the signal package, which seems to me like it would make things more\r\n> complicated unnecessarily. Do you have an example where this API would be\r\n> suited better?\r\n>\r\nJust to limit what the client can do, actually; and to avoid returning\r\nsomething like\r\n[]struct { AllSignals bool; C chan<- os.Signal }.\r\n\r\nyour approach will make client more complicated to restore the old ones\r\n(the client\r\nmust do a for range over the result and call signal.Notify for each one)\r\n\r\nAlso, as i've explained, the implementation of my proposal is in fact,\r\npretty easy.\r\njust insert a special overrider in front of handlers.list (we can also use\r\ntwo separate\r\nslices to hold overrider and normal ones, so no need to insert an entry\r\ninto a slice).\r\n\r\nRationale for the limitation of the API:\r\n1. if you touch signal notifiers in a package, then almost certainly you\r\nwill have to\r\nrestore them to the original ones before you return.\r\n2. if you control the main package, then everything is in your control, and\r\nyou actually\r\ndon't need too much flexibility in the signal API. And what's currently\r\nmissing is to\r\ntemporarily restore default behavior of signals.\r\n\r\nIf we want, we can simplify (and limit) the API further by introducing just\r\nthis:\r\n\r\n// RestoreDefault will restore OS default action for signal sig, and in\r\neffect, remove all\r\n// registered notifier channels for signal sig alone; notifier channels for\r\nall signals won't\r\n// be affected, but they won't receive signal sig after RestoreDefault\r\nreturns.\r\nfunc RestoreDefault(sig os.Signal)\r\n\r\nbut then we lose the ability for a package to transparently catch some\r\nsignals (for\r\nexample, a package to read a password from terminal without echo must catch\r\nSIGINT\r\ntemporarily to restore terminal mode; but currently, we can't deregister a\r\nnotifier so\r\nthis is not easy to do now)\r\n",
+			"disapproval": false,
+			"date": "2013-01-12 15:30:27.443410",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"guelfey@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-01-11 14:44:43.525850",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Jan 12, 2013 at 11:47 PM, <guelfey@gmail.com> wrote:\r\n\r\n> On Saturday, January 12, 2013 4:30:06 PM UTC+1, minux wrote:\r\n>\r\n>> On Sat, Jan 12, 2013 at 11:08 PM, <gue...@gmail.com> wrote:\r\n>>\r\n>>> I don't really see how this is different from my approach, except that\r\n>>> the old handlers are saved\r\n>>> in the signal package, which seems to me like it would make things more\r\n>>> complicated unnecessarily. Do you have an example where this API would be\r\n>>> suited better?\r\n>>>\r\n>> Just to limit what the client can do, actually; and to avoid returning\r\n>> something like\r\n>> []struct { AllSignals bool; C chan<- os.Signal }.\r\n>>\r\n>> your approach will make client more complicated to restore the old ones\r\n>> (the client\r\n>> must do a for range over the result and call signal.Notify for each one)\r\n>>\r\n>> Also, as i've explained, the implementation of my proposal is in fact,\r\n>> pretty easy.\r\n>> just insert a special overrider in front of handlers.list (we can also\r\n>> use two separate\r\n>> slices to hold overrider and normal ones, so no need to insert an entry\r\n>> into a slice).\r\n>>\r\n>> Rationale for the limitation of the API:\r\n>> 1. if you touch signal notifiers in a package, then almost certainly you\r\n>> will have to\r\n>> restore them to the original ones before you return.\r\n>> 2. if you control the main package, then everything is in your control,\r\n>> and you actually\r\n>> don't need too much flexibility in the signal API. And what's currently\r\n>> missing is to\r\n>> temporarily restore default behavior of signals.\r\n>>\r\n>\r\n> That sounds reasonable. I'll try and implement it later.\r\n>\r\nI suggest we wait for more comments. Implementation is always the easiest\r\npart.\r\n",
+			"disapproval": false,
+			"date": "2013-01-12 15:50:54.736110",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I like this spirit proposal, though with the following flavor:\r\n\r\n// Push pushes all handlers for the given signal (or all handlers, if no\r\nsignal is specified) onto\r\n// an internal stack.\r\nfunc Push(sig ...os.Signal)\r\n\r\n// Pop restores the latest result of Push, restoring handlers for all\r\naffected signals and discarding\r\n// any intervening channels added to handle them.\r\nfunc Pop()\r\n\r\nso a client would look like\r\n\r\nfunc client() {\r\n  c := make(chan os.Signal, 2)\r\n  // take over SIGNIT\r\n  signal.Push(SIGINT)\r\n  defer signal.Pop()\r\n  signal.Notify(SIGINT, c)\r\n  ... do stuff\r\n}\r\n\r\n\r\nOn Sat, Jan 12, 2013 at 6:34 AM, minux <minux.ma@gmail.com> wrote:\r\n\r\n> my api proposal:\r\n>\r\n> // Push saves the original channel for signal sig into an internal stack,\r\n> and from now on\r\n> // until next Pop(sig), c and only c is used for notification of sig if c\r\n> is not nil;\r\n> // if c is nil, the default behavior of sig is restored until the\r\n> correspondent Pop(sig).\r\n> func Push(c chan<- os.Signal, sig os.Signal)\r\n>\r\n> // Pop restores signal channel saved by Push, if the stack underflows, it\r\n> will panic.\r\n> func Pop(sig os.Signal)\r\n>\r\n> In this way, we don't need to return the original channel (to avoid the\r\n> single vs. multiple signal\r\n> channel problem), and it can also achieve the goal of temporarily\r\n> change signal handle like this:\r\n> func client() {\r\n>    c := make(chan os.Signal, 2)\r\n>    // take over SIGINT\r\n>    signal.Push(c, SIGINT)\r\n>    defer signal.Pop(SIGINT)\r\n>    // blah blah\r\n> }\r\n>\r\n> For implementation, we just need to place a override entry in front of\r\n> handlers.list for Push.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-13 03:09:58.145670",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"guelfey@gmail.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"minux.ma@gmail.com",
+				"kevlar@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I agree that it's probably better if Pop doesn't take a parameter. However, your form of Push may lead to a signal not being reported. Consider the case that a signal whose handler is to be changed arrives between the calls to Push and Notify.\n\nConsequently, the user must be able to reset the handler for a signal and establish a new one in one function call where the lock is held without interruption.\n\nMy proposal:\n\n// Push removes all handlers for the given signals, saves them on the \n// top of an internal stack and establishes c as the new handler for\n// these signals. If no signal is listed, all handlers are removed and\n// c will receive all signals. If c is nil, the default handlers for\n// the signals are re-established.\nfunc Push(c chan<- os.Signal, sig ...os.Signal)\n\n// Pop inverts the effects of the last call to Push, i.e. it removes\n// the channel that was passed to Push from the list of handlers, and\n// re-establishes the signal handlers that were saved by Push.\nfunc Pop()\n\nExample client code:\n\nfunc foo() {\n    c := make(chan os.Signal, 1)\n    signal.Push(c, syscall.SIGINT)\n    defer signal.Pop()\n    // blah blah\n}\n\nOn 2013/01/13 03:09:58, kevlar wrote:\n> I like this spirit proposal, though with the following flavor:\n> \n> // Push pushes all handlers for the given signal (or all handlers, if no\n> signal is specified) onto\n> // an internal stack.\n> func Push(sig ...os.Signal)\n> \n> // Pop restores the latest result of Push, restoring handlers for all\n> affected signals and discarding\n> // any intervening channels added to handle them.\n> func Pop()\n> \n> so a client would look like\n> \n> func client() {\n>   c := make(chan os.Signal, 2)\n>   // take over SIGNIT\n>   signal.Push(SIGINT)\n>   defer signal.Pop()\n>   signal.Notify(SIGINT, c)\n>   ... do stuff\n> }\n> \n> \n> On Sat, Jan 12, 2013 at 6:34 AM, minux <mailto:minux.ma@gmail.com> wrote:\n> \n> > my api proposal:\n> >\n> > // Push saves the original channel for signal sig into an internal stack,\n> > and from now on\n> > // until next Pop(sig), c and only c is used for notification of sig if c\n> > is not nil;\n> > // if c is nil, the default behavior of sig is restored until the\n> > correspondent Pop(sig).\n> > func Push(c chan<- os.Signal, sig os.Signal)\n> >\n> > // Pop restores signal channel saved by Push, if the stack underflows, it\n> > will panic.\n> > func Pop(sig os.Signal)\n> >\n> > In this way, we don't need to return the original channel (to avoid the\n> > single vs. multiple signal\n> > channel problem), and it can also achieve the goal of temporarily\n> > change signal handle like this:\n> > func client() {\n> >    c := make(chan os.Signal, 2)\n> >    // take over SIGINT\n> >    signal.Push(c, SIGINT)\n> >    defer signal.Pop(SIGINT)\n> >    // blah blah\n> > }\n> >\n> > For implementation, we just need to place a override entry in front of\n> > handlers.list for Push.\n> >",
+			"disapproval": false,
+			"date": "2013-01-13 10:32:13.982340",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"guelfey@gmail.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/reset_unix_test.go\nFile src/pkg/os/signal/reset_unix_test.go (right):\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/reset_unix_test.go#newcode16\nsrc/pkg/os/signal/reset_unix_test.go:16: const source = `\nThis is cute but don't do it.  Instead have the test run itself after setting environment variables.  See syscall/passfd_test.go for an example.\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/signal.go\nFile src/pkg/os/signal/signal.go (right):\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/signal.go#newcode30\nsrc/pkg/os/signal/signal.go:30: // It returns a (possibly empty) slice of channels that\nWhy is it useful to return the channels?  The channels were passed in by the program anyhow; if the program needs to keep track, it can do so.  In particular, returning the channels is not useful if we don't distinguish between channels for a specific signal and channels for all signals.  Since we don't want to bother distinguishing them, let's just not return them.\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/signal.go#newcode32\nsrc/pkg/os/signal/signal.go:32: func Reset(sig os.Signal) []chan<- os.Signal {\nI would put this function at the bottom of the file.\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/signal.go#newcode39\nsrc/pkg/os/signal/signal.go:39: if i != len(handlers.list)-1 {\nI don't think you need this conditional.\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/signal.go#newcode71\nsrc/pkg/os/signal/signal.go:71: h := handler{c: c, all: true, except: make(map[os.Signal]bool)}\nPerhaps we should leave the except field as nil unless we need it.  Not sure.\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/os/signal/signal.go#newcode85\nsrc/pkg/os/signal/signal.go:85: var found bool\nI would write \"found := false\".\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/runtime/sigqueue.goc\nFile src/pkg/runtime/sigqueue.goc (right):\n\nhttps://codereview.appspot.com/7086045/diff/7001/src/pkg/runtime/sigqueue.goc#newcode175\nsrc/pkg/runtime/sigqueue.goc:175: runtime\u00b7sigdisable(s);\nSeems like you can call runtime\u00b7sigdisable before runtime\u00b7lock.",
+			"disapproval": false,
+			"date": "2013-01-12 02:15:14.629250",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Monday, January 14, 2013 6:09:24 PM UTC+1, minux wrote:\r\n\r\n>\r\n> On Mon, Jan 14, 2013 at 8:19 AM, Kyle Lemons <kev...@google.com<javascript:>\r\n> > wrote:\r\n>\r\n>> You could return an opaque interface { Restore() }; this would probably \r\n>> even prevent you from having to have an internal stack, you'd just ferret \r\n>> the channels away inside the opaque value and re-add them on Restore.\r\n>>\r\n> ok, I propose this (only the signature and semantics, but not the name, as \r\n> this obviously not a good name):\r\n>\r\n> // Update overrides the current notifier for signals sigs as channel c, \r\n> and returns a function which when called,\r\n> // will restore the notifier channels for signal s to the state before \r\n> Update takes effect.\r\n> // when c is nil, it will restore the default OS behavior for signal sigs.\r\n> func  Update(c chan<- os.Signal, sigs ...os.Signal) func()\r\n>\r\n> the example use case is now:\r\n> func client() {\r\n>     defer signal.Update(nil, syscall.SIGINT)()\r\n>     // now SIGINT is restored to its default behavior...\r\n>     // do things\r\n> }\r\n> with the added benefits that if the client ignores the return value, it \r\n> effectively removes all the existing signal\r\n> handlers and we don't need to maintain any explicit stacks in os/signal.\r\n>\r\n> the docs is not comprehensive, if we adopt it, we'd need to rewrite it, \r\n> but i think you can get the idea. :-)\r\n> of course, I'm open to suggestion about proper name for this API.\r\n>\r\n\r\nI'm not good at thinking of good names, but something like \"Change\", \r\n\"Modify\" or maybe \"Overwrite\" should be fine. As it's one of two functions \r\nin this package, the most important thing is IMO that it is easily \r\ndistinguishable from the other one (even more so because they have the same \r\nsignature).\r\n",
+			"disapproval": false,
+			"date": "2013-01-14 17:38:07.867210",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "my api proposal:\r\n\r\n// Push saves the original channel for signal sig into an internal stack,\r\nand from now on\r\n// until next Pop(sig), c and only c is used for notification of sig if c\r\nis not nil;\r\n// if c is nil, the default behavior of sig is restored until the\r\ncorrespondent Pop(sig).\r\nfunc Push(c chan<- os.Signal, sig os.Signal)\r\n\r\n// Pop restores signal channel saved by Push, if the stack underflows, it\r\nwill panic.\r\nfunc Pop(sig os.Signal)\r\n\r\nIn this way, we don't need to return the original channel (to avoid the\r\nsingle vs. multiple signal\r\nchannel problem), and it can also achieve the goal of temporarily\r\nchange signal handle like this:\r\nfunc client() {\r\n   c := make(chan os.Signal, 2)\r\n   // take over SIGINT\r\n   signal.Push(c, SIGINT)\r\n   defer signal.Pop(SIGINT)\r\n   // blah blah\r\n}\r\n\r\nFor implementation, we just need to place a override entry in front of\r\nhandlers.list for Push.\r\n",
+			"disapproval": false,
+			"date": "2013-01-12 14:34:46.824850",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sun, Jan 13, 2013 at 6:32 PM, <guelfey@gmail.com> wrote:\r\n\r\n> I agree that it's probably better if Pop doesn't take a parameter.\r\n> However, your form of Push may lead to a signal not being reported.\r\n> Consider the case that a signal whose handler is to be changed arrives\r\n> between the calls to Push and Notify.\r\n>\r\n> Consequently, the user must be able to reset the handler for a signal\r\n> and establish a new one in one function call where the lock is held\r\n> without interruption.\r\n>\r\n> My proposal:\r\n>\r\n> // Push removes all handlers for the given signals, saves them on the\r\n> // top of an internal stack and establishes c as the new handler for\r\n> // these signals. If no signal is listed, all handlers are removed and\r\n> // c will receive all signals. If c is nil, the default handlers for\r\n> // the signals are re-established.\r\n> func Push(c chan<- os.Signal, sig ...os.Signal)\r\n>\r\n> // Pop inverts the effects of the last call to Push, i.e. it removes\r\n> // the channel that was passed to Push from the list of handlers, and\r\n> // re-establishes the signal handlers that were saved by Push.\r\n> func Pop()\r\n>\r\nhowever, what if a concurrently running goroutine also calls\r\nPush but haven't yet call Pop when this goroutine calls Pop?\r\n\r\nthe sequence of events is as follows (time flows down in this chart):\r\ngoroutine 1        goroutine 2\r\nPush(c, sig)\r\n// do things\r\n                          Push(c2, sig)\r\n                          // somehow blocked\r\nPop()\r\n                          Pop()\r\n\r\nThis is also a problem for my original proposal when c2 == c, however,\r\ni believe solving this problem is beyond the scope of the os/signal package\r\n(because the signal handlers are a global resource, the user must somehow\r\nprovide a means to coordinate the issues; or perhaps os/signal should hold\r\na lock when Push returns until Pop is called, but it's hardly acceptable).\r\n\r\nok, an easy solution is to record the goroutine id, but it then forbid the\r\nuser to call Pop on another goroutine.\r\n",
+			"disapproval": false,
+			"date": "2013-01-13 20:59:27.024550",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\r\n\r\nOn Saturday, January 12, 2013 4:30:06 PM UTC+1, minux wrote:\r\n>\r\n>\r\n> On Sat, Jan 12, 2013 at 11:08 PM, <gue...@gmail.com <javascript:>> wrote:\r\n>\r\n>> I don't really see how this is different from my approach, except that \r\n>> the old handlers are saved\r\n>> in the signal package, which seems to me like it would make things more \r\n>> complicated unnecessarily. Do you have an example where this API would be \r\n>> suited better?\r\n>>\r\n> Just to limit what the client can do, actually; and to avoid returning \r\n> something like\r\n> []struct { AllSignals bool; C chan<- os.Signal }.\r\n>\r\n> your approach will make client more complicated to restore the old ones \r\n> (the client\r\n> must do a for range over the result and call signal.Notify for each one)\r\n>\r\n> Also, as i've explained, the implementation of my proposal is in fact, \r\n> pretty easy.\r\n> just insert a special overrider in front of handlers.list (we can also use \r\n> two separate\r\n> slices to hold overrider and normal ones, so no need to insert an entry \r\n> into a slice).\r\n>\r\n> Rationale for the limitation of the API:\r\n> 1. if you touch signal notifiers in a package, then almost certainly you \r\n> will have to\r\n> restore them to the original ones before you return.\r\n> 2. if you control the main package, then everything is in your control, \r\n> and you actually\r\n> don't need too much flexibility in the signal API. And what's currently \r\n> missing is to\r\n> temporarily restore default behavior of signals.\r\n>\r\n\r\nThat sounds reasonable. I'll try and implement it later.\r\n",
+			"disapproval": false,
+			"date": "2013-01-12 15:47:55.839280",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sunday, January 13, 2013 9:59:06 PM UTC+1, minux wrote:\r\n\r\n>\r\n> On Sun, Jan 13, 2013 at 6:32 PM, <gue...@gmail.com <javascript:>> wrote:\r\n>\r\n>> I agree that it's probably better if Pop doesn't take a parameter.\r\n>> However, your form of Push may lead to a signal not being reported.\r\n>> Consider the case that a signal whose handler is to be changed arrives\r\n>> between the calls to Push and Notify.\r\n>>\r\n>> Consequently, the user must be able to reset the handler for a signal\r\n>> and establish a new one in one function call where the lock is held\r\n>> without interruption.\r\n>>\r\n>> My proposal:\r\n>>\r\n>> // Push removes all handlers for the given signals, saves them on the\r\n>> // top of an internal stack and establishes c as the new handler for\r\n>> // these signals. If no signal is listed, all handlers are removed and\r\n>> // c will receive all signals. If c is nil, the default handlers for\r\n>> // the signals are re-established.\r\n>> func Push(c chan<- os.Signal, sig ...os.Signal)\r\n>>\r\n>> // Pop inverts the effects of the last call to Push, i.e. it removes\r\n>> // the channel that was passed to Push from the list of handlers, and\r\n>> // re-establishes the signal handlers that were saved by Push.\r\n>> func Pop()\r\n>>\r\n> however, what if a concurrently running goroutine also calls\r\n> Push but haven't yet call Pop when this goroutine calls Pop?\r\n>\r\n> the sequence of events is as follows (time flows down in this chart):\r\n> goroutine 1        goroutine 2\r\n> Push(c, sig)\r\n> // do things\r\n>                           Push(c2, sig)\r\n>                           // somehow blocked\r\n> Pop()\r\n>                           Pop()\r\n>\r\n> This is also a problem for my original proposal when c2 == c, however,\r\n> i believe solving this problem is beyond the scope of the os/signal package\r\n> (because the signal handlers are a global resource, the user must somehow\r\n> provide a means to coordinate the issues; or perhaps os/signal should hold\r\n> a lock when Push returns until Pop is called, but it's hardly acceptable).\r\n>\r\n> ok, an easy solution is to record the goroutine id, but it then forbid the\r\n> user to call Pop on another goroutine.\r\n>\r\n\r\nA similar thing would happen if Pop took a signal parameter and two \r\ngoroutines\r\nconcurrently used Push/Pop with the same signal. I guess in the end the \r\nbest way to it\r\nis to leave it to the user completely and use my first approach where the \r\nchannels are\r\nreturned. At the moment, I can't imagine a good alternative. (Maybe it will \r\ncome up later.)\r\n",
+			"disapproval": false,
+			"date": "2013-01-13 21:51:33.512840",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "You could return an opaque interface { Restore() }; this would probably\r\neven prevent you from having to have an internal stack, you'd just ferret\r\nthe channels away inside the opaque value and re-add them on Restore.\r\n\r\n\r\nOn Sun, Jan 13, 2013 at 3:59 PM, minux <minux.ma@gmail.com> wrote:\r\n\r\n>\r\n> On Sun, Jan 13, 2013 at 6:32 PM, <guelfey@gmail.com> wrote:\r\n>\r\n>> I agree that it's probably better if Pop doesn't take a parameter.\r\n>> However, your form of Push may lead to a signal not being reported.\r\n>> Consider the case that a signal whose handler is to be changed arrives\r\n>> between the calls to Push and Notify.\r\n>>\r\n>> Consequently, the user must be able to reset the handler for a signal\r\n>> and establish a new one in one function call where the lock is held\r\n>> without interruption.\r\n>>\r\n>> My proposal:\r\n>>\r\n>> // Push removes all handlers for the given signals, saves them on the\r\n>> // top of an internal stack and establishes c as the new handler for\r\n>> // these signals. If no signal is listed, all handlers are removed and\r\n>> // c will receive all signals. If c is nil, the default handlers for\r\n>> // the signals are re-established.\r\n>> func Push(c chan<- os.Signal, sig ...os.Signal)\r\n>>\r\n>> // Pop inverts the effects of the last call to Push, i.e. it removes\r\n>> // the channel that was passed to Push from the list of handlers, and\r\n>> // re-establishes the signal handlers that were saved by Push.\r\n>> func Pop()\r\n>>\r\n> however, what if a concurrently running goroutine also calls\r\n> Push but haven't yet call Pop when this goroutine calls Pop?\r\n>\r\n> the sequence of events is as follows (time flows down in this chart):\r\n> goroutine 1        goroutine 2\r\n> Push(c, sig)\r\n> // do things\r\n>                           Push(c2, sig)\r\n>                           // somehow blocked\r\n> Pop()\r\n>                           Pop()\r\n>\r\n> This is also a problem for my original proposal when c2 == c, however,\r\n> i believe solving this problem is beyond the scope of the os/signal package\r\n> (because the signal handlers are a global resource, the user must somehow\r\n> provide a means to coordinate the issues; or perhaps os/signal should hold\r\n> a lock when Push returns until Pop is called, but it's hardly acceptable).\r\n>\r\n> ok, an easy solution is to record the goroutine id, but it then forbid the\r\n> user to call Pop on another goroutine.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-14 00:19:51.701660",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The bike shed could also be painted \"Intercept\", \"Temp\", \"Inject\", etc.\r\n\r\nI only suggested an interface because I thought one might have a separate\r\ntype for when all signals are being replaced versus when just one has been,\r\nas they may not be structs.  A \"Restorer\" interface can also be exported\r\nand documented; otherwise it would have to be a struct even if it didn't\r\nneed to be in order to hide its implementation.\r\n\r\n\r\nOn Mon, Jan 14, 2013 at 9:38 AM, <guelfey@gmail.com> wrote:\r\n\r\n> On Monday, January 14, 2013 6:09:24 PM UTC+1, minux wrote:\r\n>\r\n>\r\n>> On Mon, Jan 14, 2013 at 8:19 AM, Kyle Lemons <kev...@google.com> wrote:\r\n>>\r\n>>> You could return an opaque interface { Restore() }; this would probably\r\n>>> even prevent you from having to have an internal stack, you'd just ferret\r\n>>> the channels away inside the opaque value and re-add them on Restore.\r\n>>>\r\n>> ok, I propose this (only the signature and semantics, but not the name,\r\n>> as this obviously not a good name):\r\n>>\r\n>> // Update overrides the current notifier for signals sigs as channel c,\r\n>> and returns a function which when called,\r\n>> // will restore the notifier channels for signal s to the state before\r\n>> Update takes effect.\r\n>> // when c is nil, it will restore the default OS behavior for signal sigs.\r\n>> func  Update(c chan<- os.Signal, sigs ...os.Signal) func()\r\n>>\r\n>> the example use case is now:\r\n>> func client() {\r\n>>     defer signal.Update(nil, syscall.SIGINT)()\r\n>>     // now SIGINT is restored to its default behavior...\r\n>>     // do things\r\n>> }\r\n>> with the added benefits that if the client ignores the return value, it\r\n>> effectively removes all the existing signal\r\n>> handlers and we don't need to maintain any explicit stacks in os/signal.\r\n>>\r\n>> the docs is not comprehensive, if we adopt it, we'd need to rewrite it,\r\n>> but i think you can get the idea. :-)\r\n>> of course, I'm open to suggestion about proper name for this API.\r\n>>\r\n>\r\n> I'm not good at thinking of good names, but something like \"Change\",\r\n> \"Modify\" or maybe \"Overwrite\" should be fine. As it's one of two functions\r\n> in this package, the most important thing is IMO that it is easily\r\n> distinguishable from the other one (even more so because they have the same\r\n> signature).\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-14 21:04:32.194460",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"guelfey@gmail.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"minux.ma@gmail.com",
+				"kevlar@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, iant@golang.org, minux.ma@gmail.com, kevlar@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-14 21:58:07.758350",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"guelfey@gmail.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"minux.ma@gmail.com",
+				"kevlar@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ping?",
+			"disapproval": false,
+			"date": "2013-01-18 14:47:36.963020",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm baffled about why we need a function returning a function for\r\nsomething as trivial as resetting a signal handler. What is the reason\r\nnot to do something simpler like:\r\n\r\n// Reset resets the handlers for the given signals to the default behavior.\r\n// If the list is empty, it resets handlers for all signals.\r\nfunc Reset(sig ...os.Signal)\r\n\r\nThanks.\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 21:14:55.470000",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"guelfey@gmail.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"minux.ma@gmail.com",
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/18 21:14:55, rsc wrote:\n> I'm baffled about why we need a function returning a function for\n> something as trivial as resetting a signal handler. What is the reason\n> not to do something simpler like:\n> \n> // Reset resets the handlers for the given signals to the default behavior.\n> // If the list is empty, it resets handlers for all signals.\n> func Reset(sig ...os.Signal)\n> \n> Thanks.\n> Russ\n\nAs the issue report leading to this CL (https://code.google.com/p/go/issues/detail?id=4268) pointed out, it is possible that a non-main package needs to temporarily reset a signal handler or establish its own, overwriting any signal handler that main or any other package may have registered. This has two consequences:\n\n1. There must be a way to atomically remove all handlers for a signal and establish a new one, similar to what sigaction() does.\n\n2. This action has to be reversible. sigaction() returns the old signal handler, so I first suggested that the new function returns the previous handlers as a slice of channels, but we came to the conclusion that it's easier for the user if the function just returns a function that undoes the changes. If the handler should be reset permanently, the return value is just discarded.",
+			"disapproval": false,
+			"date": "2013-01-18 21:59:45.962090",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Any amount of complexity can be justified by 'it is possible'. I think\r\nthat adding Reset will address the (rare!) problem without needing to\r\nadd significant complexity.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 22:26:41.556600",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Jan 19, 2013 at 6:26 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Any amount of complexity can be justified by 'it is possible'. I think\r\n> that adding Reset will address the (rare!) problem without needing to\r\n> add significant complexity\r\n>\r\nWhat about this scenario:\r\ni write a package function to read raw keystrokes from terminal, so i set\r\nthe terminal to raw mode, but to avoid the user accidentally kill the\r\nprogram\r\nwhile leaving the terminal mode set to raw, i need to add a notifier channel\r\nfor deadly signals.\r\n\r\nHowever, after my function returns, how can I remove my notifier channel\r\nfrom the list? for now, i will have to maintain the state within my package\r\nwhether I've already registered the notifier channel, not an ideal solution.\r\n\r\nwith the proposal in this CL, i can write:\r\nfunc ReadKeyPresses() {\r\n     ch := make(chan os.Signal, 1)\r\n     defer signal.Change(ch, syscall.SIGINT /* and other deadly signals\r\n*/)()\r\n     go func() { /* do something with ch */ }()\r\n     // change terminal mode\r\n     // blah blah\r\n}\r\n\r\n\r\nPerhaps we can get by with these two functions and minimum added complexity:\r\n// as you proposed\r\nfunc Reset(sigs ...os.Signal)\r\n// remove ch from the list of notifier channels\r\nfunc Remove(ch chan<- os.Signal)\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 22:38:25.663960",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think you are worrying about too much generality. Only package main\r\nshould be dealing with signals like this, and if it does, it can\r\nfigure out what to do.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 22:44:18.990520",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Jan 19, 2013 at 6:44 AM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> I think you are worrying about too much generality. Only package main\r\n> should be dealing with signals like this, and if it does, it can\r\n> figure out what to do.\r\n>\r\na concrete example of this kind of requirements:\r\nhttp://godoc.org/code.google.com/p/go.crypto/ssh/terminal#ReadPassword\r\n\r\nwhat if the user press ^C or even ^\\ when prompted for password?\r\nwe shouldn't left them with a non-echo terminal (I guess some people, if\r\nnot most, will panic if that happens).\r\n",
+			"disapproval": false,
+			"date": "2013-01-18 23:02:34.359420",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"guelfey@gmail.com",
+				"golang-dev@googlegroups.com",
+				"iant@golang.org",
+				"minux.ma@gmail.com",
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/18 22:26:41, rsc wrote:\n> Any amount of complexity can be justified by 'it is possible'. I think\n> that adding Reset will address the (rare!) problem without needing to\n> add significant complexity.\n> \n> Russ\n\nI can understand that you dislike adding that much code for such a rare problem. However, consider that, by implementing os/signal, we basically provide an interface to the signal/sigaction syscalls for Go. So I think this interface should provide the same functionality as the syscalls themselves. As both signal() and sigaction() are able to atomically change the signal handler and return the old one, we should also be able to do this.",
+			"disapproval": false,
+			"date": "2013-01-24 16:54:46.544000",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jan 24, 2013 at 8:54 AM, <guelfey@gmail.com> wrote:\r\n\r\n> I can understand that you dislike adding that much code for such a rare\r\n> problem. However, consider that, by implementing os/signal, we basically\r\n> provide an interface to the signal/sigaction syscalls for Go. So I think\r\n> this interface should provide the same functionality as the syscalls\r\n> themselves. As both signal() and sigaction() are able to atomically\r\n> change the signal handler and return the old one, we should also be able\r\n> to do this.\r\n>\r\n\r\nThis is not true. os/signal is an abstraction that is defined not just on\r\nUnix but also on Plan 9 and Windows and any other system Go runs on. Signal\r\nand sigaction are not the only implementation, and we shouldn't do things\r\nthat can only be done with them.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-01-31 01:38:04.576510",
+			"approval": false
+		},
+		{
+			"sender": "guelfey@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thursday, January 31, 2013 2:38:02 AM UTC+1, rsc wrote:\r\n>\r\n> This is not true. os/signal is an abstraction that is defined not just on \r\n> Unix but also on Plan 9 and Windows and any other system Go runs on. Signal \r\n> and sigaction are not the only implementation, and we shouldn't do things \r\n> that can only be done with them.\r\n>\r\n> Russ\r\n>\r\n\r\nYou're right, of course, that os/signal is not supposed to be \r\nplatform-dependent. However, it should be possible to have the \r\nfunctionality of sigaction on the systems that implement it. As this is not \r\nactually limited to Unix (because we can use locks to atomically change a \r\nsignal handler), I can't think of a reason why this shouldn't be put into \r\nos/signal.\r\n",
+			"disapproval": false,
+			"date": "2013-01-31 15:03:43.718750",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Russ,\r\n  have you considered the following example that should benefit from\r\na restorable signal notifier?\r\n\r\na concrete example of this kind of requirements:\r\nhttp://godoc.org/code.google.com/p/go.crypto/ssh/terminal#ReadPassword\r\n\r\nwhat if the user press ^C or even ^\\ when prompted for password?\r\nwe shouldn't left them with a non-echo terminal.\r\n\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-31 16:46:58.810760",
+			"approval": false
+		}
+	],
+	"owner_email": "guelfey@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "guelfey",
+	"subject": "code review 7086045: os/signal: implement Change() function",
+	"created": "2013-01-11 14:37:11.853240",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		7001,
+		3023,
+		11002,
+		16001,
+		3
+	],
+	"modified": "2013-03-15 05:57:03.234070",
+	"closed": true,
+	"issue": 7086045
+}

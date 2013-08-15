@@ -1,0 +1,233 @@
+{
+	"description": "cmd/go: do not scan whole tree on prefix match\n\nA command such as\n\n    go install some.site/some/pkg/...\n\nCurrently takes more than 30 seconds to execute in\nmy machine as it scans the whole $GOPATH/src tree.\nWith this change it takes 0.1s.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org",
+		"rsc@golang.org",
+		"fullung@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-06-21 19:22:10.581039",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6337043/diff/7001/src/cmd/go/main.go\nFile src/cmd/go/main.go (right):\n\nhttp://codereview.appspot.com/6337043/diff/7001/src/cmd/go/main.go#newcode442\nsrc/cmd/go/main.go:442: // Avoid scanning the whole tree if we know where to look at.\ns/ at//\nor maybe\nAvoid scanning the whole tree if we have a literal prefix to the pattern.\n\nbut in any case this smells funny to me. surely if there's no \"...\" i can do something fast, but this only does something fast if there *is* a \"...\". please explain",
+			"disapproval": false,
+			"date": "2012-07-09 22:19:50.680060",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6337043/diff/7001/src/cmd/go/main.go\nFile src/cmd/go/main.go (right):\n\nhttp://codereview.appspot.com/6337043/diff/7001/src/cmd/go/main.go#newcode442\nsrc/cmd/go/main.go:442: // Avoid scanning the whole tree if we know where to look at.\nOn 2012/07/09 22:19:50, r wrote:\n> but in any case this smells funny to me. surely if there's no \"...\" i can do\n> something fast, but this only does something fast if there *is* a \"...\". please\n> explain\n\nThis function runs in three situations: patterns, \"all\", and \"std\", with the latter two being special tokens. We can't speed up \"all\", \"std\" was already handled specially below. This is handling the missing case.\n\nI'll replace the text by your suggestion.",
+			"disapproval": false,
+			"date": "2012-07-09 22:44:29.014780",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM but let rsc sign off too",
+			"disapproval": false,
+			"date": "2012-07-17 03:44:47.039540",
+			"approval": true
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-07-17 02:51:23.144010",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This doesn't seem right. It handles one important case, but it's not general enough. What you really want is inside the body, where the other SkipDir cases are, to have\n\nif !childrenCanMatch(name, pattern) {\n    return filepath.SkipDir\n}\n\nThat would require writing that function, but maybe you could put it in with\n\nfunc childrenCanMatch(name, pattern string) {\n    // TODO: Write less conservative implementation to speed scan.\n    return true\n}\n\n474 or so says\n_, err = build.ImportDir(path, 0)\nif err != nil ... { ... }\nif match(name) {\n    pkgs = append(pkgs, name)\n}\n\nIt seems reasonable to invert this so that we don't ImportDir on packages we won't keep:\n\nif !match(name) {\n    return nil\n}\n_, err = build.ImportDir(path, 0)\n...\n\nI think that alone will get your 0.1 second speedup, and then we can leave the full implementation of childrenCanMatch for future work.\n474                         _, err = build.ImportDir(path, 0)\n 468                         if err != nil && strings.Contains(err.Error(), \"no Go source files\") {\t 475                         if err != nil && strings.Contains(err.Error(), \"no Go source files\") {\n 469                                 return nil\t 476                                 return nil\n 470                         }\t 477                         }\n 471                         if match(name) {\t 478                         if match(name) {\n 472                                 pkgs = append(pkgs, name)\t 479                                 pkgs = append(pkgs, name)\n 473                         }\t 480                         }\n 474                         return nil\n\nhttp://codereview.appspot.com/6337043/diff/15001/src/cmd/go/main.go\nFile src/cmd/go/main.go (right):\n\nhttp://codereview.appspot.com/6337043/diff/15001/src/cmd/go/main.go#newcode445\nsrc/cmd/go/main.go:445: prefix, _ = path.Split(pattern[:i])\nWhat if pattern is \"x...\" ?",
+			"disapproval": false,
+			"date": "2012-07-29 22:48:02.388610",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ignore the garbage at the bottom of my reply.",
+			"disapproval": false,
+			"date": "2012-07-29 22:48:19.536570",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/07/29 22:48:02, rsc wrote:\n> This doesn't seem right. It handles one important case, but it's not general\n> enough. What you really want is inside the body, where the other SkipDir cases\n> are, to have\n(...)\n> func childrenCanMatch(name, pattern string) {\n>     // TODO: Write less conservative implementation to speed scan.\n>     return true\n> }\n\nAdding a dummy function that does nothing won't prevent scanning huge trees. The change I'm suggesting is trivial and works. Once you want to generalize the suggested logic, it won't be any more expensive to do so.\n\nFor these reasons, I disagree with your suggestion.\n\nhttp://codereview.appspot.com/6337043/diff/15001/src/cmd/go/main.go\nFile src/cmd/go/main.go (right):\n\nhttp://codereview.appspot.com/6337043/diff/15001/src/cmd/go/main.go#newcode445\nsrc/cmd/go/main.go:445: prefix, _ = path.Split(pattern[:i])\nOn 2012/07/29 22:48:02, rsc wrote:\n> What if pattern is \"x...\" ?\n\nprefix will be \"\", which should work.",
+			"disapproval": false,
+			"date": "2012-07-30 05:53:30.398320",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/07/30 05:53:30, niemeyer wrote:\n> On 2012/07/29 22:48:02, rsc wrote:\n> > This doesn't seem right. It handles one important case, but it's not general\n> > enough. What you really want is inside the body, where the other SkipDir cases\n> > are, to have\n> (...)\n> > func childrenCanMatch(name, pattern string) {\n> >     // TODO: Write less conservative implementation to speed scan.\n> >     return true\n> > }\n> \n> Adding a dummy function that does nothing won't prevent scanning huge trees. The\n> change I'm suggesting is trivial and works. Once you want to generalize the\n> suggested logic, it won't be any more expensive to do so.\n\nDid you try this:\n\n474 or so says\n_, err = build.ImportDir(path, 0)\nif err != nil ... { ... }\nif match(name) {\n    pkgs = append(pkgs, name)\n}\n\nIt seems reasonable to invert this so that we don't ImportDir on packages we\nwon't keep:\n\nif !match(name) {\n    return nil\n}\n_, err = build.ImportDir(path, 0)\n...\n\nThat should have a huge impact, since we won't read Go files that can only be part of packages we don't care about.",
+			"disapproval": false,
+			"date": "2012-08-03 18:24:43.277330",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Gustavo, I think this is in your court.",
+			"disapproval": false,
+			"date": "2012-08-31 19:59:17.929500",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/31 19:59:17, rsc wrote:\n> Gustavo, I think this is in your court.\n\nCheers, I'll try to get back to this over the weekend. Things have been a bit crazy over here, sorry for the lag.",
+			"disapproval": false,
+			"date": "2012-08-31 21:51:48.415970",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-04-08 18:27:27.309620",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "For the record, the approach suggested by Russ is already in. Hopefully it solves the problem this change intended to address.",
+			"disapproval": false,
+			"date": "2013-04-08 18:29:33.144690",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Is this about\n\nhttps://groups.google.com/d/topic/golang-nuts/muDHV2yx6VA/discussion\n\n?\n\nNot quite sure it's fixed if there's still extra system calls being made?",
+			"disapproval": false,
+			"date": "2013-04-08 21:31:37.422690",
+			"approval": false
+		}
+	],
+	"owner_email": "n13m3y3r@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "niemeyer",
+	"subject": "code review 6337043: cmd/go: do not scan whole tree on prefix match",
+	"created": "2012-06-21 19:11:01.909694",
+	"patchsets": [
+		1,
+		3,
+		4001,
+		7001,
+		12001,
+		15001
+	],
+	"modified": "2013-04-08 21:31:37.422690",
+	"closed": true,
+	"issue": 6337043
+}

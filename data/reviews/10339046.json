@@ -1,0 +1,164 @@
+{
+	"description": "runtime: compute arglen for various runtime functions in traceback\n\nThis affects GC and is therefore difficult to test.\n\nThe old ARM code used 3*sizeof(uintptr) for deferproc and\nnewproc; this code uses 2*sizeof(uintptr).  Why does ARM use 3\nrather than 2?\n\nUpdate issue 5749",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"dvyukov@google.com",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Updated.\n\nhttps://codereview.appspot.com/10339046/diff/1/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10339046/diff/1/src/pkg/runtime/proc.c#newcode2470\nsrc/pkg/runtime/proc.c:2470: // important for functions with textflag 7 that directly or indirectly\nOn 2013/06/21 15:04:56, dvyukov wrote:\n> if/when preemption is implemented, most of the runtime functions will be able to\n> park goroutines\n> there are also semacquire/semrelease that are called from sync to park\n> goroutines, but probably they do not cause lots of problems\n\nAcknowledged.\n\nhttps://codereview.appspot.com/10339046/diff/1/src/pkg/runtime/proc.c#newcode2484\nsrc/pkg/runtime/proc.c:2484: *arglen = 2*sizeof(uintptr) + (*(Type**)argp)->size;\nOn 2013/06/21 15:04:56, dvyukov wrote:\n> this needs to be (*(Type**)argp)->elem->size\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-21 15:24:14.589920",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-06-21 14:01:25.297920",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/10339046/diff/1/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10339046/diff/1/src/pkg/runtime/proc.c#newcode2470\nsrc/pkg/runtime/proc.c:2470: // important for functions with textflag 7 that directly or indirectly\nif/when preemption is implemented, most of the runtime functions will be able to park goroutines\nthere are also semacquire/semrelease that are called from sync to park goroutines, but probably they do not cause lots of problems\n\nhttps://codereview.appspot.com/10339046/diff/1/src/pkg/runtime/proc.c#newcode2484\nsrc/pkg/runtime/proc.c:2484: *arglen = 2*sizeof(uintptr) + (*(Type**)argp)->size;\nthis needs to be (*(Type**)argp)->elem->size",
+			"disapproval": false,
+			"date": "2013-06-21 15:04:56.188210",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The refactoring is fine, but the giant list is not lgtm.\nI'd like to get better information from the compiler instead.\n\nhttps://codereview.appspot.com/10339046/diff/5001/src/pkg/runtime/proc.c\nFile src/pkg/runtime/proc.c (right):\n\nhttps://codereview.appspot.com/10339046/diff/5001/src/pkg/runtime/proc.c#newcode2480\nsrc/pkg/runtime/proc.c:2480: *arglen = 2*sizeof(uintptr) + *(int32*)argp;\nThe arm really does need 3.\n\nConsider go f(x) where x is one word.\nOn x86, this turns into\nMOVQ x, 0(SP)\nPUSHQ f\nPUSHQ 8 // size of args\nCALL newproc\n\nOn arm, there is a saved LR at the bottom of every non-leaf stack frame. In particular there is one between the argsize, f and the x. And then to make the called function find the args where it expects them, there must be a 0 pushed too. So the call sequence is (pseudo)\n\nMOVW x, 4(SP)\nSUB $12, SP\nMOVW $0, 0(SP) // unused\nMOVW $4, 4(SP)\nMOVW $f, 8(SP)\nBL newproc\n\nthe 3 are the f, 4, and the gap before x.\n\nhttps://codereview.appspot.com/10339046/diff/5001/src/pkg/runtime/proc.c#newcode2487\nsrc/pkg/runtime/proc.c:2487: if(pc == (uintptr)runtime\u00b7selectnbrecv) {\nThe variadic things like chansend1 need to handled here, but all these ones that have fixed sizes seem wrong to me. The right fix is to make the compiler tell the runtime the right information.\n\nThat is, there are two times functions get marked as nosplit. One time is that the arg size is dynamically computed, and so a split cannot do the right thing. That's what's going on in chansend1. But the other time is when the arg size is static but there's some other reason we want to avoid a split, like the function needs to be able to find (and possibly modify) its caller's frame. That's what's going on all of the ones from here down. These should not need special work.\n\nThe compiler can tell the two cases apart because the former includes a ... in the type list but the latter does not.",
+			"disapproval": true,
+			"date": "2013-06-21 18:28:07.178820",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping\n\nIan, please handle only chan functions here.\nI suspect this will fix http://code.google.com/p/go/issues/detail?id=5797",
+			"disapproval": false,
+			"date": "2013-06-27 11:46:05.937030",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's not clear that that's the right solution for channels. I thought the\r\nplan was to avoid the variable-sized arguments.\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 15:21:55.023710",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jun 27, 2013 at 7:21 PM, Russ Cox <rsc@golang.org> wrote:\r\n> It's not clear that that's the right solution for channels. I thought the\r\n> plan was to avoid the variable-sized arguments.\r\n\r\nThis is not the right solution. But it is a solution.\r\nIs somebody working on a compiler solution for Go1.2? The more big\r\ndeployments we have, the more problems with imprecise GC occur. It can\r\nmake sense to take some proactive steps.\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 15:43:04.195750",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jun 27, 2013 at 11:42 AM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n\r\n> This is not the right solution. But it is a solution.\r\n> Is somebody working on a compiler solution for Go1.2?\r\n\r\n\r\nYes, I plan to do that. There has to be a solution for Go 1.2. The current\r\nsituation is unworkable. But I don't want to put stopgaps in, because it\r\nmakes it look like people should expect tip to work. Tip is not for\r\nproduction use.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 15:47:14.003110",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jun 27, 2013 at 8:47 AM, Russ Cox <rsc@golang.org> wrote:\r\n> On Thu, Jun 27, 2013 at 11:42 AM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n>>\r\n>> This is not the right solution. But it is a solution.\r\n>> Is somebody working on a compiler solution for Go1.2?\r\n>\r\n>\r\n> Yes, I plan to do that. There has to be a solution for Go 1.2. The current\r\n> situation is unworkable. But I don't want to put stopgaps in, because it\r\n> makes it look like people should expect tip to work. Tip is not for\r\n> production use.\r\n\r\nShould I just drop this CL?\r\n\r\nIan\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 15:49:47.225290",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sure.\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 15:50:56.239390",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"iant@golang.org",
+				"golang-dev@googlegroups.com",
+				"dvyukov@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-06-27 15:51:18.173340",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jun 27, 2013 at 7:47 PM, Russ Cox <rsc@golang.org> wrote:\r\n> On Thu, Jun 27, 2013 at 11:42 AM, Dmitry Vyukov <dvyukov@google.com> wrote:\r\n>>\r\n>> This is not the right solution. But it is a solution.\r\n>> Is somebody working on a compiler solution for Go1.2?\r\n>\r\n> Yes, I plan to do that. There has to be a solution for Go 1.2. The current\r\n> situation is unworkable. But I don't want to put stopgaps in, because it\r\n> makes it look like people should expect tip to work. Tip is not for\r\n> production use.\r\n\r\n\r\nIf it is going to be ready for Go1.2, then it is fine with me.\r\n",
+			"disapproval": false,
+			"date": "2013-06-27 15:51:29.301500",
+			"approval": false
+		}
+	],
+	"owner_email": "iant@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "iant",
+	"subject": "code review 10339046: runtime: compute arglen for various runtime functions i...",
+	"created": "2013-06-21 14:01:16.085460",
+	"patchsets": [
+		1,
+		5001
+	],
+	"modified": "2013-06-27 15:51:29.373980",
+	"closed": true,
+	"issue": 10339046
+}

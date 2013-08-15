@@ -1,0 +1,178 @@
+{
+	"description": "unit: new package with time duration units (STRAWMAN)\n\nLight your torches!\n\nThis adds package unit with unit.Minutes, Seconds,\nMillis, Micros, Nanos, and a unit.Duration interface.\n\nThen uses it in time and everywhere else to see how\nit felt. It did seem to remove a lot of comments.\n\nThis doesn't go all the way, and I'm not even sure\nI'm perfectly happy with it (maybe the Duration interface\ncould be smaller, just Nanos?) Maybe there should\nbe \"Exact\" interfaces that exclude the division cases.\netc.\n\nThoughts?",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"rsc@google.com",
+		"go.peter.90@gmail.com",
+		"rogpeppe@gmail.com",
+		"gri@golang.org",
+		"kevlar@google.com",
+		"f1@uekermann-online.de"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Thu, May 12, 2011 at 2:27 PM, Kyle Lemons <kevlar@google.com> wrote:\n\n> Avoidable bugs and noise like:\n>>\n>>      time.Sleep(25e3) // 25 microseconds\n>>\n>\n> If I'm not mistaken, 25e3 is an ideal constant, so even if it was\n> time.Sleep(nanos Nanoseconds) it would still fail silently.\n>\n\nI believe you're mistaken?\n\ntime.Sleep() in this CL takes a unit.Duration.\n\nThat ideal constant would be an int, so wouldn't implement unit.Duration.\n",
+			"disapproval": false,
+			"date": "2011-05-12 21:35:39.874344",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": ">\n> I believe you're mistaken?\n>\n\nAh, it would appear so.  I looked briefly at the Time() change before\nreading the thread and had forgotten that it was even in the strawman by the\ntime I got around to responding.\n\n\n> time.Sleep() in this CL takes a unit.Duration.\n>\n> That ideal constant would be an int, so wouldn't implement unit.Duration.\n>\n\nIndeed.  Turns out, this is an argument for having Duration be an interface\nand not a simple type as I had envisioned.\n\n-- \n~Kyle\n\n*\"Everyone knows that debugging is twice as hard as writing a program in the\nfirst place. So if you're as clever as you can be when you write it, how\nwill you ever debug it?\"\n\u2014 Brian Kernighan*\n",
+			"disapproval": false,
+			"date": "2011-05-12 21:40:59.305926",
+			"approval": false
+		},
+		{
+			"sender": "rsc@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "It's interesting.  Some knee jerk reactions.\n\nThis really needs to happen in concert\nwith work on the time package itself.  It's not clear\nwhether unit should stand alone or be part of time.\n(Of course if it is part of time we need to reorder some\nof the dependencies.)\n\nI can't think what other units you'd have,\nbut given the generic name of the package presumably\nNanos, Mills, and Micros should have suffixes.\nunit.Duration could be unit.Time.  (The fact that it is\na unit implies that it's not absolute.)  Having just\nNanoseconds in the interface seems fine.\n\nThe conversions read like function calls, and\nthey read backward: you expect Hours(t) to\nreturn the number of hours in t.  I don't know\nwhat to do about that.\n\nAn alternative would be\n\npackage unit\n\ntype Time int64\n\nconst (\n    Nanosecond Time = 1\n    Microsecond Time = 1000*Nanosecond\n    Millisecond Time = 1000*Microsecond\n    Second Time = 1000*Millisecond\n    Minute Time = 60*Second\n    Hour Time = 60*Minute\n)\n\ntime.Sleep(5 * unit.Minute)\n\nIn package time I'd probably s/Time/Duration/.\n\nMy ideal is still to end up with something like\n\npackage time\ntype Duration int64\ntype Date int64\n\nand appropriate methods and constants.\n",
+			"disapproval": false,
+			"date": "2011-05-12 19:35:50.917683",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Thu, May 12, 2011 at 12:35 PM, Russ Cox <rsc@google.com> wrote:\n\n> It's interesting.  Some knee jerk reactions.\n>\n> This really needs to happen in concert\n> with work on the time package itself.  It's not clear\n> whether unit should stand alone or be part of time.\n>\n\nI did it standalone in unit to keep it simple for now, but in retrospect it\nfeels weird that whenever you import \"time\" you also have to import \"unit\"\nto use anything in time.  I think I'd prefer to put it in time.\n\n\n> (Of course if it is part of time we need to reorder some\n> of the dependencies.)\n>\n\nI knew the issues here once but forgot.  Do we have something to generate a\ngraphviz dot file from src/pkg/Make.deps?  I should write one... curious how\nit looks, after excluding some higher-level packages.\n\n\n> I can't think what other units you'd have,\n> but given the generic name of the package presumably\n> Nanos, Mills, and Micros should have suffixes.\n>\n\nYeah, I couldn't settle on this.  I justified it as the trailing s could\nalso mean \"seconds\".\n\n\n> unit.Duration could be unit.Time.  (The fact that it is\n> a unit implies that it's not absolute.)\n\n\nI'd prefer to use the same terms as other language's popular time libraries.\n At least DateTime::Perl and JodaTime use \"Duration\" for an amount of time\nthat is independent from governments or the planet's wobbliness. I haven't\ndone exhaustive research, though.  JodaTime uses \"Period\" for things that\nmight involve leap seconds or timezones.\n\n\n>  Having just\n> Nanoseconds in the interface seems fine.\n>\n\nYeah, realized that in retrospect.\n\n\n>\n> The conversions read like function calls, and\n> they read backward: you expect Hours(t) to\n> return the number of hours in t.  I don't know\n> what to do about that.\n>\n\nI also didn't like that.  And also that you can't do things like:\nunit.Seconds(1) / 2 and get what you might expect.\n\n\n> An alternative would be\n>\n> package unit\n>\n> type Time int64\n>\n> const (\n>    Nanosecond Time = 1\n>    Microsecond Time = 1000*Nanosecond\n>    Millisecond Time = 1000*Microsecond\n>    Second Time = 1000*Millisecond\n>    Minute Time = 60*Second\n>    Hour Time = 60*Minute\n> )\n>\n> time.Sleep(5 * unit.Minute)\n>\n> In package time I'd probably s/Time/Duration/.\n>\n\nYeah, I also considered something like that, but wanted to play with using\ntypes a bit more.  (having a Second type be distinct from a Millis type, so\ncallers can't mess it up....)\n\n\n> My ideal is still to end up with something like\n>\n> package time\n> type Duration int64\n> type Date int64\n>\n> and appropriate methods and constants.\n>\n\nYeah, perhaps including things like:\n\ntype Period struct {\n   ...\n   Minutes, Hours, Weeks, Months, Years int\n   ...\n}\n Date.AddPeriod(p Period) Date\n\n?\n",
+			"disapproval": false,
+			"date": "2011-05-12 19:51:15.780930",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg",
+			"disapproval": false,
+			"date": "2011-05-12 19:07:18.001037",
+			"approval": false
+		},
+		{
+			"sender": "go.peter.90@gmail.com",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@google.com",
+				"go.peter.90@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Brad,\n\nWhat problem(s) are you trying to solve?\n\nAfter a quick look, I don't see things that have been included in the duration packages that I've written or used. For example, calendar durations (e.g. year, half-year, quarter, month, week, day), duration arithmetic (plus and minus), and rounding.\n\nPeter",
+			"disapproval": false,
+			"date": "2011-05-12 19:46:52.799714",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Thu, May 12, 2011 at 12:46 PM, <go.peter.90@gmail.com> wrote:\n\n> Brad,\n>\n> What problem(s) are you trying to solve?\n>\n\nAvoidable bugs and noise like:\n\n     time.Sleep(25e3) // 25 microseconds\n\n(oh whoops, they took the time to explain what they wanted to do, but still\nmessed it up)\n\nWe should take advantage of Go's type system and not just use int64s and\nrely on variable names.\n\nThis keeps coming up in API designs where people aren't sure whether to take\na \"seconds int\", \"time int\" (what unit?), \"seconds int64\", \"t int64\" (maybe\nnanos?), \"ns int64\", etc.\n\n\n> After a quick look, I don't see things that have been included in the\n> duration packages that I've written or used. For example, calendar\n> durations (e.g. year, half-year, quarter, month, week, day), duration\n> arithmetic (plus and minus), and rounding.\n>\n\nThose are often called \"Periods\", not Durations.  I want to start with just\nDurations which are dead easy in comparison.\n",
+			"disapproval": false,
+			"date": "2011-05-12 19:54:53.028631",
+			"approval": false
+		},
+		{
+			"sender": "rsc@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> A unit package implies more than just time durations.\n\nAnd sadly I can't think of any legitimate reason to add type Candela.\n",
+			"disapproval": false,
+			"date": "2011-05-12 20:23:40.277900",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 12 May 2011 20:35, \"Russ Cox\" <rsc@google.com> wrote:\n>\n> It's interesting.  Some knee jerk reactions.\n>\n> This really needs to happen in concert\n> with work on the time package itself.  It's not clear\n> whether unit should stand alone or be part of time.\n> (Of course if it is part of time we need to reorder some\n> of the dependencies.)\n>\n> I can't think what other units you'd have,\n> but given the generic name of the package presumably\n> Nanos, Mills, and Micros should have suffixes.\n> unit.Duration could be unit.Time.  (The fact that it is\n> a unit implies that it's not absolute.)  Having just\n> Nanoseconds in the interface seems fine.\n>\n> The conversions read like function calls, and\n> they read backward: you expect Hours(t) to\n> return the number of hours in t.  I don't know\n> what to do about that.\n>\n> An alternative would be\n>\n> package unit\n>\n> type Time int64\n>\n> const (\n>    Nanosecond Time = 1\n>    Microsecond Time = 1000*Nanosecond\n>    Millisecond Time = 1000*Microsecond\n>    Second Time = 1000*Millisecond\n>    Minute Time = 60*Second\n>    Hour Time = 60*Minute\n> )\n>\n> time.Sleep(5 * unit.Minute)\n>\n> In package time I'd probably s/Time/Duration/.\n\nFWIW I'm +1 on this and -1 on the straw man.\n\nI think there's less chance of getting things wrong if everything is\nconverted to the same scale as soon as possible. If you're doing type\nconversions all the time (as you would), it's so easy to do s+time.Milli(x)\nwithout remembering the multiplier, and then you've silenced the type\nchecking.\n\nBetter IMHO to keep separate types for those kinds of thing that you\nshouldn't add together even with a scale change, eg. Days, Months and Years.\n\n>\n\n> My ideal is still to end up with something like\n>\n> package time\n> type Duration int64\n> type Date int64\n>\n> and appropriate methods and constants.\n",
+			"disapproval": false,
+			"date": "2011-05-12 20:18:54.389063",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I like the general idea. I think it can be simplified.\n\nThe advantage of Russ' suggestion of named multiplier constants is\nthat there is only one Time or Duration type, so for two durations d1,\nd2 I can write:\n\nd1 + d2\nd1 - d2\n\nindependent of whether d1 is in seconds and d2 was in hours\noriginally. This is more complicated in the current scheme:\n\nd1 + d2.Seconds()\n\n(on the other hand, d1/d2 and d1*d2 are meaningless, but we cannot\nprevent them).\n\nWriting 3*time.Second is probably more obvious than time.Second(3);\nconversely, the conversion time.Time(10) will require that one\nunderstands the underlying implementation of Time (which is ok).\nAnother advantage of rsc's suggestion in my mind.\n\nVarious conversion methods would be attached to a Time t; e.g.\nt.Seconds(), t.Hours(), etc. which could return an int64 (probably).\n\nI don't mind the term \"Duration\" . I think it should be defined in the\ntime package. A unit package implies more than just time durations.\n\n- gri\n\nOn Thu, May 12, 2011 at 12:07 PM,  <bradfitz@golang.org> wrote:\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg\n>\n>\n> Description:\n> unit: new package with time duration units (STRAWMAN)\n>\n> Light your torches!\n>\n> This adds package unit with unit.Minutes, Seconds,\n> Millis, Micros, Nanos, and a unit.Duration interface.\n>\n> Then uses it in time and everywhere else to see how\n> it felt. It did seem to remove a lot of comments.\n>\n> This doesn't go all the way, and I'm not even sure\n> I'm perfectly happy with it (maybe the Duration interface\n> could be smaller, just Nanos?) Maybe there should\n> be \"Exact\" interfaces that exclude the division cases.\n> etc.\n>\n> Thoughts?\n>\n> Please review this at http://codereview.appspot.com/4544043/\n>\n> Affected files:\n> \u00a0M misc/dashboard/builder/main.go\n> \u00a0M src/cmd/godoc/godoc.go\n> \u00a0M src/cmd/godoc/main.go\n> \u00a0M src/pkg/Makefile\n> \u00a0M src/pkg/go/printer/printer_test.go\n> \u00a0M src/pkg/http/pprof/pprof.go\n> \u00a0M src/pkg/http/serve_test.go\n> \u00a0M src/pkg/http/server.go\n> \u00a0M src/pkg/http/transport_test.go\n> \u00a0M src/pkg/io/pipe_test.go\n> \u00a0M src/pkg/netchan/common.go\n> \u00a0M src/pkg/netchan/netchan_test.go\n> \u00a0M src/pkg/os/inotify/inotify_linux_test.go\n> \u00a0M src/pkg/rpc/server_test.go\n> \u00a0M src/pkg/testing/testing.go\n> \u00a0M src/pkg/time/sleep.go\n> \u00a0M src/pkg/time/sleep_test.go\n> \u00a0M src/pkg/time/sys.go\n> \u00a0M src/pkg/time/tick.go\n> \u00a0M src/pkg/time/tick_test.go\n> \u00a0A src/pkg/unit/Makefile\n> \u00a0A src/pkg/unit/unit.go\n> \u00a0A src/pkg/unit/unit_test.go\n> \u00a0M test/chan/nonblock.go\n> \u00a0M test/chan/select3.go\n> \u00a0M test/fixedbugs/bug147.go\n> \u00a0M test/mallocfin.go\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-05-12 20:19:07.307214",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": ">\n> Avoidable bugs and noise like:\n>\n>      time.Sleep(25e3) // 25 microseconds\n>\n\nIf I'm not mistaken, 25e3 is an ideal constant, so even if it was\ntime.Sleep(nanos Nanoseconds) it would still fail silently.\n\n\n> An alternative would be\n>\n> package unit\n>\n> type Time int64\n>\n> const (\n>    Nanosecond Time = 1\n>    Microsecond Time = 1000*Nanosecond\n>    Millisecond Time = 1000*Microsecond\n>    Second Time = 1000*Millisecond\n>    Minute Time = 60*Second\n>    Hour Time = 60*Minute\n> )\n>\n> time.Sleep(5 * unit.Minute)\n>\n> In package time I'd probably s/Time/Duration/.\n>\n> My ideal is still to end up with something like\n>\n> package time\n> type Duration int64\n> type Date int64\n>\n> and appropriate methods and constants.\n>\n\n+1 to the multipliers and calling them Durations.\n\nI also agree that this sort of change should go in with a broader change of\nthe time package to be more in line with the initially linked set of\nrequirements (storing times internally as a number of days + a number of\nseconds with a table of leap seconds for converting).\n-- \n~Kyle\n\n*\"Everyone knows that debugging is twice as hard as writing a program in the\nfirst place. So if you're as clever as you can be when you write it, how\nwill you ever debug it?\"\n\u2014 Brian Kernighan*\n",
+			"disapproval": false,
+			"date": "2011-05-12 21:28:18.255141",
+			"approval": false
+		},
+		{
+			"sender": "rsc@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "We are so not talking about leap seconds.\n",
+			"disapproval": false,
+			"date": "2011-05-12 21:30:42.008584",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@google.com",
+				"go.peter.90@gmail.com",
+				"rogpeppe@gmail.com",
+				"gri@golang.org",
+				"kevlar@google.com",
+				"f1@uekermann-online.de",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "My 2 cents:\n\n+1 for a type Duration interface{ Nanoseconds() (u)int64 }\n\nkeeping it in a seperate package would allow for a . import without importing the rest of time and risking conflicts, units feel like native types then... maybe thats worth the additional package... ...or maybe not\n\n###\nimport . \"time/units\"\n...\ntime.Sleep(Seconds(3))\n###\n\nJust using nanoseconds for time and being able to do this looks nice too.\n\n###\nimport . \"time/units\"\n...\ntime.Sleep(Seconds(3)+Hours(2))\n###",
+			"disapproval": false,
+			"date": "2011-06-07 23:22:27.012113",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 4544043: unit: new package with time duration units (STRAWMAN)",
+	"created": "2011-05-12 19:06:47.281984",
+	"patchsets": [
+		1,
+		2001,
+		3
+	],
+	"modified": "2011-10-06 18:22:03.146411",
+	"closed": true,
+	"issue": 4544043
+}

@@ -1,0 +1,68 @@
+{
+	"description": "net/http: Fixed race condition when server closes the connection during setup.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "nightgunner5@llamaslayers.net",
+			"recipients": [
+				"nightgunner5@llamaslayers.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2012-07-20 18:23:46.364240",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This would need a test before being submitted.\r\n\r\nBut could you explain the race first?\r\n\r\n\r\nOn Fri, Jul 20, 2012 at 11:23 AM, <nightgunner5@llamaslayers.net> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Description:\r\n> net/http: Fixed race condition when server closes the connection during\r\n> setup.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6430056/<http://codereview.appspot.com/6430056/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/http/transport.go\r\n>\r\n>\r\n> Index: src/pkg/net/http/transport.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/http/transport.**go\r\n> +++ b/src/pkg/net/http/transport.**go\r\n> @@ -530,8 +530,6 @@\r\n>  }\r\n>\r\n>  func (pc *persistConn) readLoop() {\r\n> -       defer close(pc.closech)\r\n> -       defer close(pc.writech)\r\n>         alive := true\r\n>         var lastbody io.ReadCloser // last response body, if any, read on\r\n> this connection\r\n>\r\n> @@ -693,16 +691,20 @@\r\n>\r\n>         pc.lk.Lock()\r\n>         pc.numExpectedResponses++\r\n> -       pc.lk.Unlock()\r\n>\r\n>         // Write the request concurrently with waiting for a response,\r\n>         // in case the server decides to reply before reading our full\r\n>         // request body.\r\n> +       if pc.broken {\r\n> +               pc.lk.Unlock()\r\n> +               return nil, errors.New(\"net/http: server closed connection\r\n> early\")\r\n> +       }\r\n>         writeErrCh := make(chan error, 1)\r\n>         pc.writech <- writeRequest{req, writeErrCh}\r\n>\r\n>         resc := make(chan responseAndError, 1)\r\n>         pc.reqch <- requestAndChan{req.Request, resc, requestedGzip}\r\n> +       pc.lk.Unlock()\r\n>\r\n>         var re responseAndError\r\n>         var pconnDeadCh = pc.closech\r\n> @@ -765,6 +767,8 @@\r\n>         if !pc.closed {\r\n>                 pc.conn.Close()\r\n>                 pc.closed = true\r\n> +               close(pc.writech)\r\n> +               close(pc.reqch)\r\n>         }\r\n>         pc.mutateHeaderFunc = nil\r\n>  }\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-07-20 20:02:29.431970",
+			"approval": false
+		},
+		{
+			"sender": "nightgunner5@llamaslayers.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's the reason the build with GOMAXPROCS=32 failed (\r\nhttps://code.google.com/p/go/source/detail?r=61d1d72136f70da62a456f0e985205c1025c6243\r\n)\r\n\r\nThe test would be net/http's TestStressSurpriseServerCloses with an \r\nunreasonably high (32 in the testing I did and the build that failed) \r\nnumber for GOMAXPROCS.\r\n\r\nOn Friday, July 20, 2012 3:02:28 PM UTC-5, Brad Fitzpatrick wrote:\r\n>\r\n> This would need a test before being submitted.\r\n>\r\n> But could you explain the race first?\r\n>\r\n>\r\n> On Fri, Jul 20, 2012 at 11:23 AM, <nightgunner5@llamaslayers.net> wrote:\r\n>\r\n>> Reviewers: golang-dev_googlegroups.com,\r\n>>\r\n>> Description:\r\n>> net/http: Fixed race condition when server closes the connection during\r\n>> setup.\r\n>>\r\n>> Please review this at http://codereview.appspot.com/**6430056/<http://codereview.appspot.com/6430056/>\r\n>>\r\n>> Affected files:\r\n>>   M src/pkg/net/http/transport.go\r\n>>\r\n>>\r\n>> Index: src/pkg/net/http/transport.go\r\n>> ==============================**==============================**=======\r\n>> --- a/src/pkg/net/http/transport.**go\r\n>> +++ b/src/pkg/net/http/transport.**go\r\n>> @@ -530,8 +530,6 @@\r\n>>  }\r\n>>\r\n>>  func (pc *persistConn) readLoop() {\r\n>> -       defer close(pc.closech)\r\n>> -       defer close(pc.writech)\r\n>>         alive := true\r\n>>         var lastbody io.ReadCloser // last response body, if any, read on \r\n>> this connection\r\n>>\r\n>> @@ -693,16 +691,20 @@\r\n>>\r\n>>         pc.lk.Lock()\r\n>>         pc.numExpectedResponses++\r\n>> -       pc.lk.Unlock()\r\n>>\r\n>>         // Write the request concurrently with waiting for a response,\r\n>>         // in case the server decides to reply before reading our full\r\n>>         // request body.\r\n>> +       if pc.broken {\r\n>> +               pc.lk.Unlock()\r\n>> +               return nil, errors.New(\"net/http: server closed \r\n>> connection early\")\r\n>> +       }\r\n>>         writeErrCh := make(chan error, 1)\r\n>>         pc.writech <- writeRequest{req, writeErrCh}\r\n>>\r\n>>         resc := make(chan responseAndError, 1)\r\n>>         pc.reqch <- requestAndChan{req.Request, resc, requestedGzip}\r\n>> +       pc.lk.Unlock()\r\n>>\r\n>>         var re responseAndError\r\n>>         var pconnDeadCh = pc.closech\r\n>> @@ -765,6 +767,8 @@\r\n>>         if !pc.closed {\r\n>>                 pc.conn.Close()\r\n>>                 pc.closed = true\r\n>> +               close(pc.writech)\r\n>> +               close(pc.reqch)\r\n>>         }\r\n>>         pc.mutateHeaderFunc = nil\r\n>>  }\r\n>>\r\n>>\r\n>>\r\n>",
+			"disapproval": false,
+			"date": "2012-07-20 20:06:42.008330",
+			"approval": false
+		},
+		{
+			"sender": "nightgunner5@llamaslayers.net",
+			"recipients": [
+				"nightgunner5@llamaslayers.net",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-08-17 03:02:27.992490",
+			"approval": false
+		}
+	],
+	"owner_email": "nightgunner5@llamaslayers.net",
+	"private": false,
+	"base_url": "",
+	"owner": "Ben L. (Nightgunner5)",
+	"subject": "net/http: Fixed race condition when server closes the connection during setup",
+	"created": "2012-07-20 18:02:45.539410",
+	"patchsets": [
+		1,
+		1002
+	],
+	"modified": "2012-08-17 03:02:29.181030",
+	"closed": true,
+	"issue": 6430056
+}

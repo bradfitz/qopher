@@ -1,0 +1,94 @@
+{
+	"description": "path: handle NUL bytes as end of path in path.Clean\n\nUnderlying system calls typically treat NUL byte and an end\nof a string (e.g. a filename), which needs to be taken into\naccount by path.Clean. Otherwise users like net/http, which\nuses it to make sure request path is canonical, become\nsusceptible to directory traversal attacks by hiding \".\" or\n\"..\" with a NUL byte (e.g. making requests to/.%00/ or\n/..%00/ to get a file listing despite having index.html).\nFixes issue 3842.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-07-26 18:21:19.518430",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm not sure this is THE right place to fix this, since many paths don't go through Clean. It may be one place to deal with NULs. I'm made very nervous by this level of fiddling in such an odd place, though.",
+			"disapproval": false,
+			"date": "2012-07-27 18:18:07.877220",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I think maybe adding safeStringByteSlice, safeStringBytePtr,\r\n> safeStringSlicePtr and safeStringToUTF16 (returning EINVAL on NUL\r\n> bytes), then changing mksyscall.pl and mksyscall_windows.pl to use\r\n> \"safe\" versions if syscall has \"err\" in results. What is the best way\r\n> to do a change like that though? Just change mksyscall.pl, make manual\r\n> changes, regenerate all zsyscall_*.go? I could probably test darwin\r\n> and linux, but bsd and plan9 would be hard to do, so how does one make\r\n> a change like that?\r\n\r\nYou can just rebuild them using mkall.sh -syscalls. If darwin and\r\nlinux work it's unlikely you broke the code in a way specific to the\r\nother systems.\r\n\r\n> P.S. For some reason I can't sign in to codereview due to strange\r\n> redirect cycles.\r\n\r\nSorry about that. Usually it works to clear your cookies, or to go to\r\nwww.google.com and click sign out.\r\n",
+			"disapproval": false,
+			"date": "2012-07-30 18:23:31.119730",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This is not correct. path.Clean(p) is supposed to return a path\r\nequivalent to p (under the assumption that the elements eliminated by\r\n.. did exist).\r\n\r\n\"x\\00y\" is NOT equivalent to \"x\".\r\n\r\nThe functions in package syscall that accept a string should reject\r\nstrings with NULs in them before sending the string on to the\r\noperating system. They already call a function to create the string\r\npointer with the final NUL. That function or generated code can\r\ngenerate the check for the NUL byte too.\r\n\r\nWe can make a new func stringBytePtr(string) (*byte, error) in package\r\nsyscall and make the generated code call that instead of StringBytePtr\r\nand check the result. I would be happy for StringBytePtr to be a\r\nwrapper around stringBytePtr that panics on error, but the generated\r\ncode cannot panic, so it has to call the new form.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-07-29 20:11:23.951310",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jul 30, 2012 at 12:11 AM, Russ Cox <rsc@golang.org> wrote:\r\n> This is not correct. path.Clean(p) is supposed to return a path\r\n> equivalent to p (under the assumption that the elements eliminated by\r\n> .. did exist).\r\n>\r\n> \"x\\00y\" is NOT equivalent to \"x\".\r\n\r\nYes, you are right.\r\n\r\n> The functions in package syscall that accept a string should reject\r\n> strings with NULs in them before sending the string on to the\r\n> operating system. They already call a function to create the string\r\n> pointer with the final NUL. That function or generated code can\r\n> generate the check for the NUL byte too.\r\n>\r\n> We can make a new func stringBytePtr(string) (*byte, error) in package\r\n> syscall and make the generated code call that instead of StringBytePtr\r\n> and check the result. I would be happy for StringBytePtr to be a\r\n> wrapper around stringBytePtr that panics on error, but the generated\r\n> code cannot panic, so it has to call the new form.\r\n\r\nI think maybe adding safeStringByteSlice, safeStringBytePtr,\r\nsafeStringSlicePtr and safeStringToUTF16 (returning EINVAL on NUL\r\nbytes), then changing mksyscall.pl and mksyscall_windows.pl to use\r\n\"safe\" versions if syscall has \"err\" in results. What is the best way\r\nto do a change like that though? Just change mksyscall.pl, make manual\r\nchanges, regenerate all zsyscall_*.go? I could probably test darwin\r\nand linux, but bsd and plan9 would be hard to do, so how does one make\r\na change like that?\r\n\r\nP.S. For some reason I can't sign in to codereview due to strange\r\nredirect cycles.\r\n",
+			"disapproval": false,
+			"date": "2012-07-30 17:58:36.641750",
+			"approval": false
+		},
+		{
+			"sender": "snaury@gmail.com",
+			"recipients": [
+				"snaury@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-07-30 20:21:56.216040",
+			"approval": false
+		}
+	],
+	"owner_email": "snaury@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "snaury",
+	"subject": "code review 6445047: path: handle NUL bytes as end of path in path.Clean",
+	"created": "2012-07-26 18:20:04.165550",
+	"patchsets": [
+		1,
+		1002,
+		2003
+	],
+	"modified": "2012-07-30 20:21:57.522070",
+	"closed": true,
+	"issue": 6445047
+}

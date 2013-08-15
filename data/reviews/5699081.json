@@ -1,0 +1,179 @@
+{
+	"description": "os/exec: release completed process handle",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/27 03:23:53, bradfitz wrote:\n> \n> Can you ask Windows how many open handles a process has? ...\n\nI do not know. I will investigate.\n\n> >\n> > func (p *Process) Release() error\n> >    Release releases any resources associated with the Process.\n> >\n> > seems enough to me.\n> >\n> \n> It doesn't say anything about when I'm supposed to call it, though.  I want\n> to know the difference between Wait() and Release(), and not in this email.\n>  I want it in the docs.\n\nThis is from godoc:\n\nfunc (p *Process) Release() error\n    Release releases any resources associated with the Process.\n\nfunc (p *Process) Wait() (ps *ProcessState, err error)\n    Wait waits for the Process to exit or stop, and then returns a\n    ProcessState describing its status and an error, if any.\n\nWhat else should I say on top of that? You should call Wait, if you want to know when process is finished. You should call Release, when you finished with Process - you have no plans to interrogate it anymore. It is similar to\n\nfunc (f *File) Close() error\n    Close closes the File, rendering it unusable for I/O. It returns an\n    error, if any.\n\nShould I add \"... rendering it unusable for ...\" bit?\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-27 03:37:07.586287",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "+1 on removing Release from the public API.\n\nOn Mon, Feb 27, 2012 at 7:43 AM, Russ Cox <rsc@golang.org> wrote:\n\n> os.Process.Wait should release automatically.\n> It would be even better if then Release was no\n> longer a public method on os.Process.\n> People outside Windows do not think about\n> Release as a required operation; if we don't just\n> get it right automatically, we will certainly have\n> handle leaks.\n>\n> Russ\n>\n",
+			"disapproval": false,
+			"date": "2012-02-27 19:13:31.773188",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/27 15:43:28, rsc wrote:\n> os.Process.Wait should release automatically.\n> It would be even better if then Release was no\n> longer a public method on os.Process.\n\nI am nearly convinced <g>. But one question.\n\nIf I create a process with os.StartProcess and do not want to wait for it to finish, how do I close handle that I hold?\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-28 00:09:51.197595",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 27, 2012 at 1:53 PM, <alex.brainman@gmail.com> wrote:\n\n> On 2012/02/27 02:10:51, bradfitz wrote:\n>\n>  It doesn't have a test, ...\n>>\n>\n> I can't think of a good way to test this.\n>\n\nCan you ask Windows how many open handles a process has?  Run a bunch of\nthings and verify that number hasn't increased a bunch.\n\n\n>  ... and I can't understand what os.Process.Release\n>> actually does. ...\n>>\n>\n> os.Process struct holds process handle on windows. It needs to be closed\n> sooner or later. os.Process.Release releases that handle.\n> os.Process.Release is called anyway:\n>\n> rex os # grep -n SetFinal *\n> exec.go:21:     runtime.SetFinalizer(p, (*Process).Release)\n>\n\nI can read code.  I was talking about the godoc.\n\n\n> but rsc suggested\n> (http://code.google.com/p/go/**issues/detail?id=2866#c12<http://code.google.com/p/go/issues/detail?id=2866#c12>)\n> we caller it as\n> soon as we can, rather then later.\n>\n>  ... Its docs are quite lacking. ...\n>>\n>\n> func (p *Process) Release() error\n>    Release releases any resources associated with the Process.\n>\n> seems enough to me.\n>\n\nIt doesn't say anything about when I'm supposed to call it, though.  I want\nto know the difference between Wait() and Release(), and not in this email.\n I want it in the docs.\n",
+			"disapproval": false,
+			"date": "2012-02-27 03:23:53.212716",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/28 00:13:14, bradfitz wrote:\n> >\n> > If I create a process with os.StartProcess and do not want to wait for\n> > it to finish, how do I close handle that I hold?\n> >\n> \n> go process.Wait()\n\nThat, certainly, wont do. I do not want to wait for process to finish- it could be running for a while, maybe much longer then my own process. I just want to close process handle I am holding to tell OS that it can release any resources (locks and such) associated to my access of this running process. These could be important when OS gets to make decisions about whether to allow to do things.\n\n> Or, are you saying that Windows lets you close the handle while a process\n> is still running? \n\nAbsolutely. It is like a file handle - you close file handle, but the file remains.\n\n> ... If so, that can't be much saved memory compared to the\n> memory of the process that's running. ...\n\nMemory is not my concern. It is other things (things I do not know about) that bother me.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-28 00:22:15.588356",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Feb 28, 2012 at 11:09 AM, <alex.brainman@gmail.com> wrote:\n\n> On 2012/02/27 15:43:28, rsc wrote:\n>\n>> os.Process.Wait should release automatically.\n>> It would be even better if then Release was no\n>> longer a public method on os.Process.\n>>\n>\n> I am nearly convinced <g>. But one question.\n>\n> If I create a process with os.StartProcess and do not want to wait for\n> it to finish, how do I close handle that I hold?\n>\n\ngo process.Wait()\n\nOr, are you saying that Windows lets you close the handle while a process\nis still running?  If so, that can't be much saved memory compared to the\nmemory of the process that's running.  So my answer is the same:\n\ngo process.Wait()\n",
+			"disapproval": false,
+			"date": "2012-02-28 00:13:14.523454",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-27 01:57:59.467451",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "os.Process.Wait should release automatically.\nIt would be even better if then Release was no\nlonger a public method on os.Process.\nPeople outside Windows do not think about\nRelease as a required operation; if we don't just\nget it right automatically, we will certainly have\nhandle leaks.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-27 15:43:28.210344",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't like this CL (yet).\n\nIt doesn't have a test, and I can't understand what os.Process.Release\nactually does.  Its docs are quite lacking.  Why doesn't os.Process.Wait\ncall Release automatically?  If I call Release, what later becomes valid or\ninvalid?  Can I Wait after Release?  Or do I have to Release after Wait?\n\n\nOn Mon, Feb 27, 2012 at 12:57 PM, <alex.brainman@gmail.com> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com,\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> os/exec: release completed process handle\n>\n> Please review this at http://codereview.appspot.com/**5699081/<http://codereview.appspot.com/5699081/>\n>\n> Affected files:\n>  M src/pkg/os/exec/exec.go\n>\n>\n> Index: src/pkg/os/exec/exec.go\n> ==============================**==============================**=======\n> --- a/src/pkg/os/exec/exec.go\n> +++ b/src/pkg/os/exec/exec.go\n> @@ -307,7 +307,10 @@\n>\n>        if err != nil {\n>                return err\n> -       } else if !state.Success() {\n> +       }\n> +       defer c.Process.Release()\n> +\n> +       if !state.Success() {\n>                return &ExitError{state}\n>        }\n>\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-27 02:10:51.443798",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/27 02:10:51, bradfitz wrote:\n> \n> It doesn't have a test, ...\n\nI can't think of a good way to test this.\n\n> ... and I can't understand what os.Process.Release\n> actually does. ...\n\nos.Process struct holds process handle on windows. It needs to be closed sooner or later. os.Process.Release releases that handle. os.Process.Release is called anyway:\n\nrex os # grep -n SetFinal *\nexec.go:21:     runtime.SetFinalizer(p, (*Process).Release)\n\nbut rsc suggested (http://code.google.com/p/go/issues/detail?id=2866#c12) we caller it as soon as we can, rather then later.\n\n> ... Its docs are quite lacking. ...\n\nfunc (p *Process) Release() error\n    Release releases any resources associated with the Process.\n\nseems enough to me.\n\n> ... Why doesn't os.Process.Wait\n> call Release automatically?\n\nPerhaps it can. But I would not like to commit to it at this stage. Perhaps we would want to be able to collect stats for process that finished. Or some other functionality needs to be implemented. For example, I find this in exec_windows.go:\n\n// UserTime returns the user CPU time of the exited process and its children.\n// For now, it is always reported as 0 on Windows.\nfunc (p *ProcessState) UserTime() time.Duration {\n        return 0                                 \n}                                                \n\n> ... If I call Release, what later becomes valid or\n> invalid?\n\nProcess handle is closed. So you can't use it anymore.\n\n> ... Can I Wait after Release?\n\nYou can't Wait after you Released process handle.\n\n> ... Or do I have to Release after Wait?\n\nYou must close it like any handle on Windows. If you don't close it, it will get closed once you process goes. Open handles means some system resource are occupied, it means other processes can't use them.\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-27 02:53:28.216122",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 27, 2012 at 19:09,  <alex.brainman@gmail.com> wrote:\n> If I create a process with os.StartProcess and do not want to wait for\n> it to finish, how do I close handle that I hold?\n\nI don't mind leaving Release if the semantics are that you either Wait\nor Release but never both.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-28 16:51:11.479126",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/28 16:51:11, rsc wrote:\n> \n> I don't mind leaving Release if the semantics are that you either Wait\n> or Release but never both.\n> \n\nOK. http://codereview.appspot.com/5707052/\n\nAlex",
+			"disapproval": false,
+			"date": "2012-02-28 23:43:22.448027",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-03-01 06:39:24.979538",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 5699081: os/exec: release completed process handle",
+	"created": "2012-02-27 01:53:46.751427",
+	"patchsets": [
+		1,
+		3,
+		4001
+	],
+	"modified": "2012-03-01 06:39:27.232688",
+	"closed": true,
+	"issue": 5699081
+}

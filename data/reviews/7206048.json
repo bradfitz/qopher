@@ -1,0 +1,261 @@
+{
+	"description": "io: reuse Copy buffers beween copies",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"adg@golang.org",
+		"dsymonds@golang.org",
+		"r@golang.org",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Jan 23, 2013 at 4:22 PM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> Yeah, fair call. Would implementing ReadFrom, WriteTo help, or has\r\n> that path already been investigated ?\r\n\r\n\r\nYes.\r\n",
+			"disapproval": false,
+			"date": "2013-01-24 00:23:57.674950",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 24 January 2013 11:23, <bradfitz@golang.org> wrote:\r\n\r\n> Ideally I'd like it to be burstable somewhat (i.e. not just 1 here), but\r\n> also slowly drain if idle (but I haven't profiled that cost, maintaining\r\n> those timers.  Reset probably helps, but still have to update that heap\r\n> (the other type of heap))\r\n>\r\n\r\nIt could probably be done reasonably cheaply if you do the accounting on\r\neach get/put.\r\n",
+			"disapproval": false,
+			"date": "2013-01-24 00:28:02.796910",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7206048/diff/5001/src/pkg/io/io.go\nFile src/pkg/io/io.go (right):\n\nhttps://codereview.appspot.com/7206048/diff/5001/src/pkg/io/io.go#newcode349\nsrc/pkg/io/io.go:349: return make([]byte, 32*1024)\nWould you please make this a constant just below var copyBufs\n\nhttps://codereview.appspot.com/7206048/diff/5001/src/pkg/io/io_test.go\nFile src/pkg/io/io_test.go (right):\n\nhttps://codereview.appspot.com/7206048/diff/5001/src/pkg/io/io_test.go#newcode251\nsrc/pkg/io/io_test.go:251: var dst = struct{ Writer }{ioutil.Discard}\nnice",
+			"disapproval": false,
+			"date": "2013-01-24 00:06:19.951320",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I understand your concerns. I wonder if it would be better to leave\r\nio.Copy as it is and dl.google copy that method and implement its own\r\nbuffer caching.\r\n\r\n\r\nOn Thu, Jan 24, 2013 at 11:12 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> This is mostly just for discussion.\r\n>\r\n> I'm not even sure how I feel about it, since Readers and Writers could\r\n> illegally retain references to the provided Read/Write []byte arguments,\r\n> causing mysterious corruption later.  (although arguably they were already\r\n> broken before, since the second 32KB chunk would then be corrupt... but with\r\n> this CL the corruption would last longer.  Maybe that's a good thing so it\r\n> goes noticed?)\r\n>\r\n> Static escape analysis can't help here, since Read and Write go through\r\n> interfaces and who knows what impl you'll get.\r\n>\r\n> Maybe we should also document more on Reader and Writer that the impl must\r\n> not retain references to those.\r\n>\r\n> In any case, I saw this on dl.google.com memory profiles a few months ago\r\n> and made a note to myself to do this, but didn't get around to it until now.\r\n>\r\n> Thoughts welcome.\r\n>\r\n> On Wed, Jan 23, 2013 at 4:00 PM, <bradfitz@golang.org> wrote:\r\n>>\r\n>> Reviewers: golang-dev_googlegroups.com,\r\n>>\r\n>> Message:\r\n>> Hello golang-dev@googlegroups.com,\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://go.googlecode.com/hg/\r\n>>\r\n>>\r\n>> Description:\r\n>> io: reuse Copy buffers beween copies\r\n>>\r\n>> Please review this at https://codereview.appspot.com/7206048/\r\n>>\r\n>> Affected files:\r\n>>   M src/pkg/io/io.go\r\n>>   M src/pkg/io/io_test.go\r\n>>\r\n>>\r\n>> Index: src/pkg/io/io.go\r\n>> ===================================================================\r\n>> --- a/src/pkg/io/io.go\r\n>> +++ b/src/pkg/io/io.go\r\n>> @@ -338,6 +338,24 @@\r\n>>         return written, err\r\n>>  }\r\n>>\r\n>> +var copyBufs = make(chan []byte, 4)\r\n>> +\r\n>> +func getCopyBuf() []byte {\r\n>> +       select {\r\n>> +       case b := <-copyBufs:\r\n>> +               return b\r\n>> +       default:\r\n>> +       }\r\n>> +       return make([]byte, 32*1024)\r\n>> +}\r\n>> +\r\n>> +func putCopyBuf(b []byte) {\r\n>> +       select {\r\n>> +       case copyBufs <- b:\r\n>> +       default:\r\n>> +       }\r\n>> +}\r\n>> +\r\n>>  // Copy copies from src to dst until either EOF is reached\r\n>>  // on src or an error occurs.  It returns the number of bytes\r\n>>  // copied and the first error encountered while copying, if any.\r\n>> @@ -360,7 +378,8 @@\r\n>>         if wt, ok := src.(WriterTo); ok {\r\n>>                 return wt.WriteTo(dst)\r\n>>         }\r\n>> -       buf := make([]byte, 32*1024)\r\n>> +       buf := getCopyBuf()\r\n>> +       defer putCopyBuf(buf)\r\n>>         for {\r\n>>                 nr, er := src.Read(buf)\r\n>>                 if nr > 0 {\r\n>> Index: src/pkg/io/io_test.go\r\n>> ===================================================================\r\n>> --- a/src/pkg/io/io_test.go\r\n>> +++ b/src/pkg/io/io_test.go\r\n>> @@ -7,6 +7,7 @@\r\n>>  import (\r\n>>         \"bytes\"\r\n>>         . \"io\"\r\n>> +       \"io/ioutil\"\r\n>>         \"strings\"\r\n>>         \"testing\"\r\n>>  )\r\n>> @@ -235,3 +236,20 @@\r\n>>                 }\r\n>>         }\r\n>>  }\r\n>> +\r\n>> +type neverending byte\r\n>> +\r\n>> +func (b neverending) Read(p []byte) (n int, err error) {\r\n>> +       for i := 0; i < len(p); i++ {\r\n>> +               p[i] = byte(b)\r\n>> +       }\r\n>> +       return len(p), nil\r\n>> +}\r\n>> +\r\n>> +func BenchmarkCopy(b *testing.B) {\r\n>> +       b.ReportAllocs()\r\n>> +       var dst = struct{ Writer }{ioutil.Discard}\r\n>> +       for i := 0; i < b.N; i++ {\r\n>> +               Copy(dst, LimitReader(neverending('a'), 128<<10))\r\n>> +       }\r\n>> +}\r\n>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-24 00:17:56.923820",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "the specificity bothers me.  why just here? there are reasons to keep it\r\nall private but if the goal is to reduce GC pressure maybe it should be a\r\nservice more generally available. or maybe the collector should not need\r\nthis sort of workaround in the first place. there is similar nonsense in\r\nfmt for instance, and it is distasteful but important. maybe the idea\r\nshould be generalized or maybe rendered unnecessary. I would like to have a\r\nstrategy discussion before committing more such tactical tweaks.\r\n\r\nalso some benchmarks?\r\n\r\ndoesn't the allocator already cache like this? what are the issues about\r\ncaching that is not locality-aware? etc. in short, should this be done at\r\nall, and if so, where?\r\n\r\n-rob\r\nOn Jan 24, 2013 1:28 AM, \"Andrew Gerrand\" <adg@golang.org> wrote:\r\n\r\n>\r\n> On 24 January 2013 11:23, <bradfitz@golang.org> wrote:\r\n>\r\n>> Ideally I'd like it to be burstable somewhat (i.e. not just 1 here), but\r\n>> also slowly drain if idle (but I haven't profiled that cost, maintaining\r\n>> those timers.  Reset probably helps, but still have to update that heap\r\n>> (the other type of heap))\r\n>>\r\n>\r\n> It could probably be done reasonably cheaply if you do the accounting on\r\n> each get/put.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-24 05:48:45.708940",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/01/24 00:00:09, bradfitz wrote:\n> Hello mailto:golang-dev@googlegroups.com,\n> \n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n\nHi Brad. Thanks your for this proposal. I would like to see the magic numbers of the buffer size and channel size made constants for easier tweaking.",
+			"disapproval": false,
+			"date": "2013-01-24 00:05:50.823280",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think it's implied that you shouldn't hold references to the []byte, by the existing Reader and Writer interface definitions.\n\nI'm not too worried about potential corruption. Just wondering if the channel operation will ever be slower than the allocation, particularly in a program with many io.Copy operations happening simultaneously.\n\nhttps://codereview.appspot.com/7206048/diff/5001/src/pkg/io/io.go\nFile src/pkg/io/io.go (right):\n\nhttps://codereview.appspot.com/7206048/diff/5001/src/pkg/io/io.go#newcode341\nsrc/pkg/io/io.go:341: var copyBufs = make(chan []byte, 4)\nfrom where comes the magical 4?",
+			"disapproval": false,
+			"date": "2013-01-24 00:17:02.715690",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Jan 24, 2013 at 11:17 AM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> I understand your concerns. I wonder if it would be better to leave\r\n> io.Copy as it is and dl.google copy that method and implement its own\r\n> buffer caching.\r\n\r\nThat might not be possible if the io.Copy call is in another part of\r\nthe standard library (e.g. net/http).\r\n",
+			"disapproval": false,
+			"date": "2013-01-24 00:18:51.465410",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> Hi Brad. Thanks your for this proposal. I would like to see the magic numbers of\n> the buffer size and channel size made constants for easier tweaking.\n\nUrgh, I mean, *thank  you* for this proposal.",
+			"disapproval": false,
+			"date": "2013-01-24 00:06:13.087920",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-01-24 00:00:09.600300",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This is mostly just for discussion.\r\n\r\nI'm not even sure how I feel about it, since Readers and Writers could\r\nillegally retain references to the provided Read/Write []byte arguments,\r\ncausing mysterious corruption later.  (although arguably they were already\r\nbroken before, since the second 32KB chunk would then be corrupt... but\r\nwith this CL the corruption would last longer.  Maybe that's a good thing\r\nso it goes noticed?)\r\n\r\nStatic escape analysis can't help here, since Read and Write go through\r\ninterfaces and who knows what impl you'll get.\r\n\r\nMaybe we should also document more on Reader and Writer that the impl must\r\nnot retain references to those.\r\n\r\nIn any case, I saw this on dl.google.com memory profiles a few months ago\r\nand made a note to myself to do this, but didn't get around to it until now.\r\n\r\nThoughts welcome.\r\n\r\nOn Wed, Jan 23, 2013 at 4:00 PM, <bradfitz@golang.org> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> io: reuse Copy buffers beween copies\r\n>\r\n> Please review this at https://codereview.appspot.**com/7206048/<https://codereview.appspot.com/7206048/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/io/io.go\r\n>   M src/pkg/io/io_test.go\r\n>\r\n>\r\n> Index: src/pkg/io/io.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/io/io.go\r\n> +++ b/src/pkg/io/io.go\r\n> @@ -338,6 +338,24 @@\r\n>         return written, err\r\n>  }\r\n>\r\n> +var copyBufs = make(chan []byte, 4)\r\n> +\r\n> +func getCopyBuf() []byte {\r\n> +       select {\r\n> +       case b := <-copyBufs:\r\n> +               return b\r\n> +       default:\r\n> +       }\r\n> +       return make([]byte, 32*1024)\r\n> +}\r\n> +\r\n> +func putCopyBuf(b []byte) {\r\n> +       select {\r\n> +       case copyBufs <- b:\r\n> +       default:\r\n> +       }\r\n> +}\r\n> +\r\n>  // Copy copies from src to dst until either EOF is reached\r\n>  // on src or an error occurs.  It returns the number of bytes\r\n>  // copied and the first error encountered while copying, if any.\r\n> @@ -360,7 +378,8 @@\r\n>         if wt, ok := src.(WriterTo); ok {\r\n>                 return wt.WriteTo(dst)\r\n>         }\r\n> -       buf := make([]byte, 32*1024)\r\n> +       buf := getCopyBuf()\r\n> +       defer putCopyBuf(buf)\r\n>         for {\r\n>                 nr, er := src.Read(buf)\r\n>                 if nr > 0 {\r\n> Index: src/pkg/io/io_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/io/io_test.go\r\n> +++ b/src/pkg/io/io_test.go\r\n> @@ -7,6 +7,7 @@\r\n>  import (\r\n>         \"bytes\"\r\n>         . \"io\"\r\n> +       \"io/ioutil\"\r\n>         \"strings\"\r\n>         \"testing\"\r\n>  )\r\n> @@ -235,3 +236,20 @@\r\n>                 }\r\n>         }\r\n>  }\r\n> +\r\n> +type neverending byte\r\n> +\r\n> +func (b neverending) Read(p []byte) (n int, err error) {\r\n> +       for i := 0; i < len(p); i++ {\r\n> +               p[i] = byte(b)\r\n> +       }\r\n> +       return len(p), nil\r\n> +}\r\n> +\r\n> +func BenchmarkCopy(b *testing.B) {\r\n> +       b.ReportAllocs()\r\n> +       var dst = struct{ Writer }{ioutil.Discard}\r\n> +       for i := 0; i < b.N; i++ {\r\n> +               Copy(dst, LimitReader(neverending('a'), 128<<10))\r\n> +       }\r\n> +}\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-24 00:12:36.992190",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Jan 23, 2013 at 4:17 PM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> I understand your concerns. I wonder if it would be better to leave\r\n> io.Copy as it is and dl.google copy that method and implement its own\r\n> buffer caching.\r\n>\r\n\r\n grep io.Copy in net/http and the rest of the standard library.\r\n",
+			"disapproval": false,
+			"date": "2013-01-24 00:19:13.507080",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"dsymonds@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7206048/diff/5001/src/pkg/io/io.go\nFile src/pkg/io/io.go (right):\n\nhttps://codereview.appspot.com/7206048/diff/5001/src/pkg/io/io.go#newcode341\nsrc/pkg/io/io.go:341: var copyBufs = make(chan []byte, 4)\nOn 2013/01/24 00:17:02, adg wrote:\n> from where comes the magical 4?\n\nMade it up.  Like all the other constants in this CL.\n\nIdeally I'd like it to be burstable somewhat (i.e. not just 1 here), but also slowly drain if idle (but I haven't profiled that cost, maintaining those timers.  Reset probably helps, but still have to update that heap (the other type of heap))\n\nhttps://codereview.appspot.com/7206048/diff/5001/src/pkg/io/io.go#newcode349\nsrc/pkg/io/io.go:349: return make([]byte, 32*1024)\nOn 2013/01/24 00:06:20, dfc wrote:\n> Would you please make this a constant just below var copyBufs\n\nwill do, if we decide to go ahead with this.",
+			"disapproval": false,
+			"date": "2013-01-24 00:23:29.738020",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yeah, fair call. Would implementing ReadFrom, WriteTo help, or has\r\nthat path already been investigated ? I forget which types grew\r\nsupport for those interfaces.\r\n\r\nOn Thu, Jan 24, 2013 at 11:19 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> On Wed, Jan 23, 2013 at 4:17 PM, Dave Cheney <dave@cheney.net> wrote:\r\n>>\r\n>> I understand your concerns. I wonder if it would be better to leave\r\n>> io.Copy as it is and dl.google copy that method and implement its own\r\n>> buffer caching.\r\n>\r\n>\r\n>  grep io.Copy in net/http and the rest of the standard library.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-24 00:22:23.613730",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Jan 23, 2013 at 9:48 PM, Rob Pike <r@golang.org> wrote:\r\n\r\n> the specificity bothers me.  why just here?\r\n>\r\nBecause this is frequently called and allocates pretty large buffers\r\n(32KB).  The more bytes you allocate, the sooner that leads to a GC event.\r\n\r\n> there are reasons to keep it all private but if the goal is to reduce GC\r\n> pressure maybe it should be a service more generally available.\r\n>\r\nI have a byte allocator package inside Google with an API like:\r\n\r\npackage pool\r\nfunc NewBytePool(...opts...) *BytePool\r\nfunc (*BytePool) Alloc(n int) []byte\r\nfunc (*BytePool) Free(buf []byte)\r\n\r\nIf that's not objectionable, we could add that to the standard library\r\nsomewhere.\r\n\r\nPersonally I wish we could have a private packages that the standard\r\nlibrary could use but which we didn't need to commit to being public\r\nlong-term.  This would be such a candidate, so fmt and io and http and\r\neverybody didn't have to re-invent this, often poorly.\r\n\r\n> or maybe the collector should not need this sort of workaround in the\r\n> first place.\r\n>\r\nThe collector doesn't even run until N bytes are allocated, where N is the\r\nsize of the heap at the last collection.\r\n\r\nHow would the collector avoid this if the collector isn't involved until\r\nit's already too late?  The goal is to avoid allocation in the first place,\r\nand make([]byte...) allocates.\r\n\r\n> there is similar nonsense in fmt for instance, and it is distasteful but\r\n> important. maybe the idea should be generalized or maybe rendered\r\n> unnecessary. I would like to have a strategy discussion before committing\r\n> more such tactical tweaks.\r\n>\r\n> also some benchmarks?\r\n>\r\nOh, I forgot to paste them into the commit message.\r\n\r\nIt went from 33200 bytes/op to 50 bytes/op.  So before it could do 32K\r\noperations before it allocated 1 GB of memory.  Now it can do 21 million.\r\n Which means many fewer GC events and thus fewer pauses (which is the goal)\r\nand less CPU (doing GCs).\r\n\r\n> doesn't the allocator already cache like this?\r\n>\r\nThe allocator has per-size pools like tcmalloc, but it doesn't know\r\nimmediately when the 32 KB buf is no longer needed and could be re-used.\r\n It doesn't discover that and re-pool the memory until a GC occurs, which\r\nis too late.\r\n\r\n> what are the issues about caching that is not locality-aware? etc. in\r\n> short, should this be done at all, and if so, where?\r\n>\r\nI'd like to see a general allocation pool package so we can move all the\r\nfmt/http/io/etc stuff into a common place.\r\n\r\nIt could have a specialized API for []byte (a common case, as above) and\r\nmaybe also for interface{}s (for pools of variables, e.g. *MyStruct to be\r\nreused).\r\n",
+			"disapproval": false,
+			"date": "2013-01-24 06:51:33.589250",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Per request from rsc, filed\r\nhttps://code.google.com/p/go/issues/detail?id=4720 for discussion.\r\n\r\nOn Wed, Jan 23, 2013 at 10:51 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> On Wed, Jan 23, 2013 at 9:48 PM, Rob Pike <r@golang.org> wrote:\r\n>\r\n>> the specificity bothers me.  why just here?\r\n>>\r\n> Because this is frequently called and allocates pretty large buffers\r\n> (32KB).  The more bytes you allocate, the sooner that leads to a GC event.\r\n>\r\n>> there are reasons to keep it all private but if the goal is to reduce GC\r\n>> pressure maybe it should be a service more generally available.\r\n>>\r\n> I have a byte allocator package inside Google with an API like:\r\n>\r\n> package pool\r\n> func NewBytePool(...opts...) *BytePool\r\n> func (*BytePool) Alloc(n int) []byte\r\n> func (*BytePool) Free(buf []byte)\r\n>\r\n> If that's not objectionable, we could add that to the standard library\r\n> somewhere.\r\n>\r\n> Personally I wish we could have a private packages that the standard\r\n> library could use but which we didn't need to commit to being public\r\n> long-term.  This would be such a candidate, so fmt and io and http and\r\n> everybody didn't have to re-invent this, often poorly.\r\n>\r\n>> or maybe the collector should not need this sort of workaround in the\r\n>> first place.\r\n>>\r\n> The collector doesn't even run until N bytes are allocated, where N is the\r\n> size of the heap at the last collection.\r\n>\r\n> How would the collector avoid this if the collector isn't involved until\r\n> it's already too late?  The goal is to avoid allocation in the first place,\r\n> and make([]byte...) allocates.\r\n>\r\n>>  there is similar nonsense in fmt for instance, and it is distasteful but\r\n>> important. maybe the idea should be generalized or maybe rendered\r\n>> unnecessary. I would like to have a strategy discussion before committing\r\n>> more such tactical tweaks.\r\n>>\r\n>> also some benchmarks?\r\n>>\r\n> Oh, I forgot to paste them into the commit message.\r\n>\r\n> It went from 33200 bytes/op to 50 bytes/op.  So before it could do 32K\r\n> operations before it allocated 1 GB of memory.  Now it can do 21 million.\r\n>  Which means many fewer GC events and thus fewer pauses (which is the goal)\r\n> and less CPU (doing GCs).\r\n>\r\n>> doesn't the allocator already cache like this?\r\n>>\r\n> The allocator has per-size pools like tcmalloc, but it doesn't know\r\n> immediately when the 32 KB buf is no longer needed and could be re-used.\r\n>  It doesn't discover that and re-pool the memory until a GC occurs, which\r\n> is too late.\r\n>\r\n>> what are the issues about caching that is not locality-aware? etc. in\r\n>> short, should this be done at all, and if so, where?\r\n>>\r\n> I'd like to see a general allocation pool package so we can move all the\r\n> fmt/http/io/etc stuff into a common place.\r\n>\r\n> It could have a specialized API for []byte (a common case, as above) and\r\n> maybe also for interface{}s (for pools of variables, e.g. *MyStruct to be\r\n> reused).\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-01-28 18:38:09.900750",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2013-05-17 20:45:02.544950",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If Issue 4720 (sync.Cache or sync.Pool whatever) is stalled, can we revisit\r\nthis CL?\r\n\r\nio.Copy is used everywhere, and generates 32 KB of garbage per call.\r\n\r\n\r\n\r\nOn Fri, May 17, 2013 at 1:45 PM, <bradfitz@golang.org> wrote:\r\n\r\n> *** Abandoned ***\r\n>\r\n> https://codereview.appspot.**com/7206048/<https://codereview.appspot.com/7206048/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-07 22:20:39.696850",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping.\r\n\r\nThis isn't an API change.\r\n\r\n\r\n\r\nOn Wed, Aug 7, 2013 at 3:20 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> If Issue 4720 (sync.Cache or sync.Pool whatever) is stalled, can we\r\n> revisit this CL?\r\n>\r\n> io.Copy is used everywhere, and generates 32 KB of garbage per call.\r\n>\r\n>\r\n>\r\n> On Fri, May 17, 2013 at 1:45 PM, <bradfitz@golang.org> wrote:\r\n>\r\n>> *** Abandoned ***\r\n>>\r\n>> https://codereview.appspot.**com/7206048/<https://codereview.appspot.com/7206048/>\r\n>>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 01:27:11.064770",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"adg@golang.org",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have the same concerns about this change that I do about reusing buffers in bufio.",
+			"disapproval": false,
+			"date": "2013-08-09 01:37:03.588910",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 7206048: io: reuse Copy buffers beween copies",
+	"created": "2013-01-23 23:59:26.747930",
+	"patchsets": [
+		1,
+		2001,
+		5001
+	],
+	"modified": "2013-08-09 01:37:04.263120",
+	"closed": true,
+	"issue": 7206048
+}

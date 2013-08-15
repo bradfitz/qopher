@@ -1,0 +1,108 @@
+{
+	"description": "go/build: add test building support\n\nThis enables gotest to build tests without makefiles using\ngo/build. For now, this has to be explicitly enabled using\n-make=false due to the lack of full cgo support in go/build.\n\nThe way tests are built by go/build is based on and mimics\nalmost exactly the logic in gotest. The only difference\nintroduced is in the special handling of main and _xtest_\npackages. gotest uses a relative local import path that\ndoesn't work with the location-less nature of go/build.\n\nTests were extended to cover test building. When using\ngo/build, gotest can now test the logic of go/build on\nwhich gotest is based. (!)",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"adg@golang.org",
+		"rsc@golang.org",
+		"gustavo@niemeyer.net"
+	],
+	"messages": [
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-12 00:14:58.000958",
+			"approval": false
+		},
+		{
+			"sender": "gustavo@niemeyer.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> Can we please postpone this CL?\n>\n> I have various cleanup planned for both\n> go/build and goinstall, and I'd prefer to\n> wait and deal with these issues then\n> instead of doing it twice.\n\nI'm having issues as I try to push Go throughout the company and\ngotest doesn't work with GOPATH, so I'd appreciate moving things\nforward a bit. I'm also concerned that leaving the logic outside will\nmean the work I just completed carefully will have to be trashed and\ndone again.\n\nOn another angle, have you reviewed the CL? The integration is\nactually pretty clean, so I doubt the integration will create any\nissues or further work when you have to do that, and may actually be\nhelpful when planning the clean ups as it'll offer another angle on\nthe problem.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/plus\nhttp://niemeyer.net/twitter\nhttp://niemeyer.net/blog\n\n-- I never filed a patent.\n",
+			"disapproval": false,
+			"date": "2011-09-12 15:02:52.504109",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I wonder if this moves too much out of gotest and into go/build. Should gotest synthesize _testmain.go from the supplied info struct? Should we just make go/build more configurable so that it can take additional test inputs and output the test binary?\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/cmd/gotest/gotest.go\nFile src/cmd/gotest/gotest.go (right):\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/cmd/gotest/gotest.go#newcode77\nsrc/cmd/gotest/gotest.go:77: if makeFlag {\nLet's reverse this, as gobuild will eventually become the default.\n\nif makeFlag {\n  make()\n} else {\n  // contents of gobuild()\n}\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go\nFile src/pkg/go/build/build.go (right):\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go#newcode81\nsrc/pkg/go/build/build.go:81: tests = b.abss(tests...)\nI don't like this mutation here. We always want the absolute locations, so move the b.abss(tests...) and b.abss(xtests...) calls up to just after the call to filterTests.\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go#newcode131\nsrc/pkg/go/build/build.go:131: } else if !info.IsCommand() {\nmake this \"if info.IsCommand()\" and swap the cases around.\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go#newcode171\nsrc/pkg/go/build/build.go:171: gofiles = gofiles[0:0]\ns/0:0/:0/\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go#newcode180\nsrc/pkg/go/build/build.go:180: s.addInput(tests...)\nwhat about xtests?",
+			"disapproval": false,
+			"date": "2011-09-12 04:31:39.666742",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for the review Andrew.\n\n> I wonder if this moves too much out of gotest and into go/build. Should\n> gotest synthesize _testmain.go from the supplied info struct? Should we\n> just make go/build more configurable so that it can take additional test\n> inputs and output the test binary?\n\nI'd prefer to keep it this way.  Besides being able to easily\nuse this elsewhere (imagine how build_test.go would look like\notherwise), the content of _testmain.go is connected in a few\ndifferent ways to the building procedure.\n\nIf people want to customize the test running, I'd rather enable\nthem to do that via the BuildTests interface itself in the future\nthan to ask them to understand how to assemble a _testmain.go\nthat would work at all.\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/cmd/gotest/gotest.go\nFile src/cmd/gotest/gotest.go (right):\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/cmd/gotest/gotest.go#newcode77\nsrc/cmd/gotest/gotest.go:77: if makeFlag {\n> Let's reverse this, as gobuild will eventually become the default.\n\nIndeed, will do.\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go\nFile src/pkg/go/build/build.go (right):\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go#newcode81\nsrc/pkg/go/build/build.go:81: tests = b.abss(tests...)\n> move the b.abss(tests...) and b.abss(xtests...) calls up\n\nWill do.\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go#newcode131\nsrc/pkg/go/build/build.go:131: } else if !info.IsCommand() {\n> make this \"if info.IsCommand()\" and swap the cases around.\n\nCan't do that as it'd break the logic.\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go#newcode171\nsrc/pkg/go/build/build.go:171: gofiles = gofiles[0:0]\n> s/0:0/:0/\n\nSounds good.\n\nhttp://codereview.appspot.com/4956071/diff/7011/src/pkg/go/build/build.go#newcode180\nsrc/pkg/go/build/build.go:180: s.addInput(tests...)\n> what about xtests?\n\nThey're added as inputs when they're used. Line 164.",
+			"disapproval": false,
+			"date": "2011-09-12 14:43:14.291625",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Can we please postpone this CL?\n\nI have various cleanup planned for both\ngo/build and goinstall, and I'd prefer to\nwait and deal with these issues then\ninstead of doing it twice.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-12 14:48:15.757302",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"gustavo@niemeyer.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2011-10-14 18:57:54.367548",
+			"approval": false
+		}
+	],
+	"owner_email": "n13m3y3r@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "niemeyer",
+	"subject": "code review 4956071: go/build: add test building support",
+	"created": "2011-09-08 15:07:48.412979",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		6001,
+		1002,
+		7011
+	],
+	"modified": "2011-10-14 18:57:56.501267",
+	"closed": true,
+	"issue": 4956071
+}

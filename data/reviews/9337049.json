@@ -1,0 +1,130 @@
+{
+	"description": "runtime: test scanning not started goroutine stacks",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org",
+		"iant@golang.org",
+		"bradfitz@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Also, I don't really understand the whole concept of \"unknown argument\r\nsize\" for a goroutine. runtime.newproc (aka the implementation of 'go')\r\nmust copy the arguments onto the new stack. It knows how big they are. If\r\nit doesn't write that down for later use, it could.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-05-16 18:27:25.461150",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-16 18:19:25.313420",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9337049/diff/2001/src/pkg/runtime/gc_test.go\nFile src/pkg/runtime/gc_test.go (right):\n\nhttps://codereview.appspot.com/9337049/diff/2001/src/pkg/runtime/gc_test.go#newcode130\nsrc/pkg/runtime/gc_test.go:130: go w.Write([]byte(src))\nw.Write is compiled to a function call which has an unknown argument size.  The \"name\" of this function is net.(*pipe).Write which does not appear in the source leading me to believe it is compiler generated.  These functions are relatively rare and I cannot figure out how to have one generated for me.\n\nRather than import \"net\" and use its pipes, I can smash the argument size of an otherwise ordinary function with the unknown argument size value using reflection.  This might be more satisfying as I can confirm the function that will be invoked by go does have unknown arguments and ensuring the test is still valid.\n\nOpinions are welcome.",
+			"disapproval": false,
+			"date": "2013-05-16 18:20:27.433190",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, May 16, 2013 at 2:20 PM, <cshapiro@google.com> wrote:\r\n\r\n>\r\n> https://codereview.appspot.**com/9337049/diff/2001/src/pkg/**\r\n> runtime/gc_test.go<https://codereview.appspot.com/9337049/diff/2001/src/pkg/runtime/gc_test.go>\r\n> File src/pkg/runtime/gc_test.go (right):\r\n>\r\n> https://codereview.appspot.**com/9337049/diff/2001/src/pkg/**\r\n> runtime/gc_test.go#newcode130<https://codereview.appspot.com/9337049/diff/2001/src/pkg/runtime/gc_test.go#newcode130>\r\n> src/pkg/runtime/gc_test.go:**130: go w.Write([]byte(src))\r\n> w.Write is compiled to a function call which has an unknown argument\r\n> size.  The \"name\" of this function is net.(*pipe).Write which does not\r\n> appear in the source leading me to believe it is compiler generated.\r\n>\r\n\r\nnet.(*pipe).Write is *net.pipe's Write method. It is generated because type\r\npipe in net/pipe.go embeds an *io.PipeWriter, which itself has a Write\r\nmethod.\r\n\r\ntype T struct {\r\n   U\r\n}\r\n\r\ntype U struct {\r\n}\r\n\r\nfunc (u *U) Write(b []byte) {}\r\n\r\nvar t T\r\ngo t.Write(nil)\r\n\r\nshould be enough to reproduce whatever you are seeing. Of course, if there\r\nis something the compiler is missing in the generation of the embedded\r\nmethod, perhaps it should be fixed too.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-05-16 18:26:34.817860",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I agree this is something that should be fixed in the compiler.  This is why I had also been thinking about defining a ordinary function and changing its func structure argument size at runtime.  By doing so, the test case would not rely on a compiler bug.",
+			"disapproval": false,
+			"date": "2013-05-16 18:39:05.043110",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/16 18:27:25, rsc wrote:\n> Also, I don't really understand the whole concept of \"unknown argument\n> size\" for a goroutine. runtime.newproc (aka the implementation of 'go')\n> must copy the arguments onto the new stack. It knows how big they are. If\n> it doesn't write that down for later use, it could.\n\nLeaving the compiler-generated functions aside, the remaining functions which have an unknown argument size are overwhelmingly runtime functions with \"textflag 7\" set, some of which are varargs routines.  \n\nWhile we could burden newproc with recording the argument size that would only help with conservatively scanning the incoming arguments.  The greater goal is to have precise information about pointer locations on the stack.  My intent is to have the compiler provide an accurate description of the argument list for these routines and eliminate the concept of unknown argument size.",
+			"disapproval": false,
+			"date": "2013-05-16 18:44:06.096390",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"cshapiro@google.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"iant@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Now I'm not sure about the status of this CL.  Do you still want to submit it?",
+			"disapproval": false,
+			"date": "2013-05-17 16:21:26.611720",
+			"approval": false
+		},
+		{
+			"sender": "cshapiro@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Based on our off-line discussion, no matter how this test is written\r\n(either to exploit an outstanding compiler bug, or write to the symbol\r\ntable), it will likely have to be rewritten.  Unless someone wants this\r\ntest, I would be happy to just let it go.\r\n\r\n\r\nOn Fri, May 17, 2013 at 9:21 AM, <iant@golang.org> wrote:\r\n\r\n> Now I'm not sure about the status of this CL.  Do you still want to\r\n> submit it?\r\n>\r\n> https://codereview.appspot.**com/9337049/<https://codereview.appspot.com/9337049/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-20 20:45:17.299170",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Not writing and maintain a test is always easier, yes.\r\n\r\n\r\n\r\nOn Mon, May 20, 2013 at 1:44 PM, Carl Shapiro <cshapiro@google.com> wrote:\r\n\r\n> Based on our off-line discussion, no matter how this test is written\r\n> (either to exploit an outstanding compiler bug, or write to the symbol\r\n> table), it will likely have to be rewritten.  Unless someone wants this\r\n> test, I would be happy to just let it go.\r\n>\r\n>\r\n> On Fri, May 17, 2013 at 9:21 AM, <iant@golang.org> wrote:\r\n>\r\n>> Now I'm not sure about the status of this CL.  Do you still want to\r\n>> submit it?\r\n>>\r\n>> https://codereview.appspot.**com/9337049/<https://codereview.appspot.com/9337049/>\r\n>>\r\n>\r\n>  --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-20 20:57:20.470420",
+			"approval": false
+		}
+	],
+	"owner_email": "cshapiro@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "cshapiro1",
+	"subject": "code review 9337049: runtime: test scanning not started goroutine stacks",
+	"created": "2013-05-16 18:15:03.575400",
+	"patchsets": [
+		1,
+		2001,
+		5001
+	],
+	"modified": "2013-06-25 21:39:24.207910",
+	"closed": true,
+	"issue": 9337049
+}

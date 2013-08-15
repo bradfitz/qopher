@@ -1,0 +1,120 @@
+{
+	"description": "net: disable SO_REUSEADDR and SO_REUSEPORT on openbsd\n\nThis prevents the 'address already in use' issue that is often\ntriggered during the websocket tests.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org",
+		"mikioh.mikioh@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-25 16:07:13.373006",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This code is trying to handle the case where\none server exits and another starts and tries\nto listen on the port very soon thereafter,\nbefore the TCP stack has gotten around to\ncleaning up the first one.  The SO_REUSEADDR\nis supposed to say \"reuse it anyway\", that is,\n\"don't give me that address in use error\".\n\nHow is that on OpenBSD, setting SO_REUSEADDR\ncauses the error instead of silencing it?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-25 17:08:59.159769",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 26 January 2012 04:08, Russ Cox <rsc@golang.org> wrote:\n> This code is trying to handle the case where\n> one server exits and another starts and tries\n> to listen on the port very soon thereafter,\n> before the TCP stack has gotten around to\n> cleaning up the first one. \u00a0The SO_REUSEADDR\n> is supposed to say \"reuse it anyway\", that is,\n> \"don't give me that address in use error\".\n>\n> How is that on OpenBSD, setting SO_REUSEADDR\n> causes the error instead of silencing it?\n\nSorry, I should have been more specific here. The problem is not due\nto use of SO_REUSEADDR on the listening socket - the issue is that we\nare setting it on all sockets. As a result, the client performs a\nconnect() which results in the allocation of a randomised port number\n- since SO_REUSEADDR/SO_REUSEPORT are enabled the port number is\npermitted to already be in use and the normal duplication checks are\nnot performed. We then attempt to establish a TCP connection using\nthis already in use port number, which fails:\n\n 19425 test.out CALL  socket(PF_INET,SOCK_STREAM,IPPROTO_IP)\n 19425 test.out RET   socket 10/0xa\n 19425 test.out CALL  fcntl(0xa,F_SETFD,FD_CLOEXEC)\n 19425 test.out RET   fcntl 0\n 19425 test.out CALL  setsockopt(0xa,SOL_SOCKET,SO_REUSEADDR,0xf84019ea00,0x4)\n 19425 test.out RET   setsockopt 0\n 19425 test.out CALL  setsockopt(0xa,SOL_SOCKET,SO_REUSEPORT,0xf84019ea08,0x4)\n 19425 test.out RET   setsockopt 0\n 19425 test.out CALL  setsockopt(0xa,SOL_SOCKET,SO_BROADCAST,0xf84019ea10,0x4)\n 19425 test.out RET   setsockopt 0\n 19425 test.out CALL  fcntl(0xa,F_GETFL,0)\n 19425 test.out RET   fcntl 2\n 19425 test.out CALL  fcntl(0xa,F_SETFL,0x6<O_RDWR|O_NONBLOCK>)\n 19425 test.out RET   fcntl 0\n 19425 test.out CALL  connect(0xa,0xf840186768,0x10)\n 19425 test.out STRU  struct sockaddr { AF_INET, 127.0.0.1:43658 }\n 19425 test.out RET   connect -1 errno 48 Address already in use\n\nThe other (and probably better) solution is to only set\nSO_REUSEADDR/SO_REUSEPORT on sockets that will be listening, probably\nvia the addition of a func setDefaultListenSockopts(fd *netFD) that\nwould be called from ListenTCP() et al.\n",
+			"disapproval": false,
+			"date": "2012-01-31 16:25:26.237054",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Feb 1, 2012 at 1:30 AM, Russ Cox <rsc@golang.org> wrote:\n\n> Only setting SO_REUSEADDR on listen sockets sounds fine.\n\nI agree.\n",
+			"disapproval": false,
+			"date": "2012-01-31 16:32:43.345560",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "+mikio\n\nOnly setting SO_REUSEADDR on listen sockets sounds fine.\n",
+			"disapproval": false,
+			"date": "2012-01-31 16:30:24.032104",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Joel,\n\nI have CL 5562048 and it seems listenerSockaddr in sock_xxx.go\nalso works for your purpose. So would you mind holing this CL\nuntil 5562048 landed?\n\nOn Wed, Feb 1, 2012 at 1:32 AM, Mikio Hara <mikioh.mikioh@gmail.com> wrote:\n> On Wed, Feb 1, 2012 at 1:30 AM, Russ Cox <rsc@golang.org> wrote:\n>\n>> Only setting SO_REUSEADDR on listen sockets sounds fine.\n>\n> I agree.\n",
+			"disapproval": false,
+			"date": "2012-01-31 16:40:33.968162",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Well, my mind isn't quite clear.\nPlease move forward.\n\nOn Wed, Feb 1, 2012 at 1:40 AM, Mikio Hara <mikioh.mikioh@gmail.com> wrote:\n> Hi Joel,\n>\n> I have CL 5562048 and it seems listenerSockaddr in sock_xxx.go\n> also works for your purpose. So would you mind holing this CL\n> until 5562048 landed?\n>\n> On Wed, Feb 1, 2012 at 1:32 AM, Mikio Hara <mikioh.mikioh@gmail.com> wrote:\n>> On Wed, Feb 1, 2012 at 1:30 AM, Russ Cox <rsc@golang.org> wrote:\n>>\n>>> Only setting SO_REUSEADDR on listen sockets sounds fine.\n>>\n>> I agree.\n",
+			"disapproval": false,
+			"date": "2012-01-31 17:50:49.526217",
+			"approval": false
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Filed issue 2830, I'll look into this tomorrow.\n",
+			"disapproval": false,
+			"date": "2012-02-02 03:16:23.317217",
+			"approval": false
+		},
+		{
+			"sender": "jsing@google.com",
+			"recipients": [
+				"jsing@google.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Abandoned ***",
+			"disapproval": false,
+			"date": "2012-03-06 11:25:52.057050",
+			"approval": false
+		}
+	],
+	"owner_email": "jsing@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jsing",
+	"subject": "code review 5574063: net: disable SO_REUSEADDR and SO_REUSEPORT on openbsd",
+	"created": "2012-01-25 14:32:33.238328",
+	"patchsets": [
+		4001,
+		5003
+	],
+	"modified": "2012-03-06 11:25:55.046777",
+	"closed": true,
+	"issue": 5574063
+}

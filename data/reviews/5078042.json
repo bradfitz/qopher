@@ -1,0 +1,134 @@
+{
+	"description": "syslog: restart connections automatically\r\n  Implements deferred connections + single-attempt automatic\r\n  retry should the connection drop.\r\n\r\n  Fixes issue 2264\r\n\r\nsyslog: fix priority values.\r\n  hard define priority values and include facility values as\r\n  defined in the RFC and in the C library.\r\n",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"adg@golang.org",
+		"r@golang.org",
+		"minux.ma@gmail.com",
+		"jeff.allen@gmail.com",
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "akunokuroneko@gmail.com",
+			"recipients": [
+				"akunokuroneko@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2011-09-20 02:28:30.068728",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"akunokuroneko@gmail.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go\nFile src/pkg/syslog/syslog.go (right):\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode22\nsrc/pkg/syslog/syslog.go:22: SeverityPresent = Priority(0x100)\nIf they're internal, then give them unexported names\n\nseverity\nseverityMask\nfacility\nfacilityMask\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode28\nsrc/pkg/syslog/syslog.go:28: LOG_EMERG   = Priority(0) | SeverityPresent\nInstead, you can do\n\nconst (\n  LOG_EMERG = Priority(iota) | SeverityPresent\n  LOG_ALERT\n  LOG_CRIT\netc\n)\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode37\nsrc/pkg/syslog/syslog.go:37: LOG_KERN     = Priority(0<<3) | FacilityPresent\n)\n\nconst (\n  LOG_KERN = Priority(iota<<3) | facility\n  LOG_USER\netc\n)\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode114\nsrc/pkg/syslog/syslog.go:114: log.Printf(\"writer.Reconnect() on old connection.\\n\")\nSeems like a superfluous log message.\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode143\nsrc/pkg/syslog/syslog.go:143: func (w *Writer) Write(b []byte) (bout int, err os.Error) {\nthis logic is repeated in both functions.\ninstead, how about a third function which the others can wrap:\n\nfunc (w *Writer) write(p Priority, v interface{}) (n int, err os.Error) {\n   // reconnect logic\n   switch v := v.(type) {\n   case string:\n      n, err = w.conn.writeString(p, w.prefix, v)\n   case []byte:\n      n, err = w.conn.writeBytes(p, w.prefix, v)\n   default:\n      panic(\"syslog: attempt to write unacceptable type\")\n   }\n   // retry logic\n}\n\nfunc (w *Writer) writeString(p Priority, s string) (int, os.Error) {\n   return w.write(p, s)\n}\n\nfunc (w *Writer) Write(b []byte) (int, os.Error) {\n   return w.write(p, b)\n}\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode151\nsrc/pkg/syslog/syslog.go:151: retry:\nUse a for loop instead of the goto.\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode179\nsrc/pkg/syslog/syslog.go:179: log.Printf(\"Hit!\")\nweird log message.\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog_test.go\nFile src/pkg/syslog/syslog_test.go (right):\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog_test.go#newcode118\nsrc/pkg/syslog/syslog_test.go:118: t.Fatalf(\"s.Debug() = '%q', but wanted '%q'\", rcvd, expected)\ns/but wanted/want/g",
+			"disapproval": false,
+			"date": "2011-09-20 06:53:02.062480",
+			"approval": false
+		},
+		{
+			"sender": "akunokuroneko@gmail.com",
+			"recipients": [
+				"akunokuroneko@gmail.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for the feedback.\n\nA patchset has been uploaded with the fixes I agree with.  Discussion follows.\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go\nFile src/pkg/syslog/syslog.go (right):\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode22\nsrc/pkg/syslog/syslog.go:22: SeverityPresent = Priority(0x100)\nOn 2011/09/20 06:53:02, adg wrote:\n> If they're internal, then give them unexported names\n> \n> severity\n> severityMask\n> facility\n> facilityMask\n\nDone.  Although the Masks might be useful externally, I'll worry about that if anybody complains later.\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode28\nsrc/pkg/syslog/syslog.go:28: LOG_EMERG   = Priority(0) | SeverityPresent\nOn 2011/09/20 06:53:02, adg wrote:\n> Instead, you can do\n> \n> const (\n>   LOG_EMERG = Priority(iota) | SeverityPresent\n>   LOG_ALERT\n\nNot keen on this as value assignment via iota means that the value becomes position dependent in the code -- if these values were entirely internal, I'd have no problem with this, but as they're specified in an external specification, my personal style is to explicitly code their values so there can be no confusion.\n\nParticularly notable, the Facility set is discontinuous as a few of the valid values aren't usually in the headers, so iota doesn't really work there unless I put in the missing (less commonly used) intermediates.\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode114\nsrc/pkg/syslog/syslog.go:114: log.Printf(\"writer.Reconnect() on old connection.\\n\")\nOn 2011/09/20 06:53:02, adg wrote:\n> Seems like a superfluous log message.\nWhoops - it is - that was part of my own debugging.\nRemoved.\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode143\nsrc/pkg/syslog/syslog.go:143: func (w *Writer) Write(b []byte) (bout int, err os.Error) {\nOn 2011/09/20 06:53:02, adg wrote:\n> this logic is repeated in both functions.\n> instead, how about a third function which the others can wrap:\n\nPresumably a cast from string to []byte is cheap, so I've gone with implementing a single writeBytes function and wrapping to it, rather than going with a switch on type.\n\nhttp://codereview.appspot.com/5078042/diff/1/src/pkg/syslog/syslog.go#newcode179\nsrc/pkg/syslog/syslog.go:179: log.Printf(\"Hit!\")\nOn 2011/09/20 06:53:02, adg wrote:\n> weird log message.\nagain, leftover debugging. :(",
+			"disapproval": false,
+			"date": "2011-09-21 01:17:42.910259",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"akunokuroneko@gmail.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"r@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5078042/diff/5001/src/pkg/syslog/syslog.go\nFile src/pkg/syslog/syslog.go (right):\n\nhttp://codereview.appspot.com/5078042/diff/5001/src/pkg/syslog/syslog.go#newcode57\nsrc/pkg/syslog/syslog.go:57: )\nI understand your objections but you're fighting the language.\n\nconst (\n  // These are internal ...\n  severityPresent Priority = 0x100\n  ...\n)\n\nconst (\n  // From the RFCs...\n  LOG_EMERG Priority = iota | severityPresent\n  LOG_ALERT\n  ...\n)\n\nconst (\n  // More from the RFCs...\n  LOG_KERN Priority = (iota << 3) | facilityPresent\n  LOG_USER\n  ...\n)\n\nYes, it's harder to see the value of LOG_FTP, but that's not very important. It's not that easy anyway - quick, what is the value of (11<<3) | facilityPresent? A user still needs to work it out.",
+			"disapproval": false,
+			"date": "2011-09-21 17:11:08.897302",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"akunokuroneko@gmail.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What happened to this? Can we close it?",
+			"disapproval": false,
+			"date": "2012-08-08 00:47:55.770840",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"akunokuroneko@gmail.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"r@golang.org",
+				"minux.ma@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/08/08 00:47:55, adg wrote:\n> What happened to this? Can we close it?\nissue 2264 is still open",
+			"disapproval": false,
+			"date": "2012-08-08 08:01:51.547040",
+			"approval": false
+		},
+		{
+			"sender": "jeff.allen@gmail.com",
+			"recipients": [
+				"akunokuroneko@gmail.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"r@golang.org",
+				"minux.ma@gmail.com",
+				"jeff.allen@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "As of 14987:a041b45cc418 the priority/facility/severity part of this CL is fixed (a different way).\n\nThe part of this CL related to retries is not implemented, so Issue 2204 is still unaddressed.\n\nI will try to submit a new CL with a fix for 2204 in it.",
+			"disapproval": false,
+			"date": "2012-11-29 09:26:13.690620",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "thanks\r\n\r\nOn Thursday, November 29, 2012, wrote:\r\n\r\n> As of 14987:a041b45cc418 the priority/facility/severity part of this CL\r\n> is fixed (a different way).\r\n>\r\n> The part of this CL related to retries is not implemented, so Issue 2204\r\n> is still unaddressed.\r\n>\r\n> I will try to submit a new CL with a fix for 2204 in it.\r\n>\r\n>\r\n> https://codereview.appspot.**com/5078042/<https://codereview.appspot.com/5078042/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-29 09:35:50.744250",
+			"approval": false
+		}
+	],
+	"owner_email": "akunokuroneko@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "kuroneko",
+	"subject": "syslog: restart connections automatically.  Fix priority values.",
+	"created": "2011-09-20 02:10:35.222603",
+	"patchsets": [
+		1,
+		5001
+	],
+	"modified": "2013-06-12 07:23:16.811100",
+	"closed": true,
+	"issue": 5078042
+}
