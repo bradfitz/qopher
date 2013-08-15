@@ -32,7 +32,10 @@ const (
 
 	rvTimeFormat = "2006-01-02 15:04:05"
 
-	queryTmpl = "https://codereview.appspot.com/search?closed=3&{{CC_OR_REVIEWER}}=golang-dev%40googlegroups.com&private=1&modified_before={{DATE_BEFORE}}&modifed_after={{DATE_AFTER}}&order=-modified&keys_only=False&with_messages=False&cursor={{CURSOR}}&limit={{LIMIT}}&format=json"
+	// queryTmpl = "https://codereview.appspot.com/search?closed=3&{{CC_OR_REVIEWER}}=golang-dev%40googlegroups.com&private=1&modified_before={{DATE_BEFORE}}&modifed_after={{DATE_AFTER}}&order=-modified&keys_only=False&with_messages=False&cursor={{CURSOR}}&limit={{LIMIT}}&format=json"
+
+	// closed=1 means "unknown"
+	queryTmpl = "https://codereview.appspot.com/search?closed=1&owner=&{{CC_OR_REVIEWER}}=golang-dev&cc=&repo_guid=&base=&private=1&created_before=&created_after=&modified_before=&modified_after=&order=-modified&format=json&keys_only=False&with_messages=False&cursor={{CURSOR}}&limit={{LIMIT}}"
 
 	// JSON with the text of messages. e.g.
 	// https://codereview.appspot.com/api/6454085?messages=true
@@ -54,7 +57,7 @@ func main() {
 		log.Fatalf("Directory %q needs to exist.", *dir)
 	}
 
-	for _, to := range []string{"reviewer", "cc"} {
+	for _, to := range []string{"reviewer"} { // needs index: , "cc"
 		updatewg.Add(1)
 		go loadReviews(to, updatewg)
 	}
@@ -64,11 +67,10 @@ func main() {
 func loadReviews(to string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	cursor := ""
+	oldestWant := time.Now().Add(-*since).Format(rvTimeFormat)
 	for {
 		url := urlWithParams(queryTmpl, map[string]string{
 			"CC_OR_REVIEWER": to,
-			"DATE_AFTER":     time.Now().Add(-*since).Format(rvTimeFormat),
-			"DATE_BEFORE":    "2020-01-01 00:00:00",
 			"CURSOR":         cursor,
 			"LIMIT":          fmt.Sprint(itemsPerPage),
 		})
@@ -82,17 +84,23 @@ func loadReviews(to string, wg *sync.WaitGroup) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("for cursor %q, Got %d reviews", cursor, len(reviews))
+		ngood := 0 // where good means "new enough"
 		for _, r := range reviews {
-			wg.Add(1)
-			go updateReview(r, wg)
+			if r.Modified >= oldestWant {
+				ngood++
+				wg.Add(1)
+				go updateReview(r, wg)
+			}
 		}
+		log.Printf("for cursor %q, Got %d reviews (%d in time window)", cursor, len(reviews), ngood)
 		res.Body.Close()
-		if cursor == "" || len(reviews) == 0 {
+		if cursor == "" || ngood == 0 {
 			break
 		}
 	}
 }
+
+var httpGate = make(chan bool, 25)
 
 // updateReview checks to see if r (which lacks comments) has a higher
 // modification time than the version we have on disk and if necessary
@@ -107,6 +115,10 @@ func updateReview(r *Review, wg *sync.WaitGroup) {
 	if err != nil && !os.IsNotExist(err) {
 		log.Fatalf("Error loading issue %d: %v", r.Issue, err)
 	}
+
+	httpGate <- true
+	defer func() { <-httpGate }()
+
 	url := urlWithParams(reviewTmpl, map[string]string{
 		"ISSUE_NUMBER": fmt.Sprint(r.Issue),
 	})
