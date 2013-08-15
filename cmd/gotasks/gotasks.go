@@ -17,14 +17,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 var (
-	dir   = flag.String("dir", "", "Directory to put data files")
-	since = flag.Duration("since", 1*time.Hour, "Fetch things modified in this past duration.")
+	dir    = flag.String("dir", "", "Directory to put data files")
+	update = flag.Duration("update", 0, "If non-zero, duratation in past to update from.")
+	report = flag.Bool("report", false, "Dump a report")
 )
 
 const (
@@ -55,17 +57,71 @@ func main() {
 		log.Fatalf("Directory %q needs to exist.", *dir)
 	}
 
-	for _, to := range []string{"reviewer", "cc"} {
-		updatewg.Add(1)
-		go loadReviews(to, updatewg)
+	if *update != 0 {
+		for _, to := range []string{"reviewer", "cc"} {
+			updatewg.Add(1)
+			go loadReviews(to, updatewg)
+		}
+		updatewg.Wait()
+
+		for _, r := range allReviews() {
+			for _, patchID := range r.PatchSets {
+				updatewg.Add(1)
+				go func(r *Review, id int) {
+					defer updatewg.Done()
+					if err := r.LoadPatchMeta(id); err != nil {
+						log.Fatal(err)
+					}
+				}(r, patchID)
+			}
+		}
+		updatewg.Wait()
 	}
-	updatewg.Wait()
+
+	if *report {
+		open := 0
+		closed := 0
+		for _, r := range allReviews() {
+			if r.Closed {
+				closed++
+			} else {
+				open++
+			}
+		}
+		fmt.Printf("open: %d, closed: %d\n", open, closed)
+	}
+}
+
+func allReviews() []*Review {
+	var ret []*Review
+	issueRE := regexp.MustCompile(`^([0-9]+)\.json$`)
+	err := filepath.Walk(filepath.Join(*dir, "reviews"), func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		if m := issueRE.FindStringSubmatch(info.Name()); m != nil {
+			id, _ := strconv.Atoi(m[1])
+			r, err := loadDiskFullReview(id)
+			if err != nil {
+				return err
+			}
+			ret = append(ret, r)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatalf("Error loading all issues from disk: %v", err)
+	}
+	return ret
 }
 
 func loadReviews(to string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	cursor := ""
-	oldestWant := time.Now().Add(-*since).Format(rvTimeFormat)
+	oldestWant := time.Now().Add(-*update).Format(rvTimeFormat)
 	for {
 		url := urlWithParams(queryTmpl, map[string]string{
 			"CC_OR_REVIEWER": to,
@@ -83,22 +139,32 @@ func loadReviews(to string, wg *sync.WaitGroup) {
 			log.Fatal(err)
 		}
 		ngood := 0 // where good means "new enough"
+		nold := 0
 		for _, r := range reviews {
 			if r.Modified >= oldestWant {
 				ngood++
 				wg.Add(1)
 				go updateReview(r, wg)
+			} else {
+				nold++
 			}
 		}
-		log.Printf("for cursor %q, Got %d reviews (%d in time window)", cursor, len(reviews), ngood)
+		log.Printf("for cursor %q, Got %d reviews (%d in time window, %d old)", cursor, len(reviews), ngood, nold)
 		res.Body.Close()
-		if cursor == "" || ngood == 0 {
+		if cursor == "" || ngood == 0 || nold > 0 {
 			break
 		}
 	}
 }
 
 var httpGate = make(chan bool, 25)
+
+func gate() (ungate func()) {
+	httpGate <- true
+	return func() {
+		<-httpGate
+	}
+}
 
 // updateReview checks to see if r (which lacks comments) has a higher
 // modification time than the version we have on disk and if necessary
@@ -114,8 +180,13 @@ func updateReview(r *Review, wg *sync.WaitGroup) {
 		log.Fatalf("Error loading issue %d: %v", r.Issue, err)
 	}
 
-	httpGate <- true
-	defer func() { <-httpGate }()
+	dstFile := issueDiskPath(r.Issue)
+	dir := filepath.Dir(dstFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Fatal(err)
+	}
+
+	defer gate()()
 
 	url := urlWithParams(reviewTmpl, map[string]string{
 		"ISSUE_NUMBER": fmt.Sprint(r.Issue),
@@ -126,42 +197,50 @@ func updateReview(r *Review, wg *sync.WaitGroup) {
 		log.Fatalf("Error fetching %s: %+v, %v", url, res, err)
 	}
 	defer res.Body.Close()
-	all, err := ioutil.ReadAll(res.Body)
-	if err != nil {
+
+	if err := writeReadableJSON(dstFile, res.Body); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func writeReadableJSON(dstFile string, r io.Reader) error {
+	all, err := ioutil.ReadAll(r)
+	if err != nil {
+		return err
 	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, all, "", "\t"); err != nil {
 		log.Fatal(err)
 	}
 
-	dstFile := issueDiskPath(r.Issue)
 	dir := filepath.Dir(dstFile)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		log.Fatal(err)
-	}
-	tf, err := ioutil.TempFile(dir, "issue")
+	tf, err := ioutil.TempFile(dir, "tmp")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	_, err = tf.Write(buf.Bytes())
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if err := tf.Close(); err != nil {
-		log.Fatal(err)
+		return err
 	}
-	if err := os.Rename(tf.Name(), dstFile); err != nil {
-		log.Fatal(err)
-	}
+	return os.Rename(tf.Name(), dstFile)
 }
 
 func issueDiskPath(id int) string {
-	return filepath.Join(*dir, "reviews", fmt.Sprintf("%d.json", id))
+	base := fmt.Sprintf("%d.json", id)
+	return filepath.Join(*dir, "reviews", base[:3], base)
+}
+
+func patchDiskPatch(issue, patch int) string {
+	base := fmt.Sprintf("%d-patch-%d.json", issue, patch)
+	return filepath.Join(*dir, "reviews", base[:3], base)
 }
 
 func loadDiskFullReview(id int) (*Review, error) {
-	f, err := os.Open(issueDiskPath(id))
+	path := issueDiskPath(id)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +307,8 @@ type Review struct {
 	Messages   []*Message `json:"messages"`
 	Reviewers  []string   `json:"reviewers"`
 	CC         []string   `json:"cc"`
+	Closed     bool       `json:"closed"`
+	PatchSets  []int      `json:"patchsets"`
 }
 
 func ParseReviews(r io.Reader) (reviews []*Review, cursor string, err error) {
@@ -246,4 +327,23 @@ func (r *Review) Reviewer() string {
 		return who
 	}
 	return ""
+}
+
+func (r *Review) LoadPatchMeta(patch int) error {
+	path := patchDiskPatch(r.Issue, patch)
+	if fi, err := os.Stat(path); err == nil && fi.Size() != 0 {
+		return nil
+	}
+
+	defer gate()()
+
+	url := fmt.Sprintf("https://codereview.appspot.com/api/%d/%d", r.Issue, patch)
+	log.Printf("Fetching patch %s", url)
+	res, err := http.Get(url)
+	if err != nil || res.StatusCode != 200 {
+		return fmt.Errorf("Error fetching %s (issue %d, patch %d): %+v, %v", url, r.Issue, patch, res, err)
+	}
+	defer res.Body.Close()
+
+	return writeReadableJSON(path, res.Body)
 }
