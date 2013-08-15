@@ -1,0 +1,191 @@
+{
+	"description": "net: SplitHostPort: adjust error message for missing port in IPv6 addresses\n\nAn hostport of \"[::1]\" now results in the same error message\n\"missing port in address\" as the hostport value \"127.0.0.1\",\nso SplitHostPort won't complain about \"too many colons\nin address\" anymore for an IPv6 address missing a port.\n\nAdded tests checking the error values.\n\nFixes issue 4526.",
+	"cc": [
+		"dave@cheney.net",
+		"rsc@golang.org",
+		"mikioh.mikioh@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "mt4swm@googlemail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, 1 Jan 2013 10:34:47 +1100\r\nDave Cheney <dave@cheney.net> wrote:\r\n\r\n> What happens with these test cases\r\n> \r\n> 0.0.0.0:0\r\n> :0\r\n> 127.0.0.1:\r\n> www.google.com:\r\n\r\nThese hostport values all pass SplitHostPort without\r\nan error (same as in the past).\r\n\r\nThe last two values (those with the colon at the end)\r\nshould probably also yield a \"missing port in address\"\r\nerror. I can adjust SplitHostPort accordingly if you like.\r\n\r\nThe first value is matched by the test case for\r\n127.0.0.1:1234, I suppose.\r\n\r\nFor the second value -- \":0\" with a missing host part --\r\nI could add a test to splitjointests that checks that empty\r\nhost parts actually are regarded as valid (which is\r\nSplitHostPort's current behaviour, and has a usage in\r\naddress arguments to Listen calls).\r\n\t+\t{\"\", \"0\", \":0\"},\r\n",
+			"disapproval": false,
+			"date": "2013-01-02 02:06:07.209070",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What happens with these test cases\r\n\r\n0.0.0.0:0\r\n:0\r\n127.0.0.1:\r\nwww.google.com:\r\nOn 1 Jan 2013 10:27, <mt4swm@googlemail.com> wrote:\r\n\r\n> Reviewers: golang-dev_googlegroups.com,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: mikioh.mikioh@gmail.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> net: SplitHostPort: adjust error message for missing port in IPv6\r\n> addresses\r\n>\r\n> An hostport of \"[::1]\" now results in the same error message\r\n> \"missing port in address\" as the hostport value \"127.0.0.1\",\r\n> so SplitHostPort won't complain about \"too many colons\r\n> in address\" anymore for an IPv6 address missing a port.\r\n>\r\n> Added tests checking the error values.\r\n>\r\n> Fixes issue 4526.\r\n>\r\n> Please review this at https://codereview.appspot.**com/7038045/<https://codereview.appspot.com/7038045/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/ip_test.go\r\n>   M src/pkg/net/ipsock.go\r\n>\r\n>\r\n> Index: src/pkg/net/ip_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ip_test.go\r\n> +++ b/src/pkg/net/ip_test.go\r\n> @@ -271,12 +271,32 @@\r\n>         {\"google.com\", \"https%foo\", \"google.com:https%foo\"}, // Go 1.0\r\n> behavior\r\n>  }\r\n>\r\n> +var splitfailuretests = []struct {\r\n> +       HostPort string\r\n> +       Err      string\r\n> +}{\r\n> +       {\"www.google.com\", \"missing port in address\"},\r\n> +       {\"127.0.0.1\", \"missing port in address\"},\r\n> +       {\"[::1]\", \"missing port in address\"},\r\n> +       {\"::1\", \"too many colons in address\"},\r\n> +}\r\n> +\r\n>  func TestSplitHostPort(t *testing.T) {\r\n>         for _, tt := range splitjointests {\r\n>                 if host, port, err := SplitHostPort(tt.Join); host !=\r\n> tt.Host || port != tt.Port || err != nil {\r\n>                         t.Errorf(\"SplitHostPort(%q) = %q, %q, %v; want %q,\r\n> %q, nil\", tt.Join, host, port, err, tt.Host, tt.Port)\r\n>                 }\r\n>         }\r\n> +       for _, tt := range splitfailuretests {\r\n> +               if _, _, err := SplitHostPort(tt.HostPort); err == nil {\r\n> +                       t.Errorf(\"SplitHostPort(%q) should have failed\",\r\n> tt.HostPort)\r\n> +               } else {\r\n> +                       e := err.(*AddrError)\r\n> +                       if e.Err != tt.Err {\r\n> +                               t.Errorf(\"SplitHostPort(%q) = _, _, %q;\r\n> want %q\", tt.HostPort, e.Err, tt.Err)\r\n> +                       }\r\n> +               }\r\n> +       }\r\n>  }\r\n>\r\n>  func TestJoinHostPort(t *testing.T) {\r\n> Index: src/pkg/net/ipsock.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/ipsock.go\r\n> +++ b/src/pkg/net/ipsock.go\r\n> @@ -85,9 +85,12 @@\r\n>         }\r\n>         host, port = hostport[:i], hostport[i+1:]\r\n>         // Can put brackets around host ...\r\n> -       if len(host) > 0 && host[0] == '[' && host[len(host)-1] == ']' {\r\n> +       switch {\r\n> +       case insideBrackets(host):\r\n>                 host = host[1 : len(host)-1]\r\n> -       } else {\r\n> +       case insideBrackets(hostport):\r\n> +               err = &AddrError{\"missing port in address\", hostport}\r\n> +       default:\r\n>                 // ... but if there are no brackets, no colons.\r\n>                 if byteIndex(host, ':') >= 0 {\r\n>                         err = &AddrError{\"too many colons in address\",\r\n> hostport}\r\n> @@ -97,6 +100,10 @@\r\n>         return\r\n>  }\r\n>\r\n> +func insideBrackets(s string) bool {\r\n> +       return len(s) > 0 && s[0] == '[' && s[len(s)-1] == ']'\r\n> +}\r\n> +\r\n>  // JoinHostPort combines host and port into a network address\r\n>  // of the form \"host:port\" or, if host contains a colon, \"[host]:port\".\r\n>  func JoinHostPort(host, port string) string {\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-12-31 23:34:48.454880",
+			"approval": false
+		},
+		{
+			"sender": "mt4swm@googlemail.com",
+			"recipients": [
+				"mt4swm@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: mikioh.mikioh@gmail.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-12-31 20:41:07.971740",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"mt4swm@googlemail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7038045/diff/2002/src/pkg/net/ip_test.go\nFile src/pkg/net/ip_test.go (right):\n\nhttps://codereview.appspot.com/7038045/diff/2002/src/pkg/net/ip_test.go#newcode271\nsrc/pkg/net/ip_test.go:271: {\"google.com\", \"https%foo\", \"google.com:https%foo\"}, // Go 1.0 behavior\nPlease add Dave's test cases here. You can put // Go 1.0 behavior\nfor the empty string ports if you like. The goal is to avoid regressions.\nPlease also add\n\n{\"[foo]:[bar]baz\", \"foo\", \"[bar]baz\"}\n\nhttps://codereview.appspot.com/7038045/diff/2002/src/pkg/net/ip_test.go#newcode281\nsrc/pkg/net/ip_test.go:281: {\"::1\", \"too many colons in address\"},\nPlease add\n\n{\"[foo:bar]\", \"missing port in address\"}\n{\"[foo:bar]baz\", \"missing port in address\"}\n{\"[foo]:[bar]:baz\", \"too many colons in address\"},\n\nhere. I think you will find that the last two cases need work.\nWe should probably reject them, and that will be a Go 1.0 regression,\nbut one that I am willing to treat as a bug fix.\n\nThe docs are clear that the allowed forms are host:port and [host]:port.\nI think that means that if the string begins with [, then scanning forward \nwe have to find a ], and the ] must be followed by a :, which is the separator.\nThere must be no colons after the separator.\nIf the string does not begin with [, then the separator is the last :.",
+			"disapproval": false,
+			"date": "2013-01-07 04:55:41.706090",
+			"approval": false
+		},
+		{
+			"sender": "mt4swm@googlemail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've prepared a program in the Go Playground that\r\ncontains all the changes:\r\n\thttp://play.golang.org/p/9Im0PcQf-F\r\n\r\nIt tells how the behaviour of the new SplitHostPort function\r\nwill differ from the one in the Playground's Go version (1.0.3).\r\nTest cases are prefixed by \"==\" and \"!=\" accordingly.\r\n\r\nI've added another test case, \"[foo]bar:baz\", which didn't\r\nfail in Go 1.0, but now would fail with the \"missing port\" error.\r\n\r\nI wonder how the following cases should be handled:\r\n\tfoo[bar]:baz\r\n\tfo[bar]o:baz\r\n\r\nWith the present patch, and in Go 1.0, these values wouldn't yield\r\nan error.\r\n\r\nI'll push the new patch to codereview a few hours later.\r\n",
+			"disapproval": false,
+			"date": "2013-01-08 13:58:40.943440",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Let's reject [] anywhere other than in the [host]:port form.\r\n",
+			"disapproval": false,
+			"date": "2013-01-09 19:19:12.121130",
+			"approval": false
+		},
+		{
+			"sender": "mt4swm@googlemail.com",
+			"recipients": [
+				"mt4swm@googlemail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com, mikioh.mikioh@gmail.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-08 15:59:05.253280",
+			"approval": false
+		},
+		{
+			"sender": "mt4swm@googlemail.com",
+			"recipients": [
+				"mt4swm@googlemail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dave@cheney.net, rsc@golang.org (cc: golang-dev@googlegroups.com, mikioh.mikioh@gmail.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-01-09 22:38:18.499190",
+			"approval": false
+		},
+		{
+			"sender": "mt4swm@googlemail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, 9 Jan 2013 14:19:10 -0500\r\nRuss Cox <rsc@golang.org> wrote:\r\n\r\n> Let's reject [] anywhere other than in the [host]:port form.\r\n> \r\n\r\nI've adjusted the patch so that SplitHostPort works that way now.\r\n\r\nThe (updated) program showing the differences between go1.0.3\r\nand the patched version can be found at:\r\n\thttp://play.golang.org/p/eZ1H5z-F10\r\n",
+			"disapproval": false,
+			"date": "2013-01-09 22:40:15.321470",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"mt4swm@googlemail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"mikioh.mikioh@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nPerhaps mikio would like to look too.",
+			"disapproval": false,
+			"date": "2013-01-18 20:15:35.959040",
+			"approval": true
+		},
+		{
+			"sender": "mikioh.mikioh@gmail.com",
+			"recipients": [
+				"mt4swm@googlemail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nleave for rsc",
+			"disapproval": false,
+			"date": "2013-01-19 00:33:58.819590",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nHi Michael,\r\n\r\nIt looks like you still need to complete a CLA as described at\r\nhttp://golang.org/doc/contribute.html#copyright.\r\n\r\nThanks.\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-01-22 22:03:40.003090",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"mt4swm@googlemail.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"mikioh.mikioh@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=4b48471048eb ***\n\nnet: SplitHostPort: adjust error message for missing port in IPv6 addresses\n\nAn hostport of \"[::1]\" now results in the same error message\n\"missing port in address\" as the hostport value \"127.0.0.1\",\nso SplitHostPort won't complain about \"too many colons\nin address\" anymore for an IPv6 address missing a port.\n\nAdded tests checking the error values.\n\nFixes issue 4526.\n\nR=dave, rsc, mikioh.mikioh\nCC=golang-dev\nhttps://codereview.appspot.com/7038045\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2013-01-30 17:25:21.940910",
+			"approval": false
+		}
+	],
+	"owner_email": "mt4swm@googlemail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "knieriem",
+	"subject": "code review 7038045: net: SplitHostPort: adjust error message for missing po...",
+	"created": "2012-12-31 17:25:48.307290",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		8001,
+		11001
+	],
+	"modified": "2013-01-30 17:25:21.940910",
+	"closed": false,
+	"issue": 7038045
+}

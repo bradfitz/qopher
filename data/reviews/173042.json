@@ -1,0 +1,216 @@
+{
+	"description": "Faster for integer exponents in the range [-200..200],\neach tested against bases in the range [-200..200].\n\nReturns +Inf for 0**-n, 1 for 0**0, and 0 for 0**n.\nRanges down to 10**-323 before it underflows to 0, and\nup to 10**308 before it overflows to +Inf.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/173042/diff/1004/11\nFile src/pkg/math/pow.go (right):\n\nhttp://codereview.appspot.com/173042/diff/1004/11#newcode89\nsrc/pkg/math/pow.go:89: }\ni'm skeptical this is worthwhile but assuming it is, the implementation is unacceptable.  You should\na) make it log n instead of n in complexity\nb) do no more than one division.\nc) avoid recursion.  it's nice but noticeably slow in this sort of calculation",
+			"disapproval": false,
+			"date": "2009-12-10 18:34:21.263450",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Do you have a benchmark showing that the new\nPowint is a win over the obvious Pow call?\n(See \"godoc gotest\" for an easy way to write\nbenchmarks.)\n\nI don't think it makes sense to add Powint; it\npushes a performance consideration out to\nclients when that consideration belongs hidden\nin the library: Pow should do the right thing.\n\nIf you have a benchmark to show that handling\nthe integer case is a significant win, then it might\nmake sense to change Pow.\n\nBut Pow already picks off the integer case: I'm\nskeptical that what's there has much room for\nimprovement.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2009-12-10 18:52:31.349169",
+			"approval": false
+		},
+		{
+			"sender": "jason.catena@gmail.com",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review the following change.",
+			"disapproval": false,
+			"date": "2009-12-10 16:41:27.288059",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2009-12-11 20:03:48.236840",
+			"approval": false
+		},
+		{
+			"sender": "jason.catena@gmail.com",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "[-20..20]**[-20..20] Powint iterative, one division, ifs\nmath_test.BenchmarkPow\t   10000\t    190878 ns/op\nmath_test.BenchmarkPowint\t   20000\t     95262 ns/op\nmath_test.BenchmarkPow\t   10000\t    191373 ns/op\nmath_test.BenchmarkPowint\t   20000\t     96451 ns/op\n\nSo the margin shrinks to 2x for this increase of the range.  There's obviously a crossover point out there.  I'll try to get to it before I (under|over)flow.",
+			"disapproval": false,
+			"date": "2009-12-12 05:29:53.093447",
+			"approval": false
+		},
+		{
+			"sender": "jason.catena@gmail.com",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Crossover looks to be just higher than [-50..50] to the power of [-50..50].  Details in powint_test.go.",
+			"disapproval": false,
+			"date": "2009-12-12 05:48:47.857559",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "We won't add PowInt: as I said before, it\npushes a performance consideration out to\nclients when that consideration belongs hidden\nin the library: Pow should do the right thing.\n\nI'd be happy if you figured out where the time\nwas going in Pow.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2009-12-12 14:18:13.264048",
+			"approval": false
+		},
+		{
+			"sender": "jason.catena@gmail.com",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "To exponentiate [-20..20] by [-20..20], Pow generally takes around 40000ns, and the varieties of Powint take as little as 14000ns.  The particular variation chosen was the only one to take less than 14000ns.\n\nMany divisions or one didn't make much difference to the recursive case.  Removing recursion was the biggest win, cut the time about in half.  Taking the sign and using it to select whether or not to take the reciprocal took longer than inlining the absolute value function.  The quickest approach so far was to divide most of the function into a positive and a negative case, and loop on the exponent (close to what I sent out for review).\n\nI did not, with the code so far, to reduce the time complexity to log n, which probably would be faster than my current timings, if the algorithm otherwise had little constant overhead.  As it is, Powint beats Pow (by around 2.75x) for the range I tested; a log n algorithm should expand the range for which this statement is true.\n\nIf you like, I can revert powint_test.go, or roll it into all_test.go, and probably remove the timing comments.",
+			"disapproval": false,
+			"date": "2009-12-12 05:21:30.340521",
+			"approval": false
+		},
+		{
+			"sender": "jason.catena@gmail.com",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Sorry, I meant to loop through [-20..20] in the benchmark, but only did so in the test.  All the timings mentioned so far are for [-10..10].",
+			"disapproval": false,
+			"date": "2009-12-12 05:24:26.250461",
+			"approval": false
+		},
+		{
+			"sender": "jason.catena@gmail.com",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "% time of total, spent getting to line n of Pow.  See the two files under review for details.\n\n16\t8.26%\tswitch\n30\t18.9%\tsetup\n43\t21.3%\tyf != 0\n49\t29.6%\tFrexp\n54\t61.0%\thalf int64(yi) loop\n61\t79.4%\tfull int64(yi) loop\n69\t80.9%\tflip\n71\t100%\tLdexp",
+			"disapproval": false,
+			"date": "2009-12-13 00:03:31.793046",
+			"approval": false
+		},
+		{
+			"sender": "jason.catena@gmail.com",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Would you all object to a new package for fast, partial implementations of existing and new functions, with a critical eye for performance, but which allows range restrictions (eg, Powint)?  \n\nThe idea would be that it could be a proving ground for main library function changes, as well as a resource for people who need the performance and are willing to accept the restrictions.  It could isolate main library functions from day-in-and-day-out performance considerations until they've proven themselves and comprise a solution worthy of the main library functions.\n\nI could create a new issue for the package \"fastpart\", move Powint into it, and abandon this issue.  I'd just do it first and then ask you about it, but I'd rather not invest the time if there's no way you'd accept it.",
+			"disapproval": false,
+			"date": "2009-12-16 23:46:11.126391",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks, but this doesn't warrant a special case.\n\nIf there were something dramatically wrong with\nPow, then it would be worth fixing, but as I've\nsaid before, it doesn't make sense to introduce\nmultiple Pow variants and push the problem onto\nlibrary clients.  Your numbers convince me that\nPow is doing a very good job right now on its own.\nAs the compiler improves--in particular, when it\ninlines tiny functions like Modf--Pow will improve\ntoo, and then the cutoff will change.\n\nEven now, a factor of 3 or 4 for a tiny exponent\nis fine.  Programs tend not to be bottlenecked\nby how quickly one can cube an integer, and those\nthat are will spell out x*x*x instead of calling Pow\nor Powint.  Similarly, there's no point in adding\na special case for x==2, even though one can\nexponentiate 2 very efficiently, because programs\nthat need that to be fast don't call Pow at all.\n\nI computed 123456^e using Pow and Powint\nfor various almost powers of two (this is the hardest\ncase for a number of that size, for both algorithms).\nTimes are in nanoseconds.\n\ne\tPow\tPowint\n3\t71\t13\n7\t77\t24\n15\t92\t45\n31\t99\t94\n63\t130\t196\n\nThis is just fine.\n\nPlease drop this.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2009-12-17 00:02:54.740433",
+			"approval": false
+		},
+		{
+			"sender": "jason.catena@gmail.com",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "New algorithm for integers.  Smallest case is now 5.6x faster, up from 2.8x.  Break-even point is now up around 200.  The speedup (Pow time / Powint time) is \"bumpy\" since it goes linear to multiply in remaining factors after it gets the exponent to the nearest lesser power of two (the code explains this better).\n\nrange\tspeedup\n200\t0.95-1.00\n160\t1.11\n150\t1.10\n100\t3.30\n47\t2.34\n10\t5.59\n\nCould it be another special case of Pow?  Though part of the reason Pow is easy to beat for certain ranges is the constant overhead of all the special cases.\n\nYou're building a swiss-army knife, where you'd get better performance from a collection of small tools that each does one job\u2015part of the range\u2015well.\n\nI understand if you don't care about performance now, so as an alternative, could we start building a package of better-performing, restricted alternatives to the primary library functions?  This would give space for things like Powint without cluttering up the main libraries.",
+			"disapproval": false,
+			"date": "2009-12-16 06:11:09.482457",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"jason.catena@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2009-12-17 20:42:53.972452",
+			"approval": false
+		}
+	],
+	"owner_email": "jason.catena@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jdc",
+	"subject": "code review 173042: Exponentiation with only integer input.",
+	"created": "2009-12-10 06:42:40.317996",
+	"patchsets": [
+		1,
+		4,
+		7,
+		9,
+		1004,
+		2002,
+		3002,
+		3007,
+		2008,
+		2012,
+		3016,
+		3021,
+		2017,
+		4001,
+		4008,
+		4012,
+		5008
+	],
+	"modified": "2009-12-18 06:06:46.292267",
+	"closed": false,
+	"issue": 173042
+}

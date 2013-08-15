@@ -1,0 +1,229 @@
+{
+	"description": "container/alloc: add Cache component\nA Cache caches interchangeable objects, two methods -- Put and Take.\nIntended for optimization of memory allocation.\nThe final implementation is intended to use runtime support\nto implement per-GOMAXPROC caching.\nThis implementation simply defines the interface and adds tests.\nSee the issue for context.\nUpdate issue 4720.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"dave@cheney.net",
+		"dsymonds@golang.org",
+		"r@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://dvyukov%40google.com@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-05-22 14:17:36.702160",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/22 16:14:45, bradfitz wrote:\n> https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go\n> File src/pkg/container/alloc/cache.go (right):\n> \n> https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode20\n> src/pkg/container/alloc/cache.go:20: func (c *Cache) Put(v interface{}) {\n> I'd still like this to return a bool.  If I Put and it returns false, I could\n> further destroy/recycle sub-objects within v.\n> \n> https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode24\n> src/pkg/container/alloc/cache.go:24: c.buf = make([]interface{}, 0, 32)\n> why hard-coding 32? can this be an optional exported field on Cache? 32 could be\n> the default, if you like it.\n> \n> https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode29\n> src/pkg/container/alloc/cache.go:29: c.buf = append(c.buf, v)\n> is this whole method faster than the buffered channel pattern? or just because\n> you want LIFO?\n> \n> https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode37\n> src/pkg/container/alloc/cache.go:37: return nil\n> type Cache struct {\n>     ...\n>     New func() interface{}  // optional constructor, for cache misses\n> }\n> \n> \n> if c.New != nil {\n>      return c.New()\n> }\n> return nil\n\n\nPlease see the CL description:\n\"The final implementation is intended to use runtime support\nto implement per-GOMAXPROC caching.\nThis implementation simply defines the interface and adds tests.\"\n\n\nYou have proposed a self-tuning cache because we have too many knobs.\nA self-tuning cache will discard excessive elements at unknown points, so the bool from Put() makes no sense.\n\n32 will go away.\n\nIt's not yet faster.\n\nA long time ago (2009) I had interface with both ctor() and dtor() functions:\nhttps://codereview.appspot.com/4850045/diff/3002/src/pkg/co/resourcecache.go\nBut Russ talked me out of that. All that framework-like inverse-control thing... it trivial to do outside, right?\nv := c.Take()\nif v == nil {\n  v = New()\n}",
+			"disapproval": false,
+			"date": "2013-05-22 16:30:50.785990",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go\nFile src/pkg/container/alloc/cache.go (right):\n\nhttps://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode20\nsrc/pkg/container/alloc/cache.go:20: func (c *Cache) Put(v interface{}) {\nI'd still like this to return a bool.  If I Put and it returns false, I could further destroy/recycle sub-objects within v.\n\nhttps://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode24\nsrc/pkg/container/alloc/cache.go:24: c.buf = make([]interface{}, 0, 32)\nwhy hard-coding 32? can this be an optional exported field on Cache? 32 could be the default, if you like it.\n\nhttps://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode29\nsrc/pkg/container/alloc/cache.go:29: c.buf = append(c.buf, v)\nis this whole method faster than the buffered channel pattern? or just because you want LIFO?\n\nhttps://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode37\nsrc/pkg/container/alloc/cache.go:37: return nil\ntype Cache struct {\n    ...\n    New func() interface{}  // optional constructor, for cache misses\n}\n\n\nif c.New != nil {\n     return c.New()\n}\nreturn nil",
+			"disapproval": false,
+			"date": "2013-05-22 16:14:45.989650",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't know where this is going.\r\n\r\nHere's what I want:\r\n\r\n* composable pieces, if there are going to be multiple pieces\r\n\r\n* not dozens of knobs. (2 integers is too much. 0 is ideal.)\r\n\r\n* a high-level interface which lets me say Get() and it gets from cache or\r\ncalls a func to create.  fmt's is nice.  I could reimplement this in every\r\npackage, but why?  yes, if statements aren't too much work either, but it\r\nmeans I can't use it in an expression.\r\n\r\n* able to know when a Put failed (even if cache items can drop out all the\r\ntime silently) so I can do further recycling when I know for sure it's\r\npossible.  I could live without this, but I don't see why not to return it\r\ninstead of returning nothing.\r\n\r\n\r\n\r\nOn Wed, May 22, 2013 at 9:30 AM, <dvyukov@google.com> wrote:\r\n\r\n> On 2013/05/22 16:14:45, bradfitz wrote:\r\n>\r\n> https://codereview.appspot.**com/9648043/diff/5001/src/pkg/**\r\n> container/alloc/cache.go<https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go>\r\n>\r\n>> File src/pkg/container/alloc/cache.**go (right):\r\n>>\r\n>\r\n>\r\n> https://codereview.appspot.**com/9648043/diff/5001/src/pkg/**\r\n> container/alloc/cache.go#**newcode20<https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode20>\r\n>\r\n>> src/pkg/container/alloc/cache.**go:20: func (c *Cache) Put(v\r\n>>\r\n> interface{}) {\r\n>\r\n>> I'd still like this to return a bool.  If I Put and it returns false,\r\n>>\r\n> I could\r\n>\r\n>> further destroy/recycle sub-objects within v.\r\n>>\r\n>\r\n>\r\n> https://codereview.appspot.**com/9648043/diff/5001/src/pkg/**\r\n> container/alloc/cache.go#**newcode24<https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode24>\r\n>\r\n>> src/pkg/container/alloc/cache.**go:24: c.buf = make([]interface{}, 0,\r\n>>\r\n> 32)\r\n>\r\n>> why hard-coding 32? can this be an optional exported field on Cache?\r\n>>\r\n> 32 could be\r\n>\r\n>> the default, if you like it.\r\n>>\r\n>\r\n>\r\n> https://codereview.appspot.**com/9648043/diff/5001/src/pkg/**\r\n> container/alloc/cache.go#**newcode29<https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode29>\r\n>\r\n>> src/pkg/container/alloc/cache.**go:29: c.buf = append(c.buf, v)\r\n>> is this whole method faster than the buffered channel pattern? or just\r\n>>\r\n> because\r\n>\r\n>> you want LIFO?\r\n>>\r\n>\r\n>\r\n> https://codereview.appspot.**com/9648043/diff/5001/src/pkg/**\r\n> container/alloc/cache.go#**newcode37<https://codereview.appspot.com/9648043/diff/5001/src/pkg/container/alloc/cache.go#newcode37>\r\n>\r\n>> src/pkg/container/alloc/cache.**go:37: return nil\r\n>> type Cache struct {\r\n>>      ...\r\n>>      New func() interface{}  // optional constructor, for cache misses\r\n>> }\r\n>>\r\n>\r\n>\r\n>  if c.New != nil {\r\n>>       return c.New()\r\n>> }\r\n>> return nil\r\n>>\r\n>\r\n>\r\n> Please see the CL description:\r\n>\r\n> \"The final implementation is intended to use runtime support\r\n> to implement per-GOMAXPROC caching.\r\n> This implementation simply defines the interface and adds tests.\"\r\n>\r\n>\r\n> You have proposed a self-tuning cache because we have too many knobs.\r\n> A self-tuning cache will discard excessive elements at unknown points,\r\n> so the bool from Put() makes no sense.\r\n>\r\n> 32 will go away.\r\n>\r\n> It's not yet faster.\r\n>\r\n> A long time ago (2009) I had interface with both ctor() and dtor()\r\n> functions:\r\n> https://codereview.appspot.**com/4850045/diff/3002/src/pkg/**\r\n> co/resourcecache.go<https://codereview.appspot.com/4850045/diff/3002/src/pkg/co/resourcecache.go>\r\n> But Russ talked me out of that. All that framework-like inverse-control\r\n> thing... it trivial to do outside, right?\r\n> v := c.Take()\r\n> if v == nil {\r\n>   v = New()\r\n> }\r\n>\r\n> https://codereview.appspot.**com/9648043/<https://codereview.appspot.com/9648043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-22 19:08:21.512240",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/22 19:08:21, bradfitz wrote:\n> I don't know where this is going.\n> \n> Here's what I want:\n> \n> * composable pieces, if there are going to be multiple pieces\n> \n> * not dozens of knobs. (2 integers is too much. 0 is ideal.)\n> \n> * a high-level interface which lets me say Get() and it gets from cache or\n> calls a func to create.  fmt's is nice.  I could reimplement this in every\n> package, but why?  yes, if statements aren't too much work either, but it\n> means I can't use it in an expression.\n> \n> * able to know when a Put failed (even if cache items can drop out all the\n> time silently) so I can do further recycling when I know for sure it's\n> possible.  I could live without this, but I don't see why not to return it\n> instead of returning nothing.\n\n\nSounds reasonable.\nDone. PTAL.",
+			"disapproval": false,
+			"date": "2013-05-22 19:42:51.274590",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Dmitry, thank you for working on this. Without trying to pour cold water on your efforts I would not like to see any API that encouraged the use of interface{} for Put and Take. I know that with the impasse over generics there are few other options, but I would prefer to not add an API that uses interface{} as that would prevent us from defining a better API with a generic type later.",
+			"disapproval": false,
+			"date": "2013-05-23 07:38:14.147880",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9648043/diff/9001/src/pkg/container/alloc/cache.go\nFile src/pkg/container/alloc/cache.go (right):\n\nhttps://codereview.appspot.com/9648043/diff/9001/src/pkg/container/alloc/cache.go#newcode16\nsrc/pkg/container/alloc/cache.go:16: // If not nil, used to create new resources.\nThis isn't a complete sentence.\n\nGo doc style would be more like:\n\n// New optionally specifies a function to create\n// new resources on cache miss.\n// It may be called from multiple concurrent goroutines\n// and must not be changed concurrently with calls to Take.\n\nAlso, blank line before.  Or put this first in the struct and put a blank line before mu.\n\nhttps://codereview.appspot.com/9648043/diff/9001/src/pkg/container/alloc/cache.go#newcode39\nsrc/pkg/container/alloc/cache.go:39: // If there are no objects to return and c.New is not nil, then it returns the result of c.New().\nwe almost never write parens.",
+			"disapproval": false,
+			"date": "2013-05-22 20:12:00.539180",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/22 20:12:00, bradfitz wrote:\n> https://codereview.appspot.com/9648043/diff/9001/src/pkg/container/alloc/cache.go\n> File src/pkg/container/alloc/cache.go (right):\n> \n> https://codereview.appspot.com/9648043/diff/9001/src/pkg/container/alloc/cache.go#newcode16\n> src/pkg/container/alloc/cache.go:16: // If not nil, used to create new\n> resources.\n> This isn't a complete sentence.\n> \n> Go doc style would be more like:\n> \n> // New optionally specifies a function to create\n> // new resources on cache miss.\n> // It may be called from multiple concurrent goroutines\n> // and must not be changed concurrently with calls to Take.\n> \n> Also, blank line before.  Or put this first in the struct and put a blank line\n> before mu.\n> \n> https://codereview.appspot.com/9648043/diff/9001/src/pkg/container/alloc/cache.go#newcode39\n> src/pkg/container/alloc/cache.go:39: // If there are no objects to return and\n> c.New is not nil, then it returns the result of c.New().\n> we almost never write parens.\n\nDone. PTAL.\nI am happy to replace all comments with your versions :)",
+			"disapproval": false,
+			"date": "2013-05-23 07:31:59.179160",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Huh?\r\n\r\nWhat do you propose as an alternative?\r\n\r\nGo doesn't have generics.\r\n\r\n\r\n\r\nOn Thu, May 23, 2013 at 12:38 AM, <dave@cheney.net> wrote:\r\n\r\n> Dmitry, thank you for working on this. Without trying to pour cold water\r\n> on your efforts I would not like to see any API that encouraged the use\r\n> of interface{} for Put and Take. I know that with the impasse over\r\n> generics there are few other options, but I would prefer to not add an\r\n> API that uses interface{} as that would prevent us from defining a\r\n> better API with a generic type later.\r\n>\r\n> https://codereview.appspot.**com/9648043/<https://codereview.appspot.com/9648043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-23 07:42:09.483390",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, I am proposing not doing anything. I know this is not a popular\r\nor useful position.\r\n\r\nOn Thu, May 23, 2013 at 5:42 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> Huh?\r\n>\r\n> What do you propose as an alternative?\r\n>\r\n> Go doesn't have generics.\r\n>\r\n>\r\n>\r\n> On Thu, May 23, 2013 at 12:38 AM, <dave@cheney.net> wrote:\r\n>>\r\n>> Dmitry, thank you for working on this. Without trying to pour cold water\r\n>> on your efforts I would not like to see any API that encouraged the use\r\n>> of interface{} for Put and Take. I know that with the impasse over\r\n>> generics there are few other options, but I would prefer to not add an\r\n>> API that uses interface{} as that would prevent us from defining a\r\n>> better API with a generic type later.\r\n>>\r\n>> https://codereview.appspot.com/9648043/\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-23 07:45:30.066170",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's always possible to wrap it in a particular case, if it's a problem:\r\n\r\ntype MyCache alloc.Cache\r\nfunc (c *MyCache) Put(v *Foo) {\r\n  (*alloc.Cache)(c).Put(v)\r\n}\r\nfunc (c *MyCache) Take() *Foo {\r\n  return (*alloc.Cache)(c).Take().(*Foo)\r\n}\r\n\r\n\r\nOn Thu, May 23, 2013 at 11:42 AM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> Huh?\r\n>\r\n> What do you propose as an alternative?\r\n>\r\n> Go doesn't have generics.\r\n>\r\n>\r\n>\r\n> On Thu, May 23, 2013 at 12:38 AM, <dave@cheney.net> wrote:\r\n>>\r\n>> Dmitry, thank you for working on this. Without trying to pour cold water\r\n>> on your efforts I would not like to see any API that encouraged the use\r\n>> of interface{} for Put and Take. I know that with the impasse over\r\n>> generics there are few other options, but I would prefer to not add an\r\n>> API that uses interface{} as that would prevent us from defining a\r\n>> better API with a generic type later.\r\n>>\r\n>> https://codereview.appspot.com/9648043/\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-05-23 07:47:20.642590",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, May 23, 2013 at 5:38 PM,  <dave@cheney.net> wrote:\r\n\r\n> I know that with the impasse over\r\n> generics there are few other options, but I would prefer to not add an\r\n> API that uses interface{} as that would prevent us from defining a\r\n> better API with a generic type later.\r\n\r\nAny form of generics in Go would almost definitely need to wait for\r\n\"Go 2\", at which point backward compatibility would not constrain us.\r\n",
+			"disapproval": false,
+			"date": "2013-05-23 08:38:25.358960",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"dsymonds@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Brad, ping.",
+			"disapproval": false,
+			"date": "2013-06-03 09:19:54.535770",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "just comments on the documentation\n\ni am still undecided about the package itself.\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go\nFile src/pkg/container/alloc/cache.go (right):\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go#newcode12\nsrc/pkg/container/alloc/cache.go:12: // A Cache caches interchangeable objects.\nthis isn't a very helpful comment.\n\nalso this package needs an executable Example\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go#newcode20\nsrc/pkg/container/alloc/cache.go:20: // and must not be changed concurrently with calls to Take.\nNew specifies an optional function to be used to create new entries when the cache is empty.\nIt may be ...\n\nwhat does \"changed concurrently\" mean?\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go#newcode26\nsrc/pkg/container/alloc/cache.go:26: // Note that the object still can be discarded at a later point.\n// The object may be deleted by the Cache at any time.\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go#newcode40\nsrc/pkg/container/alloc/cache.go:40: // Take removes and returns one of the objects previously put into the cache.\nTake removes an item from the cache and returns it.\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go#newcode41\nsrc/pkg/container/alloc/cache.go:41: // If there are no objects to return and c.New is not nil, then it returns the result of c.New.\nIf the cache is empty and c.New is set, Take returns a new item allocated by calling c.New.\nIf the cache is empty and c.New is nil, Take returns nil.",
+			"disapproval": false,
+			"date": "2013-06-03 12:31:59.228950",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't care to review this more until everybody's in agreement with some\r\nplan.\r\n\r\nI don't think that's the case.\r\n\r\n\r\n\r\nOn Mon, Jun 3, 2013 at 2:19 AM, <dvyukov@google.com> wrote:\r\n\r\n> Brad, ping.\r\n>\r\n> https://codereview.appspot.**com/9648043/<https://codereview.appspot.com/9648043/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-03 14:04:28.829690",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dave@cheney.net",
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go\nFile src/pkg/container/alloc/cache.go (right):\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go#newcode12\nsrc/pkg/container/alloc/cache.go:12: // A Cache caches interchangeable objects.\nOn 2013/06/03 12:31:59, r wrote:\n> this isn't a very helpful comment.\n> \n> also this package needs an executable Example\n\nWill do if/when we decide on the package itself.\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go#newcode20\nsrc/pkg/container/alloc/cache.go:20: // and must not be changed concurrently with calls to Take.\nOn 2013/06/03 12:31:59, r wrote:\n> New specifies an optional function to be used to create new entries when the\n> cache is empty.\n> It may be ...\n\nDone.\n\n> what does \"changed concurrently\" mean?\n\nA user must not call Take() and concurrently assign a new value to New.\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go#newcode26\nsrc/pkg/container/alloc/cache.go:26: // Note that the object still can be discarded at a later point.\nOn 2013/06/03 12:31:59, r wrote:\n> // The object may be deleted by the Cache at any time.\n\nDone.\n\nhttps://codereview.appspot.com/9648043/diff/16001/src/pkg/container/alloc/cache.go#newcode41\nsrc/pkg/container/alloc/cache.go:41: // If there are no objects to return and c.New is not nil, then it returns the result of c.New.\nOn 2013/06/03 12:31:59, r wrote:\n> If the cache is empty and c.New is set, Take returns a new item allocated by\n> calling c.New.\n> If the cache is empty and c.New is nil, Take returns nil.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-03 14:32:18.649640",
+			"approval": false
+		}
+	],
+	"owner_email": "dvyukov@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dvyukov",
+	"subject": "code review 9648043: container/alloc: add Cache component",
+	"created": "2013-05-22 14:14:21.611900",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		9001,
+		16001,
+		28001,
+		30001
+	],
+	"modified": "2013-06-15 12:56:34.803830",
+	"closed": false,
+	"issue": 9648043
+}

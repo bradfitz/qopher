@@ -1,0 +1,54 @@
+{
+	"description": "Go: Tentative port to Plan 9 on the ARM architecture\n\nThe port is almost entirely by Gorka Guardiola, submitted\nhere so we can share development until a final CL is\nprepared.  Which means that all that follows can be thrown\naway.  Thank you, Frederick Brooks.\n\nThis now builds clean, but there are some preconditions.\nSee CL 7941043 by Gorka himself for some important instructions\nregarding this patch, but what follows should be treated\nas supplementary and more authoritative.\n\nThe idea is to start with a clean distribution, ideally a\nfreshly cloned and checked out \"tip\": everything else will\ninvolve some messing about that I cannot predict.\n\nInstallation Instructions\n\nAssuming you have a developer's repository, make sure that\nthe codereview tools are readily available - I recommend\n\n        PATH=\"$PATH:$GOPATH/bin\"\n\nfor those of us who stick to the rules: that's where \"hg\nclpatch\" will find hgapplydiff (from\ncode.google.com/p/go.codereview/cmd/hgapplydiff).\n\nThen apply this patch:\n\n        hg clpatch 7987044\n\nPlease report to me <lucio.dere@gmail.com> any conflicts\nor other problems.  I'm available on gtalk, skype (luciodere),\nyou can even text me (SMS: +27 83 251 5824, also good for\nwhatsapp).  My timezone is +0200 and I'm an early riser.\n\nOnce you have installed all the changes, there are memory\ntweaks to be performed on src/pkg/runtime/^(malloc.goc\nmalloc.h) that may differ from those suggested by Gorka.\nThere is a serious need to address how these memory settings\nwill be handled in the final distribution; I'm hoping there\nis useful precedent to follow.\n\nI find that adding a \"VERSION\" file in $GOROOT suits me\nbest, I generally build Go for NetBSD for confirmation\n(never works perfectly, though! good enough for this.),\nthen copy or rename VERSION.cache to VERSION.  That's\nbecause I do not have Python on my Plan 9 network.\n\nI need to stress that setting GOARM=5 is essential for the\nSheevaplug so as to use floating point emulation, the\nRaspberry PI doesn't need it, but Gorka needs to sort out\nthe floating point stuff, it is still failing across the\nPlan 9 architecture (last I heard).  The code to autodetect\nthe host architecture during build isn't available yet.\n\nI use NetBSD for the Mercurial repository and switch to\nPlan 9 at this point - u9fs is a great option, v9fs may be\njust as good, even better, I'm not sure.\n\nNow, on the target hardware, assuming you're at $GOROOT/src:\n\n        make.rc\n\nI timed it last at (1033.13r) on my Sheevaplug.  There are\nproblems with run.rc I have not yet investigated, feel free\nto fix them before I get to them, at this point it behaves\ndisappointingly.  So you'll need your own confidence testing\nbefore congratulating Gorka on his achievement.\n\nGorka reports completion for \"run.rc --no-rebuild\", with\nonly a few errors that he is busy addressing.  On my side,\nthe tests jam solidly on os/exec, in other respects the\noutput from run.rc is close enough to that from Gorka that\nI'm confident we can fix them.\n\nOne of the problems lies with package \"math\".  Here Gorka's\ntests return results that look sufficiently similar on my\nside, but, more importantly, also look similar on the\nplan9/386 platform.\n\nCaveat Emptor\n\nGorka and to a small extent, I have been working together\non this project for a few days and it has been quite\nrevealing.  There are revelations we'll keep for ourselves,\nbut some of what we learnt needs to be published to alert\nother Plan 9 users.  I have used exclusively the Bell Labs\nrelease of Plan 9, more or less up to the most recent\npatches.  I am running on an Intel 64-bit CPU (I believe\n- it's an ASUS motherboard) as well as more conventional\n32-bit Intel and AMD CPUs, together with a Sheevaplug from\na few years back and a fresh U-boot).  I suspect that Gorka\nis using his Raspberry PI with some help from from Apple.\n\nThere was some debug code in the Plan 9 ARM kernels that\ncaused a reboot, but Gorka told me how to fix it and I\nbelieve Geoff sorted out the distribution on sources, so\nthat ought to be a thing of the past.  But it may be critical\nfor those ARM users of Plan 9 who need to patch their\nkernel.  It does not affect the build, but it makes testing\nunreliable.\n\nGorka and I were beginning to congratulate ourselves for\nfixing some problems with the seek() function/syscall when\nwe discovered some very real complications.  The corrected\nSYS_SEEK code should be included in this patch.\n\nI'll use we in what follows, but it must be clear that\nGorka is streets ahead of me in his knowledge of the subject\nand in general my contribution has been to nod my head\n(metaphorically) and perhaps just try things out on the\nSheeva when requested.  Anyway, this \"we\" worked out that\nthere were problems with the Plan 9 implementation of UTF\nand 32-bit runes that needed some serious surgery.\n\nIndependently, Gorka and I worked out solutions to the main\ndifficulty.  I'm not aware of any changes I have applied\nto the Go sources, although they will be flagged when I\nupdate the CL code, no doubt, but on the Plan 9 side it\nwas quite some effort.  Gorka has done something equivalent\non his side, but at this point he is in no position to\nshare this with me, so we can't compare.  I do believe he\nhas modified the Plan 9 native compiler (he only needs 5c,\nthe lucky man), which I believe is not essential at this\npoint, or even for the port.\n\n        ** update **\n\n        Bell Labs have undertaken the massive task of\n        upgrading the Plan 9 distribution for the 21-bit\n        UNICODE standard.  I understand from Gorka that\n        this is going to take a lot of effort and will\n        trigger many changes.  My personal impression from\n        investigating this issue is that it's hard to do,\n        if necessary.  I wish Bell Labs a lot of luck and\n        wish I could offer them some assistance, but there\n        are others much more competent dealing with it.\n\nIn my version of the fix, the Rune type was promoted from\nushort to unsigned integer as is the case in Go.  On a side\nnote, this isn't critical for the build itself and may even\nbe irrelevant.  On the other hand, the same library modules\nthat are used to create the Go development toolchain are\nalso used in the Go runtime and here Plan 9 came up quite\nshort.  I'm now beginning to understand a bit more why\ncross-compilation is such a complex operation and also how\nthe Go toolchain is particularly helpful in making\ncross-compilation possible.\n\nA first attempt at building the Go toolchain with the\nadjusted Rune type highlighted the few places where functions\nin the native Plan 9 C library were defined with arguments\nthat ought to be Runes but weren't.  That was pretty\npainless.\n\nMore complicated was the need to upgrade many UTF modules\nin the C library to handle the longer Runes and what they\nrepresent.  Copying the code as much as possible from the\nGo distribution took a bit of time, but worked well on the\nfirst attempt.  It was necessary to rebuild libbio as well\nas libc to propagate the changes everywhere Go needed them.\nIf there are other places where the change to wider Runes\nis important, I will discover that later, right now the\nfocus is on getting Go going, then to negotiate with all\ninterested parties on how best to bring the Bell Labs\ndistribution up to date.\n\nAt this point some sticking points in the Go test sequence\nhave been resolved, but now any prospective user needs to\nhave an updated version of Plan 9 to be able to use Go.\nAs mentioned, though, this is desirable, but not unavoidable:\nthe Go toolchain can be built - at least for the time being\n- without the Rune changes.  It is necessary, however, to\nhave the Rune fixes in the libraries used by the runtime.\nA long time ago I was discouraged from keeping lib9 compatible\nwith the Plan 9 native toolchain, now it seems to me that\nwe may want to use lib9 to decouple the build library from\nthe runtime library.  If we do that, we can also, possibly,\nextract a libutf and libfmt from lib9 and later mirror this\nin Plan 9 to bring the two systems closer together and make\nthem easier to maintain. I could not see any overarching\nreasons why libutf and libfmt should remain incorporated\nin libc/lib9 - I could be missing something, though.  And\nit is clear that the configuration on Plan 9 is dictating\nthe behaviour of the Go build, so that may also be an issue.\n\nOne last comment: I'm not in a hurry to get this into Go\n1.1, I have no idea if anyone is.  I've found tracking\n\"tip\" to be as good as it needs to be, but my application\ndevelopment has been pretty restricted.  However, I'm\ngrabbing the opportunity offered by the many new modules\nhere (those ending in _plan9_arm.*) to tidy up the source\nto the best of my ability, simply because there is no\npressure (a) to do it in a hurry and (b) to match existing\nbad examples.",
+	"cc": [
+		"russ cox <rsc@golang.org>",
+		"anthony martin <ality@pbrane.org>",
+		"minux <minux.ma@gmail.com>",
+		"akshat kumar <seed@mail.nanosouffle.com>",
+		"gorka guardiola <paurea@gmail.com>"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"lucio.dere@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"russ cox <rsc@golang.org>",
+				"anthony martin <ality@pbrane.org>",
+				"minux <minux.ma@gmail.com>",
+				"akshat kumar <seed@mail.nanosouffle.com>",
+				"gorka guardiola <paurea@gmail.com>",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=close\n\n... just to appease qopher, since this CL was declared as not for submission anyway.",
+			"disapproval": false,
+			"date": "2013-06-05 21:03:28.817800",
+			"approval": false
+		}
+	],
+	"owner_email": "lucio.dere@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "lucio",
+	"subject": "src/pkg/runtime, src/pkg/sync, src/pkg/syscall: Port to...",
+	"created": "2013-03-23 20:12:14.043340",
+	"patchsets": [
+		1,
+		2001,
+		6001,
+		11001,
+		14001,
+		16001,
+		19001,
+		30001,
+		33001
+	],
+	"modified": "2013-06-05 21:03:28.888410",
+	"closed": false,
+	"issue": 7987044
+}

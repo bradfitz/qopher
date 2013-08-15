@@ -1,0 +1,159 @@
+{
+	"description": "database/sql: Close bad driver connections so they're removed from the statement connections list. Fixes an issue where prepared statements that outlive many connections become expensive to invoke.\n\nFixes issue 6081",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "anacrolix@gmail.com",
+			"recipients": [
+				"anacrolix@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Not sure if my previous message was received.",
+			"disapproval": false,
+			"date": "2013-08-11 04:39:33.609350",
+			"approval": false
+		},
+		{
+			"sender": "anacrolix@gmail.com",
+			"recipients": [
+				"anacrolix@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: bradfitz@golang.org),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-08-09 06:01:26.710430",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "All changes should include a test.\r\n\r\nCan you describe what's happening here such that a test could be written (I\r\ncould help) to demonstrate this happening?\r\n\r\n\r\n\r\nOn Thu, Aug 8, 2013 at 11:01 PM, <anacrolix@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: bradfitz@golang.org),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> database/sql: Close bad driver connections so they're removed from the\r\n> statement connections list. Fixes an issue where prepared statements\r\n> that outlive many connections become expensive to invoke.\r\n>\r\n> Fixes issue 6081\r\n>\r\n> Please review this at https://codereview.appspot.**com/12646044/<https://codereview.appspot.com/12646044/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/database/sql/sql.go\r\n>\r\n>\r\n> Index: src/pkg/database/sql/sql.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/database/sql/sql.go\r\n> +++ b/src/pkg/database/sql/sql.go\r\n> @@ -518,12 +518,12 @@\r\n>  func (db *DB) connIfFree(wanted *driverConn) (*driverConn, error) {\r\n>         db.mu.Lock()\r\n>         defer db.mu.Unlock()\r\n> +       if wanted.dbmuClosed {\r\n> +               return nil, errConnClosed\r\n> +       }\r\n>         if wanted.inUse {\r\n>                 return nil, errConnBusy\r\n>         }\r\n> -       if wanted.dbmuClosed {\r\n> -               return nil, errConnClosed\r\n> -       }\r\n>         for i, conn := range db.freeConn {\r\n>                 if conn != wanted {\r\n>                         continue\r\n> @@ -590,6 +590,7 @@\r\n>         if err == driver.ErrBadConn {\r\n>                 // Don't reuse bad connections.\r\n>                 db.mu.Unlock()\r\n> +               dc.Close()\r\n>                 return\r\n>         }\r\n>         if putConnHook != nil {\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 20:18:19.107680",
+			"approval": false
+		},
+		{
+			"sender": "anacrolix@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "In func (s *Stmt) connStmt(), an array of connStmt's, s.css, is traversed\r\nto locate a connection that has previously prepared the current statement.\r\nWhen calling connIfFree to determine if a connection is available,\r\nErrConnClosed is not returned as it should be for connections that were\r\ndiscarded due to ErrBadConn in func (db *DB) putConn. In func (db *DB)\r\nputConn, if a connection returns ErrBadConn, dc.Close is not called, and so\r\nthe variable dbmuClosed is not set to true as it should be. This means that\r\nthe connIfFree function in turn doesn't return ErrConnClosed, and so the\r\nconnection is never removed from arrays of preprepared connections on\r\nStmt's. This in turn means that as connections are discarded over time due\r\nto ErrBadConn, large numbers of dead connections accumulate in Stmt.css,\r\nand have to be walked through on every invocation of a Stmt via Query or\r\nExec. This costs a lot of time, and prepared statements become slower and\r\nslower.\r\n\r\n\r\nOn Sat, Aug 10, 2013 at 6:18 AM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\r\n\r\n> All changes should include a test.\r\n>\r\n> Can you describe what's happening here such that a test could be written\r\n> (I could help) to demonstrate this happening?\r\n>\r\n>\r\n>\r\n> On Thu, Aug 8, 2013 at 11:01 PM, <anacrolix@gmail.com> wrote:\r\n>\r\n>> Reviewers: golang-dev1,\r\n>>\r\n>> Message:\r\n>> Hello golang-dev@googlegroups.com (cc: bradfitz@golang.org),\r\n>>\r\n>> I'd like you to review this change to\r\n>> https://code.google.com/p/go/\r\n>>\r\n>>\r\n>> Description:\r\n>> database/sql: Close bad driver connections so they're removed from the\r\n>> statement connections list. Fixes an issue where prepared statements\r\n>> that outlive many connections become expensive to invoke.\r\n>>\r\n>> Fixes issue 6081\r\n>>\r\n>> Please review this at https://codereview.appspot.**com/12646044/<https://codereview.appspot.com/12646044/>\r\n>>\r\n>> Affected files:\r\n>>   M src/pkg/database/sql/sql.go\r\n>>\r\n>>\r\n>> Index: src/pkg/database/sql/sql.go\r\n>> ==============================**==============================**=======\r\n>> --- a/src/pkg/database/sql/sql.go\r\n>> +++ b/src/pkg/database/sql/sql.go\r\n>> @@ -518,12 +518,12 @@\r\n>>  func (db *DB) connIfFree(wanted *driverConn) (*driverConn, error) {\r\n>>         db.mu.Lock()\r\n>>         defer db.mu.Unlock()\r\n>> +       if wanted.dbmuClosed {\r\n>> +               return nil, errConnClosed\r\n>> +       }\r\n>>         if wanted.inUse {\r\n>>                 return nil, errConnBusy\r\n>>         }\r\n>> -       if wanted.dbmuClosed {\r\n>> -               return nil, errConnClosed\r\n>> -       }\r\n>>         for i, conn := range db.freeConn {\r\n>>                 if conn != wanted {\r\n>>                         continue\r\n>> @@ -590,6 +590,7 @@\r\n>>         if err == driver.ErrBadConn {\r\n>>                 // Don't reuse bad connections.\r\n>>                 db.mu.Unlock()\r\n>> +               dc.Close()\r\n>>                 return\r\n>>         }\r\n>>         if putConnHook != nil {\r\n>>\r\n>>\r\n>>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-10 04:35:45.595970",
+			"approval": false
+		},
+		{
+			"sender": "anacrolix@gmail.com",
+			"recipients": [
+				"anacrolix@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On production systems at Brandscreen we're seeing the Stmt.css array get as long as 1850, introducing delays in calling SQL statements of more than 20ms.\n\nPlease let me know what is left to get this in, I believe it should not wait for Go1.2 as it's a bug, not a change in behaviour or feature.",
+			"disapproval": false,
+			"date": "2013-08-12 11:13:07.722240",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Go 1.2 will be the default, unless this gets in before a point release and\r\nwe cherry-pick it over to the point release branch.  But we only do that if\r\nthe bug is serious, the fix is obviously correct and minor, and there are\r\ngood tests.\r\n\r\nThere are no tests here yet.  I'll look into writing some, but maybe you\r\ncan beat me to it.\r\n\r\n\r\n\r\nOn Mon, Aug 12, 2013 at 4:13 AM, <anacrolix@gmail.com> wrote:\r\n\r\n> On production systems at Brandscreen we're seeing the Stmt.css array get\r\n> as long as 1850, introducing delays in calling SQL statements of more\r\n> than 20ms.\r\n>\r\n> Please let me know what is left to get this in, I believe it should not\r\n> wait for Go1.2 as it's a bug, not a change in behaviour or feature.\r\n>\r\n> https://codereview.appspot.**com/12646044/<https://codereview.appspot.com/12646044/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-12 15:09:41.015830",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n\r\nI can't submit this until you've submitted a CLA, though.\r\n\r\nSee http://golang.org/doc/contribute.html#copyright\r\n\r\nLet me know when that's in.\r\n\r\n\r\n\r\nOn Thu, Aug 8, 2013 at 11:01 PM, <anacrolix@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: bradfitz@golang.org),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> database/sql: Close bad driver connections so they're removed from the\r\n> statement connections list. Fixes an issue where prepared statements\r\n> that outlive many connections become expensive to invoke.\r\n>\r\n> Fixes issue 6081\r\n>\r\n> Please review this at https://codereview.appspot.**com/12646044/<https://codereview.appspot.com/12646044/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/database/sql/sql.go\r\n>\r\n>\r\n> Index: src/pkg/database/sql/sql.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/database/sql/sql.go\r\n> +++ b/src/pkg/database/sql/sql.go\r\n> @@ -518,12 +518,12 @@\r\n>  func (db *DB) connIfFree(wanted *driverConn) (*driverConn, error) {\r\n>         db.mu.Lock()\r\n>         defer db.mu.Unlock()\r\n> +       if wanted.dbmuClosed {\r\n> +               return nil, errConnClosed\r\n> +       }\r\n>         if wanted.inUse {\r\n>                 return nil, errConnBusy\r\n>         }\r\n> -       if wanted.dbmuClosed {\r\n> -               return nil, errConnClosed\r\n> -       }\r\n>         for i, conn := range db.freeConn {\r\n>                 if conn != wanted {\r\n>                         continue\r\n> @@ -590,6 +590,7 @@\r\n>         if err == driver.ErrBadConn {\r\n>                 // Don't reuse bad connections.\r\n>                 db.mu.Unlock()\r\n> +               dc.Close()\r\n>                 return\r\n>         }\r\n>         if putConnHook != nil {\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-13 22:24:04.377850",
+			"approval": true
+		},
+		{
+			"sender": "anacrolix@gmail.com",
+			"recipients": [
+				"anacrolix@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The CLA is in. I've verified the test demonstrates the problem, and the patch fixes it.",
+			"disapproval": false,
+			"date": "2013-08-14 02:26:58.070190",
+			"approval": false
+		},
+		{
+			"sender": "anacrolix@gmail.com",
+			"recipients": [
+				"anacrolix@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: bradfitz@golang.org, golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-08-14 02:34:12.551020",
+			"approval": false
+		},
+		{
+			"sender": "anacrolix@gmail.com",
+			"recipients": [
+				"anacrolix@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: bradfitz@golang.org, golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-08-14 02:35:12.880890",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"anacrolix@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=572566a0cde3 ***\n\ndatabase/sql: fix accumulation of bad conns on prepared statements\n\nFixes an issue where prepared statements that outlive many\nconnections become expensive to invoke.\n\nFixes issue 6081\n\nR=golang-dev\nCC=bradfitz, golang-dev\nhttps://codereview.appspot.com/12646044\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2013-08-14 16:27:33.687860",
+			"approval": false
+		}
+	],
+	"owner_email": "anacrolix@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "anacrolix",
+	"subject": "code review 12646044: database/sql: Close bad driver connections so they're r...",
+	"created": "2013-08-08 07:43:48.076020",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		16001,
+		20001
+	],
+	"modified": "2013-08-14 16:27:33.871120",
+	"closed": false,
+	"issue": 12646044
+}

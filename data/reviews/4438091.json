@@ -1,0 +1,228 @@
+{
+	"description": "runtime: SysMap uses MAP_FIXED if needed on 64-bit Linux\n\nThis change was adapted from gccgo's libgo/runtime/mem.c at\nIan Taylor's suggestion.  It fixes all.bash failing with\n\"address space conflict: map() =\" on amd64 Linux with kernel\nversion 2.6.32.8-grsec-2.1.14-modsign-xeon-64.\nWith this change, SysMap will use MAP_FIXED to allocate its desired\naddress space, after first calling mincore to check that there is\nnothing else mapped there.",
+	"cc": [
+		"iant@golang.org",
+		"dave@cheney.net",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"iant@google.com",
+				"n13m3y3r@gmail.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I've had the same problem while trying to run any binary in a machine from dreamhost.com (a popular/cheap shared hosting provider), as described in this thread:\n\n    http://groups.google.com/group/golang-nuts/t/ba1d65aa337b0055\n\nApplying this patch onto tip made the binary work correctly, which indicates that MAP_FIXED was indeed the problem.\n\nNote that DreamHost also uses the grsec kernel.\n\nIt'd be nice to get something along those lines in.",
+			"disapproval": false,
+			"date": "2011-05-03 14:25:17.451227",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks, comments below.\n\nhttp://codereview.appspot.com/4438091/diff/2001/src/pkg/runtime/linux/amd64/sys.s\nFile src/pkg/runtime/linux/amd64/sys.s (right):\n\nhttp://codereview.appspot.com/4438091/diff/2001/src/pkg/runtime/linux/amd64/sys.s#newcode43\nsrc/pkg/runtime/linux/amd64/sys.s:43: MOVL\t$27, AX\t\t\t// syscall entry\nI think the mincore syscall is 232 here.\n\nAlso mincore will need to be in linux/386/sys.s and linux/arm/sys.s although we can add those easily enough.\n\nhttp://codereview.appspot.com/4438091/diff/2001/src/pkg/runtime/linux/mem.c\nFile src/pkg/runtime/linux/mem.c (right):\n\nhttp://codereview.appspot.com/4438091/diff/2001/src/pkg/runtime/linux/mem.c#newcode9\nsrc/pkg/runtime/linux/mem.c:9: #ifdef HAVE_MINCORE\nHAVE_MINCORE won't be defined here, so this will always be commented out.  (HAVE_MINCORE is defined in gccgo because of the autoconf-generated configure script, but there is no such script for 6g).  This will have to call something like runtime\u00b7mincore, which will return an errno value.",
+			"disapproval": false,
+			"date": "2011-05-02 23:25:44.819578",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4438091/diff/2001/src/pkg/runtime/linux/mem.c\nFile src/pkg/runtime/linux/mem.c (right):\n\nhttp://codereview.appspot.com/4438091/diff/2001/src/pkg/runtime/linux/mem.c#newcode82\nsrc/pkg/runtime/linux/mem.c:82: p = runtime\u00b7mmap(v, n, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON|MAP_FIXED|MAP_PRIVATE, -1, 0);\nWhy not call with MAP_FIXED in the first place ? The memory must be returned at the address specified or the runtime will panic, so why not be explicit with the kernel.",
+			"disapproval": false,
+			"date": "2011-05-03 00:41:54.350171",
+			"approval": false
+		},
+		{
+			"sender": "iant@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "dave@cheney.net writes:\n\n> src/pkg/runtime/linux/mem.c:82: p = runtime\u00b7mmap(v, n,\n> PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON|MAP_FIXED|MAP_PRIVATE, -1, 0);\n> Why not call with MAP_FIXED in the first place ? The memory must be\n> returned at the address specified or the runtime will panic, so why not\n> be explicit with the kernel.\n\nCalling with MAP_FIXED will overwrite any existing mappings at that\naddress.  That would be bad if there are in fact any existing mappings.\nIn that case, it would be better to just exit.  The mincore loop is\nintended to detect whether there are any existing mappings.\n\nIan\n",
+			"disapproval": false,
+			"date": "2011-05-03 04:38:26.492505",
+			"approval": false
+		},
+		{
+			"sender": "jhmark000@gmail.com",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"iant@google.com",
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello iant, dfc, iant2, niemeyer (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-05-04 23:57:52.872853",
+			"approval": false
+		},
+		{
+			"sender": "jhmark000@gmail.com",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"iant@google.com",
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello iant, dfc, iant2, niemeyer (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-05-05 17:00:14.904965",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Sorry for the very slow review.\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/amd64/sys.s\nFile src/pkg/runtime/linux/amd64/sys.s (right):\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/amd64/sys.s#newcode62\nsrc/pkg/runtime/linux/amd64/sys.s:62: NOTQ\tAX\nI think the NOTQ and INCQ should be removed here.  The SYSCALL should set AX to 0 on success or a negative number on error.  Let's just return the negative number here.\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/mem.c\nFile src/pkg/runtime/linux/mem.c (right):\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/mem.c#newcode9\nsrc/pkg/runtime/linux/mem.c:9: #ifdef _64BIT\nI think Russ won't like the #ifdef here, and we don't strictly speaking need it, so let's take it out.\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/mem.c#newcode11\nsrc/pkg/runtime/linux/mem.c:11: int64 off;\nUse uintptr for off and page_size.\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/mem.c#newcode17\nsrc/pkg/runtime/linux/mem.c:17: if (errval == 0 || errval != ENOMEM)\nGiven the change to not adjust the return value, this should compare to -ENOMEM.\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/mem.c#newcode21\nsrc/pkg/runtime/linux/mem.c:21: USED(v);\nWithout the #ifdef, these USED calls are unnecessary.\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/os.h\nFile src/pkg/runtime/linux/os.h (right):\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/os.h#newcode7\nsrc/pkg/runtime/linux/os.h:7: #define ENOMEM\t12\nTempting but we should probably just keep the enum in mem.c, moving it higher in the file.",
+			"disapproval": false,
+			"date": "2011-05-27 19:02:56.788458",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/mem.c\nFile src/pkg/runtime/linux/mem.c (right):\n\nhttp://codereview.appspot.com/4438091/diff/9002/src/pkg/runtime/linux/mem.c#newcode9\nsrc/pkg/runtime/linux/mem.c:9: #ifdef _64BIT\nOh wait, we do need either the #ifdef or we need implementations of mincore in linux/386/sys.s and linux/arm/sys.s.  Hmmmm.  Probably Russ would prefer the extra implementations.",
+			"disapproval": false,
+			"date": "2011-05-27 19:05:10.770362",
+			"approval": false
+		},
+		{
+			"sender": "jhmark000@gmail.com",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello iant@golang.org, dave@cheney.net, n13m3y3r@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-06-07 21:11:14.223249",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Looks OK to me if we drop the #ifdef _64BIT and add mincore to linux/386/sys.s and linux/arm/sys.s.  I can take care of that part.\n\nrsc: OK with you?",
+			"disapproval": false,
+			"date": "2011-06-07 22:17:38.324868",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "sgtm\n",
+			"disapproval": false,
+			"date": "2011-06-08 02:41:05.703433",
+			"approval": false
+		},
+		{
+			"sender": "iant@golang.org",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"n13m3y3r@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=48a84e298545 ***\n\nruntime: SysMap uses MAP_FIXED if needed on 64-bit Linux\n\nThis change was adapted from gccgo's libgo/runtime/mem.c at\nIan Taylor's suggestion.  It fixes all.bash failing with\n\"address space conflict: map() =\" on amd64 Linux with kernel\nversion 2.6.32.8-grsec-2.1.14-modsign-xeon-64.\nWith this change, SysMap will use MAP_FIXED to allocate its desired\naddress space, after first calling mincore to check that there is\nnothing else mapped there.\n\nR=iant, dave, n13m3y3r, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/4438091\n\nCommitter: Ian Lance Taylor <iant@golang.org>",
+			"disapproval": false,
+			"date": "2011-06-08 04:50:14.548166",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"n13m3y3r@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Sweet.. Go should be grsec-friendly now.",
+			"disapproval": false,
+			"date": "2011-06-08 14:18:24.180773",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"jhmark000@gmail.com",
+				"iant@golang.org",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2011-12-01 11:58:37.307522",
+			"approval": false
+		}
+	],
+	"owner_email": "jhmark000@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jhmark",
+	"subject": "code review 4438091: runtime: SysMap uses MAP_FIXED if needed on 64-bit Linux",
+	"created": "2011-05-02 22:49:53.073471",
+	"patchsets": [
+		1,
+		2001,
+		9001,
+		9002,
+		19001
+	],
+	"modified": "2011-12-01 11:58:37.307522",
+	"closed": false,
+	"issue": 4438091
+}

@@ -1,0 +1,153 @@
+{
+	"description": "sync/atomic: make unaligned 64-bit atomic operation panic on ARM\r\n\uff01\uff1ause MOVW.NE instead of BEQ and MOVW.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"rsc@golang.org",
+		"daniel.morsing@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-03-11 19:06:19.661210",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-03-11 18:58:01.167130",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "there is also 64-bit cas implementation in runtime, but as all its current\nuser in runtime already explicitly checks for 64-bit pointer alignments,\ni think we don't need to slow those runtime routines down by extra\nalignment checks.",
+			"disapproval": false,
+			"date": "2013-03-11 19:07:57.533530",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Excellent suggestion. I was thinking that this should be in place for all GOARCH during this debugging phase. \r\n\r\n\r\n\r\nOn 12/03/2013, at 5:58 AM, minux.ma@gmail.com wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n> \r\n> Message:\r\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\r\n> \r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n> \r\n> \r\n> Description:\r\n> sync/atomic: make unaligned 64-bit atomic operation panic on ARM\r\n> \r\n> Please review this at https://codereview.appspot.com/7718043/\r\n> \r\n> Affected files:\r\n>  M src/pkg/sync/atomic/asm_arm.s\r\n>  M src/pkg/sync/atomic/atomic_test.go\r\n> \r\n> \r\n> Index: src/pkg/sync/atomic/asm_arm.s\r\n> ===================================================================\r\n> --- a/src/pkg/sync/atomic/asm_arm.s\r\n> +++ b/src/pkg/sync/atomic/asm_arm.s\r\n> @@ -29,6 +29,10 @@\r\n> TEXT \u00b7armCompareAndSwapUint64(SB),7,$0\r\n>    BL    fastCheck64<>(SB)\r\n>    MOVW    addr+0(FP), R1\r\n> +    // make unaligned atomic access panic\r\n> +    AND.S    $7, R1, R2\r\n> +    BEQ    2(PC)\r\n> +    MOVW    R2, (R2)\r\n>    MOVW    oldlo+4(FP), R2\r\n>    MOVW    oldhi+8(FP), R3\r\n>    MOVW    newlo+12(FP), R4\r\n> @@ -67,6 +71,10 @@\r\n> TEXT \u00b7armAddUint64(SB),7,$0\r\n>    BL    fastCheck64<>(SB)\r\n>    MOVW    addr+0(FP), R1\r\n> +    // make unaligned atomic access panic\r\n> +    AND.S    $7, R1, R2\r\n> +    BEQ    2(PC)\r\n> +    MOVW    R2, (R2)\r\n>    MOVW    deltalo+4(FP), R2\r\n>    MOVW    deltahi+8(FP), R3\r\n> add64loop:\r\n> @@ -84,6 +92,10 @@\r\n> TEXT \u00b7armLoadUint64(SB),7,$0\r\n>    BL    fastCheck64<>(SB)\r\n>    MOVW    addr+0(FP), R1\r\n> +    // make unaligned atomic access panic\r\n> +    AND.S    $7, R1, R2\r\n> +    BEQ    2(PC)\r\n> +    MOVW    R2, (R2)\r\n> load64loop:\r\n>    LDREXD    (R1), R2    // loads R2 and R3\r\n>    STREXD    R2, (R1), R0    // stores R2 and R3\r\n> @@ -96,6 +108,10 @@\r\n> TEXT \u00b7armStoreUint64(SB),7,$0\r\n>    BL    fastCheck64<>(SB)\r\n>    MOVW    addr+0(FP), R1\r\n> +    // make unaligned atomic access panic\r\n> +    AND.S    $7, R1, R2\r\n> +    BEQ    2(PC)\r\n> +    MOVW    R2, (R2)\r\n>    MOVW    vallo+4(FP), R2\r\n>    MOVW    valhi+8(FP), R3\r\n> store64loop:\r\n> Index: src/pkg/sync/atomic/atomic_test.go\r\n> ===================================================================\r\n> --- a/src/pkg/sync/atomic/atomic_test.go\r\n> +++ b/src/pkg/sync/atomic/atomic_test.go\r\n> @@ -1189,10 +1189,10 @@\r\n> \r\n> func TestUnaligned64(t *testing.T) {\r\n>    // Unaligned 64-bit atomics on 32-bit systems are\r\n> -    // a continual source of pain. Test that on 386 they crash\r\n> +    // a continual source of pain. Test that on 32-bit systems they crash\r\n>    // instead of failing silently.\r\n> -    if runtime.GOARCH != \"386\" {\r\n> -        t.Skip(\"test only runs on 386\")\r\n> +    if unsafe.Sizeof(int(0)) != 4 {\r\n> +        t.Skip(\"test only runs on 32-bit systems\")\r\n>    }\r\n> \r\n>    x := make([]uint32, 4)\r\n> \r\n> \r\n> -- \r\n> \r\n> ---You received this message because you are subscribed to the Google Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n> \r\n> \r\n",
+			"disapproval": false,
+			"date": "2013-03-11 19:30:10.418690",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nWhat does the .S in AND.S mean?",
+			"disapproval": false,
+			"date": "2013-03-11 20:20:50.895510",
+			"approval": true
+		},
+		{
+			"sender": "daniel.morsing@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/11 20:20:50, rsc wrote:\n> LGTM\n> \n> What does the .S in AND.S mean?\n\nIt makes the instruction set the conditional flags.",
+			"disapproval": false,
+			"date": "2013-03-11 20:31:41.836980",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"daniel.morsing@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping",
+			"disapproval": false,
+			"date": "2013-04-01 12:49:40.353800",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"daniel.morsing@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=ce923fae8355 ***\n\nsync/atomic: make unaligned 64-bit atomic operation panic on ARM\nuse MOVW.NE instead of BEQ and MOVW.\n\nR=golang-dev, dave, rsc, daniel.morsing\nCC=golang-dev\nhttps://codereview.appspot.com/7718043\n\nCommitter: Rob Pike <r@golang.org>",
+			"disapproval": false,
+			"date": "2013-04-01 21:34:06.980670",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"rsc@golang.org",
+				"daniel.morsing@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=close",
+			"disapproval": false,
+			"date": "2013-07-21 19:51:48.146270",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "code review 7718043: sync/atomic: make unaligned 64-bit atomic operation pan...",
+	"created": "2013-03-11 18:55:01.756000",
+	"patchsets": [
+		1,
+		5001,
+		6003,
+		13001
+	],
+	"modified": "2013-07-21 19:51:48.256290",
+	"closed": false,
+	"issue": 7718043
+}

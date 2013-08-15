@@ -1,0 +1,260 @@
+{
+	"description": "exec: add timeout\n\nadds public field Cmd.Timeout int64. If Timeout is >0 the process gets killed\nif it didn't stop Timeout nanoseconds after Cmd.Wait was called. Works for Run,\nCombined, Output too.\nFixes issue 1917",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"kevlar@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4530108/diff/8002/src/pkg/exec/exec.go\nFile src/pkg/exec/exec.go (right):\n\nhttp://codereview.appspot.com/4530108/diff/8002/src/pkg/exec/exec.go#newcode52\nsrc/pkg/exec/exec.go:52: // Timeout specifies the amount of time (in ns) spent in Wait,\nMaybe just:\n\n// Timeout specifies the amount of time (in nanoseconds) that\n// the process is allowed to run before being killed.\n// If the value is <= 0, no timer is run.\n\nhttp://codereview.appspot.com/4530108/diff/8002/src/pkg/exec/exec.go#newcode54\nsrc/pkg/exec/exec.go:54: // If the value is zero or negative .\nsentence is not finished\n\nhttp://codereview.appspot.com/4530108/diff/8002/src/pkg/exec/exec.go#newcode275\nsrc/pkg/exec/exec.go:275: timer.Stop()\ndo this with defer instead and don't repeat the c.process.Wait(0) line?",
+			"disapproval": false,
+			"date": "2011-06-07 17:40:26.857544",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-06-06 23:25:43.087162",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "There's a line somewhere where you have to stop adding convenience features\nand let people write code, but I'll admit I don't know where it is.\n\nDid you mean to remove golang-dev from the thread?  Things won't move as\nwell without everybody's participation.\n\n\nOn Tue, Jun 7, 2011 at 2:43 AM, <f1@uekermann-online.de> wrote:\n\n> Exposing *os.Process is a good thing. But I think some kind of timeout\n>  should be available in exec, just because a lot of people will need it\n> (try googling it).\n> The whole exec package is about saving the user the time to code the\n> easy stuff you usually need while handling processes, so why not\n> timeouts.\n>\n> But I can see a consistency problem, since the proposed change only adds\n> a timeout variant for Wait(). Maybe it would be better to have something\n> like Cmd.SetTimeout(ns int) and then just add 3 lines, wrapped by an if,\n> to Start(). Might be more in the spirit of the package and would provide\n> timeouts in general without the need to add other functions of the Wait,\n> Start or Run kind.\n>\n> Florian\n>\n> (Oh, and it can take some time (2 days for me) to get the idea that\n> something like Afterfunc already exists in the time package... ...and\n> without it, things get a bit more ugly, so maybe it looks more trivial\n> than it is for the average user)\n>\n>\n> On 2011/06/06 23:33:18, bradfitz wrote:\n>\n>> I think I'd rather just expose the underlying *os.Process so others\n>>\n> can do\n>\n>> all these sorts of 3-liners themselves.  Other people need the\n>>\n> underlying\n>\n>> process anyway... it's on my list.\n>>\n>\n>\n>  On Mon, Jun 6, 2011 at 4:25 PM, <mailto:f1@uekermann-online.de**> wrote:\n>>\n>\n>  > Reviewers: bradfitz,\n>> >\n>> > Message:\n>> > Hello mailto:bradfitz@golang.org (cc:\n>>\n> mailto:golang-dev@**googlegroups.com <golang-dev@googlegroups.com>),\n>\n>  >\n>> > I'd like you to review this change to\n>> > https://go.googlecode.com/hg/\n>> >\n>> >\n>> > Description:\n>> > exec: added WaitTimeout\n>> >\n>> > cmd.WaitTimeout(time) waits for cmd to stop like cmd.Wait, but kills\n>>\n> it\n>\n>> > after the specified time elapsed.\n>> > Fixes issue 1917\n>> >\n>> > Please review this at\n>>\n>\n> http://codereview.appspot.com/****4530108/%3Chttp://**\n> codereview.appspot.com/**4530108/<http://codereview.appspot.com/**4530108/%3Chttp://codereview.appspot.com/4530108/>\n> >\n>\n>  >\n>> > Affected files:\n>> >  M src/pkg/exec/exec.go\n>> >  M src/pkg/exec/exec_test.go\n>> >\n>> >\n>> > Index: src/pkg/exec/exec.go\n>> >\n>>\n> ==============================****============================**\n> ==**=======\n>\n>> > --- a/src/pkg/exec/exec.go\n>> > +++ b/src/pkg/exec/exec.go\n>> > @@ -12,6 +12,7 @@\n>> >        \"io\"\n>> >        \"os\"\n>> >        \"strconv\"\n>> > +       \"time\"\n>> >  )\n>> >\n>> >  // Error records the name of a binary that failed to be be executed\n>> > @@ -282,6 +283,14 @@\n>> >        return copyError\n>> >  }\n>> >\n>> > +// WaitTimeout behaves exactly like wait, but kills the process if\n>>\n> it\n>\n>> > didn't\n>> > +// stop after the amount of time specified by ns in nanoseconds.\n>> > +func (c *Cmd) WaitTimeout(ns int64) os.Error {\n>> > +       timer := time.AfterFunc(ns, func() { c.process.Kill() })\n>> > +       defer timer.Stop()\n>> > +       return c.Wait()\n>> > +}\n>> > +\n>> >  // Output runs the command and returns its standard output.\n>> >  func (c *Cmd) Output() ([]byte, os.Error) {\n>> >        if c.Stdout != nil {\n>> > Index: src/pkg/exec/exec_test.go\n>> >\n>>\n> ==============================****============================**\n> ==**=======\n>\n>> > --- a/src/pkg/exec/exec_test.go\n>> > +++ b/src/pkg/exec/exec_test.go\n>> > @@ -10,6 +10,7 @@\n>> >        \"fmt\"\n>> >        \"io\"\n>> >        \"testing\"\n>> > +       \"time\"\n>> >        \"os\"\n>> >        \"strconv\"\n>> >        \"strings\"\n>> > @@ -89,6 +90,28 @@\n>> >        }\n>> >  }\n>> >\n>> > +func TestTimeout(t *testing.T) {\n>> > +       // Test that WaitTimeout kills process after time elapsed\n>> > +       // Should exit successfully\n>> > +       c := helperCommand(\"sleep\", \"100000000\") //0.1s\n>> > +       c.Start()\n>> > +       err := c.WaitTimeout(1000000000) //1s\n>> > +       if err != nil {\n>> > +               t.Error(\"unexpected error from sleep 0.1s with\n>>\n> timeout\n>\n>> > 1s:\", err)\n>> > +       }\n>> > +       // Should get killed and return signal 9\n>> > +       c = helperCommand(\"sleep\", \"1000000000\") //1s\n>> > +       c.Start()\n>> > +       err = c.WaitTimeout(100000000) //0.1s\n>> > +       if werr, ok := err.(*os.Waitmsg); ok {\n>> > +               if s, e := werr.String(), \"signal 9\"; s != e {\n>> > +                       t.Errorf(\"from sleep 1s with timeout 0.1s\n>>\n> got exit\n>\n>> > %q, want %q\", s, e)\n>> > +               }\n>> > +       } else {\n>> > +               t.Error(\"expected Waitmsg from sleep 1s with timeout\n>>\n> 0.1s;\n>\n>> > got %T: %v\", err, err)\n>> > +       }\n>> > +}\n>> > +\n>> >  func TestPipes(t *testing.T) {\n>> >        check := func(what string, err os.Error) {\n>> >                if err != nil {\n>> > @@ -208,6 +231,10 @@\n>> >        case \"exit\":\n>> >                n, _ := strconv.Atoi(args[0])\n>> >                os.Exit(n)\n>> > +       case \"sleep\":\n>> > +               t, _ := strconv.Atoi64(args[0])\n>> > +               time.Sleep(t)\n>> > +               os.Exit(0)\n>> >        default:\n>> >                fmt.Fprintf(os.Stderr, \"Unknown command %q\\n\", cmd)\n>> >                os.Exit(2)\n>> >\n>> >\n>> >\n>>\n>\n>\n>\n> http://codereview.appspot.com/**4530108/<http://codereview.appspot.com/4530108/>\n>\n",
+			"disapproval": false,
+			"date": "2011-06-07 15:22:19.699285",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"kevlar@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, kevlar@google.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-06-07 17:24:25.689566",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/06/07 20:11:43, rsc wrote:\n> I am not convinced that timeouts belong in this package.\n> Let calling code use goroutines.  That's what they're for.\n\nThis isn't an ugly hack to work around concurrency. It's about limiting the runtime of a process. Using goroutines isn't a solution. You can't solve that without code like this, even outside this package. And as far as I can see, the last version fits in nicely without introducing new methods, changing the logic of existing ones or any other sideeffects. Anyone who dislikes can just ignore it. And expecting a setting for a runtime limit from a package that helps handling processes doesn't seem far fetched to me.\nI would appreciate an explanation of the problem, since I don't seem to understand it.",
+			"disapproval": false,
+			"date": "2011-06-07 20:28:28.408820",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4530108/diff/2001/src/pkg/exec/exec.go\nFile src/pkg/exec/exec.go (right):\n\nhttp://codereview.appspot.com/4530108/diff/2001/src/pkg/exec/exec.go#newcode291\nsrc/pkg/exec/exec.go:291: syscall.Kill(c.process.Pid, syscall.SIGKILL)\nUse new process.Kill function here instead of syscall.Kill",
+			"disapproval": false,
+			"date": "2011-06-06 23:30:40.481359",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I think I'd rather just expose the underlying *os.Process so others can do\nall these sorts of 3-liners themselves.  Other people need the underlying\nprocess anyway... it's on my list.\n\n\nOn Mon, Jun 6, 2011 at 4:25 PM, <f1@uekermann-online.de> wrote:\n\n> Reviewers: bradfitz,\n>\n> Message:\n> Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> exec: added WaitTimeout\n>\n> cmd.WaitTimeout(time) waits for cmd to stop like cmd.Wait, but kills it\n> after the specified time elapsed.\n> Fixes issue 1917\n>\n> Please review this at http://codereview.appspot.com/**4530108/<http://codereview.appspot.com/4530108/>\n>\n> Affected files:\n>  M src/pkg/exec/exec.go\n>  M src/pkg/exec/exec_test.go\n>\n>\n> Index: src/pkg/exec/exec.go\n> ==============================**==============================**=======\n> --- a/src/pkg/exec/exec.go\n> +++ b/src/pkg/exec/exec.go\n> @@ -12,6 +12,7 @@\n>        \"io\"\n>        \"os\"\n>        \"strconv\"\n> +       \"time\"\n>  )\n>\n>  // Error records the name of a binary that failed to be be executed\n> @@ -282,6 +283,14 @@\n>        return copyError\n>  }\n>\n> +// WaitTimeout behaves exactly like wait, but kills the process if it\n> didn't\n> +// stop after the amount of time specified by ns in nanoseconds.\n> +func (c *Cmd) WaitTimeout(ns int64) os.Error {\n> +       timer := time.AfterFunc(ns, func() { c.process.Kill() })\n> +       defer timer.Stop()\n> +       return c.Wait()\n> +}\n> +\n>  // Output runs the command and returns its standard output.\n>  func (c *Cmd) Output() ([]byte, os.Error) {\n>        if c.Stdout != nil {\n> Index: src/pkg/exec/exec_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/exec/exec_test.go\n> +++ b/src/pkg/exec/exec_test.go\n> @@ -10,6 +10,7 @@\n>        \"fmt\"\n>        \"io\"\n>        \"testing\"\n> +       \"time\"\n>        \"os\"\n>        \"strconv\"\n>        \"strings\"\n> @@ -89,6 +90,28 @@\n>        }\n>  }\n>\n> +func TestTimeout(t *testing.T) {\n> +       // Test that WaitTimeout kills process after time elapsed\n> +       // Should exit successfully\n> +       c := helperCommand(\"sleep\", \"100000000\") //0.1s\n> +       c.Start()\n> +       err := c.WaitTimeout(1000000000) //1s\n> +       if err != nil {\n> +               t.Error(\"unexpected error from sleep 0.1s with timeout\n> 1s:\", err)\n> +       }\n> +       // Should get killed and return signal 9\n> +       c = helperCommand(\"sleep\", \"1000000000\") //1s\n> +       c.Start()\n> +       err = c.WaitTimeout(100000000) //0.1s\n> +       if werr, ok := err.(*os.Waitmsg); ok {\n> +               if s, e := werr.String(), \"signal 9\"; s != e {\n> +                       t.Errorf(\"from sleep 1s with timeout 0.1s got exit\n> %q, want %q\", s, e)\n> +               }\n> +       } else {\n> +               t.Error(\"expected Waitmsg from sleep 1s with timeout 0.1s;\n> got %T: %v\", err, err)\n> +       }\n> +}\n> +\n>  func TestPipes(t *testing.T) {\n>        check := func(what string, err os.Error) {\n>                if err != nil {\n> @@ -208,6 +231,10 @@\n>        case \"exit\":\n>                n, _ := strconv.Atoi(args[0])\n>                os.Exit(n)\n> +       case \"sleep\":\n> +               t, _ := strconv.Atoi64(args[0])\n> +               time.Sleep(t)\n> +               os.Exit(0)\n>        default:\n>                fmt.Fprintf(os.Stderr, \"Unknown command %q\\n\", cmd)\n>                os.Exit(2)\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2011-06-06 23:33:18.953950",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Exposing *os.Process is a good thing. But I think some kind of timeout \n should be available in exec, just because a lot of people will need it (try googling it).\nThe whole exec package is about saving the user the time to code the easy stuff you usually need while handling processes, so why not timeouts.\n\nBut I can see a consistency problem, since the proposed change only adds a timeout variant for Wait(). Maybe it would be better to have something like Cmd.SetTimeout(ns int) and then just add 3 lines, wrapped by an if, to Start(). Might be more in the spirit of the package and would provide timeouts in general without the need to add other functions of the Wait, Start or Run kind.\n\nFlorian\n\n(Oh, and it can take some time (2 days for me) to get the idea that something like Afterfunc already exists in the time package... ...and without it, things get a bit more ugly, so maybe it looks more trivial than it is for the average user)\n\nOn 2011/06/06 23:33:18, bradfitz wrote:\n> I think I'd rather just expose the underlying *os.Process so others can do\n> all these sorts of 3-liners themselves.  Other people need the underlying\n> process anyway... it's on my list.\n> \n> \n> On Mon, Jun 6, 2011 at 4:25 PM, <mailto:f1@uekermann-online.de> wrote:\n> \n> > Reviewers: bradfitz,\n> >\n> > Message:\n> > Hello mailto:bradfitz@golang.org (cc: mailto:golang-dev@googlegroups.com),\n> >\n> > I'd like you to review this change to\n> > https://go.googlecode.com/hg/\n> >\n> >\n> > Description:\n> > exec: added WaitTimeout\n> >\n> > cmd.WaitTimeout(time) waits for cmd to stop like cmd.Wait, but kills it\n> > after the specified time elapsed.\n> > Fixes issue 1917\n> >\n> > Please review this at\n> http://codereview.appspot.com/**4530108/%3Chttp://codereview.appspot.com/4530108/>\n> >\n> > Affected files:\n> >  M src/pkg/exec/exec.go\n> >  M src/pkg/exec/exec_test.go\n> >\n> >\n> > Index: src/pkg/exec/exec.go\n> > ==============================**==============================**=======\n> > --- a/src/pkg/exec/exec.go\n> > +++ b/src/pkg/exec/exec.go\n> > @@ -12,6 +12,7 @@\n> >        \"io\"\n> >        \"os\"\n> >        \"strconv\"\n> > +       \"time\"\n> >  )\n> >\n> >  // Error records the name of a binary that failed to be be executed\n> > @@ -282,6 +283,14 @@\n> >        return copyError\n> >  }\n> >\n> > +// WaitTimeout behaves exactly like wait, but kills the process if it\n> > didn't\n> > +// stop after the amount of time specified by ns in nanoseconds.\n> > +func (c *Cmd) WaitTimeout(ns int64) os.Error {\n> > +       timer := time.AfterFunc(ns, func() { c.process.Kill() })\n> > +       defer timer.Stop()\n> > +       return c.Wait()\n> > +}\n> > +\n> >  // Output runs the command and returns its standard output.\n> >  func (c *Cmd) Output() ([]byte, os.Error) {\n> >        if c.Stdout != nil {\n> > Index: src/pkg/exec/exec_test.go\n> > ==============================**==============================**=======\n> > --- a/src/pkg/exec/exec_test.go\n> > +++ b/src/pkg/exec/exec_test.go\n> > @@ -10,6 +10,7 @@\n> >        \"fmt\"\n> >        \"io\"\n> >        \"testing\"\n> > +       \"time\"\n> >        \"os\"\n> >        \"strconv\"\n> >        \"strings\"\n> > @@ -89,6 +90,28 @@\n> >        }\n> >  }\n> >\n> > +func TestTimeout(t *testing.T) {\n> > +       // Test that WaitTimeout kills process after time elapsed\n> > +       // Should exit successfully\n> > +       c := helperCommand(\"sleep\", \"100000000\") //0.1s\n> > +       c.Start()\n> > +       err := c.WaitTimeout(1000000000) //1s\n> > +       if err != nil {\n> > +               t.Error(\"unexpected error from sleep 0.1s with timeout\n> > 1s:\", err)\n> > +       }\n> > +       // Should get killed and return signal 9\n> > +       c = helperCommand(\"sleep\", \"1000000000\") //1s\n> > +       c.Start()\n> > +       err = c.WaitTimeout(100000000) //0.1s\n> > +       if werr, ok := err.(*os.Waitmsg); ok {\n> > +               if s, e := werr.String(), \"signal 9\"; s != e {\n> > +                       t.Errorf(\"from sleep 1s with timeout 0.1s got exit\n> > %q, want %q\", s, e)\n> > +               }\n> > +       } else {\n> > +               t.Error(\"expected Waitmsg from sleep 1s with timeout 0.1s;\n> > got %T: %v\", err, err)\n> > +       }\n> > +}\n> > +\n> >  func TestPipes(t *testing.T) {\n> >        check := func(what string, err os.Error) {\n> >                if err != nil {\n> > @@ -208,6 +231,10 @@\n> >        case \"exit\":\n> >                n, _ := strconv.Atoi(args[0])\n> >                os.Exit(n)\n> > +       case \"sleep\":\n> > +               t, _ := strconv.Atoi64(args[0])\n> > +               time.Sleep(t)\n> > +               os.Exit(0)\n> >        default:\n> >                fmt.Fprintf(os.Stderr, \"Unknown command %q\\n\", cmd)\n> >                os.Exit(2)\n> >\n> >\n> >",
+			"disapproval": false,
+			"date": "2011-06-07 09:43:27.458431",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Added golang-dev back to the issue, I hope that includes traffic in this thread as well, I removed it to prevent too much traffic on the list.\n\nI think as soon as convenience code doesn't cover the solution to a problem generically, but is a specialized solution that is only usable in cornercases, it shouldn't be part of a library anymore.\n\nThe code I proposed definitely falls in that category since it only works for users of the Start method, not for users of Run, Output and Combined. You were right there, thanks for the input, but I still think the feature itself is std-library-material.\n\nI will send a new approach to add the timeout-feature in a more generally useful way, without littering the package with stuff like WaitTimeout, RunTimeout, CombineTimeout etc.\n\nOn 2011/06/07 15:22:19, bradfitz wrote:\n> There's a line somewhere where you have to stop adding convenience features\n> and let people write code, but I'll admit I don't know where it is.\n> \n> Did you mean to remove golang-dev from the thread?  Things won't move as\n> well without everybody's participation.\n> \n> \n> On Tue, Jun 7, 2011 at 2:43 AM, <mailto:f1@uekermann-online.de> wrote:\n> \n> > Exposing *os.Process is a good thing. But I think some kind of timeout\n> >  should be available in exec, just because a lot of people will need it\n> > (try googling it).\n> > The whole exec package is about saving the user the time to code the\n> > easy stuff you usually need while handling processes, so why not\n> > timeouts.\n> >\n> > But I can see a consistency problem, since the proposed change only adds\n> > a timeout variant for Wait(). Maybe it would be better to have something\n> > like Cmd.SetTimeout(ns int) and then just add 3 lines, wrapped by an if,\n> > to Start(). Might be more in the spirit of the package and would provide\n> > timeouts in general without the need to add other functions of the Wait,\n> > Start or Run kind.\n> >\n> > Florian\n> >\n> > (Oh, and it can take some time (2 days for me) to get the idea that\n> > something like Afterfunc already exists in the time package... ...and\n> > without it, things get a bit more ugly, so maybe it looks more trivial\n> > than it is for the average user)\n> >\n> >\n> > On 2011/06/06 23:33:18, bradfitz wrote:\n> >\n> >> I think I'd rather just expose the underlying *os.Process so others\n> >>\n> > can do\n> >\n> >> all these sorts of 3-liners themselves.  Other people need the\n> >>\n> > underlying\n> >\n> >> process anyway... it's on my list.\n> >>\n> >\n> >\n> >  On Mon, Jun 6, 2011 at 4:25 PM, <mailto:f1@uekermann-online.de**> wrote:\n> >>\n> >\n> >  > Reviewers: bradfitz,\n> >> >\n> >> > Message:\n> >> > Hello mailto:bradfitz@golang.org (cc:\n> >>\n> > mailto:golang-dev@**googlegroups.com <mailto:golang-dev@googlegroups.com>),\n> >\n> >  >\n> >> > I'd like you to review this change to\n> >> > https://go.googlecode.com/hg/\n> >> >\n> >> >\n> >> > Description:\n> >> > exec: added WaitTimeout\n> >> >\n> >> > cmd.WaitTimeout(time) waits for cmd to stop like cmd.Wait, but kills\n> >>\n> > it\n> >\n> >> > after the specified time elapsed.\n> >> > Fixes issue 1917\n> >> >\n> >> > Please review this at\n> >>\n> >\n> > http://codereview.appspot.com/****4530108/%253Chttp://**\n> >\n> codereview.appspot.com/**4530108/<http://codereview.appspot.com/**4530108/%3Chttp://codereview.appspot.com/4530108/>\n> > >\n> >\n> >  >\n> >> > Affected files:\n> >> >  M src/pkg/exec/exec.go\n> >> >  M src/pkg/exec/exec_test.go\n> >> >\n> >> >\n> >> > Index: src/pkg/exec/exec.go\n> >> >\n> >>\n> > ==============================****============================**\n> > ==**=======\n> >\n> >> > --- a/src/pkg/exec/exec.go\n> >> > +++ b/src/pkg/exec/exec.go\n> >> > @@ -12,6 +12,7 @@\n> >> >        \"io\"\n> >> >        \"os\"\n> >> >        \"strconv\"\n> >> > +       \"time\"\n> >> >  )\n> >> >\n> >> >  // Error records the name of a binary that failed to be be executed\n> >> > @@ -282,6 +283,14 @@\n> >> >        return copyError\n> >> >  }\n> >> >\n> >> > +// WaitTimeout behaves exactly like wait, but kills the process if\n> >>\n> > it\n> >\n> >> > didn't\n> >> > +// stop after the amount of time specified by ns in nanoseconds.\n> >> > +func (c *Cmd) WaitTimeout(ns int64) os.Error {\n> >> > +       timer := time.AfterFunc(ns, func() { c.process.Kill() })\n> >> > +       defer timer.Stop()\n> >> > +       return c.Wait()\n> >> > +}\n> >> > +\n> >> >  // Output runs the command and returns its standard output.\n> >> >  func (c *Cmd) Output() ([]byte, os.Error) {\n> >> >        if c.Stdout != nil {\n> >> > Index: src/pkg/exec/exec_test.go\n> >> >\n> >>\n> > ==============================****============================**\n> > ==**=======\n> >\n> >> > --- a/src/pkg/exec/exec_test.go\n> >> > +++ b/src/pkg/exec/exec_test.go\n> >> > @@ -10,6 +10,7 @@\n> >> >        \"fmt\"\n> >> >        \"io\"\n> >> >        \"testing\"\n> >> > +       \"time\"\n> >> >        \"os\"\n> >> >        \"strconv\"\n> >> >        \"strings\"\n> >> > @@ -89,6 +90,28 @@\n> >> >        }\n> >> >  }\n> >> >\n> >> > +func TestTimeout(t *testing.T) {\n> >> > +       // Test that WaitTimeout kills process after time elapsed\n> >> > +       // Should exit successfully\n> >> > +       c := helperCommand(\"sleep\", \"100000000\") //0.1s\n> >> > +       c.Start()\n> >> > +       err := c.WaitTimeout(1000000000) //1s\n> >> > +       if err != nil {\n> >> > +               t.Error(\"unexpected error from sleep 0.1s with\n> >>\n> > timeout\n> >\n> >> > 1s:\", err)\n> >> > +       }\n> >> > +       // Should get killed and return signal 9\n> >> > +       c = helperCommand(\"sleep\", \"1000000000\") //1s\n> >> > +       c.Start()\n> >> > +       err = c.WaitTimeout(100000000) //0.1s\n> >> > +       if werr, ok := err.(*os.Waitmsg); ok {\n> >> > +               if s, e := werr.String(), \"signal 9\"; s != e {\n> >> > +                       t.Errorf(\"from sleep 1s with timeout 0.1s\n> >>\n> > got exit\n> >\n> >> > %q, want %q\", s, e)\n> >> > +               }\n> >> > +       } else {\n> >> > +               t.Error(\"expected Waitmsg from sleep 1s with timeout\n> >>\n> > 0.1s;\n> >\n> >> > got %T: %v\", err, err)\n> >> > +       }\n> >> > +}\n> >> > +\n> >> >  func TestPipes(t *testing.T) {\n> >> >        check := func(what string, err os.Error) {\n> >> >                if err != nil {\n> >> > @@ -208,6 +231,10 @@\n> >> >        case \"exit\":\n> >> >                n, _ := strconv.Atoi(args[0])\n> >> >                os.Exit(n)\n> >> > +       case \"sleep\":\n> >> > +               t, _ := strconv.Atoi64(args[0])\n> >> > +               time.Sleep(t)\n> >> > +               os.Exit(0)\n> >> >        default:\n> >> >                fmt.Fprintf(os.Stderr, \"Unknown command %q\\n\", cmd)\n> >> >                os.Exit(2)\n> >> >\n> >> >\n> >> >\n> >>\n> >\n> >\n> >\n> >\n> http://codereview.appspot.com/**4530108/%3Chttp://codereview.appspot.com/4530108/>\n> >",
+			"disapproval": false,
+			"date": "2011-06-07 16:09:36.310702",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": ">\n> I will send a new approach to add the timeout-feature in a more\n> generally useful way, without littering the package with stuff like\n> WaitTimeout, RunTimeout, CombineTimeout etc.\n\n\nAre you considering an inline call e.g. can be used as\nexec.Command(...).Timeout(1e9).Output()?  It's the sort of thing that's used\noften in some other languages, but not so often in Go that I've seen (though\nit is e.g. in appengine/datastore).\n",
+			"disapproval": false,
+			"date": "2011-06-07 16:19:24.760926",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"kevlar@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/06/07 16:19:24, kevlar wrote:\n> Are you considering an inline call e.g. can be used as\n> exec.Command(...).Timeout(1e9).Output()?  It's the sort of thing that's used\n> often in some other languages, but not so often in Go that I've seen (though\n> it is e.g. in appengine/datastore).\n\nI just wanted to add a public field, to keep things consistent with how Stdin,Stdout,Dir,Env etc work.\nI like the idea though. cmd.SetX(val) methods for these fields, returning cmd, would make inlining possible. But then we should be consistent and add them for all public fields, it's a seperate issue then imho.",
+			"disapproval": false,
+			"date": "2011-06-07 16:38:34.584112",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Sure, reasonable thing to do. I will keep it in my local copy for a\nwhile anyway. I'm in no hurry.\n\nOn 2011/06/07 22:00:50, bradfitz wrote:\n> I wouldn't mind it, but we haven't yet figured out our time type story, so I\n> really hate introducing new code that uses int64 for nanoseconds with a\n> field named simply and ambiguously \"Timeout\".\n> \n> Let's just put this on hold until time is figured out?\n\nFirst answer didn't come through for some reason, I hope it doesn't hit the list tomorrow or something, if it does, sorry for the double post.",
+			"disapproval": false,
+			"date": "2011-06-07 22:23:56.845529",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I am not convinced that timeouts belong in this package.\nLet calling code use goroutines.  That's what they're for.",
+			"disapproval": false,
+			"date": "2011-06-07 20:11:43.243324",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Tue, Jun 7, 2011 at 1:28 PM, <f1@uekermann-online.de> wrote:\n\n> On 2011/06/07 20:11:43, rsc wrote:\n>\n>> I am not convinced that timeouts belong in this package.\n>> Let calling code use goroutines.  That's what they're for.\n>>\n>\n> This isn't an ugly hack to work around concurrency. It's about limiting\n> the runtime of a process. Using goroutines isn't a solution. You can't\n> solve that without code like this, even outside this package. And as far\n> as I can see, the last version fits in nicely without introducing new\n> methods, changing the logic of existing ones or any other sideeffects.\n> Anyone who dislikes can just ignore it. And expecting a setting for a\n> runtime limit from a package that helps handling processes doesn't seem\n> far fetched to me.\n> I would appreciate an explanation of the problem, since I don't seem to\n> understand it.\n\n\nNow that Process is exposed, having a timeout in your caller code is just:\n\ncmd, err := exec.Command(\"slow\").Start()\n...\ntimer := time.AfterFunc(1e9, func() { cmd.Process.Kill() })\ncmd.Wait(0)\ntimer.Stop()\n\nJust two extra lines.\n",
+			"disapproval": false,
+			"date": "2011-06-07 20:36:23.878751",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"kevlar@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4530108/diff/8002/src/pkg/exec/exec.go\nFile src/pkg/exec/exec.go (right):\n\nhttp://codereview.appspot.com/4530108/diff/8002/src/pkg/exec/exec.go#newcode52\nsrc/pkg/exec/exec.go:52: // Timeout specifies the amount of time (in ns) spent in Wait,\nOn 2011/06/07 17:40:27, bradfitz wrote:\n> Maybe just:\n> \n> // Timeout specifies the amount of time (in nanoseconds) that\n> // the process is allowed to run before being killed.\n> // If the value is <= 0, no timer is run.\n\nI would like to be precise here, since the time spent between a Start and a Wait call doesn't count, that could confuse people.\n\nI first thought of working around that by starting the timer in Start, but I can't think of a sane usecase where one would need to start a timeout and would like to delay catching the waitmsg. So it's neither usefull nor does it resemble how these things work, at least not in linux.\n\nAbout \"SIGKILL is sent\" instead of \"killing\": We can't predict if the process is killed, can we? I'm not sure if its possible to change the owner of a process for example... ...if it isn't possible to prevent the process from exiting on Linux and Mac I am happy with your suggestion here.\n\nI will substitute the sentence I messed up with your last sentence.\n\nhttp://codereview.appspot.com/4530108/diff/8002/src/pkg/exec/exec.go#newcode275\nsrc/pkg/exec/exec.go:275: timer.Stop()\nOn 2011/06/07 17:40:27, bradfitz wrote:\n> do this with defer instead and don't repeat the c.process.Wait(0) line?\n\nI liked that one better too, but a defered timer.Stop() runs at the end of Wait(), not after the scope of timer ends, right? If I'm wrong here I all for defer.\n\nIt wouldn't be a big problem anyway, since the stuff going on afterwards isn't too serious, but I don't know how predictable the timing of the file-closing and channel-receiving is, so I went for the clean but slightly more ugly solution.\n\nWe could put things like this though:\nfunc(){\n  if c.Timeout > 0 {\n    timer := time.AfterFunc(c.Timeout, func() { c.process.Kill() })\n    defer timer.Stop()\n  }\n}\nmsg, err := c.process.Wait(0)\n\nIm not sure which one is more ugly, don't have much of an opinion here. Will do whatever anyone wants.",
+			"disapproval": false,
+			"date": "2011-06-07 18:21:21.033617",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Tue, Jun 7, 2011 at 1:36 PM, Brad Fitzpatrick <bradfitz@golang.org>wrote:\n\n> On Tue, Jun 7, 2011 at 1:28 PM, <f1@uekermann-online.de> wrote:\n>\n>> On 2011/06/07 20:11:43, rsc wrote:\n>>\n>>> I am not convinced that timeouts belong in this package.\n>>> Let calling code use goroutines.  That's what they're for.\n>>>\n>>\n>> This isn't an ugly hack to work around concurrency. It's about limiting\n>> the runtime of a process. Using goroutines isn't a solution. You can't\n>> solve that without code like this, even outside this package. And as far\n>> as I can see, the last version fits in nicely without introducing new\n>> methods, changing the logic of existing ones or any other sideeffects.\n>> Anyone who dislikes can just ignore it. And expecting a setting for a\n>> runtime limit from a package that helps handling processes doesn't seem\n>> far fetched to me.\n>> I would appreciate an explanation of the problem, since I don't seem to\n>> understand it.\n>\n>\n> Now that Process is exposed, having a timeout in your caller code is just:\n>\n> cmd, err := exec.Command(\"slow\").Start()\n> ...\n> timer := time.AfterFunc(1e9, func() { cmd.Process.Kill() })\n> cmd.Wait(0)\n>\n\nRather,\n\nerr := cmd.Wait()\n\n\n> timer.Stop()\n>\n> Just two extra lines.\n>\n",
+			"disapproval": false,
+			"date": "2011-06-07 20:36:57.775345",
+			"approval": false
+		},
+		{
+			"sender": "f1@uekermann-online.de",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"bradfitz@golang.org",
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": ":), I know... ...thats how it worked before I ported my things from os to the new exec package. \nIt looks like I'm fighting a lost cause here, so this will be the last try message this issue.\n\nAlthough this is a nice solution:\n\ncmd, err := exec.Command(\"slow\").Start()\ntimer := time.AfterFunc(1e9, func() { cmd.Process.Kill() })\nerr := cmd.Wait()\ntimer.Stop()\n\nyou have to admit, that this code is much nicer:\n\ncmd, err := exec.Command(\"slow\")\ncmd.Timeout=1e9\nerr:=cmd.Run()\n\nnot mentioning that you get guarantee of nothing being nil (cmd.Process as receiver of Kill()) and causing a runtime panic, without having to look at the library code. Plus: I don't see the downside.\n\nIt just fits in, like many other small details in the various packages that only exist to make everyday programming a bit easier. Everyone could write it for himself, but there is just no point in doing that if it fits in the libraries.\n\nGiven the task: Call a program, but make sure it gets killed if it doesn't return after three minutes!, how many good solutions would you expect in a normal \"scientific programming\" class for... ...physicists. I would be surprised if it was more than 10% without providing a function like this. With it you get 100%, and you saved everyone an hour of doc research.\n\nAnd don't say that setting an execution time limit isn't an obvious thing you want to do if you call a process. It's the only control mechanism you have.\n\nIf someone wants to revive this one at some point in the future, I'm happy to fix the last one or two lines of the patch and send it again. I'm quite happy with the current code, much more than I was with the original proposal, so thanks for pushing me in the right direction anyway, if nothing else, it was nice practice for writing good libraries :).\n\nRegards,\nFlorian\n\nPS.: Sorry, too long, got carried away.. ....happens easily when I'm tired.",
+			"disapproval": false,
+			"date": "2011-06-07 21:51:48.646972",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I wouldn't mind it, but we haven't yet figured out our time type story, so I\nreally hate introducing new code that uses int64 for nanoseconds with a\nfield named simply and ambiguously \"Timeout\".\n\nLet's just put this on hold until time is figured out?\n\n\nOn Tue, Jun 7, 2011 at 2:51 PM, <f1@uekermann-online.de> wrote:\n\n> :), I know... ...thats how it worked before I ported my things from os\n> to the new exec package.\n> It looks like I'm fighting a lost cause here, so this will be the last\n> try message this issue.\n>\n> Although this is a nice solution:\n>\n>\n> cmd, err := exec.Command(\"slow\").Start()\n> timer := time.AfterFunc(1e9, func() { cmd.Process.Kill() })\n> err := cmd.Wait()\n> timer.Stop()\n>\n> you have to admit, that this code is much nicer:\n>\n>\n> cmd, err := exec.Command(\"slow\")\n> cmd.Timeout=1e9\n> err:=cmd.Run()\n>\n> not mentioning that you get guarantee of nothing being nil (cmd.Process\n> as receiver of Kill()) and causing a runtime panic, without having to\n> look at the library code. Plus: I don't see the downside.\n>\n> It just fits in, like many other small details in the various packages\n> that only exist to make everyday programming a bit easier. Everyone\n> could write it for himself, but there is just no point in doing that if\n> it fits in the libraries.\n>\n> Given the task: Call a program, but make sure it gets killed if it\n> doesn't return after three minutes!, how many good solutions would you\n> expect in a normal \"scientific programming\" class for... ...physicists.\n> I would be surprised if it was more than 10% without providing a\n> function like this. With it you get 100%, and you saved everyone an hour\n> of doc research.\n>\n> And don't say that setting an execution time limit isn't an obvious\n> thing you want to do if you call a process. It's the only control\n> mechanism you have.\n>\n> If someone wants to revive this one at some point in the future, I'm\n> happy to fix the last one or two lines of the patch and send it again.\n> I'm quite happy with the current code, much more than I was with the\n> original proposal, so thanks for pushing me in the right direction\n> anyway, if nothing else, it was nice practice for writing good libraries\n> :).\n>\n> Regards,\n> Florian\n>\n> PS.: Sorry, too long, got carried away.. ....happens easily when I'm\n> tired.\n>\n>\n> http://codereview.appspot.com/**4530108/<http://codereview.appspot.com/4530108/>\n>\n",
+			"disapproval": false,
+			"date": "2011-06-07 22:00:50.081337",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"f1@uekermann-online.de",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2012-06-03 04:51:15.351504",
+			"approval": false
+		}
+	],
+	"owner_email": "f1@uekermann-online.de",
+	"private": false,
+	"base_url": "",
+	"owner": "Florian Uekermann",
+	"subject": "code review 4530108: exec: add timeout",
+	"created": "2011-06-04 21:56:48.525413",
+	"patchsets": [
+		2001,
+		4001,
+		8002
+	],
+	"modified": "2012-06-03 04:51:15.351902",
+	"closed": false,
+	"issue": 4530108
+}

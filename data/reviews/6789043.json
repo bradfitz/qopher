@@ -1,0 +1,201 @@
+{
+	"description": "os/exec: fix possible data loss and fd leak\n\nThe reasonable-seeming code below could lose data and it\nwill not terminate if the command does not exist.\n\nIt can lose data because the client side of the pipe\nis closed after Wait returns, even if we haven't read\nall the data yet.\n\nIt won't terminate when the command is not found because\nthe server side of the pipe is not closed by Run if the command\nwas not found, so the io.Copy never gets EOF.\n\n        func getOutput(cmd string) (string, error) {\n                c := exec.Command(cmd)\n                r, err := c.StdoutPipe()\n                if err != nil {\n                        return \"\", err\n                }\n                done := make(chan bool, 1)\n                var buf bytes.Buffer\n                go func() {\n                        io.Copy(&buf, r)\n                        r.Close()\n                        done <- true\n                }()\n                err = c.Run()\n                <-done\n                return buf.String(), err\n        }\n\nThis CL fixes the first issue above by making sure that\nthe server side of the pipe is always closed\nwhen Start is called, even if Start returns an error.\n\nIt fixes the second issue by not closing the client\nside of the pipe at all, and leaving it up to the\ncode that calls StdoutPipe to close it for itself.\nIt could be argued that this breaks the Go 1 contract,\nbut I think it's a bug that needs fixing.\n\nFixes issue 4290.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-10-26 10:29:35.497360",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 26 October 2012 11:29,  <rogpeppe@gmail.com> wrote:\r\n> Related aside:\r\n>\r\n> I think it's a mistake that the ReadCloser returned by\r\n> StdoutPipe and StderrPipe is closed after Wait is called.\r\n> In particular, it's sometimes useful to call Cmd.Run and\r\n> have an independent goroutine reading the output pipe,\r\n> but if the reader side of the pipe is closed after Wait, the\r\n> Wait must be called after the reader completes, compromising\r\n> the reader's independence.\r\n>\r\n> A more succinct argument: if something gives me a ReadCloser,\r\n> it's usual that I'm the one expected to close it.\r\n\r\nI created issue 4290 to track this.\r\n",
+			"disapproval": false,
+			"date": "2012-10-26 14:15:17.900760",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Your CL description subject doesn't really match the CL description body\r\nand code.\r\n\r\nIt's more like:\r\n\r\n    os/exec: move where things are cleaned up failure\r\n\r\nI think most people are going to check the return value from Start before\r\ndoing other stuff, so how we have it now probably works more often.\r\n\r\nChanging this feels like it'll just surprise a different set of people.\r\n\r\nWith this CL, you're just making the reader get a different error instead\r\nof EOF?  That seems acceptable in an error case?\r\n\r\n\r\nOn Fri, Oct 26, 2012 at 3:29 AM, <rogpeppe@gmail.com> wrote:\r\n\r\n> Reviewers: bradfitz,\r\n>\r\n> Message:\r\n> Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://go.googlecode.com/hg/\r\n>\r\n>\r\n> Description:\r\n> os/exec: fix fd leak on error\r\n>\r\n> This is by no means the only possible solution.\r\n> Another possibility would be to cause StdoutPipe\r\n> to fail if c.err is not nil. I'm not keen on that because\r\n> means the error is now seen in an unexpected\r\n> place.\r\n>\r\n> I think the \"bad file descriptor\" check is probably bogus\r\n> because it's OS specific. Better suggestions\r\n> welcome.\r\n>\r\n> Related aside:\r\n>\r\n> I think it's a mistake that the ReadCloser returned by\r\n> StdoutPipe and StderrPipe is closed after Wait is called.\r\n> In particular, it's sometimes useful to call Cmd.Run and\r\n> have an independent goroutine reading the output pipe,\r\n> but if the reader side of the pipe is closed after Wait, the\r\n> Wait must be called after the reader completes, compromising\r\n> the reader's independence.\r\n>\r\n> A more succinct argument: if something gives me a ReadCloser,\r\n> it's usual that I'm the one expected to close it.\r\n>\r\n> Whether we could/should fix this is another matter.\r\n>\r\n> Please review this at http://codereview.appspot.com/**6789043/<http://codereview.appspot.com/6789043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/os/exec/exec.go\r\n>   M src/pkg/os/exec/exec_test.go\r\n>\r\n>\r\n> Index: src/pkg/os/exec/exec.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/os/exec/exec.go\r\n> +++ b/src/pkg/os/exec/exec.go\r\n> @@ -227,6 +227,7 @@\r\n>  // returned for I/O problems.\r\n>  func (c *Cmd) Run() error {\r\n>         if err := c.Start(); err != nil {\r\n> +               c.closeDescriptors(c.**closeAfterWait)\r\n>                 return err\r\n>         }\r\n>         return c.Wait()\r\n> @@ -235,6 +236,7 @@\r\n>  // Start starts the specified command but does not wait for it to\r\n> complete.\r\n>  func (c *Cmd) Start() error {\r\n>         if c.err != nil {\r\n> +               c.closeDescriptors(c.**closeAfterStart)\r\n>                 return c.err\r\n>         }\r\n>         if c.Process != nil {\r\n> Index: src/pkg/os/exec/exec_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/os/exec/exec_test.go\r\n> +++ b/src/pkg/os/exec/exec_test.go\r\n> @@ -93,6 +93,42 @@\r\n>         }\r\n>  }\r\n>\r\n> +func TestPipeWriterClosedAfterStart**Error(t *testing.T) {\r\n> +       c := Command(\"non-existent command\")\r\n> +       r, err := c.StdoutPipe()\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"cannot make stdout pipe: %v\", err)\r\n> +       }\r\n> +       c.Start()\r\n> +       _, err = r.Read(make([]byte, 10))\r\n> +       if err != io.EOF {\r\n> +               t.Fatalf(\"got %q, want io.EOF\", err)\r\n> +       }\r\n> +}\r\n> +\r\n> +func testPipeClosedAfterRun(t *testing.T, c *Cmd) {\r\n> +       r, err := c.StdoutPipe()\r\n> +       if err != nil {\r\n> +               t.Fatalf(\"cannot make stdout pipe: %v\", err)\r\n> +       }\r\n> +       c.Run()\r\n> +       _, err = r.Read(make([]byte, 10))\r\n> +       if err == nil {\r\n> +               t.Fatalf(\"got no error, want bad fd\")\r\n> +       }\r\n> +       if !strings.HasSuffix(err.Error()**, \"bad file descriptor\") {\r\n> +               t.Fatalf(\"got %q, want bad file descriptor error\", err)\r\n> +       }\r\n> +}\r\n> +\r\n> +func TestPipeCloseAfterRun(t *testing.T) {\r\n> +       c := helperCommand(\"exit\", \"0\")\r\n> +       testPipeClosedAfterRun(t, c)\r\n> +\r\n> +       c = Command(\"non-existent command\")\r\n> +       testPipeClosedAfterRun(t, c)\r\n> +}\r\n> +\r\n>  func TestPipes(t *testing.T) {\r\n>         check := func(what string, err error) {\r\n>                 if err != nil {\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-10-26 15:05:49.648870",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 26 October 2012 16:04, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> Your CL description subject doesn't really match the CL description body and\r\n> code.\r\n>\r\n> It's more like:\r\n>\r\n>     os/exec: move where things are cleaned up failure\r\n>\r\n> I think most people are going to check the return value from Start before\r\n> doing other stuff, so how we have it now probably works more often.\r\n>\r\n> Changing this feels like it'll just surprise a different set of people.\r\n>\r\n> With this CL, you're just making the reader get a different error instead of\r\n> EOF?  That seems acceptable in an error case?\r\n\r\nI'm not sure that helps. StdoutPipe must be called before Start, so\r\nchecking Start's error return is not useful in fixing this issue AFAICS.\r\nIf I have this code (which I think is reasonably idiomatic):\r\n\r\n    c := exec.Command(\"some-command-that-does-not-exist\")\r\n    r, err := c.StdoutPipe()\r\n    if err != nil {\r\n        return err\r\n    }\r\n    err := c.Run()\r\n    if err != nil {\r\n        return err\r\n    }\r\n    io.Copy(dest, r)\r\n\r\n\r\nthen:\r\n\r\na) the client side of the stdout pipe will not be closed (the user\r\nmust close it explicitly\r\nif run fails, which actually i think is fine, because i think the user should\r\n*always* close it, as per issue 4290, but breaks likely current assumptions).\r\n\r\nb) the server side of the stdout pipe is not closed and cannot\r\nbe closed by the user except by doing something like\r\nc.Stdout.(io.ReadCloser).Close() which seems wrong to me.\r\n\r\nas an example, the only instance in the Go core code that uses StdoutPipe,\r\nnet/http/cgi, will be vulnerable to this leak AFAICS.\r\n",
+			"disapproval": false,
+			"date": "2012-10-26 15:41:28.908960",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL.\n\nI've changed the scope of this issue to fix another closely\nrelated issue at the same time.",
+			"disapproval": false,
+			"date": "2012-10-30 11:00:24.985060",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Okay, this makes more sense now with the updated CL description and tests.\n\nI wonder whether, for Go 1 compatibility reasons, we should have the StdoutPipe and StderrPipe io.ReadCloser close automatically (but once) on Read EOF.  An EOF will Close (and release the pipe fd), but another explicit Close will be a no-op.\n\nhttps://codereview.appspot.com/6789043/diff/11001/src/pkg/os/exec/exec_test.go\nFile src/pkg/os/exec/exec_test.go (right):\n\nhttps://codereview.appspot.com/6789043/diff/11001/src/pkg/os/exec/exec_test.go#newcode105\nsrc/pkg/os/exec/exec_test.go:105: t.Fatalf(\"start succeeded unexpectedly\")\ns/Fatalf/Fatal/\n\nhttps://codereview.appspot.com/6789043/diff/11001/src/pkg/os/exec/exec_test.go#newcode108\nsrc/pkg/os/exec/exec_test.go:108: t.Fatalf(\"server side of pipe was not closed\")\nFatal\n\nhttps://codereview.appspot.com/6789043/diff/11001/src/pkg/os/exec/exec_test.go#newcode131\nsrc/pkg/os/exec/exec_test.go:131: <-done\nselect {\ncase <-done:\ncase <-time.After(10 * time.Second):\n   t.Fatal(\"timeout waiting for copy goroutine\")\n}",
+			"disapproval": false,
+			"date": "2012-10-30 11:57:38.771830",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 30 October 2012 11:57,  <bradfitz@golang.org> wrote:\r\n> Okay, this makes more sense now with the updated CL description and\r\n> tests.\r\n>\r\n> I wonder whether, for Go 1 compatibility reasons, we should have the\r\n> StdoutPipe and StderrPipe io.ReadCloser close automatically (but once)\r\n> on Read EOF.  An EOF will Close (and release the pipe fd), but another\r\n> explicit Close will be a no-op.\r\n\r\nI'm not sure we can do that without making StdoutPipe return something\r\nthat's not of type *os.File, and I suspect that really would break things\r\n(and, worse, at run time not compile time)\r\n\r\nThe reason for my \"still wrong\" comment above is that removing closeAfterWait\r\nmeans that if a setupFd fails, it can leak earlier file descriptors\r\ncreated by setupFd.\r\n\r\nThe other issue that still concerns me is the following:\r\n\r\n    c := exec.Command(\"something\")\r\n    r0, err := c.StdoutPipe()\r\n    if err != nil {\r\n         return\r\n    }\r\n    defer r0.Close()\r\n    r1, err := c.StderrPipe()\r\n    if err != nil {\r\n        return\r\n    }\r\n    defer r1.Close()\r\n    err = c.Start()\r\n    if err != nil {\r\n         return\r\n    }\r\n\r\nI think we want the above code to be leak free in all error\r\ncases, but it's not - if StdoutPipe succeeds but StderrPipe\r\nfails then we'll leak the server side of the stdout pipe.\r\n\r\nI *think* that the only decent solution to this is to change\r\neach *Pipe method so that\r\na) if there's already been an error, it fails\r\nb) when it fail, it closes all server-side pipe ends.\r\n\r\nThis would result in one significant alteration in semantics - the\r\nerror from a non-existent executable would be detected earlier\r\nthan currently.\r\n\r\nI suspect there are probably nicer solutions though.\r\n",
+			"disapproval": false,
+			"date": "2012-10-30 13:22:52.288370",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 30 October 2012 11:00,  <rogpeppe@gmail.com> wrote:\r\n> PTAL.\r\n>\r\n> I've changed the scope of this issue to fix another closely\r\n> related issue at the same time.\r\n\r\nhmm, this is still wrong, sorry.\r\n",
+			"disapproval": false,
+			"date": "2012-10-30 11:44:21.056950",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping\r\n\r\nOn 30 October 2012 13:22, roger peppe <rogpeppe@gmail.com> wrote:\r\n> On 30 October 2012 11:57,  <bradfitz@golang.org> wrote:\r\n>> Okay, this makes more sense now with the updated CL description and\r\n>> tests.\r\n>>\r\n>> I wonder whether, for Go 1 compatibility reasons, we should have the\r\n>> StdoutPipe and StderrPipe io.ReadCloser close automatically (but once)\r\n>> on Read EOF.  An EOF will Close (and release the pipe fd), but another\r\n>> explicit Close will be a no-op.\r\n>\r\n> I'm not sure we can do that without making StdoutPipe return something\r\n> that's not of type *os.File, and I suspect that really would break things\r\n> (and, worse, at run time not compile time)\r\n>\r\n> The reason for my \"still wrong\" comment above is that removing closeAfterWait\r\n> means that if a setupFd fails, it can leak earlier file descriptors\r\n> created by setupFd.\r\n>\r\n> The other issue that still concerns me is the following:\r\n>\r\n>     c := exec.Command(\"something\")\r\n>     r0, err := c.StdoutPipe()\r\n>     if err != nil {\r\n>          return\r\n>     }\r\n>     defer r0.Close()\r\n>     r1, err := c.StderrPipe()\r\n>     if err != nil {\r\n>         return\r\n>     }\r\n>     defer r1.Close()\r\n>     err = c.Start()\r\n>     if err != nil {\r\n>          return\r\n>     }\r\n>\r\n> I think we want the above code to be leak free in all error\r\n> cases, but it's not - if StdoutPipe succeeds but StderrPipe\r\n> fails then we'll leak the server side of the stdout pipe.\r\n>\r\n> I *think* that the only decent solution to this is to change\r\n> each *Pipe method so that\r\n> a) if there's already been an error, it fails\r\n> b) when it fail, it closes all server-side pipe ends.\r\n>\r\n> This would result in one significant alteration in semantics - the\r\n> error from a non-existent executable would be detected earlier\r\n> than currently.\r\n>\r\n> I suspect there are probably nicer solutions though.\r\n",
+			"disapproval": false,
+			"date": "2012-11-12 19:59:03.623800",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Oct 30, 2012 at 6:22 AM, roger peppe <rogpeppe@gmail.com> wrote:\r\n\r\n> On 30 October 2012 11:57,  <bradfitz@golang.org> wrote:\r\n> > Okay, this makes more sense now with the updated CL description and\r\n> > tests.\r\n> >\r\n> > I wonder whether, for Go 1 compatibility reasons, we should have the\r\n> > StdoutPipe and StderrPipe io.ReadCloser close automatically (but once)\r\n> > on Read EOF.  An EOF will Close (and release the pipe fd), but another\r\n> > explicit Close will be a no-op.\r\n>\r\n> I'm not sure we can do that without making StdoutPipe return something\r\n> that's not of type *os.File, and I suspect that really would break things\r\n> (and, worse, at run time not compile time)\r\n>\r\n\r\nWell, we never promised in the go1 contract what the underlying type is.\r\n And it's possible for code to be updated to work with both go1 and go1.1\r\nby doing a comma-ok type assertion, so it's not as bad as real API changes\r\nwhere code won't compile in both.\r\n\r\n\r\n> The reason for my \"still wrong\" comment above is that removing\r\n> closeAfterWait\r\n> means that if a setupFd fails, it can leak earlier file descriptors\r\n> created by setupFd.\r\n\r\n\r\n> The other issue that still concerns me is the following:\r\n>\r\n>     c := exec.Command(\"something\")\r\n>     r0, err := c.StdoutPipe()\r\n>     if err != nil {\r\n>          return\r\n>     }\r\n>     defer r0.Close()\r\n>     r1, err := c.StderrPipe()\r\n>     if err != nil {\r\n>         return\r\n>     }\r\n>     defer r1.Close()\r\n>     err = c.Start()\r\n>     if err != nil {\r\n>          return\r\n>     }\r\n>\r\n> I think we want the above code to be leak free in all error\r\n> cases, but it's not - if StdoutPipe succeeds but StderrPipe\r\n> fails then we'll leak the server side of the stdout pipe.\r\n>\r\n> I *think* that the only decent solution to this is to change\r\n> each *Pipe method so that\r\n> a) if there's already been an error, it fails\r\n> b) when it fail, it closes all server-side pipe ends.\r\n>\r\n> This would result in one significant alteration in semantics - the\r\n> error from a non-existent executable would be detected earlier\r\n> than currently.\r\n>\r\n\r\nWhy?  Just close all the write sides after the Start fails?\r\n\r\n\r\n>\r\n> I suspect there are probably nicer solutions though.\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-11-12 23:57:35.522650",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 12 November 2012 23:57, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n>\r\n>\r\n> On Tue, Oct 30, 2012 at 6:22 AM, roger peppe <rogpeppe@gmail.com> wrote:\r\n>>\r\n>> On 30 October 2012 11:57,  <bradfitz@golang.org> wrote:\r\n>> > Okay, this makes more sense now with the updated CL description and\r\n>> > tests.\r\n>> >\r\n>> > I wonder whether, for Go 1 compatibility reasons, we should have the\r\n>> > StdoutPipe and StderrPipe io.ReadCloser close automatically (but once)\r\n>> > on Read EOF.  An EOF will Close (and release the pipe fd), but another\r\n>> > explicit Close will be a no-op.\r\n>>\r\n>> I'm not sure we can do that without making StdoutPipe return something\r\n>> that's not of type *os.File, and I suspect that really would break things\r\n>> (and, worse, at run time not compile time)\r\n>\r\n>\r\n> Well, we never promised in the go1 contract what the underlying type is.\r\n> And it's possible for code to be updated to work with both go1 and go1.1 by\r\n> doing a comma-ok type assertion, so it's not as bad as real API changes\r\n> where code won't compile in both.\r\n\r\nMy concern here is that we'd be adding this type for compatibility reasons,\r\nbut we can break code as well as fixing it.\r\n\r\nHowever, after looking at a moderately representative example of code\r\nout there using StdoutPipe (I downloaded all the packages mentioned in\r\ngo.pkgdoc.org)\r\nI think you're right - I don't see any code type-asserting to *os.File, but\r\nI've seen quite a few places that will leak if we don't close\r\nit automatically. I've also seen quite a few places that have bugs that\r\nwill be fixed by this CL.\r\n\r\n>> The reason for my \"still wrong\" comment above is that removing\r\n>> closeAfterWait\r\n>> means that if a setupFd fails, it can leak earlier file descriptors\r\n>> created by setupFd.\r\n>>\r\n>>\r\n>> The other issue that still concerns me is the following:\r\n>>\r\n>>     c := exec.Command(\"something\")\r\n>>     r0, err := c.StdoutPipe()\r\n>>     if err != nil {\r\n>>          return\r\n>>     }\r\n>>     defer r0.Close()\r\n>>     r1, err := c.StderrPipe()\r\n>>     if err != nil {\r\n>>         return\r\n>>     }\r\n>>     defer r1.Close()\r\n>>     err = c.Start()\r\n>>     if err != nil {\r\n>>          return\r\n>>     }\r\n>>\r\n>> I think we want the above code to be leak free in all error\r\n>> cases, but it's not - if StdoutPipe succeeds but StderrPipe\r\n>> fails then we'll leak the server side of the stdout pipe.\r\n>>\r\n>> I *think* that the only decent solution to this is to change\r\n>> each *Pipe method so that\r\n>> a) if there's already been an error, it fails\r\n>> b) when it fail, it closes all server-side pipe ends.\r\n>>\r\n>> This would result in one significant alteration in semantics - the\r\n>> error from a non-existent executable would be detected earlier\r\n>> than currently.\r\n>\r\n>\r\n> Why?  Just close all the write sides after the Start fails?\r\n\r\nThe problem is that lots of code is similar to the sample\r\nabove - if it sees that StdoutPipe fails, it stops there and then,\r\nso Start never has a chance to act.\r\n\r\nTake a look at net/http/cgi/host.go:/ServeHTTP for an example.\r\n",
+			"disapproval": false,
+			"date": "2012-11-13 11:43:31.659110",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Nov 13, 2012 at 3:43 AM, roger peppe <rogpeppe@gmail.com> wrote:\r\n\r\n> On 12 November 2012 23:57, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> >\r\n> >\r\n> > On Tue, Oct 30, 2012 at 6:22 AM, roger peppe <rogpeppe@gmail.com> wrote:\r\n> >>\r\n> >> On 30 October 2012 11:57,  <bradfitz@golang.org> wrote:\r\n> >> > Okay, this makes more sense now with the updated CL description and\r\n> >> > tests.\r\n> >> >\r\n> >> > I wonder whether, for Go 1 compatibility reasons, we should have the\r\n> >> > StdoutPipe and StderrPipe io.ReadCloser close automatically (but once)\r\n> >> > on Read EOF.  An EOF will Close (and release the pipe fd), but another\r\n> >> > explicit Close will be a no-op.\r\n> >>\r\n> >> I'm not sure we can do that without making StdoutPipe return something\r\n> >> that's not of type *os.File, and I suspect that really would break\r\n> things\r\n> >> (and, worse, at run time not compile time)\r\n> >\r\n> >\r\n> > Well, we never promised in the go1 contract what the underlying type is.\r\n> > And it's possible for code to be updated to work with both go1 and go1.1\r\n> by\r\n> > doing a comma-ok type assertion, so it's not as bad as real API changes\r\n> > where code won't compile in both.\r\n>\r\n> My concern here is that we'd be adding this type for compatibility reasons,\r\n> but we can break code as well as fixing it.\r\n>\r\n\r\nIt'd be a private type.  If it's too much of a problem for some\r\nyet-unidentified user, we could always add a method on that private type:\r\n\r\nfunc (c *closeOnEOFReader) File() *os.File { ... }\r\n\r\nAnd they could assert for that interface if they really needed the\r\n*os.File.  I'm not proposing that (yet?) though.\r\n\r\n>\r\n> However, after looking at a moderately representative example of code\r\n> out there using StdoutPipe (I downloaded all the packages mentioned in\r\n> go.pkgdoc.org)\r\n> I think you're right - I don't see any code type-asserting to *os.File, but\r\n> I've seen quite a few places that will leak if we don't close\r\n> it automatically. I've also seen quite a few places that have bugs that\r\n> will be fixed by this CL.\r\n>\r\n\r\nIs this CL done?  It sounds like there's more you want to do.\r\n\r\n\r\n> >> The reason for my \"still wrong\" comment above is that removing\r\n> >> closeAfterWait\r\n> >> means that if a setupFd fails, it can leak earlier file descriptors\r\n> >> created by setupFd.\r\n> >>\r\n> >>\r\n> >> The other issue that still concerns me is the following:\r\n> >>\r\n> >>     c := exec.Command(\"something\")\r\n> >>     r0, err := c.StdoutPipe()\r\n> >>     if err != nil {\r\n> >>          return\r\n> >>     }\r\n> >>     defer r0.Close()\r\n> >>     r1, err := c.StderrPipe()\r\n> >>     if err != nil {\r\n> >>         return\r\n> >>     }\r\n> >>     defer r1.Close()\r\n> >>     err = c.Start()\r\n> >>     if err != nil {\r\n> >>          return\r\n> >>     }\r\n> >>\r\n> >> I think we want the above code to be leak free in all error\r\n> >> cases, but it's not - if StdoutPipe succeeds but StderrPipe\r\n> >> fails then we'll leak the server side of the stdout pipe.\r\n> >>\r\n> >> I *think* that the only decent solution to this is to change\r\n> >> each *Pipe method so that\r\n> >> a) if there's already been an error, it fails\r\n> >> b) when it fail, it closes all server-side pipe ends.\r\n> >>\r\n> >> This would result in one significant alteration in semantics - the\r\n> >> error from a non-existent executable would be detected earlier\r\n> >> than currently.\r\n> >\r\n> >\r\n> > Why?  Just close all the write sides after the Start fails?\r\n>\r\n> The problem is that lots of code is similar to the sample\r\n> above - if it sees that StdoutPipe fails, it stops there and then,\r\n> so Start never has a chance to act.\r\n>\r\n> Take a look at net/http/cgi/host.go:/ServeHTTP for an example.\r\n>\r\n\r\nThat code seems fine.  But you're saying if we'd also called StderrPipe\r\nfirst, we could leak the write side of StderrPipe if StdoutPipe failed?\r\n So, sure, add a cmd.cleanup() method called in a few error paths in the\r\nexec package, closing things.\r\n\r\nLet me know when you have another version of this patch for review.\r\n",
+			"disapproval": false,
+			"date": "2012-11-13 15:06:17.716690",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I agree that the code in the CL description is reasonable sounding, and if we had more flexibility in the API I'd probably change something. But there is a good way to work within the current API:\n\ncall StdoutPipe\ncall Start\nRead until EOF\ncall Wait\n\nIt doesn't even need a goroutine. All the code changes we can make are API changes in one form or another. Perhaps the right solution is to make the docs very clear, by way of an example, what the working way to read from a pipe is, so that people won't arrive at the \"reasonable sounding\" version.",
+			"disapproval": false,
+			"date": "2012-11-13 15:22:30.509220",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 13 November 2012 15:22,  <rsc@golang.org> wrote:\r\n> I agree that the code in the CL description is reasonable sounding, and\r\n> if we had more flexibility in the API I'd probably change something. But\r\n> there is a good way to work within the current API:\r\n>\r\n> call StdoutPipe\r\n> call Start\r\n> Read until EOF\r\n> call Wait\r\n>\r\n> It doesn't even need a goroutine. All the code changes we can make are\r\n> API changes in one form or another. Perhaps the right solution is to\r\n> make the docs very clear, by way of an example, what the working way to\r\n> read from a pipe is, so that people won't arrive at the \"reasonable\r\n> sounding\" version.\r\n\r\nUnfortunately the above doesn't work if the started process forks\r\nanother process in the background. In that case the Read can\r\ntake an indefinite time to return, and for some code (this was\r\nthe example that brought me up against this problem) it is\r\nactually the original process exiting that is important.\r\n\r\nHowever, we were able to work around the issue by using\r\nos.Pipe directly, rather than StdoutPipe,  and perhaps that's\r\nhow it should be.\r\n\r\nWhat do you think about the leak-on-error issue? Should we document\r\nthat it's important to call Start even when a *Pipe method call\r\nfails?\r\n",
+			"disapproval": false,
+			"date": "2012-11-14 08:43:42.621360",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Wed, Nov 14, 2012 at 12:43 AM, roger peppe <rogpeppe@gmail.com> wrote:\r\n\r\n> On 13 November 2012 15:22,  <rsc@golang.org> wrote:\r\n> > I agree that the code in the CL description is reasonable sounding, and\r\n> > if we had more flexibility in the API I'd probably change something. But\r\n> > there is a good way to work within the current API:\r\n> >\r\n> > call StdoutPipe\r\n> > call Start\r\n> > Read until EOF\r\n> > call Wait\r\n> >\r\n> > It doesn't even need a goroutine. All the code changes we can make are\r\n> > API changes in one form or another. Perhaps the right solution is to\r\n> > make the docs very clear, by way of an example, what the working way to\r\n> > read from a pipe is, so that people won't arrive at the \"reasonable\r\n> > sounding\" version.\r\n>\r\n> Unfortunately the above doesn't work if the started process forks\r\n> another process in the background. In that case the Read can\r\n> take an indefinite time to return, and for some code (this was\r\n> the example that brought me up against this problem) it is\r\n> actually the original process exiting that is important.\r\n>\r\n\r\nWhy was the first process leaking stdout to its child?  Sounds like the\r\nreal problem.\r\n\r\n\r\n> What do you think about the leak-on-error issue? Should we document\r\n> that it's important to call Start even when a *Pipe method call\r\n> fails?\r\n>\r\n\r\nIf StdoutPipe or StderrPipe fails, the program's probably already pretty\r\nscrewed (nothing good happens when you're out of fds), so I'm not too\r\nworried.  Especially because the finalizer will close it anyway.  I would\r\nerr on the side less esoteric docs.\r\n",
+			"disapproval": false,
+			"date": "2012-11-14 16:59:04.095700",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 14 November 2012 16:59, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n>> Unfortunately the above doesn't work if the started process forks\r\n>> another process in the background. In that case the Read can\r\n>> take an indefinite time to return, and for some code (this was\r\n>> the example that brought me up against this problem) it is\r\n>> actually the original process exiting that is important.\r\n>\r\n>\r\n> Why was the first process leaking stdout to its child?  Sounds like the real\r\n> problem.\r\n\r\nThe first process is a shell script written by some third party - we don't\r\nhave control over it, but it's important that we finish when the script\r\nfinishes.\r\n\r\nI suppose this may be a relatively unusual requirement,\r\nand thus justify a special treatment. I didn't think so at the time,\r\nbut if we can't change the os/exec API at all, we can live with it.\r\n\r\n>> What do you think about the leak-on-error issue? Should we document\r\n>> that it's important to call Start even when a *Pipe method call\r\n>> fails?\r\n>\r\n>\r\n> If StdoutPipe or StderrPipe fails, the program's probably already pretty\r\n> screwed (nothing good happens when you're out of fds), so I'm not too\r\n> worried.  Especially because the finalizer will close it anyway.  I would\r\n> err on the side less esoteric docs.\r\n\r\nOK, seems good to me.\r\n\r\nI'll abandon the CL and we'll write some docs/examples to point\r\nout the pitfalls.\r\n\r\n  cheers,\r\n    rog.\r\n",
+			"disapproval": false,
+			"date": "2012-11-14 18:00:46.203960",
+			"approval": false
+		}
+	],
+	"owner_email": "rogpeppe@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "rog",
+	"subject": "code review 6789043: os/exec: fix fd leak on error",
+	"created": "2012-10-26 10:25:45.199190",
+	"patchsets": [
+		1,
+		3,
+		4,
+		9001,
+		11001
+	],
+	"modified": "2012-11-14 18:00:46.203960",
+	"closed": false,
+	"issue": 6789043
+}

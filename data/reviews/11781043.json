@@ -1,0 +1,135 @@
+{
+	"description": "go.crypto/ssh: Use net.UnixConn for connecting client and sshd.\n\nThis obviates custom code to emulate a thread-safe connection.\n\nUse this for testing that listeners close if the connection breaks.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"dave@cheney.net",
+		"agl@golang.org",
+		"fullung@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello dave@cheney.net, agl@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.crypto",
+			"disapproval": false,
+			"date": "2013-07-24 20:18:23.853890",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "tested with go test -race ; the result is clean.",
+			"disapproval": false,
+			"date": "2013-07-24 20:20:34.483360",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/11781043/diff/2001/ssh/test/forward_unix_test.go\nFile ssh/test/forward_unix_test.go (right):\n\nhttps://codereview.appspot.com/11781043/diff/2001/ssh/test/forward_unix_test.go#newcode176\nssh/test/forward_unix_test.go:176: server.clientConn.Close()\nI tried closing the server-side too, but for some reason that does not cause the client-side read to exit.",
+			"disapproval": false,
+			"date": "2013-07-24 20:22:03.974840",
+			"approval": false
+		},
+		{
+			"sender": "fullung@gmail.com",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/07/24 20:22:03, hanwen wrote:\n> https://codereview.appspot.com/11781043/diff/2001/ssh/test/forward_unix_test.go\n> File ssh/test/forward_unix_test.go (right):\n> \n> https://codereview.appspot.com/11781043/diff/2001/ssh/test/forward_unix_test.go#newcode176\n> ssh/test/forward_unix_test.go:176: server.clientConn.Close()\n> I tried closing the server-side too, but for some reason that does not cause the\n> client-side read to exit.\n\nThis usually happens if you have two file descriptors open for the same UNIX socket but only close one of them, e.g. c2 and c2.File().\n\nSocketpair is a bit cleaner than the TempFile approach.\n\nCheers\n\nAlbert",
+			"disapproval": false,
+			"date": "2013-07-25 01:26:35.271710",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Very nice, I like the way TryDial will have cleaned up everything on disk before even starting the test.\n\nI think this is very close, just a few nits to fix.\n\nhttps://codereview.appspot.com/11781043/diff/2001/ssh/test/test_unix_test.go\nFile ssh/test/test_unix_test.go (right):\n\nhttps://codereview.appspot.com/11781043/diff/2001/ssh/test/test_unix_test.go#newcode178\nssh/test/test_unix_test.go:178: s.t.Errorf(\"unixConnection: %v\", err)\nFatalf\n\nhttps://codereview.appspot.com/11781043/diff/2001/ssh/test/test_unix_test.go#newcode184\nssh/test/test_unix_test.go:184: s.t.Errorf(\"UnixConn.File: %v\", err)\ns/Errorf/Fatalf",
+			"disapproval": false,
+			"date": "2013-07-25 11:18:08.175650",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Socketpair has an inherent race condition: socketpair will give you 2\r\nfile descriptors, and if you can only do after the read syscall kicks\r\noff, but there is no way to synchronize on that without help from the\r\nnetwork poller.\r\n\r\nI guess it uses conn.File() dup under the hood? Let me try to close\r\nboth and see if it works\r\n\r\nOn Wed, Jul 24, 2013 at 10:26 PM,  <fullung@gmail.com> wrote:\r\n> On 2013/07/24 20:22:03, hanwen wrote:\r\n>\r\n> https://codereview.appspot.com/11781043/diff/2001/ssh/test/forward_unix_test.go\r\n>>\r\n>> File ssh/test/forward_unix_test.go (right):\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.com/11781043/diff/2001/ssh/test/forward_unix_test.go#newcode176\r\n>>\r\n>> ssh/test/forward_unix_test.go:176: server.clientConn.Close()\r\n>> I tried closing the server-side too, but for some reason that does not\r\n>\r\n> cause the\r\n>>\r\n>> client-side read to exit.\r\n>\r\n>\r\n> This usually happens if you have two file descriptors open for the same\r\n> UNIX socket but only close one of them, e.g. c2 and c2.File().\r\n>\r\n> Socketpair is a bit cleaner than the TempFile approach.\r\n>\r\n> Cheers\r\n>\r\n> Albert\r\n>\r\n> https://codereview.appspot.com/11781043/\r\n\r\n\r\n\r\n-- \r\nHan-Wen Nienhuys\r\nGoogle Munich\r\nhanwen@google.com\r\n",
+			"disapproval": false,
+			"date": "2013-07-25 13:13:21.753570",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry - not enough coffee.\r\n\r\n\r\n\r\nOn Thu, Jul 25, 2013 at 10:13 AM, Han-Wen Nienhuys <hanwen@google.com> wrote:\r\n> Socketpair has an inherent race condition: socketpair will give you 2\r\n> file descriptors, and if you can only do after the read syscall kicks\r\n\r\nyou can only close from thread 2 after the read syscall is kicked off\r\nin thread 1.\r\n\r\n> off, but there is no way to synchronize on that without help from the\r\n> network poller.\r\n>\r\n> I guess it uses conn.File() dup under the hood? Let me try to close\r\n> both and see if it works\r\n>\r\n> On Wed, Jul 24, 2013 at 10:26 PM,  <fullung@gmail.com> wrote:\r\n>> On 2013/07/24 20:22:03, hanwen wrote:\r\n>>\r\n>> https://codereview.appspot.com/11781043/diff/2001/ssh/test/forward_unix_test.go\r\n>>>\r\n>>> File ssh/test/forward_unix_test.go (right):\r\n>>\r\n>>\r\n>>\r\n>> https://codereview.appspot.com/11781043/diff/2001/ssh/test/forward_unix_test.go#newcode176\r\n>>>\r\n>>> ssh/test/forward_unix_test.go:176: server.clientConn.Close()\r\n>>> I tried closing the server-side too, but for some reason that does not\r\n>>\r\n>> cause the\r\n>>>\r\n>>> client-side read to exit.\r\n>>\r\n>>\r\n>> This usually happens if you have two file descriptors open for the same\r\n>> UNIX socket but only close one of them, e.g. c2 and c2.File().\r\n>>\r\n>> Socketpair is a bit cleaner than the TempFile approach.\r\n>>\r\n>> Cheers\r\n>>\r\n>> Albert\r\n>>\r\n>> https://codereview.appspot.com/11781043/\r\n>\r\n>\r\n>\r\n> --\r\n> Han-Wen Nienhuys\r\n> Google Munich\r\n> hanwen@google.com\r\n\r\n\r\n\r\n-- \r\nHan-Wen Nienhuys\r\nGoogle Munich\r\nhanwen@google.com\r\n",
+			"disapproval": false,
+			"date": "2013-07-25 13:14:15.503860",
+			"approval": false
+		},
+		{
+			"sender": "hanwen@google.com",
+			"recipients": [
+				"hanwen@google.com",
+				"dave@cheney.net",
+				"agl@golang.org",
+				"fullung@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I tried closing the server side too, but couldn't get it to work.\n\nhttps://codereview.appspot.com/11781043/diff/2001/ssh/test/test_unix_test.go\nFile ssh/test/test_unix_test.go (right):\n\nhttps://codereview.appspot.com/11781043/diff/2001/ssh/test/test_unix_test.go#newcode178\nssh/test/test_unix_test.go:178: s.t.Errorf(\"unixConnection: %v\", err)\nOn 2013/07/25 11:18:08, dfc wrote:\n> Fatalf\n\nDone.\n\nhttps://codereview.appspot.com/11781043/diff/2001/ssh/test/test_unix_test.go#newcode184\nssh/test/test_unix_test.go:184: s.t.Errorf(\"UnixConn.File: %v\", err)\nOn 2013/07/25 11:18:08, dfc wrote:\n> s/Errorf/Fatalf\n\nDone.",
+			"disapproval": false,
+			"date": "2013-07-25 14:08:37.434490",
+			"approval": false
+		}
+	],
+	"owner_email": "hanwen@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "hanwen",
+	"subject": "code review 11781043: go.crypto/ssh: Use net.UnixConn for connecting client a...",
+	"created": "2013-07-24 20:17:49.473500",
+	"patchsets": [
+		1,
+		2001,
+		14001,
+		18001
+	],
+	"modified": "2013-07-25 14:08:45.880700",
+	"closed": false,
+	"issue": 11781043
+}

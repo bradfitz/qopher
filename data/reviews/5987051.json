@@ -1,0 +1,190 @@
+{
+	"description": "net/http: The custom headers are not kept upon redirect\n\nExample, setting a custom User-Agent and hitting a page returning an HTTP 301:\n\npackage main\nimport (\n        \"log\"\n        \"net/http\"\n)\nfunc main() {\n        client := &http.Client{}\n\n        req, err := http.NewRequest(\"GET\", \"http://combo.cc/redirect\", nil)\n        if err != nil {\n                log.Fatalln(err)\n        }\n\n        req.Header.Set(\"User-Agent\", \"MSIE 5.15 (MacintoshOS 9)\")\n\n        resp, err := client.Do(req)\n        if err != nil {\n                log.Fatalln(err)\n        }\n        defer resp.Body.Close()\n}\n\nThis is the output on the web server access log:\n\n> 1.2.3.4 - - [31/Mar/2012:14:36:59 +0200] \"GET /redirect HTTP/1.1\" 301 185 \"-\" \"MSIE 5.15 (MacintoshOS 9)\"\n> 1.2.3.4 - - [31/Mar/2012:14:36:59 +0200] \"GET / HTTP/1.1\" 200 79 \"http://combo.cc/redirect\" \"Go http package\"\n\nAs you can see, the User-Agent has not been kept when querying the page we've been redirected to.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"dr.volker.dobler@gmail.com",
+		"minux.ma@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client.go\nFile src/pkg/net/http/client.go (right):\n\nhttp://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client.go#newcode243\nsrc/pkg/net/http/client.go:243: origHeader.Del(\"Cookie\") // but remove the cookies\nwhy is this special?\n\nwhat about \"Authorization\"?\n\nif you're being redirected to a potentially untrusted site, you don't want to re-send potentially sensitive headers.\n\nI'm not sure this CL is possible to do safely.\n\nThere's already a workaround:  re-set headers on each redirect in your Client's CheckRedirect function, once you're sure it's safe.\n\nhttp://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client_test.go\nFile src/pkg/net/http/client_test.go (right):\n\nhttp://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client_test.go#newcode241\nsrc/pkg/net/http/client_test.go:241: var ts *httptest.Server\nwhy?\n\nts := httptest.NewServer below works.\n\nyou only need a var line if you need to refer to \"ts\" in the handler itself.\n\nhttp://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client_test.go#newcode243\nsrc/pkg/net/http/client_test.go:243: header_name := \"Custom-Header\"\nconst, not vars.\n\nalso, we don't use underscores in variable names.\n\nhttp://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client_test.go#newcode268\nsrc/pkg/net/http/client_test.go:268: _, err := c.Do(req)\nDon't use _ here.  you want to Close the res.Body if err is nil.",
+			"disapproval": false,
+			"date": "2012-04-05 22:04:04.908762",
+			"approval": false
+		},
+		{
+			"sender": "stephane.travostino@gmail.com",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry, I cannot find a way to include header.go to the patchset. How do I do it?\n\nOn 2012/04/05 23:40:59, stephane.travostino wrote:\n> The cookie problem was due to the shallow copy of the original request headers.\n> I had to create a new function NewHeader in net/http/header.go to create a new\n> header deep copying from another.\n> \n> On 2012/04/05 23:39:34, stephane.travostino wrote:\n> > Hello mailto:golang-dev@googlegroups.com, mailto:bradfitz@golang.org (cc:\n> > mailto:golang-dev@googlegroups.com),\n> > \n> > Please take another look.",
+			"disapproval": false,
+			"date": "2012-04-05 23:43:02.040737",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I am feeling a bit uneasy about just copying the\nwhole header including all the cookies:  The new\nrequest might go to different domain, different\npath or switch ssl and therefore might need a \ndifferent set of cookies (the redirec might even\nhave deleted a cookie).  The client's Jar is the \nplace to implement this logic.\n\nhttp://codereview.appspot.com/5987051/diff/3005/src/pkg/net/http/client_test.go\nFile src/pkg/net/http/client_test.go (right):\n\nhttp://codereview.appspot.com/5987051/diff/3005/src/pkg/net/http/client_test.go#newcode269\nsrc/pkg/net/http/client_test.go:269: if e, g := \"<nil>\", fmt.Sprintf(\"%v\", err); e != g {\nYou do not expect an error here. A simple\nif err != nil {\n  t.Error(r)\n}\nwould do.",
+			"disapproval": false,
+			"date": "2012-04-06 05:36:47.334354",
+			"approval": false
+		},
+		{
+			"sender": "stephane.travostino@gmail.com",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "In the new patchset the cookies are not copied, because I'm saving the headers (line 199) before the cookies are being added (line 225).\n\nThe saved headers will be the ones specified by the user when calling the Get/Post/Head/Do functions.\n\nOn 2012/04/06 05:36:47, volker.dobler wrote:\n> I am feeling a bit uneasy about just copying the\n> whole header including all the cookies:  The new\n> request might go to different domain, different\n> path or switch ssl and therefore might need a \n> different set of cookies (the redirec might even\n> have deleted a cookie).  The client's Jar is the \n> place to implement this logic.\n> \n> http://codereview.appspot.com/5987051/diff/3005/src/pkg/net/http/client_test.go\n> File src/pkg/net/http/client_test.go (right):\n> \n> http://codereview.appspot.com/5987051/diff/3005/src/pkg/net/http/client_test.go#newcode269\n> src/pkg/net/http/client_test.go:269: if e, g := \"<nil>\", fmt.Sprintf(\"%v\", err);\n> e != g {\n> You do not expect an error here. A simple\n> if err != nil {\n>   t.Error(r)\n> }\n> would do.\n\nI'm changing it",
+			"disapproval": false,
+			"date": "2012-04-06 09:43:36.341307",
+			"approval": false
+		},
+		{
+			"sender": "stephane.travostino@gmail.com",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2012-04-05 19:01:11.661397",
+			"approval": false
+		},
+		{
+			"sender": "stephane.travostino@gmail.com",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/04/05 22:04:04, bradfitz wrote:\n> http://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client.go\n> File src/pkg/net/http/client.go (right):\n> \n> http://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client.go#newcode243\n> src/pkg/net/http/client.go:243: origHeader.Del(\"Cookie\") // but remove the\n> cookies\n> why is this special?\n\nIf the Cookies are being left, the cookie test functions in client_test.go break, because the cookies are duplicated.\nI've tried to find the better way to handle the special headers which should not be copied over, and I'm open to suggestions.\n\n> \n> what about \"Authorization\"?\n> \n> if you're being redirected to a potentially untrusted site, you don't want to\n> re-send potentially sensitive headers.\n\nIf a web server redirects a password-protected page, the Authorization header should be kept, I think.\nAnd it cannot be a potentially untrusted site, because the redirection would be configured on the web server which also defines the password protection.\n\n> \n> I'm not sure this CL is possible to do safely.\n> \n> There's already a workaround:  re-set headers on each redirect in your Client's\n> CheckRedirect function, once you're sure it's safe.\n\nI know, but I think it is an ugly workaround. A user should know the headers are kept, redirection or not.\nOr at least I think it's better document this shortcoming and provide a workaround.\n\n> \n> http://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client_test.go\n> File src/pkg/net/http/client_test.go (right):\n> \n> http://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client_test.go#newcode241\n> src/pkg/net/http/client_test.go:241: var ts *httptest.Server\n> why?\n> \n> ts := httptest.NewServer below works.\n> \n> you only need a var line if you need to refer to \"ts\" in the handler itself.\n\nI'll modify it, I copied the code from the testing function above.\n\n> \n> http://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client_test.go#newcode243\n> src/pkg/net/http/client_test.go:243: header_name := \"Custom-Header\"\n> const, not vars.\n> \n> also, we don't use underscores in variable names.\n\nI'm changing it.\n\n> \n> http://codereview.appspot.com/5987051/diff/1002/src/pkg/net/http/client_test.go#newcode268\n> src/pkg/net/http/client_test.go:268: _, err := c.Do(req)\n> Don't use _ here.  you want to Close the res.Body if err is nil.\n\nChanging it too.",
+			"disapproval": false,
+			"date": "2012-04-05 22:31:43.488836",
+			"approval": false
+		},
+		{
+			"sender": "stephane.travostino@gmail.com",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-04-05 23:39:34.292220",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "hg change NNNNN\n\nthen add it to the section at bottom\n\n\nOn Thu, Apr 5, 2012 at 4:43 PM, <stephane.travostino@gmail.com> wrote:\n\n> Sorry, I cannot find a way to include header.go to the patchset. How do\n> I do it?\n>\n>\n> On 2012/04/05 23:40:59, stephane.travostino wrote:\n>\n>> The cookie problem was due to the shallow copy of the original request\n>>\n> headers.\n>\n>> I had to create a new function NewHeader in net/http/header.go to\n>>\n> create a new\n>\n>> header deep copying from another.\n>>\n>\n>  On 2012/04/05 23:39:34, stephane.travostino wrote:\n>> > Hello mailto:golang-dev@**googlegroups.com<golang-dev@googlegroups.com>,\n>> mailto:bradfitz@golang.org\n>>\n> (cc:\n>\n>> > mailto:golang-dev@**googlegroups.com <golang-dev@googlegroups.com>),\n>> >\n>> > Please take another look.\n>>\n>\n>\n>\n> http://codereview.appspot.com/**5987051/<http://codereview.appspot.com/5987051/>\n>\n",
+			"disapproval": false,
+			"date": "2012-04-05 23:53:21.794515",
+			"approval": false
+		},
+		{
+			"sender": "stephane.travostino@gmail.com",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The cookie problem was due to the shallow copy of the original request headers.\nI had to create a new function NewHeader in net/http/header.go to create a new header deep copying from another.\n\nOn 2012/04/05 23:39:34, stephane.travostino wrote:\n> Hello mailto:golang-dev@googlegroups.com, mailto:bradfitz@golang.org (cc:\n> mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.",
+			"disapproval": false,
+			"date": "2012-04-05 23:40:59.291274",
+			"approval": false
+		},
+		{
+			"sender": "stephane.travostino@gmail.com",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-04-05 23:48:37.763575",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Apr 6, 2012 at 7:43 AM, <stephane.travostino@gmail.com> wrote:\n\n> Sorry, I cannot find a way to include header.go to the patchset. How do\n> I do it?\n>\nhg file NNNN header.go\n",
+			"disapproval": false,
+			"date": "2012-04-06 07:16:04.947304",
+			"approval": false
+		},
+		{
+			"sender": "stephane.travostino@gmail.com",
+			"recipients": [
+				"stephane.travostino@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dr.volker.dobler@gmail.com",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL\n\nOn 2012/04/06 09:43:36, stephane.travostino wrote:\n> In the new patchset the cookies are not copied, because I'm saving the headers\n> (line 199) before the cookies are being added (line 225).\n> \n> The saved headers will be the ones specified by the user when calling the\n> Get/Post/Head/Do functions.\n> \n> On 2012/04/06 05:36:47, volker.dobler wrote:\n> > I am feeling a bit uneasy about just copying the\n> > whole header including all the cookies:  The new\n> > request might go to different domain, different\n> > path or switch ssl and therefore might need a \n> > different set of cookies (the redirec might even\n> > have deleted a cookie).  The client's Jar is the \n> > place to implement this logic.\n> > \n> >\n> http://codereview.appspot.com/5987051/diff/3005/src/pkg/net/http/client_test.go\n> > File src/pkg/net/http/client_test.go (right):\n> > \n> >\n> http://codereview.appspot.com/5987051/diff/3005/src/pkg/net/http/client_test.go#newcode269\n> > src/pkg/net/http/client_test.go:269: if e, g := \"<nil>\", fmt.Sprintf(\"%v\",\n> err);\n> > e != g {\n> > You do not expect an error here. A simple\n> > if err != nil {\n> >   t.Error(r)\n> > }\n> > would do.\n> \n> I'm changing it",
+			"disapproval": false,
+			"date": "2012-04-19 12:31:08.570087",
+			"approval": false
+		}
+	],
+	"owner_email": "stephane.travostino@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "stephane.travostino",
+	"subject": "code review 5987051: net/http: The custom headers are not kept upon redirect",
+	"created": "2012-04-05 18:58:44.330171",
+	"patchsets": [
+		1,
+		1002,
+		3004,
+		3005
+	],
+	"modified": "2012-04-19 12:31:08.570087",
+	"closed": false,
+	"issue": 5987051
+}

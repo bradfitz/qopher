@@ -1,0 +1,128 @@
+{
+	"description": "compress/flate: increase the length of hash table from 1<<15 to 1<<17. 0%-16% speedup.",
+	"cc": [
+		"rsc@golang.org",
+		"imkrasin@gmail.com",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "imkrasin@gmail.com",
+			"recipients": [
+				"krasin@golang.org",
+				"rsc@golang.org",
+				"imkrasin@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/24 15:36:05, rsc wrote:\n> I am not sure about this change.\n> \n> Why does making the hash table bigger (which would seem\n> like it gives the compressor more work to do, and waste \n> memory besides) make the compressor run faster on \n> uncompressible data?\nEvery hash value that the compressor has met, it adds this hash to the single-linker list with the head in hashHead[hash] and links between nodes in prevHash[index]. So, the compressor knows that the given value of hash is at hashHead[hash] position, prevHash[hashHead[hash]], prevHash[prevHash[hashHead[hash]]] and so on.\n\nfindMatch is called to walk through the list and find the biggest match for current hash value. If we have a hash collision, it would make findMatch to go through list and return w/o any match.\n\nThis usually happens on uncompressable data, like .avi and almost does not happen on text data, because text data uses only a small subset of values and there's few hash collisions. At the same time, real data would likely be in between.\n\nThis change does not make any extra work for compressor. It's opposite: we significantly reduce the probability of hash collision and the case when findMatch is called for no gain.\n\nFor example, if I compress google chrome binary, I get the following results:\n\ngzip: 3.18 s\nGo: 7.26 s\npatched Go: 6.86 s [6% improvement]\n\nAlso, this memory (512K for hashHead) is only used during the compression. I can even allocate it on the stack to avoid pressure on GC in case on frequent calls of compressor (in fact, this is one of the optimisations which I have in pending list, because it's likely other inefficiencies contribute much more to the picture) \n> \n> Why is uncompressible data something worth speeding up?\n> \n> Also, this doesn't help compression ratios, which makes it\n> seem like not a good use of the extra memory.",
+			"disapproval": false,
+			"date": "2012-01-24 17:43:41.722705",
+			"approval": false
+		},
+		{
+			"sender": "krasin@golang.org",
+			"recipients": [
+				"krasin@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Performance measurements are given at http://code.google.com/p/go/issues/detail?id=2726",
+			"disapproval": false,
+			"date": "2012-01-24 03:17:42.720662",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"krasin@golang.org",
+				"rsc@golang.org",
+				"imkrasin@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=2d5bddf02998 ***\n\ncompress/flate: increase the length of hash table from 1<<15 to 1<<17. 0%-16% speedup.\n\nR=rsc, imkrasin\nCC=golang-dev\nhttp://codereview.appspot.com/5569048\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2012-01-24 18:52:50.439175",
+			"approval": false
+		},
+		{
+			"sender": "krasin@golang.org",
+			"recipients": [
+				"krasin@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-24 03:16:45.112656",
+			"approval": false
+		},
+		{
+			"sender": "imkrasin@gmail.com",
+			"recipients": [
+				"krasin@golang.org",
+				"rsc@golang.org",
+				"imkrasin@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "err. s/single-linker list/single-linked list/, of course. :)",
+			"disapproval": false,
+			"date": "2012-01-24 17:44:25.817402",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"krasin@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I am not sure about this change.\n\nWhy does making the hash table bigger (which would seem\nlike it gives the compressor more work to do, and waste \nmemory besides) make the compressor run faster on \nuncompressible data?\n\nWhy is uncompressible data something worth speeding up?\n\nAlso, this doesn't help compression ratios, which makes it\nseem like not a good use of the extra memory.",
+			"disapproval": false,
+			"date": "2012-01-24 15:36:05.434265",
+			"approval": false
+		},
+		{
+			"sender": "imkrasin@gmail.com",
+			"recipients": [
+				"krasin@golang.org",
+				"rsc@golang.org",
+				"imkrasin@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/24 17:44:25, imkrasin wrote:\n> err. s/single-linker list/single-linked list/, of course. :)\n\nI would also explain why 1<<17 is much better than 1<<15. We have 1<<15 live hash values (>= minIndex) because of the limitation on the offset value. If we have len(hashHead) == 1 << 15, it would lead to no collisions only in the best case (like, English text). Increasing the size of the array even just twice, to 1 << 16, would significantly reduce the amount of hash collisions. Unfortunately, 1 << 16 is not a good value for the size of hash (verified experimentally): the compression rate becomes slighly worse. It's because\n\nhashShift = (hashBits + minMatchLength - 1) / minMatchLength\n\n(15 + 3 - 1) / 3 = 5\n(16 + 3 - 1) / 3 = 6\n\nso, at hashBits == 16, hashShift is incremented, but it means that we begin to store less information about the oldest byte. 1 << 17 adds an extra bit which returns the quality of the compression and gives even more advantage in terms of hash collision probability.",
+			"disapproval": false,
+			"date": "2012-01-24 17:59:38.371257",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2012-01-24 18:49:39.953069",
+			"approval": true
+		}
+	],
+	"owner_email": "krasin@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "Ivan Krasin",
+	"subject": "code review 5569048: compress/flate: increase the length of hash table from ...",
+	"created": "2012-01-24 03:06:15.359562",
+	"patchsets": [
+		5
+	],
+	"modified": "2012-01-24 18:49:39.953069",
+	"closed": false,
+	"issue": 5569048
+}

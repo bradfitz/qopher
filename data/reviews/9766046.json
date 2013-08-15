@@ -1,0 +1,150 @@
+{
+	"description": "net/http: Fix authentication info leakage in Referer header (potential security risk)\n\nhttp.Client calls URL.String() to fill in the Referer header, which may\ncontain authentication info. This patch removes authentication info from the Referer header without introducing any API changes.\n\nA new test for net/http is also provided.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-05-31 13:06:15.202700",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If this is worth fixing, I think we should fix it without any API changes.\r\n\r\nAnonymousString() seems like a weird API addition.\r\n\r\n\r\nOn Fri, May 31, 2013 at 6:06 AM, <alberto.garcia.hierro@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> net/http: Fix authentication info leakage in Referer header (potential\r\n> security risk)\r\n>\r\n> http.Client calls URL.String() to fill in the Referer header, which may\r\n> contain authentication info. This patch adds a new method to net/url.URL\r\n> called AnonymousString() which returns the URL as a string without any\r\n> authentication info. It also changes net/http.Client to use that new\r\n> function\r\n> rather than String().\r\n>\r\n> New tests for both net/url and net/http are also provided.\r\n>\r\n> Please review this at https://codereview.appspot.**com/9766046/<https://codereview.appspot.com/9766046/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/net/http/client.go\r\n>   M src/pkg/net/http/client_test.**go\r\n>   M src/pkg/net/url/url.go\r\n>   M src/pkg/net/url/url_test.go\r\n>\r\n>\r\n> Index: src/pkg/net/http/client.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/http/client.go\r\n> +++ b/src/pkg/net/http/client.go\r\n> @@ -278,7 +278,7 @@\r\n>                                 // Add the Referer header.\r\n>                                 lastReq := via[len(via)-1]\r\n>                                 if lastReq.URL.Scheme != \"https\" {\r\n> -                                       req.Header.Set(\"Referer\",\r\n> lastReq.URL.String())\r\n> +                                       req.Header.Set(\"Referer\",\r\n> lastReq.URL.AnonymousString())\r\n>                                 }\r\n>\r\n>                                 err = redirectChecker(req, via)\r\n> Index: src/pkg/net/http/client_test.**go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/http/client_**test.go\r\n> +++ b/src/pkg/net/http/client_**test.go\r\n> @@ -735,3 +735,29 @@\r\n>         }\r\n>         defer resp.Body.Close()\r\n>  }\r\n> +\r\n> +func TestPreventRefererAuthLeak(t *testing.T) {\r\n> +       defer afterTest(t)\r\n> +       ts := httptest.NewServer(**HandlerFunc(func(w ResponseWriter, r\r\n> *Request) {\r\n> +               if r.URL.Path != \"/\" {\r\n> +                       Redirect(w, r, \"/\", StatusFound)\r\n> +                       return\r\n> +               }\r\n> +               referer := r.Header.Get(\"Referer\")\r\n> +               if strings.Contains(referer, \"@\") {\r\n> +                       t.Errorf(\"Invalid referer %q, it contains\r\n> authentication info\", referer)\r\n> +               }\r\n> +       }))\r\n> +       defer ts.Close()\r\n> +       req, err := NewRequest(\"GET\", ts.URL+\"/foo\", nil)\r\n> +       if err != nil {\r\n> +               t.Fatal(err)\r\n> +       }\r\n> +       req.URL.User = url.User(\"golang\")\r\n> +       c := &Client{}\r\n> +       resp, err := c.Do(req)\r\n> +       if err != nil {\r\n> +               t.Fatal(err)\r\n> +       }\r\n> +       defer resp.Body.Close()\r\n> +}\r\n> Index: src/pkg/net/url/url.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/url/url.go\r\n> +++ b/src/pkg/net/url/url.go\r\n> @@ -439,8 +439,9 @@\r\n>         return\r\n>  }\r\n>\r\n> -// String reassembles the URL into a valid URL string.\r\n> -func (u *URL) String() string {\r\n> +// toString reassembles the URL into a valid URL string,\r\n> +// optionally including user authentication info.\r\n> +func (u *URL) toString(anon bool) string {\r\n>         var buf bytes.Buffer\r\n>         if u.Scheme != \"\" {\r\n>                 buf.WriteString(u.Scheme)\r\n> @@ -451,9 +452,11 @@\r\n>         } else {\r\n>                 if u.Scheme != \"\" || u.Host != \"\" || u.User != nil {\r\n>                         buf.WriteString(\"//\")\r\n> -                       if u := u.User; u != nil {\r\n> -                               buf.WriteString(u.String())\r\n> -                               buf.WriteByte('@')\r\n> +                       if !anon {\r\n> +                               if u := u.User; u != nil {\r\n> +                                       buf.WriteString(u.String())\r\n> +                                       buf.WriteByte('@')\r\n> +                               }\r\n>                         }\r\n>                         if h := u.Host; h != \"\" {\r\n>                                 buf.WriteString(h)\r\n> @@ -472,6 +475,17 @@\r\n>         return buf.String()\r\n>  }\r\n>\r\n> +// String reassembles the URL into a valid URL string.\r\n> +func (u *URL) String() string {\r\n> +       return u.toString(false)\r\n> +}\r\n> +\r\n> +// AnonymousString reassembles the URL into a valid URL string\r\n> +// omitting any user authentication info (if present).\r\n> +func (u *URL) AnonymousString() string {\r\n> +       return u.toString(true)\r\n> +}\r\n> +\r\n>  // Values maps a string key to a list of values.\r\n>  // It is typically used for query parameters and form values.\r\n>  // Unlike in the http.Header map, the keys in a Values map\r\n> Index: src/pkg/net/url/url_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/net/url/url_test.go\r\n> +++ b/src/pkg/net/url/url_test.go\r\n> @@ -868,3 +868,14 @@\r\n>                 t.Errorf(`ParseQuery(%q) returned error %q, want something\r\n> containing %q\"`, url, errStr, \"%gh\")\r\n>         }\r\n>  }\r\n> +\r\n> +func TestAnonymous(t *testing.T) {\r\n> +       const url = \"http://go:lang@www.example.**com<http://go:lang@www.example.com>\r\n> \"\r\n> +       u, err := Parse(url)\r\n> +       if err != nil {\r\n> +               t.Fatal(err)\r\n> +       }\r\n> +       if strings.Contains(u.**AnonymousString(), \"@\") {\r\n> +               t.Errorf(\"%q contains authentication info\",\r\n> u.AnonymousString())\r\n> +       }\r\n> +}\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-06-02 01:36:00.020160",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=bradfitz",
+			"disapproval": false,
+			"date": "2013-06-14 09:02:46.555150",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Q=wait\n\nHierro, were you going to revise this to not introduce AnonymousString?",
+			"disapproval": false,
+			"date": "2013-06-17 18:35:41.668380",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/17 18:35:41, bradfitz wrote:\n> Q=wait\n> \n> Hierro, were you going to revise this to not introduce AnonymousString?\n\nI was under the impression that you considered this issue not worth fixing. I'll update the code to remove AnonymousString.\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-06-20 11:34:29.022190",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "PTAL",
+			"disapproval": false,
+			"date": "2013-06-20 11:58:13.702860",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9766046/diff/13001/src/pkg/net/http/client.go\nFile src/pkg/net/http/client.go (right):\n\nhttps://codereview.appspot.com/9766046/diff/13001/src/pkg/net/http/client.go#newcode280\nsrc/pkg/net/http/client.go:280: if lastReq.URL.Scheme != \"https\" {\nlet's pull this out into a function.  then this code looks like:\n\nif ref := refererForURL(lastReq.URL); ref != \"\" {\n    req.Header.Set(\"Referer\", ref)\n}\n\n// refererforURL returns the HTTP Referer header to send\n// in a request after u was just fetched. If empty, no\n// referer should be sent.\nfunc refererforURL(u *url.URL) string {\n...\n}\n\nAnd then you can easily write a table-driven test in client_test.go for that function.",
+			"disapproval": false,
+			"date": "2013-06-20 20:23:30.336780",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/20 20:23:30, bradfitz wrote:\n> https://codereview.appspot.com/9766046/diff/13001/src/pkg/net/http/client.go\n> File src/pkg/net/http/client.go (right):\n> \n> https://codereview.appspot.com/9766046/diff/13001/src/pkg/net/http/client.go#newcode280\n> src/pkg/net/http/client.go:280: if lastReq.URL.Scheme != \"https\" {\n> let's pull this out into a function.  then this code looks like:\n> \n> if ref := refererForURL(lastReq.URL); ref != \"\" {\n>     req.Header.Set(\"Referer\", ref)\n> }\n> \n> // refererforURL returns the HTTP Referer header to send\n> // in a request after u was just fetched. If empty, no\n> // referer should be sent.\n> func refererforURL(u *url.URL) string {\n> ...\n> }\n> \n> And then you can easily write a table-driven test in client_test.go for that\n> function.\n\nHi Brad,\n\nclient_test.go has its package declared as http_test, so it can't include references to non-exported functions. What would be the most appropriate file in net/http to put this new test?\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-07-15 13:57:03.717710",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jul 15, 2013 at 6:57 AM, <alberto.garcia.hierro@gmail.com> wrote:\r\n\r\n> On 2013/06/20 20:23:30, bradfitz wrote:\r\n>\r\n> https://codereview.appspot.**com/9766046/diff/13001/src/**\r\n> pkg/net/http/client.go<https://codereview.appspot.com/9766046/diff/13001/src/pkg/net/http/client.go>\r\n>\r\n>> File src/pkg/net/http/client.go (right):\r\n>>\r\n>\r\n>\r\n> https://codereview.appspot.**com/9766046/diff/13001/src/**\r\n> pkg/net/http/client.go#**newcode280<https://codereview.appspot.com/9766046/diff/13001/src/pkg/net/http/client.go#newcode280>\r\n>\r\n>> src/pkg/net/http/client.go:**280: if lastReq.URL.Scheme != \"https\" {\r\n>> let's pull this out into a function.  then this code looks like:\r\n>>\r\n>\r\n>  if ref := refererForURL(lastReq.URL); ref != \"\" {\r\n>>      req.Header.Set(\"Referer\", ref)\r\n>> }\r\n>>\r\n>\r\n>  // refererforURL returns the HTTP Referer header to send\r\n>> // in a request after u was just fetched. If empty, no\r\n>> // referer should be sent.\r\n>> func refererforURL(u *url.URL) string {\r\n>> ...\r\n>> }\r\n>>\r\n>\r\n>  And then you can easily write a table-driven test in client_test.go\r\n>>\r\n> for that\r\n>\r\n>> function.\r\n>>\r\n>\r\n> Hi Brad,\r\n>\r\n> client_test.go has its package declared as http_test, so it can't\r\n> include references to non-exported functions. What would be the most\r\n> appropriate file in net/http to put this new test?\r\n>\r\n\r\nSee the file export_test.go --- it's in package http (so can access\r\nunexported stuff) but is only compiled when in test mode, so it can export\r\nthings just for testing.\r\n\r\nYou can add a line below and similar to this one:\r\n\r\n     var DefaultUserAgent = defaultUserAgent\r\n\r\nThen you can add a test in client_test.go.\r\n",
+			"disapproval": false,
+			"date": "2013-07-22 21:57:51.757440",
+			"approval": false
+		},
+		{
+			"sender": "alberto.garcia.hierro@gmail.com",
+			"recipients": [
+				"alberto.garcia.hierro@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> You can add a line below and similar to this one:\n> \n>      var DefaultUserAgent = defaultUserAgent\n> \n> Then you can add a test in client_test.go.\n\nThanks for the clarification. I've updated the patchset accordingly. PTAL.\n\nRegards,\nAlberto",
+			"disapproval": false,
+			"date": "2013-07-26 22:06:51.708530",
+			"approval": false
+		}
+	],
+	"owner_email": "alberto.garcia.hierro@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Hierro",
+	"subject": "code review 9766046: net/http: Fix authentication info leakage in Referer he...",
+	"created": "2013-05-31 13:04:38.779130",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		11001,
+		13001,
+		21001
+	],
+	"modified": "2013-07-26 22:06:51.981560",
+	"closed": false,
+	"issue": 9766046
+}

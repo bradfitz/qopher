@@ -1,0 +1,205 @@
+{
+	"description": "    exp/fsnotify : A suggestion for how to implement a filesystem notification package that is cross-platform.\n\n    This was made in response to comments on os/kevent package here: http://codereview.appspot.com/5248062/\n    I figured it would be best to provide a working proto-type for a yes/no discussion.\n\n    The same test is used for both Linux and BSD systems.\n\nUpdate per Dave's comments to use error.",
+	"cc": [
+		"bradfitz@golang.org",
+		"golang-dev@googlegroups.com",
+		"hectorchu@gmail.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"robfig@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "howeyc@gmail.com",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Here's an attempt at a cross-platform fsnotify package. \n\nI know I jumped way ahead, this is to start a discussion as to which way to go.\n\nSome notes on the implementation:\n\nI noticed the Linux os/inotify package was sending events for files that are created within the directory that is being watched. The BSD kevent/kqueue system requires you to have file descriptors added to the kqueue in order to get events. I have made the BSD fsnotify automatically add created files to the watch list. It also manufactures \"Create\" events as kevent provides events against the directory and it's up to user-space to find out files that are created.\n\nThe os/inotify package has some kind of OS_IGNORED event that gets triggered for reasons I am unaware of. I stopped the package from passing those on the Event channel. This was because of the change to use IsDelete(), IsModify(),... it made no sense to pass an event that did not satisfy at least one of these functions.\n\nAlso:\nI noticed the winfsnotify test and it may be better to move the test to that kind of format if this is the way we decide to go for a unified package.",
+			"disapproval": false,
+			"date": "2011-10-20 02:16:01.370398",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I haven't had a chance to apply this CL and run the tests but the code looks good. Let's see what the others have to say.\n\nIs it possible to make the Watcher type shared across bsd and linux in the same way syscall.ProcAttr embeds OS specific attributes>\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go\nFile src/pkg/exp/fsnotify/fsnotify_bsd.go (right):\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode37\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:37: type FileEvent struct {\n// A FileEvent represents a single notification event.\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode43\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:43: // IsCreate reports whether the FileEvent was triggerd by a creation\nPeriods at the end of comments, ditto for other IsDelete, IsModify, IsAttribute, IsRename, etc\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode69\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:69: \ns/ and returns//\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode91\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:91: // It sends a message to the reader goroutine to quit and removes all watches\ns/It/Close\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode153\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:153: return os.NewError(fmt.Sprintf(\"can't remove non-existent kevent watch for: %s\", path))\nYou can use fmt.Errorf here.\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode180\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:180: *twait = syscall.NsecToTimespec(keventWaitTime)\nCan't this just be var twait *syscall.Timespec = syscall.NsecToTimespec(keventWaitTime) ? I'm not sure what I'm missing here.\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode190\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:190: case done = <-w.done:\nWhy not move the done logic below to here ?\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode191\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:191: default:\nAnd the n < 0 or n = 0 logic here ?\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode215\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:215: for len(events) > 0 {\nfor i, _ := range events, then use &events[i] below ?\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode248\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:248: if fileInfo.IsRegular() == true {\ns/== true//\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode258\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:258: fileEvent := new(FileEvent)\nConsider using the compact literal format here.\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_bsd.go#newcode268\nsrc/pkg/exp/fsnotify/fsnotify_bsd.go:268: // Flags (from <sys/event.h>)\nMaybe submit another CL that adds these constants to syscall?\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go\nFile src/pkg/exp/fsnotify/fsnotify_linux.go (right):\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go#newcode1\nsrc/pkg/exp/fsnotify/fsnotify_linux.go:1: // Copyright 2010 The Go Authors. All rights reserved.\n2011, check all the new files submitted in this package\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go#newcode36\nsrc/pkg/exp/fsnotify/fsnotify_linux.go:36: \n// A FileEvent represents ...\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go#newcode43\nsrc/pkg/exp/fsnotify/fsnotify_linux.go:43: // IsCreate reports whether the FileEvent was triggerd by a creation\nPeriods at the end of comments.\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go#newcode65\nsrc/pkg/exp/fsnotify/fsnotify_linux.go:65: type Watcher struct {\n// A watcher (represents|encapuslates) ...\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go#newcode95\nsrc/pkg/exp/fsnotify/fsnotify_linux.go:95: // It sends a message to the reader goroutine to quit and removes all watches\ns/It/Close\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go#newcode145\nsrc/pkg/exp/fsnotify/fsnotify_linux.go:145: return os.NewError(fmt.Sprintf(\"can't remove non-existent inotify watch for: %s\", path))\nfmt.Errorf\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go#newcode169\nsrc/pkg/exp/fsnotify/fsnotify_linux.go:169: case done = <-w.done:\nCan the done logic move here, and the error and eof checks to default:\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go#newcode198\nsrc/pkg/exp/fsnotify/fsnotify_linux.go:198: event := new(FileEvent)\n&FileEvent{ } ?\n\nhttp://codereview.appspot.com/5304046/diff/3/src/pkg/exp/fsnotify/fsnotify_linux.go#newcode206\nsrc/pkg/exp/fsnotify/fsnotify_linux.go:206: event.Name = w.paths[int(raw.Wd)]\nDo you need a mutex to protect w.path from concurrent modification?",
+			"disapproval": false,
+			"date": "2011-10-20 20:11:33.923930",
+			"approval": false
+		},
+		{
+			"sender": "howeyc@gmail.com",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I figured I'd bump this for individuals that were interested in the initial BSD kevent/kqueue change.",
+			"disapproval": false,
+			"date": "2011-11-08 23:31:38.432676",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "This patch doesn't apply cleanly anymore after the errors fix. Can you\nplease gofix your tree and hg upload it.\n\nCheers\n\nDave\n\nOn Wed, Nov 9, 2011 at 10:31 AM,  <howeyc@gmail.com> wrote:\n> I figured I'd bump this for individuals that were interested in the\n> initial BSD kevent/kqueue change.\n>\n> http://codereview.appspot.com/5304046/\n>\n",
+			"disapproval": false,
+			"date": "2011-11-09 08:45:22.022378",
+			"approval": false
+		},
+		{
+			"sender": "howeyc@gmail.com",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net (cc: bradfitz@golang.org, golang-dev@googlegroups.com, hectorchu@gmail.com, rsc@golang.org),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-11-09 14:30:17.672593",
+			"approval": false
+		},
+		{
+			"sender": "howeyc@gmail.com",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net (cc: bradfitz@golang.org, golang-dev@googlegroups.com, hectorchu@gmail.com, rsc@golang.org),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-11-09 14:31:57.716642",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello, are you keen to continue this CL ?",
+			"disapproval": false,
+			"date": "2012-01-17 10:32:26.893555",
+			"approval": false
+		},
+		{
+			"sender": "robfig@gmail.com",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"robfig@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/17 10:32:26, dfc wrote:\n> Hello, are you keen to continue this CL ?\n\nI am eager to use this code in my own projects.  Would it be appropriate for me to push it down the home stretch?",
+			"disapproval": false,
+			"date": "2012-01-26 02:53:58.151057",
+			"approval": false
+		},
+		{
+			"sender": "howeyc@gmail.com",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"robfig@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/26 02:53:58, robfig wrote:\n> On 2012/01/17 10:32:26, dfc wrote:\n> > Hello, are you keen to continue this CL ?\n> \n> I am eager to use this code in my own projects.  Would it be appropriate for me\n> to push it down the home stretch?\n\nI'd be happy to collaborate in any way to get this in a state for others to use.",
+			"disapproval": false,
+			"date": "2012-01-27 01:20:37.027773",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"robfig@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Could you please remerge the CL and do a hg mail, currently it does not apply cleanly.\n\ncodereview issue 5304046 is out of date: patch and recent changes conflict (afa4ccab6746->24e6b9d71966)",
+			"disapproval": false,
+			"date": "2012-01-27 01:31:32.986448",
+			"approval": false
+		},
+		{
+			"sender": "howeyc@gmail.com",
+			"recipients": [
+				"howeyc@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"robfig@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"hectorchu@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I was unable to change this patch:\n\"cannot change non-local CL\"\n\nNew CL: http://codereview.appspot.com/5585043",
+			"disapproval": false,
+			"date": "2012-01-27 15:05:11.991776",
+			"approval": false
+		}
+	],
+	"owner_email": "howeyc@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "howeyc",
+	"subject": "code review 5304046:     exp/fsnotify : A suggestion for how to implement a ...",
+	"created": "2011-10-20 01:41:35.177914",
+	"patchsets": [
+		1,
+		3,
+		13001,
+		12002
+	],
+	"modified": "2012-01-27 15:05:11.991776",
+	"closed": false,
+	"issue": 5304046
+}

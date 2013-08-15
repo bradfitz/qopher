@@ -1,0 +1,299 @@
+{
+	"description": "This change adds the http/fcgi package.  This package provides an http.Listener and http.Handler that implement both sides of a FastCGI connection for http.Serve().",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change.",
+			"disapproval": false,
+			"date": "2010-02-07 04:14:39.254600",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Good work on this, Jesse.\n\nThere are a number of issues of style and consistency that\nI've addressed in this review. Please read (or re-read)\nthe Effective Go document: http://golang.org/doc/effective_go.html\n\nIf you have any further questions please don't hesitate \nto ask. We tend to toss changelists and code-reviews back\nand forth a few times before they get accepted. =)\n\nThanks for working on this. We think it's an important\naddition to the http package.\n\nhttp://codereview.appspot.com/204063/diff/1001/17\nFile src/pkg/http/fcgi/Makefile (right):\n\nhttp://codereview.appspot.com/204063/diff/1001/17#newcode1\nsrc/pkg/http/fcgi/Makefile:1: include ../../../Make.$(GOARCH)\nNeed to include Copyright 2010 statement here.\n\nhttp://codereview.appspot.com/204063/diff/1001/18\nFile src/pkg/http/fcgi/fcgi.go (right):\n\nhttp://codereview.appspot.com/204063/diff/1001/18#newcode94\nsrc/pkg/http/fcgi/fcgi.go:94: var _ = log.Stderr // reference this so it wont complain about imports\nIt's best not to use hacks like this in production code.\n\nhttp://codereview.appspot.com/204063/diff/1001/18#newcode100\nsrc/pkg/http/fcgi/fcgi.go:100: FCGI_LISTENSOCK_FILENO = iota\nThese names are all exported (uppercase first chars), when there is no reason for them to be.\n\nhttp://codereview.appspot.com/204063/diff/1001/18#newcode138\nsrc/pkg/http/fcgi/fcgi.go:138: type fcgiHeader struct {\nThe 'fcgi' in 'fcgiHeader' (and similar) is redundant, as it's effectively fcgi.fcgiHeader.\n\nSimpler and cleaner: \ntype header struct {\n\nhttp://codereview.appspot.com/204063/diff/1001/18#newcode302\nsrc/pkg/http/fcgi/fcgi.go:302: func dialTcpAddr(addr string) (conn *net.TCPConn, err os.Error) {\nBetter to use net.Dial than this wrapper.\n\nSee: http://golang.org/pkg/net/#Conn.Dial\n\nhttp://codereview.appspot.com/204063/diff/1001/18#newcode313\nsrc/pkg/http/fcgi/fcgi.go:313: func dialUnixAddr(addr string) (conn *net.UnixConn, err os.Error) {\nUse net.Dial instead.\n\nhttp://codereview.appspot.com/204063/diff/1001/19\nFile src/pkg/http/fcgi/fcgi_test.go (right):\n\nhttp://codereview.appspot.com/204063/diff/1001/19#newcode47\nsrc/pkg/http/fcgi/fcgi_test.go:47: var tests = []testRecord{\nNice table-driven test! =)\n\nhttp://codereview.appspot.com/204063/diff/1001/19#newcode86\nsrc/pkg/http/fcgi/fcgi_test.go:86: fcgiMux.Handle(\"/static/\", http.FileServer(\"/tmp\", \"/static\"))\nUse _test in working directory instead of /tmp,\nso that multiple tests in different trees don't conflict.\n\nhttp://codereview.appspot.com/204063/diff/1001/19#newcode111\nsrc/pkg/http/fcgi/fcgi_test.go:111: func TestStartTcpListener(t *testing.T) {\nConceptually, each of these Test* functions is expected to\nrun independently of the others. All relevant init and\nteardown code in a single test function.\n\nhttp://codereview.appspot.com/204063/diff/1001/19#newcode114\nsrc/pkg/http/fcgi/fcgi_test.go:114: if tcplisten, err = fcgi.Listen(\"tcp\", \"0.0.0.0:7134\"); err == nil {\nRather than using a fixed port here, call Listen on \":0\"\nand it will allocate a free port. You can then query \ntcplisten.Addr and amend the port numbers elsewhere in\nyour tests. See the tests in package 'rpc' for an example.\n\nhttp://codereview.appspot.com/204063/diff/1001/20\nFile src/pkg/http/fcgi/handler.go (right):\n\nhttp://codereview.appspot.com/204063/diff/1001/20#newcode34\nsrc/pkg/http/fcgi/handler.go:34: // even on fatal errors, always do our best to return some kind of handler\nRather than throwing these errors away, you should make \nthe function return 'http.Handler, os.Error' and\nreturn errors where appropriate so that the callers can \nhandle them appropriately (or throw them away, IF they \nchoose to).\n\nhttp://codereview.appspot.com/204063/diff/1001/20#newcode90\nsrc/pkg/http/fcgi/handler.go:90: if responder != nil {\nAvoid this extra indentation with:\n\nif responder == nil {\n   Log...\n   return\n}\n\nhttp://codereview.appspot.com/204063/diff/1001/20#newcode93\nsrc/pkg/http/fcgi/handler.go:93: if response, err := responder.ReadResponse(reqid, req.Method); err == nil {\nSimilarly, avoid unnecessary control flow:\n\nresponse, err := ...\nif err != nil {\n   Log...\n   return\n}\n// response.setHeader, conn.write, etc\n\nhttp://codereview.appspot.com/204063/diff/1001/20#newcode184\nsrc/pkg/http/fcgi/handler.go:184: if fd, errno := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0); errno == 0 {\nThis series of nested error handlers could be better written sequentially, see: http://golang.org/doc/effective_go.html#control-structures\n\nhttp://codereview.appspot.com/204063/diff/1001/22\nFile src/pkg/http/fcgi/listener_test_exec.go (right):\n\nhttp://codereview.appspot.com/204063/diff/1001/22#newcode1\nsrc/pkg/http/fcgi/listener_test_exec.go:1: package main\nShould include Copyright here.",
+			"disapproval": false,
+			"date": "2010-02-08 23:24:36.389663",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for your comments, I've updated everything you mentioned.",
+			"disapproval": false,
+			"date": "2010-02-09 06:39:54.959845",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for making those changes.\n\nI have another set of issues. Some which will require\nsome restructuring. Particularly the way the Handler is\nconstructed.\n\nAgain, if you have any questions feel free to ping me.\n\nYour help is much appreciated.\nThis is really useful functionality.\n\nhttp://codereview.appspot.com/204063/diff/3001/3004\nFile src/pkg/http/fcgi/fcgi.go (right):\n\nhttp://codereview.appspot.com/204063/diff/3001/3004#newcode6\nsrc/pkg/http/fcgi/fcgi.go:6: This package implements FastCGI for use with http.Serve().  It provides two main pieces: fcgi.Handler and fcgi.Listener.\nPlease make this documentation hard-wrapped at 80 columns.\n\nhttp://codereview.appspot.com/204063/diff/3001/3004#newcode27\nsrc/pkg/http/fcgi/fcgi.go:27: if listen, err := fcgi.Listen(\"tcp\", \"0.0.0.0:7134\"); err == nil {\nThis example should check for errors as the special-case\n(like I asked you to change in your actual code), so invert\nthe condition to err != nil, etc.\n\nhttp://codereview.appspot.com/204063/diff/3001/3004#newcode32\nsrc/pkg/http/fcgi/fcgi.go:32: Now, if you configured lighttpd to connect to ( \"host\" => \"127.0.0.1\", \"port\" => 7134 ),\nDo you want to bind to 127.0.0.1 or 0.0.0.0 (as above in the\ncode example)? Change one so that they are consistent.\n\nhttp://codereview.appspot.com/204063/diff/3001/3004#newcode167\nsrc/pkg/http/fcgi/fcgi.go:167: func (self *header) readContent(r io.Reader) (b []byte, err os.Error) {\nThroughout this function, and in other parts of this package,\nplease restructure your error handling so that errors are\nhandled first. In this instance, you can reduce the level\nof indentation and unnecessary control flow significantly.\n\nPlease have a look through the rest of the package for\ninstances of this style, and correct them. Thank you.\n\nhttp://codereview.appspot.com/204063/diff/3001/3004#newcode170\nsrc/pkg/http/fcgi/fcgi.go:170: if t == 0 {\nThis is good.\n\nhttp://codereview.appspot.com/204063/diff/3001/3004#newcode175\nsrc/pkg/http/fcgi/fcgi.go:175: return b[0:n], os.NewError(fmt.Sprint(\"Short read got \", n, \"of\", t))\nThis is also good.\n\nhttp://codereview.appspot.com/204063/diff/3001/3004#newcode176\nsrc/pkg/http/fcgi/fcgi.go:176: } else if n < t {\nHandle the error condition first:\n\nif n >= t {\n  return b[0:self.ContentLength], err\n}\npad := ...\n\nhttp://codereview.appspot.com/204063/diff/3001/3004#newcode179\nsrc/pkg/http/fcgi/fcgi.go:179: if m, err := r.Read(pad); err == nil {\nDitto.\n\nhttp://codereview.appspot.com/204063/diff/3001/3006\nFile src/pkg/http/fcgi/handler.go (right):\n\nhttp://codereview.appspot.com/204063/diff/3001/3006#newcode27\nsrc/pkg/http/fcgi/handler.go:27: func Handler(addrs []string) (http.Handler, os.Error) {\nIt would be simpler for this function to take a slice of\nnet.Conn instead of an array of strings. I understand your\ninclination to make it more easily configurable, but I\nwould prefer this to happen outside the http.fcgi package.\n\nAdditionally, the handler appears to only connect to each\nservice once. Does this mean that when the service goes\ndown (or the socket is closed for any reason) the fcgi\nHandler will permanently stop communicating with the given\nresponder? This seems incorrect.\n\nhttp://codereview.appspot.com/204063/diff/3001/3006#newcode87\nsrc/pkg/http/fcgi/handler.go:87: handler := http.HandlerFunc(func(conn *http.Conn, req *http.Request) {\nRather than having Handler return a closure passed through\nhttp.HandlerFunc, you should implement the http.Handler\ninterface on an explicit type by adding ServeHTTP(*Conn, *Request) \nand putting this functionality there.\n\ntype Handler interface {\n    ServeHTTP(*Conn, *Request)\n}\n\nhttp://codereview.appspot.com/204063/diff/3001/3006#newcode160\nsrc/pkg/http/fcgi/handler.go:160: func fcgiDialTcp(addr string) (self *wsConn, err os.Error) {\nfcgiDialTcp and fcgiDialUnix are now essentially the same\nfunction. Let's remove these extra wrapping functions\nentirely. (ie just call net.Dial and newWsConn where you\nwould previously call fcgiDial*\n\nhttp://codereview.appspot.com/204063/diff/3001/3006#newcode269\nsrc/pkg/http/fcgi/handler.go:269: func (self *wsConn) readAllPackets() {\nThis function is quite monolithic, and would benefit from\nbeing broken up into several smaller components.\n\nhttp://codereview.appspot.com/204063/diff/3001/3006#newcode287\nsrc/pkg/http/fcgi/handler.go:287: } else {\nThis is a good example where we can drop the 'else' and\navoid another level of indentation.\n(the continue above short-circuits)",
+			"disapproval": false,
+			"date": "2010-02-10 01:58:37.916394",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I added the Dialer stuff we discussed.\n\nAlso added benchmarks which, under stress, revealed several places where errors weren't being caught, and short reads and writes weren't handled, so I updated lots of that stuff as well.",
+			"disapproval": false,
+			"date": "2010-02-12 19:10:01.630574",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc, adg (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2010-02-09 06:28:31.673208",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc, adg (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2010-02-12 19:04:42.020063",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc, adg (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2010-02-12 19:21:54.342781",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Added exec.go to the files list.",
+			"disapproval": false,
+			"date": "2010-02-12 19:22:14.394733",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hi Jesse,\n\nApologies it's been so long to get back to you on this. What you've\ndone with Handler and the Dialer interface looks good.\n\nI'm preparing another review and should have some detailed feedback\nfor you soon.\n\nAndrew\n\nOn 12 February 2010 11:04,  <jesse.dailey@gmail.com> wrote:\n> Hello rsc, adg (cc: golang-dev@googlegroups.com),\n>\n> Please take another look.\n>\n>\n> http://codereview.appspot.com/204063/show\n>\n",
+			"disapproval": false,
+			"date": "2010-02-25 00:39:42.602240",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc, adg (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2010-04-28 15:59:24.195607",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2010/04/28 15:59:24, jesse.dailey wrote:\n> Hello rsc, adg (cc: mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nMore benchmarks revealed more locking needs, in several places the protocol needed an atomic read or write that was split into 2 or 3 operations.\n\nI couldn't use the existing sync.RWMutex because I need to make multiple reads atomic as well.\n\nMost of the added benchmarks are just plain http benchmarks, and show a serious memory leak that I can't identify at this time (but as far as I know, does not require that fcgi be involved).",
+			"disapproval": false,
+			"date": "2010-04-28 16:04:03.626262",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "These are some miscellaneous comments I have so far.\n\nI'm a little daunted by the locking in the wsConn multiplexing. Could it be further simplified with goroutines? Perhaps a goroutine for each wsConn that dispatches writes and reads through channels?\n\nI will think about this some more and give you some more comments tomorrow.\n\nhttp://codereview.appspot.com/204063/diff/11001/12004\nFile src/pkg/http/fcgi/fcgi.go (right):\n\nhttp://codereview.appspot.com/204063/diff/11001/12004#newcode80\nsrc/pkg/http/fcgi/fcgi.go:80: Responder.\nMight as well merge this example with the one above. They're not fundamentally different.\n\nhttp://codereview.appspot.com/204063/diff/11001/12004#newcode181\nsrc/pkg/http/fcgi/fcgi.go:181: func (self *header) String() string {\nIt's a small point, but it's idiomatic to use a slightly more descriptive name than 'self' for the receiver. I would use 'h' here instead, and below also.\n\nhttp://codereview.appspot.com/204063/diff/11001/12004#newcode229\nsrc/pkg/http/fcgi/fcgi.go:229: for uint8(n) < p {\nvar n uint8 = 0\nfor n < p {\n\nhttp://codereview.appspot.com/204063/diff/11001/12004#newcode230\nsrc/pkg/http/fcgi/fcgi.go:230: m, err := w.Write(pad[n:])\nWhat is this loop supposed to be doing? It seems to me that it can write way more than p bytes to w. Is that intentional?\n\nhttp://codereview.appspot.com/204063/diff/11001/12004#newcode234\nsrc/pkg/http/fcgi/fcgi.go:234: n += m\nn += uint8(m)\n\nhttp://codereview.appspot.com/204063/diff/11001/12004#newcode242\nsrc/pkg/http/fcgi/fcgi.go:242: // now uses a lockable RWC so that the header-body-padding writes are atomic on this conn\nDoes it make writing the record atomic, or does it just prevent others from writing to it at the same time? \"Atomic\" to me means that it either writes the whole record completely or not at all which isn't the case here.\n\nMust it be atomic, in the sense I describe? If so, consider writing the entire record to a bytes.Buffer here, before only writing it to the conn if it's built successfully.\n\nhttp://codereview.appspot.com/204063/diff/11001/12006\nFile src/pkg/http/fcgi/handler.go (right):\n\nhttp://codereview.appspot.com/204063/diff/11001/12006#newcode239\nsrc/pkg/http/fcgi/handler.go:239: disconnected:\nuse return and a defer instead of goto and this label.",
+			"disapproval": false,
+			"date": "2010-05-03 06:12:53.219596",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2010/05/03 06:12:53, adg wrote:\n> These are some miscellaneous comments I have so far.\n> \n> I'm a little daunted by the locking in the wsConn multiplexing. Could it be\n> further simplified with goroutines? Perhaps a goroutine for each wsConn that\n> dispatches writes and reads through channels?\n> \n\nEach wsConn already has a goroutine for doing all it's reads, but that doesn't help with the problem that the locking solves.  Each read must read the header, parse out the ContentLength of the data, then read the data, and we have to prevent some other goroutine from trying to read a header in-between.\n\nOn the write side, I believe that locking is a cheaper solution than allocating a short-lived buffer, but I could be wrong.  For instance, if you are using FileServer you would create a copy in memory of every file served, in 4k chunks... tons of peak memory usage, plus the GC time to clean it all up.",
+			"disapproval": false,
+			"date": "2010-05-03 15:12:03.216963",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/204063/diff/11001/12004\nFile src/pkg/http/fcgi/fcgi.go (right):\n\nhttp://codereview.appspot.com/204063/diff/11001/12004#newcode230\nsrc/pkg/http/fcgi/fcgi.go:230: m, err := w.Write(pad[n:])\nOn 2010/05/03 06:12:53, adg wrote:\n> What is this loop supposed to be doing? It seems to me that it can write way\n> more than p bytes to w. Is that intentional?\n\npad is a maximum of p bytes long (line 226), so it will never write more than that.\nIt wants to write p bytes, has written n total bytes, and wrote m bytes on the last write.  This kind of loop is repeated many times in the code to make sure we don't get short writes.\n\nhttp://codereview.appspot.com/204063/diff/11001/12004#newcode242\nsrc/pkg/http/fcgi/fcgi.go:242: // now uses a lockable RWC so that the header-body-padding writes are atomic on this conn\nIt's a loose usage of the word atomic. It only needs to prevent anyone else from writing between the header and the following data.\n\nIn my mind, it was worse to add extra allocation rather than extra locking... not only is the locking as I understand it very fast (since the locked goroutines just dont wake up), but the benchmarks already show huge memory growth so I was trying to keep that down.\n\nAnd, even if we could skip the locking here, we need this same locking solution in place for reads, which cannot read a single packet in one read... so I opted to use the same solution everywhere.",
+			"disapproval": false,
+			"date": "2010-05-03 15:12:30.394028",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"rsc@golang.org",
+				"adg@golang.org",
+				"n13m3y3r@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "It'd be great to have this feature integrated so that people can get Go servers cheaply working in shared environments such as dreamhost.\n\nI see that it's been a couple of months since the last comment.\n\nIs there work going on in either side (reviewing or improving the code), or is this approved/rejected?",
+			"disapproval": false,
+			"date": "2010-07-06 13:57:33.679240",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "That's a good question - thanks for bringing it up.\n\nI would like to see this get finished. I know the last thing I said\nwas \"I'll send more comments tomorrow.\" Sorry about that.\n\nJesse, are you keen to continue trying to get this into shape? Have\nyou continued developing it outside of the codereview process?\n\nI'm also interested in whether it's currently being used by anyone.\n\nAndrew\n\nOn 6 July 2010 23:57,  <n13m3y3r@gmail.com> wrote:\n> It'd be great to have this feature integrated so that people can get Go\n> servers cheaply working in shared environments such as dreamhost.\n>\n> I see that it's been a couple of months since the last comment.\n>\n> Is there work going on in either side (reviewing or improving the code),\n> or is this approved/rejected?\n>\n> http://codereview.appspot.com/204063/show\n>\n",
+			"disapproval": false,
+			"date": "2010-07-09 04:27:23.377931",
+			"approval": false
+		},
+		{
+			"sender": "jesse.dailey@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I'm definitely interested in getting this into shape.\n\nI haven't done anything major on it outside of code review, but I've kept it\nminimally up-to-date with language changes (so that it continues to build\nand pass its tests, etc).\n\nIt has been up on github (as fcgigo), and a couple people are using it.  I\nwas just about to code (today) an issue that someone submitted about apache2\ncompatibility (which only accepts a \"Status: XXX\" header rather than the\nstandard \"HTTP/1.1 XXX\" header).  Once that fix is in place, I think usage\nwill jump a little (from something like 5 users to something like 10 ;) ),\nbecause it will work on shared hosting services that use a vanilla\nmod_fastcgi setup.\n\nOne thing I'd like to encourage is for Michael Hoisie to get web.go to use\nit instead of his own fcgi backend.  But, I'd like it to be stable and\naccepted first.. then he can port his scgi backend into the Handler/Listener\nAPI and everyone wins.  I haven't attempted to make that argument yet, but\nthat would bring usage up into the dozens. :)\n\nOn Fri, Jul 9, 2010 at 12:26 AM, Andrew Gerrand <adg@golang.org> wrote:\n\n> That's a good question - thanks for bringing it up.\n>\n> I would like to see this get finished. I know the last thing I said\n> was \"I'll send more comments tomorrow.\" Sorry about that.\n>\n> Jesse, are you keen to continue trying to get this into shape? Have\n> you continued developing it outside of the codereview process?\n>\n> I'm also interested in whether it's currently being used by anyone.\n>\n> Andrew\n>\n> On 6 July 2010 23:57,  <n13m3y3r@gmail.com> wrote:\n> > It'd be great to have this feature integrated so that people can get Go\n> > servers cheaply working in shared environments such as dreamhost.\n> >\n> > I see that it's been a couple of months since the last comment.\n> >\n> > Is there work going on in either side (reviewing or improving the code),\n> > or is this approved/rejected?\n> >\n> > http://codereview.appspot.com/204063/show\n> >\n>\n",
+			"disapproval": false,
+			"date": "2010-07-09 18:16:32.650537",
+			"approval": false
+		},
+		{
+			"sender": "n13m3y3r@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> I'm definitely interested in getting this into shape.\n\nThat's fantastic, thank you.\n\n(...)\n> One thing I'd like to encourage is for Michael Hoisie to get web.go to use\n> it instead of his own fcgi backend. \u00a0But, I'd like it to be stable and\n> accepted first.. then he can port his scgi backend into the Handler/Listener\n> API and everyone wins. \u00a0I haven't attempted to make that argument yet, but\n> that would bring usage up into the dozens. :)\n\nI was actually already talking to Michael before I pinged this review\nrequest, so I've just wrote another mail to the two of you to close\nthat loop.\n\nMichael seems to receive many requests to get FastCGI working, which\nis also a nice hint that a good implementation would be helpful.\n\n-- \nGustavo Niemeyer\nhttp://niemeyer.net\nhttp://niemeyer.net/blog\nhttp://niemeyer.net/twitter\n",
+			"disapproval": false,
+			"date": "2010-07-12 19:57:29.946528",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 10 July 2010 04:16, Jesse Dailey <jesse.dailey@gmail.com> wrote:\n> I'm definitely interested in getting this into shape.\n> I haven't done anything major on it outside of code review, but I've kept it\n> minimally up-to-date with language changes (so that it continues to build\n> and pass its tests, etc).\n> It has been up on github (as fcgigo), and a couple people are using it. \u00a0I\n> was just about to code (today) an issue that someone submitted about apache2\n> compatibility (which only accepts a \"Status: XXX\" header rather than the\n> standard \"HTTP/1.1 XXX\" header). \u00a0Once that fix is in place, I think usage\n> will jump a little (from something like 5 users to something like 10 ;) ),\n> because it will work on shared hosting services that use a vanilla\n> mod_fastcgi setup.\n\nThis is a big CL to work through, so my suggestion is to try to break\nit down into the smallest possible part and start there.\n\nMy impression that this library is most commonly used for writing\nFastCGI applications, rather than Web Servers that implement the\nFastCGI protocol.\n\nWould you consider submitting a CL that only includes the Listen part?\nWe can then focus on getting the wire protocol part submitted, and\nfrom there it will be easier to work on the other parts incrementally.\n\nWhat do you think?\n\nAndrew\n",
+			"disapproval": false,
+			"date": "2010-07-14 07:16:59.176825",
+			"approval": false
+		},
+		{
+			"sender": "rsc@google.com",
+			"recipients": [
+				"jesse.dailey@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "removing reviewers; timed out",
+			"disapproval": false,
+			"date": "2010-11-01 20:50:15.232074",
+			"approval": false
+		}
+	],
+	"owner_email": "jesse.dailey@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "jesse.dailey",
+	"subject": "code review 204063: This change adds the http/fcgi package.  This package p...",
+	"created": "2010-02-07 03:42:15.847225",
+	"patchsets": [
+		1,
+		1001,
+		3001,
+		4007,
+		3027,
+		4024,
+		11001
+	],
+	"modified": "2010-11-01 20:50:15.232341",
+	"closed": false,
+	"issue": 204063
+}

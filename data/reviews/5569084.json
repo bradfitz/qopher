@@ -1,0 +1,141 @@
+{
+	"description": "cmd/cgo: Emitting correct line number annotations by introducing a new Writer\nimplementation (lineAdjuster) as a decorator sitting between go/printer.Fprint\nand the .go file. Every line of generated code will be passed through an\ninstance of lineAdjuster and then output to the .cgo1.go file. lineAdjuster\nwill prpperly emit line number annotations in the middle of the .cgo1.go file.\n\nFixes issue 1047 and issue 2697",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"gri@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "monnand@gmail.com",
+			"recipients": [
+				"monnand@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, rsc@golang.org),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-28 05:06:21.557515",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Thanks for working on this.  I very much like the\nidea about the filter, but I am a little confused\nabout how this works.  I can see that it is resetting\nthe //line after the import \"C\" line, but I don't see it\nresetting the //line after other omitted comments.\nFor example, if the input is\n\npackage p\n\n/*\nbig comment\n*/\nimport \"C\"\n\n/*\nanother big comment\n*/\nfunc f() {}\n\nthen the current cgo1.go file does not include either\ncomment, and as far as I can tell this CL only\ncompensates for the first comment.\n\nI think a complete fix might require some changes to the\nprinter itself.  Robert is working on some other things\nin the printer, so now is probably not a good time to\nmake other changes.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-01-31 16:05:02.678041",
+			"approval": false
+		},
+		{
+			"sender": "monnand@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi Russ and other Go developers,\n\nThanks for your reply. I will explain a little below (Showing the \ncorrectness of this CL). It would be perfectly fine for my if you reject \nthis patch. After all, for me, changing printer itself is a better \nsolution to the problem itself. My solution is trying to not be too \ninvasive and change less code.\n\nRuss Cox wrote, On 01/31/2012 11:05 AM:\n> Thanks for working on this.  I very much like the\n> idea about the filter, but I am a little confused\n> about how this works.  I can see that it is resetting\n> the //line after the import \"C\" line, but I don't see it\n> resetting the //line after other omitted comments.\n\nActually, it can deal with it. See the following code beloe:\n\npackage rand\n\n/*\n#include <stdlib.h>\n#cgo LDFLAGS: -lm\n*/\nimport \"C\"\n\n/*\n  * This\n  * is\n  * a comment\n  * after import \"C\"\n  */\n\nfunc Random() int {\n\treturn int(C.random())\n}\n\nThe generated .cgo1.go is:\n\n// Created by cgo - DO NOT EDIT\n\n//line rand.go:1\npackage rand\n\n//line rand.go:16\nfunc Random() int {\n\treturn int(_Cfunc_random())\n}\n\nYou can see the second //line which annotated the correct line number.\n\nI think what confused you is the member name I added to the File struct. \nThe member FirstLineAfterImportC is actually, the first \nnon-comment-non-blank line after import \"C\" (I explained it a little in \nthe comment. But it seems did not work. I should put more information \nthere). This value is set in ast.go:ReadGo() function.\n\nActually, I did make the mistake you mentioned when I first wrote the \ncode. That's the reason why there is a member named \nFirstLineAfterImportC --- it was actually the first line after import \n\"C\" before. I just forget to change the name.\n\nThanks again for your reply.\n\nRegards,\n-Monnand\n\n> For example, if the input is\n>\n> package p\n>\n> /*\n> big comment\n> */\n> import \"C\"\n>\n> /*\n> another big comment\n> */\n> func f() {}\n>\n> then the current cgo1.go file does not include either\n> comment, and as far as I can tell this CL only\n> compensates for the first comment.\n>\n> I think a complete fix might require some changes to the\n> printer itself.  Robert is working on some other things\n> in the printer, so now is probably not a good time to\n> make other changes.\n>\n> Russ\n>\n\n",
+			"disapproval": false,
+			"date": "2012-02-02 04:36:01.063180",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I can look at this later today or tomorrow. We have discussed a\nspecial printer mode that inserts line information in the past; it\nmight be an easier fix.\n- Robert\n\nOn Wed, Feb 1, 2012 at 8:35 PM, monnand@gmail.com <monnand@gmail.com> wrote:\n> Hi Russ and other Go developers,\n>\n> Thanks for your reply. I will explain a little below (Showing the\n> correctness of this CL). It would be perfectly fine for my if you reject\n> this patch. After all, for me, changing printer itself is a better solution\n> to the problem itself. My solution is trying to not be too invasive and\n> change less code.\n>\n> Russ Cox wrote, On 01/31/2012 11:05 AM:\n>\n>> Thanks for working on this. \u00a0I very much like the\n>> idea about the filter, but I am a little confused\n>> about how this works. \u00a0I can see that it is resetting\n>> the //line after the import \"C\" line, but I don't see it\n>> resetting the //line after other omitted comments.\n>\n>\n> Actually, it can deal with it. See the following code beloe:\n>\n> package rand\n>\n> /*\n> #include <stdlib.h>\n> #cgo LDFLAGS: -lm\n> */\n> import \"C\"\n>\n> /*\n> \u00a0* This\n> \u00a0* is\n> \u00a0* a comment\n> \u00a0* after import \"C\"\n> \u00a0*/\n>\n> func Random() int {\n> \u00a0 \u00a0 \u00a0 \u00a0return int(C.random())\n> }\n>\n> The generated .cgo1.go is:\n>\n>\n> // Created by cgo - DO NOT EDIT\n>\n> //line rand.go:1\n> package rand\n>\n> //line rand.go:16\n> func Random() int {\n> \u00a0 \u00a0 \u00a0 \u00a0return int(_Cfunc_random())\n> }\n>\n> You can see the second //line which annotated the correct line number.\n>\n> I think what confused you is the member name I added to the File struct. The\n> member FirstLineAfterImportC is actually, the first non-comment-non-blank\n> line after import \"C\" (I explained it a little in the comment. But it seems\n> did not work. I should put more information there). This value is set in\n> ast.go:ReadGo() function.\n>\n> Actually, I did make the mistake you mentioned when I first wrote the code.\n> That's the reason why there is a member named FirstLineAfterImportC --- it\n> was actually the first line after import \"C\" before. I just forget to change\n> the name.\n>\n> Thanks again for your reply.\n>\n> Regards,\n> -Monnand\n>\n>\n>> For example, if the input is\n>>\n>> package p\n>>\n>> /*\n>> big comment\n>> */\n>> import \"C\"\n>>\n>> /*\n>> another big comment\n>> */\n>> func f() {}\n>>\n>> then the current cgo1.go file does not include either\n>> comment, and as far as I can tell this CL only\n>> compensates for the first comment.\n>>\n>> I think a complete fix might require some changes to the\n>> printer itself. \u00a0Robert is working on some other things\n>> in the printer, so now is probably not a good time to\n>> make other changes.\n>>\n>> Russ\n>>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-02 18:01:03.617890",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I was asking more about the general case of comments\nbeing stripped, not just the one case of comments around\nimport \"C\".  If I pass the file below through cgo, the output\nneeds to have annotations so that the two reported compiler\nerrors (inside f and g) have correct line numbers.\n\nThanks.\nRuss\n\npackage p\n\n/*\nbig comment\n*/\nimport \"C\"\n\n/*\nmore comments\n*/\n\nfunc f() {\n    /*\n    another big comment\n    */\n    x := 1.0 + \"hello\"\n}\n\nfunc g() {\n    /*\n    another big comment\n    */\n    x := 1.0 + \"hello\"\n}\n",
+			"disapproval": false,
+			"date": "2012-02-02 19:03:10.492509",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FYI: I haven't forgotten about this. Next up on the list.\n- gri\n\nOn Thu, Feb 2, 2012 at 10:01 AM, Robert Griesemer <gri@golang.org> wrote:\n> I can look at this later today or tomorrow. We have discussed a\n> special printer mode that inserts line information in the past; it\n> might be an easier fix.\n> - Robert\n>\n> On Wed, Feb 1, 2012 at 8:35 PM, monnand@gmail.com <monnand@gmail.com> wrote:\n>> Hi Russ and other Go developers,\n>>\n>> Thanks for your reply. I will explain a little below (Showing the\n>> correctness of this CL). It would be perfectly fine for my if you reject\n>> this patch. After all, for me, changing printer itself is a better solution\n>> to the problem itself. My solution is trying to not be too invasive and\n>> change less code.\n>>\n>> Russ Cox wrote, On 01/31/2012 11:05 AM:\n>>\n>>> Thanks for working on this. \u00a0I very much like the\n>>> idea about the filter, but I am a little confused\n>>> about how this works. \u00a0I can see that it is resetting\n>>> the //line after the import \"C\" line, but I don't see it\n>>> resetting the //line after other omitted comments.\n>>\n>>\n>> Actually, it can deal with it. See the following code beloe:\n>>\n>> package rand\n>>\n>> /*\n>> #include <stdlib.h>\n>> #cgo LDFLAGS: -lm\n>> */\n>> import \"C\"\n>>\n>> /*\n>> \u00a0* This\n>> \u00a0* is\n>> \u00a0* a comment\n>> \u00a0* after import \"C\"\n>> \u00a0*/\n>>\n>> func Random() int {\n>> \u00a0 \u00a0 \u00a0 \u00a0return int(C.random())\n>> }\n>>\n>> The generated .cgo1.go is:\n>>\n>>\n>> // Created by cgo - DO NOT EDIT\n>>\n>> //line rand.go:1\n>> package rand\n>>\n>> //line rand.go:16\n>> func Random() int {\n>> \u00a0 \u00a0 \u00a0 \u00a0return int(_Cfunc_random())\n>> }\n>>\n>> You can see the second //line which annotated the correct line number.\n>>\n>> I think what confused you is the member name I added to the File struct. The\n>> member FirstLineAfterImportC is actually, the first non-comment-non-blank\n>> line after import \"C\" (I explained it a little in the comment. But it seems\n>> did not work. I should put more information there). This value is set in\n>> ast.go:ReadGo() function.\n>>\n>> Actually, I did make the mistake you mentioned when I first wrote the code.\n>> That's the reason why there is a member named FirstLineAfterImportC --- it\n>> was actually the first line after import \"C\" before. I just forget to change\n>> the name.\n>>\n>> Thanks again for your reply.\n>>\n>> Regards,\n>> -Monnand\n>>\n>>\n>>> For example, if the input is\n>>>\n>>> package p\n>>>\n>>> /*\n>>> big comment\n>>> */\n>>> import \"C\"\n>>>\n>>> /*\n>>> another big comment\n>>> */\n>>> func f() {}\n>>>\n>>> then the current cgo1.go file does not include either\n>>> comment, and as far as I can tell this CL only\n>>> compensates for the first comment.\n>>>\n>>> I think a complete fix might require some changes to the\n>>> printer itself. \u00a0Robert is working on some other things\n>>> in the printer, so now is probably not a good time to\n>>> make other changes.\n>>>\n>>> Russ\n>>>\n>>\n",
+			"disapproval": false,
+			"date": "2012-02-08 01:34:03.423663",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Feb 7, 2012 at 20:34, Robert Griesemer <gri@golang.org> wrote:\n> FYI: I haven't forgotten about this. Next up on the list.\n\nThanks!\n",
+			"disapproval": false,
+			"date": "2012-02-08 03:37:38.287546",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi there;\n\nI think making this change in the go/printer will lead to a simpler,\nfaster, and more robust solution. I have a CL in the works that should\naccomplish this. Essentially there's a new printer mode that - when\nset - will cause the printer to emit a correcting //line comment\nwhenever the resulting output positions are different from the\noriginal source.\n\nStay tuned.\n- gri\n\nOn Wed, Feb 1, 2012 at 8:35 PM, monnand@gmail.com <monnand@gmail.com> wrote:\n> Hi Russ and other Go developers,\n>\n> Thanks for your reply. I will explain a little below (Showing the\n> correctness of this CL). It would be perfectly fine for my if you reject\n> this patch. After all, for me, changing printer itself is a better solution\n> to the problem itself. My solution is trying to not be too invasive and\n> change less code.\n>\n> Russ Cox wrote, On 01/31/2012 11:05 AM:\n>\n>> Thanks for working on this. \u00a0I very much like the\n>> idea about the filter, but I am a little confused\n>> about how this works. \u00a0I can see that it is resetting\n>> the //line after the import \"C\" line, but I don't see it\n>> resetting the //line after other omitted comments.\n>\n>\n> Actually, it can deal with it. See the following code beloe:\n>\n> package rand\n>\n> /*\n> #include <stdlib.h>\n> #cgo LDFLAGS: -lm\n> */\n> import \"C\"\n>\n> /*\n> \u00a0* This\n> \u00a0* is\n> \u00a0* a comment\n> \u00a0* after import \"C\"\n> \u00a0*/\n>\n> func Random() int {\n> \u00a0 \u00a0 \u00a0 \u00a0return int(C.random())\n> }\n>\n> The generated .cgo1.go is:\n>\n>\n> // Created by cgo - DO NOT EDIT\n>\n> //line rand.go:1\n> package rand\n>\n> //line rand.go:16\n> func Random() int {\n> \u00a0 \u00a0 \u00a0 \u00a0return int(_Cfunc_random())\n> }\n>\n> You can see the second //line which annotated the correct line number.\n>\n> I think what confused you is the member name I added to the File struct. The\n> member FirstLineAfterImportC is actually, the first non-comment-non-blank\n> line after import \"C\" (I explained it a little in the comment. But it seems\n> did not work. I should put more information there). This value is set in\n> ast.go:ReadGo() function.\n>\n> Actually, I did make the mistake you mentioned when I first wrote the code.\n> That's the reason why there is a member named FirstLineAfterImportC --- it\n> was actually the first line after import \"C\" before. I just forget to change\n> the name.\n>\n> Thanks again for your reply.\n>\n> Regards,\n> -Monnand\n>\n>\n>> For example, if the input is\n>>\n>> package p\n>>\n>> /*\n>> big comment\n>> */\n>> import \"C\"\n>>\n>> /*\n>> another big comment\n>> */\n>> func f() {}\n>>\n>> then the current cgo1.go file does not include either\n>> comment, and as far as I can tell this CL only\n>> compensates for the first comment.\n>>\n>> I think a complete fix might require some changes to the\n>> printer itself. \u00a0Robert is working on some other things\n>> in the printer, so now is probably not a good time to\n>> make other changes.\n>>\n>> Russ\n>>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-08 23:53:55.443417",
+			"approval": false
+		},
+		{
+			"sender": "monnand@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Robert Griesemer wrote, On 02/08/2012 06:53 PM:\n> Hi there;\n>\n> I think making this change in the go/printer will lead to a simpler,\n> faster, and more robust solution. I have a CL in the works that should\n> accomplish this. Essentially there's a new printer mode that - when\n> set - will cause the printer to emit a correcting //line comment\n> whenever the resulting output positions are different from the\n> original source.\n\nThis is definitely a better solution than mine. No need to say the bug \nin my code that Russ pointed.\n\nThanks,\n-Nan\n>\n> Stay tuned.\n> - gri\n>\n> On Wed, Feb 1, 2012 at 8:35 PM, monnand@gmail.com<monnand@gmail.com>  wrote:\n>> Hi Russ and other Go developers,\n>>\n>> Thanks for your reply. I will explain a little below (Showing the\n>> correctness of this CL). It would be perfectly fine for my if you reject\n>> this patch. After all, for me, changing printer itself is a better solution\n>> to the problem itself. My solution is trying to not be too invasive and\n>> change less code.\n>>\n>> Russ Cox wrote, On 01/31/2012 11:05 AM:\n>>\n>>> Thanks for working on this.  I very much like the\n>>> idea about the filter, but I am a little confused\n>>> about how this works.  I can see that it is resetting\n>>> the //line after the import \"C\" line, but I don't see it\n>>> resetting the //line after other omitted comments.\n>>\n>>\n>> Actually, it can deal with it. See the following code beloe:\n>>\n>> package rand\n>>\n>> /*\n>> #include<stdlib.h>\n>> #cgo LDFLAGS: -lm\n>> */\n>> import \"C\"\n>>\n>> /*\n>>   * This\n>>   * is\n>>   * a comment\n>>   * after import \"C\"\n>>   */\n>>\n>> func Random() int {\n>>         return int(C.random())\n>> }\n>>\n>> The generated .cgo1.go is:\n>>\n>>\n>> // Created by cgo - DO NOT EDIT\n>>\n>> //line rand.go:1\n>> package rand\n>>\n>> //line rand.go:16\n>> func Random() int {\n>>         return int(_Cfunc_random())\n>> }\n>>\n>> You can see the second //line which annotated the correct line number.\n>>\n>> I think what confused you is the member name I added to the File struct. The\n>> member FirstLineAfterImportC is actually, the first non-comment-non-blank\n>> line after import \"C\" (I explained it a little in the comment. But it seems\n>> did not work. I should put more information there). This value is set in\n>> ast.go:ReadGo() function.\n>>\n>> Actually, I did make the mistake you mentioned when I first wrote the code.\n>> That's the reason why there is a member named FirstLineAfterImportC --- it\n>> was actually the first line after import \"C\" before. I just forget to change\n>> the name.\n>>\n>> Thanks again for your reply.\n>>\n>> Regards,\n>> -Monnand\n>>\n>>\n>>> For example, if the input is\n>>>\n>>> package p\n>>>\n>>> /*\n>>> big comment\n>>> */\n>>> import \"C\"\n>>>\n>>> /*\n>>> another big comment\n>>> */\n>>> func f() {}\n>>>\n>>> then the current cgo1.go file does not include either\n>>> comment, and as far as I can tell this CL only\n>>> compensates for the first comment.\n>>>\n>>> I think a complete fix might require some changes to the\n>>> printer itself.  Robert is working on some other things\n>>> in the printer, so now is probably not a good time to\n>>> make other changes.\n>>>\n>>> Russ\n>>>\n>>\n>\n\n",
+			"disapproval": false,
+			"date": "2012-02-09 01:18:32.512274",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please see:\n\nhttp://codereview.appspot.com/5643066\n\nIt would be great if you could verify that this works for cgo. I am\nnot 100% sure about the cgo specific changes. Thanks.\n- gri\n\nOn Wed, Feb 8, 2012 at 5:18 PM, monnand@gmail.com <monnand@gmail.com> wrote:\n> Robert Griesemer wrote, On 02/08/2012 06:53 PM:\n>\n>> Hi there;\n>>\n>> I think making this change in the go/printer will lead to a simpler,\n>> faster, and more robust solution. I have a CL in the works that should\n>> accomplish this. Essentially there's a new printer mode that - when\n>> set - will cause the printer to emit a correcting //line comment\n>> whenever the resulting output positions are different from the\n>> original source.\n>\n>\n> This is definitely a better solution than mine. No need to say the bug in my\n> code that Russ pointed.\n>\n> Thanks,\n> -Nan\n>\n>>\n>> Stay tuned.\n>> - gri\n>>\n>> On Wed, Feb 1, 2012 at 8:35 PM, monnand@gmail.com<monnand@gmail.com>\n>> \u00a0wrote:\n>>>\n>>> Hi Russ and other Go developers,\n>>>\n>>> Thanks for your reply. I will explain a little below (Showing the\n>>> correctness of this CL). It would be perfectly fine for my if you reject\n>>> this patch. After all, for me, changing printer itself is a better\n>>> solution\n>>> to the problem itself. My solution is trying to not be too invasive and\n>>> change less code.\n>>>\n>>> Russ Cox wrote, On 01/31/2012 11:05 AM:\n>>>\n>>>> Thanks for working on this. \u00a0I very much like the\n>>>> idea about the filter, but I am a little confused\n>>>> about how this works. \u00a0I can see that it is resetting\n>>>> the //line after the import \"C\" line, but I don't see it\n>>>> resetting the //line after other omitted comments.\n>>>\n>>>\n>>>\n>>> Actually, it can deal with it. See the following code beloe:\n>>>\n>>> package rand\n>>>\n>>> /*\n>>> #include<stdlib.h>\n>>> #cgo LDFLAGS: -lm\n>>> */\n>>> import \"C\"\n>>>\n>>> /*\n>>> \u00a0* This\n>>> \u00a0* is\n>>> \u00a0* a comment\n>>> \u00a0* after import \"C\"\n>>> \u00a0*/\n>>>\n>>> func Random() int {\n>>> \u00a0 \u00a0 \u00a0 \u00a0return int(C.random())\n>>> }\n>>>\n>>> The generated .cgo1.go is:\n>>>\n>>>\n>>> // Created by cgo - DO NOT EDIT\n>>>\n>>> //line rand.go:1\n>>> package rand\n>>>\n>>> //line rand.go:16\n>>> func Random() int {\n>>> \u00a0 \u00a0 \u00a0 \u00a0return int(_Cfunc_random())\n>>> }\n>>>\n>>> You can see the second //line which annotated the correct line number.\n>>>\n>>> I think what confused you is the member name I added to the File struct.\n>>> The\n>>> member FirstLineAfterImportC is actually, the first non-comment-non-blank\n>>> line after import \"C\" (I explained it a little in the comment. But it\n>>> seems\n>>> did not work. I should put more information there). This value is set in\n>>> ast.go:ReadGo() function.\n>>>\n>>> Actually, I did make the mistake you mentioned when I first wrote the\n>>> code.\n>>> That's the reason why there is a member named FirstLineAfterImportC ---\n>>> it\n>>> was actually the first line after import \"C\" before. I just forget to\n>>> change\n>>> the name.\n>>>\n>>> Thanks again for your reply.\n>>>\n>>> Regards,\n>>> -Monnand\n>>>\n>>>\n>>>> For example, if the input is\n>>>>\n>>>> package p\n>>>>\n>>>> /*\n>>>> big comment\n>>>> */\n>>>> import \"C\"\n>>>>\n>>>> /*\n>>>> another big comment\n>>>> */\n>>>> func f() {}\n>>>>\n>>>> then the current cgo1.go file does not include either\n>>>> comment, and as far as I can tell this CL only\n>>>> compensates for the first comment.\n>>>>\n>>>> I think a complete fix might require some changes to the\n>>>> printer itself. \u00a0Robert is working on some other things\n>>>> in the printer, so now is probably not a good time to\n>>>> make other changes.\n>>>>\n>>>> Russ\n>>>>\n>>>\n>>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-09 22:58:22.285400",
+			"approval": false
+		},
+		{
+			"sender": "monnand@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Robert Griesemer wrote, On 02/09/2012 05:58 PM:\n> Please see:\n>\n> http://codereview.appspot.com/5643066\n>\n> It would be great if you could verify that this works for cgo. I am\n> not 100% sure about the cgo specific changes. Thanks.\n> - gri\n\nSure. It's my honor. I will try some example code this week.\n\n-Monnand\n\n>\n> On Wed, Feb 8, 2012 at 5:18 PM, monnand@gmail.com<monnand@gmail.com>  wrote:\n>> Robert Griesemer wrote, On 02/08/2012 06:53 PM:\n>>\n>>> Hi there;\n>>>\n>>> I think making this change in the go/printer will lead to a simpler,\n>>> faster, and more robust solution. I have a CL in the works that should\n>>> accomplish this. Essentially there's a new printer mode that - when\n>>> set - will cause the printer to emit a correcting //line comment\n>>> whenever the resulting output positions are different from the\n>>> original source.\n>>\n>>\n>> This is definitely a better solution than mine. No need to say the bug in my\n>> code that Russ pointed.\n>>\n>> Thanks,\n>> -Nan\n>>\n>>>\n>>> Stay tuned.\n>>> - gri\n>>>\n>>> On Wed, Feb 1, 2012 at 8:35 PM, monnand@gmail.com<monnand@gmail.com>\n>>>   wrote:\n>>>>\n>>>> Hi Russ and other Go developers,\n>>>>\n>>>> Thanks for your reply. I will explain a little below (Showing the\n>>>> correctness of this CL). It would be perfectly fine for my if you reject\n>>>> this patch. After all, for me, changing printer itself is a better\n>>>> solution\n>>>> to the problem itself. My solution is trying to not be too invasive and\n>>>> change less code.\n>>>>\n>>>> Russ Cox wrote, On 01/31/2012 11:05 AM:\n>>>>\n>>>>> Thanks for working on this.  I very much like the\n>>>>> idea about the filter, but I am a little confused\n>>>>> about how this works.  I can see that it is resetting\n>>>>> the //line after the import \"C\" line, but I don't see it\n>>>>> resetting the //line after other omitted comments.\n>>>>\n>>>>\n>>>>\n>>>> Actually, it can deal with it. See the following code beloe:\n>>>>\n>>>> package rand\n>>>>\n>>>> /*\n>>>> #include<stdlib.h>\n>>>> #cgo LDFLAGS: -lm\n>>>> */\n>>>> import \"C\"\n>>>>\n>>>> /*\n>>>>   * This\n>>>>   * is\n>>>>   * a comment\n>>>>   * after import \"C\"\n>>>>   */\n>>>>\n>>>> func Random() int {\n>>>>         return int(C.random())\n>>>> }\n>>>>\n>>>> The generated .cgo1.go is:\n>>>>\n>>>>\n>>>> // Created by cgo - DO NOT EDIT\n>>>>\n>>>> //line rand.go:1\n>>>> package rand\n>>>>\n>>>> //line rand.go:16\n>>>> func Random() int {\n>>>>         return int(_Cfunc_random())\n>>>> }\n>>>>\n>>>> You can see the second //line which annotated the correct line number.\n>>>>\n>>>> I think what confused you is the member name I added to the File struct.\n>>>> The\n>>>> member FirstLineAfterImportC is actually, the first non-comment-non-blank\n>>>> line after import \"C\" (I explained it a little in the comment. But it\n>>>> seems\n>>>> did not work. I should put more information there). This value is set in\n>>>> ast.go:ReadGo() function.\n>>>>\n>>>> Actually, I did make the mistake you mentioned when I first wrote the\n>>>> code.\n>>>> That's the reason why there is a member named FirstLineAfterImportC ---\n>>>> it\n>>>> was actually the first line after import \"C\" before. I just forget to\n>>>> change\n>>>> the name.\n>>>>\n>>>> Thanks again for your reply.\n>>>>\n>>>> Regards,\n>>>> -Monnand\n>>>>\n>>>>\n>>>>> For example, if the input is\n>>>>>\n>>>>> package p\n>>>>>\n>>>>> /*\n>>>>> big comment\n>>>>> */\n>>>>> import \"C\"\n>>>>>\n>>>>> /*\n>>>>> another big comment\n>>>>> */\n>>>>> func f() {}\n>>>>>\n>>>>> then the current cgo1.go file does not include either\n>>>>> comment, and as far as I can tell this CL only\n>>>>> compensates for the first comment.\n>>>>>\n>>>>> I think a complete fix might require some changes to the\n>>>>> printer itself.  Robert is working on some other things\n>>>>> in the printer, so now is probably not a good time to\n>>>>> make other changes.\n>>>>>\n>>>>> Russ\n>>>>>\n>>>>\n>>>\n>>\n>\n\n",
+			"disapproval": false,
+			"date": "2012-02-10 05:10:48.372342",
+			"approval": false
+		}
+	],
+	"owner_email": "monnand@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Nan Deng",
+	"subject": "code review 5569084: cmd/cgo: Emitting correct line number annotations by in...",
+	"created": "2012-01-28 05:00:51.827930",
+	"patchsets": [
+		1,
+		3,
+		3001
+	],
+	"modified": "2012-02-10 05:10:48.372342",
+	"closed": false,
+	"issue": 5569084
+}

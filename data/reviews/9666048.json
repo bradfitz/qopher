@@ -1,0 +1,139 @@
+{
+	"description": "path/filepath: ignore case when matching on windows\n\nFixes issue 5441.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"rsc@golang.org",
+		"r@golang.org",
+		"minux.ma@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "could we find a way to dynamically determine if the underlying file system is\ncase insensitive, and act accordingly?",
+			"disapproval": false,
+			"date": "2013-06-21 07:26:39.565720",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9666048/diff/2001/src/pkg/path/filepath/match.go\nFile src/pkg/path/filepath/match.go (right):\n\nhttps://codereview.appspot.com/9666048/diff/2001/src/pkg/path/filepath/match.go#newcode13\nsrc/pkg/path/filepath/match.go:13: \"unicode\"\ni don't want to pull in unicode and then only use it if a dynamic check succeeds. please move the check to a file conditionally compiled.\n\nin any case i find it strange that OS X has a case-insensitive file system with a glob that is case-sensitive, yet windows takes a different tack. it makes me wonder what the right answer really is.\n\nbut for now, let's just pursue windows in isolation.",
+			"disapproval": false,
+			"date": "2013-06-21 03:08:55.132300",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, r@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-06-21 06:22:17.924390",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9666048/diff/2001/src/pkg/path/filepath/match.go\nFile src/pkg/path/filepath/match.go (right):\n\nhttps://codereview.appspot.com/9666048/diff/2001/src/pkg/path/filepath/match.go#newcode13\nsrc/pkg/path/filepath/match.go:13: \"unicode\"\nOn 2013/06/21 03:08:55, r wrote:\n> i don't want to pull in unicode and then only use it if a dynamic check\n> succeeds. please move the check to a file conditionally compiled.\n> \n> in any case i find it strange that OS X has a case-insensitive file system with\n> a glob that is case-sensitive, yet windows takes a different tack. it makes me\n> wonder what the right answer really is.\n> \n> but for now, let's just pursue windows in isolation.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-06-21 06:22:23.571710",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/21 07:26:39, minux wrote:\n> could we find a way to dynamically determine if the underlying file system is\n> case insensitive, and act accordingly?\n\nI don't believe file system matters. See https://code.google.com/p/go/issues/detail?id=5441#c5 for details.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-21 10:52:45.958520",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I am not 100% sure that the behavior being fixed is a bug worth fixing. There are so many other things that depend on the name casing, and they're not going to be fixed by hacking Match or Glob. For example, the go command lists the directory and then uses HasSuffix(name, \".go\") to find go files.\n\nMatch fundamentally cannot give the \"right\" answer, because \"right\" will depend on the file system, and Match is more abstract than that: it doesn't know what the file system is. I believe Match should not change at all.\n\nGlob actually touches the file system, so it could conceivably be changed to do the \"right\" thing. If we want to go down that path, the thing I would do is introduce a matchFold function defined as:\n\n// matchFold reports whether there is a string pname such that name and pname\n// are equal under Unicode case folding and pname matches pattern.\n// If so, it returns both the matched boolean and the derived pname.\n// It returns a pname as similar to name as possible.\n// For example, matchFold(\"*\", \"foo\") returns pname=\"foo\", not pname=\"Foo\" or pname=\"FOO\".\nfunc matchFold(pattern, name string) (matched bool, pname string, err error)\n\nThen func glob would do:\n\nfor _, n := range names {\n\tmatched, p, err := matchFold(pattern, n)\n\tif err != nil {\n\t\treturn m, err\n\t}\n\tif matched {\n\t\tif p == n {\n\t\t\tm = append(m, Join(dir, n))\n\t\t\tcontinue\n\t\t}\n\n\t\t// Have name n from file system and\n\t\t// name p matching pattern and strings.EqualFold(n, p).\n\t\t// If n and p are the same file, add p to list.\n\t\tfi1, err1 := os.Stat(Join(dir, n))\n\t\tfi2, err2 := os.Stat(Join(dir, p))\n\t\tif err1 == nil && err2 == nil && os.SameFile(fi1, fi2) {\n\t\t\tm = append(m, Join(dir, p))\n\t\t}\n\t}\n}\n\nSeparately, there should be a special case at the top of func glob for !hasMeta(pattern) that just stats the one file and returns pattern. This is similar to the case at the top of func Glob and would trigger in the case of multi-element patterns with non-meta elements later in the pattern, such as */foo.go.\n\nhttps://codereview.appspot.com/9666048/diff/7001/src/pkg/path/filepath/match.go\nFile src/pkg/path/filepath/match.go (right):\n\nhttps://codereview.appspot.com/9666048/diff/7001/src/pkg/path/filepath/match.go#newcode228\nsrc/pkg/path/filepath/match.go:228: if runtime.GOOS == \"windows\" {\nI disagree with this. Glob should return strings that Match the pattern, even if the \"official\" file system name is different. If you have a file named FOO.GO and you Glob(\"foo.go\"), it's much less magical for the caller to get \"foo.go\" than to get \"FOO.GO\".\n\nThat is, I think the original code is correct - even on Windows - without the windows exception.",
+			"disapproval": false,
+			"date": "2013-06-21 18:08:46.555720",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I agree with your concerns; they're related to my comment about how OS X works.\r\n\r\n% date > x\r\n% date > Y\r\n% echo x*\r\nx\r\n% echo X*\r\nX*\r\n% echo y*\r\ny*\r\n% echo Y*\r\nY\r\n% cat x\r\nFri Jun 21 11:10:54 PDT 2013\r\n% cat y\r\nFri Jun 21 11:10:56 PDT 2013\r\n% cat X\r\nFri Jun 21 11:10:54 PDT 2013\r\n% cat Y\r\nFri Jun 21 11:10:56 PDT 2013\r\n%\r\n\r\nGlob is case-sensitive even though the file system (via cat) is\r\ncase-insensitive.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-06-21 18:13:11.322820",
+			"approval": false
+		},
+		{
+			"sender": "alex.brainman@gmail.com",
+			"recipients": [
+				"alex.brainman@gmail.com",
+				"rsc@golang.org",
+				"r@golang.org",
+				"minux.ma@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/21 18:13:11, r wrote:\n> I agree with your concerns; they're related to my comment about how OS X works.\n> \n> % date > x\n> % date > Y\n> % echo x*\n> x\n> % echo X*\n> X*\n> % echo y*\n> y*\n> % echo Y*\n> Y\n> % cat x\n> Fri Jun 21 11:10:54 PDT 2013\n> % cat y\n> Fri Jun 21 11:10:56 PDT 2013\n> % cat X\n> Fri Jun 21 11:10:54 PDT 2013\n> % cat Y\n> Fri Jun 21 11:10:56 PDT 2013\n> %\n> \n> Glob is case-sensitive even though the file system (via cat) is\n> case-insensitive.\n> \n\nWell, Windows works differently. (Please, note, Windows command does not do glob expansion. dir command does. But all our arguments still apply).\n\nC:\\a>echo xxx > x\n\nC:\\a>echo YYY > Y\n\nC:\\a>dir x*\n Volume in drive C has no label.\n Volume Serial Number is 1021-46BD\n\n Directory of C:\\a\n\n23/06/2013  07:28 PM                 6 x\n\t\t\t   1 File(s)              6 bytes\n\t\t\t   0 Dir(s)   4,844,167,168 bytes free\n\nC:\\a>dir X*\n Volume in drive C has no label.\n Volume Serial Number is 1021-46BD\n\n Directory of C:\\a\n\n23/06/2013  07:28 PM                 6 x\n\t\t\t   1 File(s)              6 bytes\n\t\t\t   0 Dir(s)   4,844,167,168 bytes free\n\nC:\\a>dir y*\n Volume in drive C has no label.\n Volume Serial Number is 1021-46BD\n\n Directory of C:\\a\n\n23/06/2013  07:29 PM                 6 Y\n\t\t\t   1 File(s)              6 bytes\n\t\t\t   0 Dir(s)   4,844,167,168 bytes free\n\nC:\\a>dir Y*\n Volume in drive C has no label.\n Volume Serial Number is 1021-46BD\n\n Directory of C:\\a\n\n23/06/2013  07:29 PM                 6 Y\n\t\t\t   1 File(s)              6 bytes\n\t\t\t   0 Dir(s)   4,844,167,168 bytes free\n\nC:\\a>type x\nxxx\n\nC:\\a>type y\nYYY\n\nC:\\a>type X\nxxx\n\nC:\\a>type Y\nYYY\n\nC:\\a>\n\nWindows glob is case-insensitive regardless of file system. Looking for X* finds existing file x, and real file name (x) is displayed.\n\nOur current filepath.Glob is behaving differently. Looking for X* with filepath.Glob finds nothing. This is what issue 5441 is about. I beleive, filepath.Glob is suppose to implement OS specific rules. Current windows version is not.\n\nDir is not special in that regard. I suspect, it uses FindFirstFile Windows API that does all the work. (I didn't check, but happy to investigate, if you like). \n\nAlso as I quoted before http://support.microsoft.com/kb/100625:\n\n\"... The difference in behavior noted here applies only when an application needs to locate an existing file. POSIX takes advantage of the full case sensitive mode, while MS-DOS, WOW, and Win32 subsystems use the case insensitive mode. ...\"\n\nWe use Win32 Windows API, so the behaviour does not depend on file system. I just tryied above commands on ext3 file system, mounted on windows via Samba, and the result is the same.\n\nWe have an issue. We should fix it. I will try to implement Russ's suggestions and report back when ready.\n\nAlex",
+			"disapproval": false,
+			"date": "2013-06-23 10:30:09.803850",
+			"approval": false
+		}
+	],
+	"owner_email": "alex.brainman@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "brainman",
+	"subject": "code review 9666048: path/filepath: ignore case when matching on windows",
+	"created": "2013-05-29 04:46:10.654600",
+	"patchsets": [
+		1,
+		2001,
+		7001
+	],
+	"modified": "2013-06-23 10:30:10.039780",
+	"closed": false,
+	"issue": 9666048
+}

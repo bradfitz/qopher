@@ -1,0 +1,201 @@
+{
+	"description": "net: sort records returned by LookupMX",
+	"cc": [
+		"rogpeppe@gmail.com",
+		"adg@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"cthom.lists@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4388048/diff/4001/src/pkg/net/dnsclient.go\nFile src/pkg/net/dnsclient.go (right):\n\nhttp://codereview.appspot.com/4388048/diff/4001/src/pkg/net/dnsclient.go#newcode415\nsrc/pkg/net/dnsclient.go:415: type mxslice []*MX\nYMMV, but if you wanted to implement random ordering for objects with the same preference, you do something like:\n\ntype mxrecords struct {\n  mx []*MX\n  perm []int\n}\n\nfunc (m *mxrecords) Less(i, j int) bool {\n    if m.mx[i].Pref != m.mx[i].Pref {\n        return m.mx[i].Pref < m.mx[j].Pref\n    }\n    return m.perm[i] < m.perm[j]\n}\n\nfunc (m *mxrecords) Swap(i, j int) {\n   m.mx[i], m.mx[j] = m.mx[j], m.mx[i]\n   m.perm[i], m.perm[j] = m.mx[j], m.mx[i]\n}\n\nfunc LookupMX(name string) (entries []*MX, err os.Error) {\n    ...\n    m := &mxrecords{entries, rand.Perm(len(entries))\n    sort.Sort(m)\n    return\n}\n\nthis is a case where it would be nice to have rand.Shuffle - you could shuffle consecutive sequences mx records with the same Pref, avoiding the need to allocate a permutation array.",
+			"disapproval": false,
+			"date": "2011-04-11 13:33:57.810123",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"cthom.lists@gmail.com",
+				"rogpeppe@gmail.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4388048/diff/5002/src/pkg/net/dnsclient.go\nFile src/pkg/net/dnsclient.go (right):\n\nhttp://codereview.appspot.com/4388048/diff/5002/src/pkg/net/dnsclient.go#newcode414\nsrc/pkg/net/dnsclient.go:414: // Implements sort.Interface\nThis is working too hard.  (I know it's not your algorithm.)\n\ntype byPref []*MX\n// usual methods, now 1/3 as long\n\nfunc LookupMX(...) {\n    ...\n    // Shuffle.\n    for i := range mx {\n        j := rand.Intn(i+1)\n        mx[i], mx[j] = mx[j], mx[i]\n    }\n    // Sort by preference.\n    // Stays shuffled within equal preference.\n    sort.Sort(byPref(mx))\n}\n\nhttp://codereview.appspot.com/4388048/diff/5002/src/pkg/net/dnsclient.go#newcode437\nsrc/pkg/net/dnsclient.go:437: var records []dnsRR\nWhile you're here,\n\ns/records/rr/\ns/entries/mx/",
+			"disapproval": false,
+			"date": "2011-04-12 03:06:20.627286",
+			"approval": false
+		},
+		{
+			"sender": "cthom.lists@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I was just reading the RFC, didn't realize the randomness was a MUST\n[sic], I would've thought the \"random\" order the dns server sends them\nwould be sufficient. I'll adjust I suppose, but it does seem silly to\ninvest client-side code into load-balancing for the server.\n\nOn 11 April 2011 09:33,  <rogpeppe@gmail.com> wrote:\n>\n> http://codereview.appspot.com/4388048/diff/4001/src/pkg/net/dnsclient.go\n> File src/pkg/net/dnsclient.go (right):\n>\n> http://codereview.appspot.com/4388048/diff/4001/src/pkg/net/dnsclient.go#newcode415\n> src/pkg/net/dnsclient.go:415: type mxslice []*MX\n> YMMV, but if you wanted to implement random ordering for objects with\n> the same preference, you do something like:\n>\n> type mxrecords struct {\n> \u00a0mx []*MX\n> \u00a0perm []int\n> }\n>\n> func (m *mxrecords) Less(i, j int) bool {\n> \u00a0 \u00a0if m.mx[i].Pref != m.mx[i].Pref {\n> \u00a0 \u00a0 \u00a0 \u00a0return m.mx[i].Pref < m.mx[j].Pref\n> \u00a0 \u00a0}\n> \u00a0 \u00a0return m.perm[i] < m.perm[j]\n> }\n>\n> func (m *mxrecords) Swap(i, j int) {\n> \u00a0 m.mx[i], m.mx[j] = m.mx[j], m.mx[i]\n> \u00a0 m.perm[i], m.perm[j] = m.mx[j], m.mx[i]\n> }\n>\n> func LookupMX(name string) (entries []*MX, err os.Error) {\n> \u00a0 \u00a0...\n> \u00a0 \u00a0m := &mxrecords{entries, rand.Perm(len(entries))\n> \u00a0 \u00a0sort.Sort(m)\n> \u00a0 \u00a0return\n> }\n>\n> this is a case where it would be nice to have rand.Shuffle - you could\n> shuffle consecutive sequences mx records with the same Pref, avoiding\n> the need to allocate a permutation array.\n>\n> http://codereview.appspot.com/4388048/\n>\n",
+			"disapproval": false,
+			"date": "2011-04-11 13:52:10.896840",
+			"approval": false
+		},
+		{
+			"sender": "cthom.lists@gmail.com",
+			"recipients": [
+				"cthom.lists@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-04-11 12:50:20.591043",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Don't worry about a test.  We don't have testing set up\nfor any of the DNS code, and it's going to get some\nmore work done on it soon anyway.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-04-12 18:12:00.886247",
+			"approval": false
+		},
+		{
+			"sender": "cthom.lists@gmail.com",
+			"recipients": [
+				"cthom.lists@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, rog (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-04-11 14:34:56.414025",
+			"approval": false
+		},
+		{
+			"sender": "cthom.lists@gmail.com",
+			"recipients": [
+				"cthom.lists@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, rog (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-04-11 14:36:04.737154",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "The code looks good, but I would like to see some simple test cases\nfor mxsorter.\n",
+			"disapproval": false,
+			"date": "2011-04-12 01:09:09.902419",
+			"approval": false
+		},
+		{
+			"sender": "cthom.lists@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Changes made.\n\nShould I also include a test of byPref in this CL? i.e.\n\nfunc TestMXPref(t *testing.T) {\n\tvar mx1, mx2, mx3 []*MX\n\tmx1 = []*MX{\n\t\t&MX{\"a\", 5},\n\t\t&MX{\"b\", 5},\n\t\t&MX{\"c\", 5},\n\t\t&MX{\"d\", 5},\n\t\t&MX{\"e\", 5},\n\t}\n\t// Copied the shuffle here\n\tmx2 = append(mx2, mx1...)\n\tfor i := range mx2 {\n\t\tj := rand.Intn(i+1)\n\t\tmx2[i], mx2[j] = mx2[j], mx2[i]\n\t}\n\tsort.Sort(byPref(mx2))\n\t// mx2 now holds a shuffled copy to check that shuffles are random\n\tmx3 = append(mx3, mx1...)\n\tfor runs := 0; runs < 20; runs++ {\n\t\tfor i := range mx3 {\n\t\t\tj := rand.Intn(i+1)\n\t\t\tmx3[i], mx3[j] = mx3[j], mx3[i]\n\t\t}\n\t\tsort.Sort(byPref(mx3))\n\t\tfor i := range mx3 {\n\t\t\tif mx3[i] != mx2[i] && mx3[i] != mx1[i] {\n\t\t\t\treturn\n\t\t\t}\n\t\t}\n\t\tcopy(mx3, mx1)\n\t}\n\tt.Errorf(\"MX records don't get shuffled\")\n}\n\nOr something, I don't have much experience writing test functions,\nespecially not for randomness, but honestly this seems more like a\ntest of rand and sort than anything, and it will fail something like 1\nin every 19 sextillion builds.\n\nOn 11 April 2011 23:06,  <rsc@golang.org> wrote:\n>\n> http://codereview.appspot.com/4388048/diff/5002/src/pkg/net/dnsclient.go\n> File src/pkg/net/dnsclient.go (right):\n>\n> http://codereview.appspot.com/4388048/diff/5002/src/pkg/net/dnsclient.go#newcode414\n> src/pkg/net/dnsclient.go:414: // Implements sort.Interface\n> This is working too hard. \u00a0(I know it's not your algorithm.)\n>\n> type byPref []*MX\n> // usual methods, now 1/3 as long\n>\n> func LookupMX(...) {\n> \u00a0 \u00a0...\n> \u00a0 \u00a0// Shuffle.\n> \u00a0 \u00a0for i := range mx {\n> \u00a0 \u00a0 \u00a0 \u00a0j := rand.Intn(i+1)\n> \u00a0 \u00a0 \u00a0 \u00a0mx[i], mx[j] = mx[j], mx[i]\n> \u00a0 \u00a0}\n> \u00a0 \u00a0// Sort by preference.\n> \u00a0 \u00a0// Stays shuffled within equal preference.\n> \u00a0 \u00a0sort.Sort(byPref(mx))\n> }\n>\n> http://codereview.appspot.com/4388048/diff/5002/src/pkg/net/dnsclient.go#newcode437\n> src/pkg/net/dnsclient.go:437: var records []dnsRR\n> While you're here,\n>\n> s/records/rr/\n> s/entries/mx/\n>\n> http://codereview.appspot.com/4388048/\n>\n",
+			"disapproval": false,
+			"date": "2011-04-12 13:54:51.286705",
+			"approval": false
+		},
+		{
+			"sender": "cthom.lists@gmail.com",
+			"recipients": [
+				"cthom.lists@gmail.com",
+				"rogpeppe@gmail.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rog, adg, rsc (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-04-12 18:16:34.785085",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"cthom.lists@gmail.com",
+				"rogpeppe@gmail.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n\nOne last change.\n\nhttp://codereview.appspot.com/4388048/diff/6/src/pkg/net/dnsclient.go\nFile src/pkg/net/dnsclient.go (right):\n\nhttp://codereview.appspot.com/4388048/diff/6/src/pkg/net/dnsclient.go#newcode414\nsrc/pkg/net/dnsclient.go:414: // Implements sort.Interface by record preference\n// byPref implements sort.Interface to sort MX records by preference",
+			"disapproval": false,
+			"date": "2011-04-12 23:41:10.452969",
+			"approval": true
+		},
+		{
+			"sender": "cthom.lists@gmail.com",
+			"recipients": [
+				"cthom.lists@gmail.com",
+				"rogpeppe@gmail.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rog, adg, rsc (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-04-13 11:59:28.353867",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"cthom.lists@gmail.com",
+				"rogpeppe@gmail.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=b353f61b9548 ***\n\nnet: sort records returned by LookupMX\n\nR=rog, adg, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/4388048\n\nCommitter: Andrew Gerrand <adg@golang.org>",
+			"disapproval": false,
+			"date": "2011-04-14 00:30:54.992885",
+			"approval": false
+		}
+	],
+	"owner_email": "cthom.lists@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "cthom",
+	"subject": "code review 4388048: net: sort records returned by LookupMX",
+	"created": "2011-04-11 12:47:41.366985",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		8002,
+		9002,
+		5002,
+		6,
+		18001
+	],
+	"modified": "2011-04-14 00:30:54.992885",
+	"closed": false,
+	"issue": 4388048
+}

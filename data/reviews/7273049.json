@@ -1,0 +1,128 @@
+{
+	"description": "net/http: allow graceful server shutdown\n\nAdds Close method to Server.\nFixes issue 4674.\n\nBenchmark results from Intel(R) Core(TM)2 Duo CPU     P8700  @ 2.53GHz linux/amd64:\n\nbenchmark            old ns/op    new ns/op    delta\nBenchmarkServer         164948       169391   +2.69%\nBenchmarkServer-2       139033       142452   +2.46%\n",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"bradfitz@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "patrick.allen.higgins@gmail.com",
+			"recipients": [
+				"patrick.allen.higgins@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"patrick.allen.higgins@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode790\nsrc/pkg/net/http/server.go:790: c.server.mu.RLock()\nOn 2013/02/04 20:41:05, bradfitz wrote:\n> if we have this notion of closing, we'd probably want to use it in the policy of\n> whether to send the client \"Connection: close\" HTTP responses, too.\n\nDone.\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode796\nsrc/pkg/net/http/server.go:796: w, err := c.readRequest()\nOn 2013/02/04 20:41:05, bradfitz wrote:\n> this could be blocked for a very long time.\n> \n> we'd probably want to keep track of:\n> \n>    inKeepAlive map[net.Conn]bool\n> \n> so then on Close, we could close any net.Conn which is being read from.\n> \n> but this is all starts to feel like a lot of work for something that'll be\n> rarely used.\n> \n> makes me wonder what's the minimum we could provide so others can do this\n> themselves?\n\nThis is why Close documents that it should be called after closing the listener and setting a ReadTimeout on the server.\n\nThere are test cases for the slow path (no read timeout and unclosed listener) and the fast(er) path.\n\nI agree that it would be good to provide something simpler so that more complex policies can be implemented by others.\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1242\nsrc/pkg/net/http/server.go:1242: wg sync.WaitGroup // keeps track of all service goroutines\nOn 2013/02/04 20:41:05, bradfitz wrote:\n> s/service/handler/? \n\nDone. Also added note that the accept loop is tracked.\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1308\nsrc/pkg/net/http/server.go:1308: defer srv.wg.Done()\nOn 2013/02/04 20:41:05, bradfitz wrote:\n> just put this in c.serve() at the top?\n\nDone.\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1320\nsrc/pkg/net/http/server.go:1320: func (srv *Server) Close() {\nOn 2013/02/04 20:41:05, bradfitz wrote:\n> Close() conventionally returns error (e.g. io.Closer).\n\nDone.\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1322\nsrc/pkg/net/http/server.go:1322: srv.closing = true\nOn 2013/02/04 20:41:05, bradfitz wrote:\n> what about people already stuck in Accept?  Don't you also want to close the\n> listener?\n\nI don't know how this could be done without making the listener a part of the Server struct. Right now I think Serve could be called on the same *Server multiple times with different listeners, no?\n\nThis is why Close documents that the listener should be closed before calling Close.",
+			"disapproval": false,
+			"date": "2013-02-04 21:17:09.271810",
+			"approval": false
+		},
+		{
+			"sender": "patrick.allen.higgins@gmail.com",
+			"recipients": [
+				"patrick.allen.higgins@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org, golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, patrick.allen.higgins@gmail.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-02-04 20:12:56.543220",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"patrick.allen.higgins@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"patrick.allen.higgins@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go\nFile src/pkg/net/http/server.go (right):\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode790\nsrc/pkg/net/http/server.go:790: c.server.mu.RLock()\nif we have this notion of closing, we'd probably want to use it in the policy of whether to send the client \"Connection: close\" HTTP responses, too.\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode796\nsrc/pkg/net/http/server.go:796: w, err := c.readRequest()\nthis could be blocked for a very long time.\n\nwe'd probably want to keep track of:\n\n   inKeepAlive map[net.Conn]bool\n\nso then on Close, we could close any net.Conn which is being read from.\n\nbut this is all starts to feel like a lot of work for something that'll be rarely used.\n\nmakes me wonder what's the minimum we could provide so others can do this themselves?\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1242\nsrc/pkg/net/http/server.go:1242: wg sync.WaitGroup // keeps track of all service goroutines\ns/service/handler/?\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1308\nsrc/pkg/net/http/server.go:1308: defer srv.wg.Done()\njust put this in c.serve() at the top?\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1320\nsrc/pkg/net/http/server.go:1320: func (srv *Server) Close() {\nClose() conventionally returns error (e.g. io.Closer).\n\nhttps://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1322\nsrc/pkg/net/http/server.go:1322: srv.closing = true\nwhat about people already stuck in Accept?  Don't you also want to close the listener?",
+			"disapproval": false,
+			"date": "2013-02-04 20:41:05.638950",
+			"approval": false
+		},
+		{
+			"sender": "patrick.allen.higgins@gmail.com",
+			"recipients": [
+				"patrick.allen.higgins@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello bradfitz@golang.org (cc: golang-dev@googlegroups.com, patrick.allen.higgins@gmail.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-02-04 21:16:05.143710",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "We should decide what Close should even do before implementing it.\r\n\r\nI think it should probably close the listener (which means retaining a\r\nprivate reference to it), close any keep-alive connections, wait for\r\nexisting handlers to finish.  But do we force-kill open connections after\r\nsome timeout?  Or do we return an error from Close if it's taking too long\r\nand/or there are no Read/WriteTimeouts set on the Server?\r\n\r\netc, etc.\r\n\r\nBut I think the currently API is kinda weird and requires a lot of reading.\r\n\r\nOr we go super light and only do the WaitGroup thing and let other people\r\npass in a net.Listener which does all the tracking/closing.\r\n\r\n\r\nOn Mon, Feb 4, 2013 at 1:17 PM, <patrick.allen.higgins@gmail.com> wrote:\r\n\r\n>\r\n> https://codereview.appspot.**com/7273049/diff/4001/src/pkg/**\r\n> net/http/server.go<https://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go>\r\n> File src/pkg/net/http/server.go (right):\r\n>\r\n> https://codereview.appspot.**com/7273049/diff/4001/src/pkg/**\r\n> net/http/server.go#newcode790<https://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode790>\r\n> src/pkg/net/http/server.go:**790: c.server.mu.RLock()\r\n> On 2013/02/04 20:41:05, bradfitz wrote:\r\n>\r\n>> if we have this notion of closing, we'd probably want to use it in the\r\n>>\r\n> policy of\r\n>\r\n>> whether to send the client \"Connection: close\" HTTP responses, too.\r\n>>\r\n>\r\n> Done.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7273049/diff/4001/src/pkg/**\r\n> net/http/server.go#newcode796<https://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode796>\r\n> src/pkg/net/http/server.go:**796: w, err := c.readRequest()\r\n> On 2013/02/04 20:41:05, bradfitz wrote:\r\n>\r\n>> this could be blocked for a very long time.\r\n>>\r\n>\r\n>  we'd probably want to keep track of:\r\n>>\r\n>\r\n>      inKeepAlive map[net.Conn]bool\r\n>>\r\n>\r\n>  so then on Close, we could close any net.Conn which is being read\r\n>>\r\n> from.\r\n>\r\n>  but this is all starts to feel like a lot of work for something\r\n>>\r\n> that'll be\r\n>\r\n>> rarely used.\r\n>>\r\n>\r\n>  makes me wonder what's the minimum we could provide so others can do\r\n>>\r\n> this\r\n>\r\n>> themselves?\r\n>>\r\n>\r\n> This is why Close documents that it should be called after closing the\r\n> listener and setting a ReadTimeout on the server.\r\n>\r\n> There are test cases for the slow path (no read timeout and unclosed\r\n> listener) and the fast(er) path.\r\n>\r\n> I agree that it would be good to provide something simpler so that more\r\n> complex policies can be implemented by others.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7273049/diff/4001/src/pkg/**\r\n> net/http/server.go#newcode1242<https://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1242>\r\n> src/pkg/net/http/server.go:**1242: wg sync.WaitGroup // keeps track of all\r\n> service goroutines\r\n> On 2013/02/04 20:41:05, bradfitz wrote:\r\n>\r\n>> s/service/handler/?\r\n>>\r\n>\r\n> Done. Also added note that the accept loop is tracked.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7273049/diff/4001/src/pkg/**\r\n> net/http/server.go#newcode1308<https://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1308>\r\n> src/pkg/net/http/server.go:**1308: defer srv.wg.Done()\r\n> On 2013/02/04 20:41:05, bradfitz wrote:\r\n>\r\n>> just put this in c.serve() at the top?\r\n>>\r\n>\r\n> Done.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7273049/diff/4001/src/pkg/**\r\n> net/http/server.go#newcode1320<https://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1320>\r\n> src/pkg/net/http/server.go:**1320: func (srv *Server) Close() {\r\n> On 2013/02/04 20:41:05, bradfitz wrote:\r\n>\r\n>> Close() conventionally returns error (e.g. io.Closer).\r\n>>\r\n>\r\n> Done.\r\n>\r\n>\r\n> https://codereview.appspot.**com/7273049/diff/4001/src/pkg/**\r\n> net/http/server.go#newcode1322<https://codereview.appspot.com/7273049/diff/4001/src/pkg/net/http/server.go#newcode1322>\r\n> src/pkg/net/http/server.go:**1322: srv.closing = true\r\n> On 2013/02/04 20:41:05, bradfitz wrote:\r\n>\r\n>> what about people already stuck in Accept?  Don't you also want to\r\n>>\r\n> close the\r\n>\r\n>> listener?\r\n>>\r\n>\r\n> I don't know how this could be done without making the listener a part\r\n> of the Server struct. Right now I think Serve could be called on the\r\n> same *Server multiple times with different listeners, no?\r\n>\r\n> This is why Close documents that the listener should be closed before\r\n> calling Close.\r\n>\r\n> https://codereview.appspot.**com/7273049/<https://codereview.appspot.com/7273049/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-02-04 21:59:22.565070",
+			"approval": false
+		},
+		{
+			"sender": "patrick.allen.higgins@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I agree that the API is weird. I was thinking it's OK if it's a little\r\nweird if it's expected to be rarely-used and means we don't have to do\r\nsomething heavyweight for everyone.\r\n\r\nTracking all the keep-alive connections seems heavyweight, but it does make\r\nthe API cleaner and could put an upper-bound on shutdown time.\r\n\r\nThe shutdown timeout and force-kill behavior could be parameters to Close\r\n(making it no longer an io.Closer), as the timeout is likely app-specific.\r\n\r\nI'll have to think about what the net.Listener which does all the tracking\r\nwould look like. I don't know how it would be able to shutdown a long-lived\r\npersistent connection cleanly.\r\n",
+			"disapproval": false,
+			"date": "2013-02-04 22:27:18.347030",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"patrick.allen.higgins@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"patrick.allen.higgins@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If you'd like to resume discussing this, we now can.",
+			"disapproval": false,
+			"date": "2013-05-14 23:23:25.135200",
+			"approval": false
+		},
+		{
+			"sender": "patrick.allen.higgins@gmail.com",
+			"recipients": [
+				"patrick.allen.higgins@gmail.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/05/14 23:23:25, bradfitz wrote:\n> If you'd like to resume discussing this, we now can.\n\nI am still interested and started working on it again tonight. I'd like to measure the overhead of tracking all the keep-alive connections. I'm having a hard time getting the tests to pass, though. Apparently a Transport is leaking somehow and 19 allocations have been added to TestChunkReaderAllocs.",
+			"disapproval": false,
+			"date": "2013-06-06 04:07:51.757780",
+			"approval": false
+		}
+	],
+	"owner_email": "patrick.allen.higgins@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "pah",
+	"subject": "code review 7273049: net/http: allow graceful server shutdown",
+	"created": "2013-02-04 20:04:59.556360",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		7001
+	],
+	"modified": "2013-06-06 04:07:52.059700",
+	"closed": false,
+	"issue": 7273049
+}

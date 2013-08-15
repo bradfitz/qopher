@@ -1,0 +1,154 @@
+{
+	"description": "database/sql: Add SetMaxOpenConns()\n\nAdd the ability to set an open connection limit.\nFixed case where the Conn finalCloser was being called with db.mu locked.\nAdded seperate benchmarks for each path for Exec and Query.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"google@julienschmidt.com",
+		"bradfitz@golang.org",
+		"nightlyone@googlemail.com"
+	],
+	"messages": [
+		{
+			"sender": "Tad.Glines@gmail.com",
+			"recipients": [
+				"Tad.Glines@gmail.com",
+				"google@julienschmidt.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Regarding the change to DB.Close(): This was the one place where the conn's finalClose() was being called while db.mu was locked. This is contrary to the contract specified for the finalCloser interface. This wasn't a problem before because the conn's finalClose() didn't need to touch the db. But, with the addition of MaxOpenConns, it was necessary to fix this so that the conn's finalClose() could decrement the numOpen count and signal db.cond.",
+			"disapproval": false,
+			"date": "2013-05-26 17:12:06.470220",
+			"approval": false
+		},
+		{
+			"sender": "Tad.Glines@gmail.com",
+			"recipients": [
+				"Tad.Glines@gmail.com",
+				"google@julienschmidt.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Update to CL that addresses some comments to follow shortly.\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go\nFile src/pkg/database/sql/sql.go (right):\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode196\nsrc/pkg/database/sql/sql.go:196: cond     sync.Cond\nOn 2013/06/14 19:46:33, bradfitz wrote:\n> I skeptical of any code that feels it necessary to use a sync.Cond.  It's\n> definitely not code I want to maintain and reason about in the future.\n> \n> I believe Ian or somebody recently went so far as to say: never use sync.Cond. \n> It's there for low-level packages.  I doubt it's required here.\n\nWhile sync.Cond isn't required, the solution using sync.Cond has fewer moving parts (and is likely more performant) than the \"request list/slice+channels+go routine opener\" alternative.\n\nCan you elaborate on why you are skeptical of code that uses sync.Cond?\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode260\nsrc/pkg/database/sql/sql.go:260: func (dc *driverConn) closeDBLocked() func() error {\nOn 2013/06/14 19:46:33, bradfitz wrote:\n> this function name now doesn't really match what it does.\n\nThe name still matches what it does. Look at line 436. It is called while db.mu is locked.\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode431\nsrc/pkg/database/sql/sql.go:431: func (db *DB) Close() error {\nOn 2013/06/14 19:46:33, bradfitz wrote:\n> why did this function change?\n\nI explained the change in my first comment on this CL. To repeat:\n\nThis was the one place where the conn's\nfinalClose() was being called while db.mu was locked. This is contrary to the\ncontract specified for the finalCloser interface. This wasn't a problem before\nbecause the conn's finalClose() didn't need to touch the db. But, with the\naddition of MaxOpenConns, it was necessary to fix this so that the conn's\nfinalClose() could decrement the numOpen count and signal db.cond.\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode481\nsrc/pkg/database/sql/sql.go:481: // MAke sure maxIdle doesn't exeed maxOpen\nOn 2013/06/14 19:46:33, bradfitz wrote:\n> two typos on this line\n\nDone.\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode495\nsrc/pkg/database/sql/sql.go:495: // can maintain.\nOn 2013/06/14 19:46:33, bradfitz wrote:\n> it doesn't change the capabilities of the DB server.\n> \n> it affects how many connections this *DB makes to the server.\n\nI'll change the wording.\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode504\nsrc/pkg/database/sql/sql.go:504: var syncMaxIdle bool = false\nOn 2013/06/14 19:46:33, bradfitz wrote:\n> no need to say bool. or var.\n\nI realize now that I can just delete the entire line and just add a colon on line 510.",
+			"disapproval": false,
+			"date": "2013-06-14 21:12:00.213410",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"Tad.Glines@gmail.com",
+				"google@julienschmidt.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/fakedb_test.go\nFile src/pkg/database/sql/fakedb_test.go (right):\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/fakedb_test.go#newcode503\nsrc/pkg/database/sql/fakedb_test.go:503: case \"NOSERT\":\nwhat is NOSERT? or execInsert's doInsert bool? Neither are documented.\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go\nFile src/pkg/database/sql/sql.go (right):\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode196\nsrc/pkg/database/sql/sql.go:196: cond     sync.Cond\nI skeptical of any code that feels it necessary to use a sync.Cond.  It's definitely not code I want to maintain and reason about in the future.\n\nI believe Ian or somebody recently went so far as to say: never use sync.Cond.  It's there for low-level packages.  I doubt it's required here.\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode260\nsrc/pkg/database/sql/sql.go:260: func (dc *driverConn) closeDBLocked() func() error {\nthis function name now doesn't really match what it does.\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode431\nsrc/pkg/database/sql/sql.go:431: func (db *DB) Close() error {\nwhy did this function change?\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode481\nsrc/pkg/database/sql/sql.go:481: // MAke sure maxIdle doesn't exeed maxOpen\ntwo typos on this line\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode495\nsrc/pkg/database/sql/sql.go:495: // can maintain.\nit doesn't change the capabilities of the DB server.\n\nit affects how many connections this *DB makes to the server.\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/sql.go#newcode504\nsrc/pkg/database/sql/sql.go:504: var syncMaxIdle bool = false\nno need to say bool. or var.",
+			"disapproval": false,
+			"date": "2013-06-14 19:46:33.106490",
+			"approval": false
+		},
+		{
+			"sender": "Tad.Glines@gmail.com",
+			"recipients": [
+				"Tad.Glines@gmail.com",
+				"google@julienschmidt.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello google@julienschmidt.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-06-14 21:13:27.691740",
+			"approval": false
+		},
+		{
+			"sender": "Tad.Glines@gmail.com",
+			"recipients": [
+				"Tad.Glines@gmail.com",
+				"google@julienschmidt.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/fakedb_test.go\nFile src/pkg/database/sql/fakedb_test.go (right):\n\nhttps://codereview.appspot.com/9789044/diff/2001/src/pkg/database/sql/fakedb_test.go#newcode503\nsrc/pkg/database/sql/fakedb_test.go:503: case \"NOSERT\":\nOn 2013/06/14 19:46:33, bradfitz wrote:\n> what is NOSERT? or execInsert's doInsert bool? Neither are documented.\n\nI added comments to address this in the patch I just uploaded, but forgot to comment on this directly.\n\nNOSERT does everything INSERT does except it doesn't add the row to the table. I added it so that I could use it in the concurrent benchmarks. I wanted it to excursive the same code paths in database/sql as a real INSERT but without the having to worry about the added overhead of a ballooning table.",
+			"disapproval": false,
+			"date": "2013-06-14 21:17:31.235190",
+			"approval": false
+		},
+		{
+			"sender": "nightlyone@googlemail.com",
+			"recipients": [
+				"Tad.Glines@gmail.com",
+				"google@julienschmidt.com",
+				"bradfitz@golang.org",
+				"nightlyone@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/14 21:17:31, Tad Glines wrote:\n> NOSERT does everything INSERT does except it doesn't add the row to the table. I\n> added it so that I could use it in the concurrent benchmarks. I wanted it to\n> excursive the same code paths in database/sql as a real INSERT but without the\n> having to worry about the added overhead of a ballooning table.\n\nWhat about calling it \"UPDATE\" instead? As an UPDATE has the same semantics.",
+			"disapproval": false,
+			"date": "2013-06-14 23:02:32.725070",
+			"approval": false
+		},
+		{
+			"sender": "Tad.Glines@gmail.com",
+			"recipients": [
+				"Tad.Glines@gmail.com",
+				"google@julienschmidt.com",
+				"bradfitz@golang.org",
+				"nightlyone@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/06/14 23:02:32, ioe wrote:\n> On 2013/06/14 21:17:31, Tad Glines wrote:\n> > NOSERT does everything INSERT does except it doesn't add the row to the table.\n> I\n> > added it so that I could use it in the concurrent benchmarks. I wanted it to\n> > excursive the same code paths in database/sql as a real INSERT but without the\n> > having to worry about the added overhead of a ballooning table.\n> \n> What about calling it \"UPDATE\" instead? As an UPDATE has the same semantics.\n\nUPDATE isn't implemented in fakedb and NOSERT was easier to add than implementing actual UPDATE functionality.\nI could name it FAKE_INSERT instead of NOSERT if that would make it clearer.",
+			"disapproval": false,
+			"date": "2013-06-14 23:49:48.509660",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"Tad.Glines@gmail.com",
+				"google@julienschmidt.com",
+				"bradfitz@golang.org",
+				"nightlyone@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9789044/diff/9001/src/pkg/database/sql/sql.go\nFile src/pkg/database/sql/sql.go (right):\n\nhttps://codereview.appspot.com/9789044/diff/9001/src/pkg/database/sql/sql.go#newcode196\nsrc/pkg/database/sql/sql.go:196: cond     sync.Cond\nI didn't really don't want to see a sync.Cond in this code.  The usage in this CL seems mostly fine (see comment below), but it adds complexity to code that is arguably already borderline too complex.  I'd much prefer something using higher-level idiomatic Go mechanisms.\n\nThat is, can we make this code simpler at the same time?\n\nI'd fine introducing new (unexported) types and interfaces and spilling out into a new file if necessary, if all the pieces are clear.\n\nOr not going that far, what does this CL look like mostly as-is, but without the sync.Cond?\n\nCan we have a connection manager goroutine (run for the life of the life of the *DB) that owns the pool and hands out connections and counts?\n\nhttps://codereview.appspot.com/9789044/diff/9001/src/pkg/database/sql/sql.go#newcode469\nsrc/pkg/database/sql/sql.go:469: // then the new MaxIdfleConns will be reduced to match the MaxOpenConns limit\ntypo\n\nhttps://codereview.appspot.com/9789044/diff/9001/src/pkg/database/sql/sql.go#newcode519\nsrc/pkg/database/sql/sql.go:519: if db.closed {\ndoesn't this check need to be be done after re-acquiring the lock after the cond.Wait?\n\nhttps://codereview.appspot.com/9789044/diff/9001/src/pkg/database/sql/sql.go#newcode524\nsrc/pkg/database/sql/sql.go:524: // If db.maxOpen > 0 then wait until either the number of open connectsion\ntypo",
+			"disapproval": false,
+			"date": "2013-06-27 17:40:38.060460",
+			"approval": false
+		},
+		{
+			"sender": "Tad.Glines@gmail.com",
+			"recipients": [
+				"Tad.Glines@gmail.com",
+				"google@julienschmidt.com",
+				"bradfitz@golang.org",
+				"nightlyone@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/9789044/diff/9001/src/pkg/database/sql/sql.go\nFile src/pkg/database/sql/sql.go (right):\n\nhttps://codereview.appspot.com/9789044/diff/9001/src/pkg/database/sql/sql.go#newcode196\nsrc/pkg/database/sql/sql.go:196: cond     sync.Cond\nOn 2013/06/27 17:40:38, bradfitz wrote:\n> I didn't really don't want to see a sync.Cond in this code.  The usage in this\n> CL seems mostly fine (see comment below), but it adds complexity to code that is\n> arguably already borderline too complex.  I'd much prefer something using\n> higher-level idiomatic Go mechanisms.\n> \n> That is, can we make this code simpler at the same time?\n> \n> I'd fine introducing new (unexported) types and interfaces and spilling out into\n> a new file if necessary, if all the pieces are clear.\n> \n> Or not going that far, what does this CL look like mostly as-is, but without the\n> sync.Cond?\n> \n> Can we have a connection manager goroutine (run for the life of the life of the\n> *DB) that owns the pool and hands out connections and counts?\n> \n\nMy original goals when writing this Cl where:\n1. Minimize delta size (lines changed/added)\n2. Zero (or nearly zero) impact to existing performance characteristics.\n\nIf neither of those are important, then yes, a channel base solution is certainly possible. I did it once already, I can do it again :-)\n\nI'll create a new CL with a channel based solution.",
+			"disapproval": false,
+			"date": "2013-06-27 18:16:07.484380",
+			"approval": false
+		}
+	],
+	"owner_email": "Tad.Glines@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Tad Glines",
+	"subject": "code review 9789044: database/sql: Add SetMaxOpenConns()",
+	"created": "2013-05-26 16:44:52.890510",
+	"patchsets": [
+		1,
+		2001,
+		9001
+	],
+	"modified": "2013-06-27 18:16:07.765030",
+	"closed": false,
+	"issue": 9789044
+}

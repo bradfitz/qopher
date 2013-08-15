@@ -1,0 +1,299 @@
+{
+	"description": "sort: Sort() now switches over to heapsort (from quicksort) if the\nlatter is taking too long to finish (presumably due to a bad case).\n\nSee http://research.swtch.com/2008/01/killing-quicksort.html for more\ninfo.\nFixes issue 467.",
+	"cc": [
+		"r@golang.org",
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Also, please complete a CLA as described at\nhttp://golang.org/doc/contribute.html#copyright\n\nThanks again.\nRuss\n",
+			"disapproval": false,
+			"date": "2011-06-08 11:58:03.047610",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"hatahet@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "This looks great.  It's nice to get this fixed.\nPlease change the CL description to\n\nsort: switch to heapsort if quicksort is not making progress\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go\nFile src/pkg/sort/sort.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode9\nsrc/pkg/sort/sort.go:9: import \"math\"\nIt would be nice to avoid this import, since right now\nsort has no dependencies at all.  Easy to approximate log below\nwith a shift loop.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode24\nsrc/pkg/sort/sort.go:24: func Min(a, b int) int {\nExporting this for the test puts it in the public API, which it\nprobably doesn't need to be.  Please s/Min/min/ and then\njust make a copy in the test.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode41\nsrc/pkg/sort/sort.go:41: func siftDown(data Interface, lo, hi, first int) {\nIn code that gives a lo, hi, we typically set things so that the\nrange of values is lo <= v < hi (for example, in a slice: x[lo:hi]);\nthis code is using lo <= v <= hi, which is easy to miss.\nPlease change this to have the < meaning of hi.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode51\nsrc/pkg/sort/sort.go:51: if child <= hi && data.Less(first+root, first+child) {\nThe child comparison here is guaranteed to be true.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode55\nsrc/pkg/sort/sort.go:55: return\nSwap the return up to pick it off first.\n\nif !Less {\n    return\n}\nSwap\nroot = child\n\nhttp://golang.org/doc/effective_go.html#if\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode61\nsrc/pkg/sort/sort.go:61: parent := (b - a - 2) / 2\nCan we make this use the same index space as the siftDown function?\nAlso a comment or two would help:\n\nfirst := a\nlo := 0\nhi := b - a\n\n// Build heap with greatest element at top.\nfor i := (hi-1)/2; i >= 0; i-- { ...\n\n// Pop elements, largest first, into end of data.\nfor i := hi-1; i >= 0; i-- {\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode161\nsrc/pkg/sort/sort.go:161: func quickSort(data Interface, a, b, max_depth int) {\nmaxDepth please\nhttp://golang.org/doc/effective_go.html#names\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode186\nsrc/pkg/sort/sort.go:186: max_depth := 2 * int(math.Log2(float64(data.Len())))\n// 2*ceil(log2(n))\nmaxDepth := 0\nfor n := data.Len(); n > 1; n >>= 1 {\n    maxDepth++\n}\nmaxDepth *= 2\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort_test.go\nFile src/pkg/sort/sort_test.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort_test.go#newcode180\nsrc/pkg/sort/sort_test.go:180: func TestBentleyMcIlroy(t *testing.T) {\nPlease make this possible to call with different sort functions:\n\nfunc testBentleyMcIlroy(t *testing.T, sort func(sort.Interface)) {\n\nand then add\n\nfunc TestSortBM(t *testing.T) {\n    testBentleyMcIlroy(t, Sort)\n}\n\nfunc TestHeapsortBM(t *testing.T) {\n    testBentleyMcIlroy(t, Heapsort)\n}\n\nso that we can test the heapsort implementation directly.\n\nOf course, there is no Heapsort in the sort package (and shouldn't be)\nbut we can add one during testing by creating a file export_test.go containing:\n\npackage sort\n\nfunc Heapsort(data Interface) {\n    heapsort(data, 0, data.Len())\n}\n\nAlso, please add a TestAdversary that calls Sort with the adversary\nimplementation.",
+			"disapproval": false,
+			"date": "2011-06-08 11:56:14.847973",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> http://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort_test.go#newcode5\n> src/pkg/sort/sort_test.go:5: package sort_test\n> I'm not 100% sure, but I believe gotest expects the test suite package\n> name to be same as the name of the package under testing in order to\n> successfully build the test binary.\n>\n> http://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort_test.go#newcode12\n> src/pkg/sort/sort_test.go:12: . \"sort\"\n> Wrt to note at line 5: this would became wrong.\n\nThe renaming is unfortunate but necessary.\nThe packages that testing depends on should be\n(but sometimes get away with not) using a\nseparate test package to avoid a cyclic dependency.\nSort has been getting away with it.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-06-08 12:18:40.877074",
+			"approval": false
+		},
+		{
+			"sender": "hatahet@gmail.com",
+			"recipients": [
+				"hatahet@gmail.com",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hi rsc,\nCould you take a look at this please?\nThanks",
+			"disapproval": false,
+			"date": "2011-06-08 08:17:35.104101",
+			"approval": false
+		},
+		{
+			"sender": "jan.mercl@nic.cz",
+			"recipients": [
+				"hatahet@gmail.com",
+				"rsc@golang.org",
+				"jan.mercl@nic.cz",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort_test.go\nFile src/pkg/sort/sort_test.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort_test.go#newcode5\nsrc/pkg/sort/sort_test.go:5: package sort_test\nI'm not 100% sure, but I believe gotest expects the test suite package name to be same as the name of the package under testing in order to successfully build the test binary.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort_test.go#newcode12\nsrc/pkg/sort/sort_test.go:12: . \"sort\"\nWrt to note at line 5: this would became wrong.",
+			"disapproval": false,
+			"date": "2011-06-08 12:14:40.949531",
+			"approval": false
+		},
+		{
+			"sender": "jan.mercl@nic.cz",
+			"recipients": [
+				"hatahet@gmail.com",
+				"rsc@golang.org",
+				"jan.mercl@nic.cz",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/06/08 12:18:40, rsc wrote:\n> The renaming is unfortunate but necessary.\n> The packages that testing depends on should be\n> (but sometimes get away with not) using a\n> separate test package to avoid a cyclic dependency.\n> Sort has been getting away with it.\n\nAh, sorry for the noise then.\n\nJan",
+			"disapproval": false,
+			"date": "2011-06-08 12:22:15.376492",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Are you still interested in working on this CL?\n",
+			"disapproval": false,
+			"date": "2011-07-25 18:34:29.529423",
+			"approval": false
+		},
+		{
+			"sender": "hatahet@gmail.com",
+			"recipients": [
+				"hatahet@gmail.com",
+				"rsc@golang.org",
+				"jan.mercl@nic.cz",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/07/25 18:34:29, rsc wrote:\n> Are you still interested in working on this CL?\n\nDefinitely. I implemented most of the comments above. However, I'm just waiting on some (silly) procedures I had to go through at my company in order to be cleared to contribute to open source projects. I found out about the process relatively recently and that's why I didn't start it before.",
+			"disapproval": false,
+			"date": "2011-07-25 18:58:08.330784",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Mon, Jul 25, 2011 at 14:58,  <hatahet@gmail.com> wrote:\n> On 2011/07/25 18:34:29, rsc wrote:\n>>\n>> Are you still interested in working on this CL?\n>\n> Definitely. I implemented most of the comments above. However, I'm just\n> waiting on some (silly) procedures I had to go through at my company in\n> order to be cleared to contribute to open source projects. I found out\n> about the process relatively recently and that's why I didn't start it\n> before.\n\nGreat, thanks for the update.\n",
+			"disapproval": false,
+			"date": "2011-07-25 19:11:15.010379",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"hatahet@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort.go\nFile src/pkg/sort/sort.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort.go#newcode40\nsrc/pkg/sort/sort.go:40: // Heapsort\n// siftDown does ...\nalso heapsort is not a word.",
+			"disapproval": false,
+			"date": "2011-09-01 07:00:02.042408",
+			"approval": false
+		},
+		{
+			"sender": "hatahet@gmail.com",
+			"recipients": [
+				"hatahet@gmail.com",
+				"rsc@golang.org",
+				"jan.mercl@nic.cz",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Addressed comments.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go\nFile src/pkg/sort/sort.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode9\nsrc/pkg/sort/sort.go:9: import \"math\"\nOn 2011/06/08 11:56:14, rsc wrote:\n> It would be nice to avoid this import, since right now\n> sort has no dependencies at all.  Easy to approximate log below\n> with a shift loop.\n\nDone.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode24\nsrc/pkg/sort/sort.go:24: func Min(a, b int) int {\nOn 2011/06/08 11:56:14, rsc wrote:\n> Exporting this for the test puts it in the public API, which it\n> probably doesn't need to be.  Please s/Min/min/ and then\n> just make a copy in the test.\n\nDone.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode41\nsrc/pkg/sort/sort.go:41: func siftDown(data Interface, lo, hi, first int) {\nOn 2011/06/08 11:56:14, rsc wrote:\n> In code that gives a lo, hi, we typically set things so that the\n> range of values is lo <= v < hi (for example, in a slice: x[lo:hi]);\n> this code is using lo <= v <= hi, which is easy to miss.\n> Please change this to have the < meaning of hi.\n\nDone.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode51\nsrc/pkg/sort/sort.go:51: if child <= hi && data.Less(first+root, first+child) {\nOn 2011/06/08 11:56:14, rsc wrote:\n> The child comparison here is guaranteed to be true.\n\nDone.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode55\nsrc/pkg/sort/sort.go:55: return\nOn 2011/06/08 11:56:14, rsc wrote:\n> Swap the return up to pick it off first.\n> \n> if !Less {\n>     return\n> }\n> Swap\n> root = child\n> \n> http://golang.org/doc/effective_go.html#if\n\nDone.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode61\nsrc/pkg/sort/sort.go:61: parent := (b - a - 2) / 2\nOn 2011/06/08 11:56:14, rsc wrote:\n> Can we make this use the same index space as the siftDown function?\n> Also a comment or two would help:\n> \n> first := a\n> lo := 0\n> hi := b - a\n> \n> // Build heap with greatest element at top.\n> for i := (hi-1)/2; i >= 0; i-- { ...\n> \n> // Pop elements, largest first, into end of data.\n> for i := hi-1; i >= 0; i-- {\n> \n\nDone.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode161\nsrc/pkg/sort/sort.go:161: func quickSort(data Interface, a, b, max_depth int) {\nOn 2011/06/08 11:56:14, rsc wrote:\n> maxDepth please\n> http://golang.org/doc/effective_go.html#names\n\nDone.\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort.go#newcode186\nsrc/pkg/sort/sort.go:186: max_depth := 2 * int(math.Log2(float64(data.Len())))\nOn 2011/06/08 11:56:14, rsc wrote:\n> // 2*ceil(log2(n))\n> maxDepth := 0\n> for n := data.Len(); n > 1; n >>= 1 {\n>     maxDepth++\n> }\n> maxDepth *= 2\n> \n\nDone. I noticed that in pkg/sort/sort_test.go the lg() function does the same but loops in the opposite direction. Is one way preferred over the other? :)\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort_test.go\nFile src/pkg/sort/sort_test.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/2001/src/pkg/sort/sort_test.go#newcode180\nsrc/pkg/sort/sort_test.go:180: func TestBentleyMcIlroy(t *testing.T) {\nOn 2011/06/08 11:56:14, rsc wrote:\n> Please make this possible to call with different sort functions:\n> \n> func testBentleyMcIlroy(t *testing.T, sort func(sort.Interface)) {\n> \n> and then add\n> \n> func TestSortBM(t *testing.T) {\n>     testBentleyMcIlroy(t, Sort)\n> }\n> \n> func TestHeapsortBM(t *testing.T) {\n>     testBentleyMcIlroy(t, Heapsort)\n> }\n> \n> so that we can test the heapsort implementation directly.\n> \n> Of course, there is no Heapsort in the sort package (and shouldn't be)\n> but we can add one during testing by creating a file export_test.go containing:\n> \n> package sort\n> \n> func Heapsort(data Interface) {\n>     heapsort(data, 0, data.Len())\n> }\n> \n> Also, please add a TestAdversary that calls Sort with the adversary\n> implementation.\n\nDone. However, I had TestAdversary() sort an array which contains elements of increasing order as opposed to it calling testBentleyMcIlroy() as I had to create another struct which overrides the Less() routine in order to cause Sort() to degenerate to HeapSort(). I did verify that maxDepth was being reached and switching over to heapsort actually takes place.",
+			"disapproval": false,
+			"date": "2011-09-01 05:03:12.607429",
+			"approval": false
+		},
+		{
+			"sender": "hatahet@gmail.com",
+			"recipients": [
+				"hatahet@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello r@golang.org, rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-09-02 07:11:39.087741",
+			"approval": false
+		},
+		{
+			"sender": "hatahet@gmail.com",
+			"recipients": [
+				"hatahet@gmail.com",
+				"rsc@golang.org",
+				"jan.mercl@nic.cz",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, jan.mercl@nic.cz (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-01 05:35:44.310766",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"hatahet@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\nleaving for rsc",
+			"disapproval": false,
+			"date": "2011-09-02 08:11:24.462919",
+			"approval": true
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"hatahet@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort_test.go\nFile src/pkg/sort/sort_test.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort_test.go#newcode293\nsrc/pkg/sort/sort_test.go:293: // See http://igoro.com/archive/quicksort-killer/ for more info.\ndelete; replace with\n// http://www.cs.dartmouth.edu/~doug/mdmspe.pdf",
+			"disapproval": false,
+			"date": "2011-09-01 19:40:35.562263",
+			"approval": false
+		},
+		{
+			"sender": "hatahet@gmail.com",
+			"recipients": [
+				"hatahet@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2011-09-01 05:38:08.763503",
+			"approval": false
+		},
+		{
+			"sender": "hatahet@gmail.com",
+			"recipients": [
+				"hatahet@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-09-01 05:46:03.028000",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"hatahet@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort.go\nFile src/pkg/sort/sort.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort.go#newcode40\nsrc/pkg/sort/sort.go:40: // Heapsort\nwhat i mean is two things.\n1) write a proper comment for this subtle function, of the usual doc-comment form, starting with the name of the function. look at the comment for medianOfThree for an example, although it's an old comment and should probably rewritten as\n// medianOf Three moves ....\n\n2) just putting in a single-word comment saying what this is related to is insufficient\n3) in any case, \"heapsort\" is not a word.",
+			"disapproval": false,
+			"date": "2011-09-02 03:48:15.944818",
+			"approval": false
+		},
+		{
+			"sender": "hatahet@gmail.com",
+			"recipients": [
+				"hatahet@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort.go\nFile src/pkg/sort/sort.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort.go#newcode40\nsrc/pkg/sort/sort.go:40: // Heapsort\nOn 2011/09/01 07:00:02, r wrote:\n> // siftDown does ...\n> also heapsort is not a word.\n\nI didn't quite get what you mean. For the first comment, I presume you want a description of what siftDown() does. For the second, it's just a comment to indicate that the following code belongs to heapsort, like how the comments for insertion sort and quicksort are listed as well.\n\nhttp://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort_test.go\nFile src/pkg/sort/sort_test.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort_test.go#newcode293\nsrc/pkg/sort/sort_test.go:293: // See http://igoro.com/archive/quicksort-killer/ for more info.\nOn 2011/09/01 19:40:35, rsc wrote:\n> delete; replace with\n> // http://www.cs.dartmouth.edu/%7Edoug/mdmspe.pdf\n\nDone.",
+			"disapproval": false,
+			"date": "2011-09-02 03:43:43.429212",
+			"approval": false
+		},
+		{
+			"sender": "hatahet@gmail.com",
+			"recipients": [
+				"hatahet@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort.go\nFile src/pkg/sort/sort.go (right):\n\nhttp://codereview.appspot.com/4591051/diff/13004/src/pkg/sort/sort.go#newcode40\nsrc/pkg/sort/sort.go:40: // Heapsort\nFair enough. I fixed the medianOfThree() comment too. I guess the same applies to the \"Insertion Sort\" comment before that as well right?\n\nOn 2011/09/02 03:48:16, r wrote:\n> what i mean is two things.\n> 1) write a proper comment for this subtle function, of the usual doc-comment\n> form, starting with the name of the function. look at the comment for\n> medianOfThree for an example, although it's an old comment and should probably\n> rewritten as\n> // medianOf Three moves ....\n> \n> 2) just putting in a single-word comment saying what this is related to is\n> insufficient\n> 3) in any case, \"heapsort\" is not a word.\n> \n>",
+			"disapproval": false,
+			"date": "2011-09-02 07:12:47.482954",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"hatahet@gmail.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=047ce1c17c31 ***\n\nsort: use heapsort to bail out quicksort\n\nSee http://research.swtch.com/2008/01/killing-quicksort.html for more\ninfo.\nFixes issue 467.\n\nR=r, rsc\nCC=golang-dev\nhttp://codereview.appspot.com/4591051\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2011-09-07 17:54:36.032333",
+			"approval": false
+		}
+	],
+	"owner_email": "hatahet@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "ziad",
+	"subject": "code review 4591051: sort: Sort() now switches over to heapsort (from quicks...",
+	"created": "2011-06-08 08:12:19.440709",
+	"patchsets": [
+		1,
+		2001,
+		12001,
+		15001,
+		13003,
+		13004,
+		22004
+	],
+	"modified": "2011-09-07 17:54:36.032333",
+	"closed": false,
+	"issue": 4591051
+}

@@ -1,0 +1,115 @@
+{
+	"description": "bufio: add Reader.Close\n\nWhile looking at cmd/api profiles, Robert and I noticed that\ngo/build generates lots of bufio.Readers that don't read to\nEOF, so the internal bufio buffers aren't reused and generate\ngarbage.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org",
+		"rsc@golang.org",
+		"dan.kortschak@adelaide.edu.au"
+	],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2013-08-08 23:42:01.803080",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12687043/diff/6001/src/pkg/bufio/bufio.go\nFile src/pkg/bufio/bufio.go (right):\n\nhttps://codereview.appspot.com/12687043/diff/6001/src/pkg/bufio/bufio.go#newcode480\nsrc/pkg/bufio/bufio.go:480: // underlying Reader's Close method, if present.\nthat feels wrong or at least requires justification. i predict bugs here either way.\n\nwhy can't i close a writer?",
+			"disapproval": false,
+			"date": "2013-08-09 00:41:41.992120",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Thu, Aug 8, 2013 at 5:41 PM, <r@golang.org> wrote:\r\n\r\n>\r\n> https://codereview.appspot.**com/12687043/diff/6001/src/**\r\n> pkg/bufio/bufio.go<https://codereview.appspot.com/12687043/diff/6001/src/pkg/bufio/bufio.go>\r\n> File src/pkg/bufio/bufio.go (right):\r\n>\r\n> https://codereview.appspot.**com/12687043/diff/6001/src/**\r\n> pkg/bufio/bufio.go#newcode480<https://codereview.appspot.com/12687043/diff/6001/src/pkg/bufio/bufio.go#newcode480>\r\n> src/pkg/bufio/bufio.go:480: // underlying Reader's Close method, if\r\n> present.\r\n> that feels wrong or at least requires justification. i predict bugs here\r\n> either way.\r\n>\r\n\r\nWe've done a bad job being consistent about and documenting this.  I'm\r\ndocumenting the rules here and doing the least magical thing.  You gave\r\nbufio.NewReader an io.Reader, not a io.ReadCloser.\r\n\r\nwhy can't i close a writer?\r\n>\r\n\r\nWe already have Flush there.\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 00:45:29.570240",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Close one, Flush the other? That's not a good design.\r\n\r\nThis needs some thinking.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 01:00:35.307900",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "We should redo io.Reader and io.Writer's methods too.  They're inconsistent\r\nnow.\r\n\r\n\r\n\r\nOn Thu, Aug 8, 2013 at 6:00 PM, Rob Pike <r@golang.org> wrote:\r\n\r\n> Close one, Flush the other? That's not a good design.\r\n>\r\n> This needs some thinking.\r\n>\r\n> -rob\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 01:01:50.184990",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "NOT LGTM\n\nThis isn't Close, it's Free. Go doesn't have Free.",
+			"disapproval": true,
+			"date": "2013-08-09 01:05:04.012360",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "To expand on my comment, Go doesn't have Free because we have a garbage\r\ncollector. The garbage collector protects programmers from use-after-free\r\nbugs in their own code and in code they are linking against.\r\n\r\nIt looks like an implicit \"free\" slipped in while I wasn't looking, in CL\r\n8819049, and this just uses it in one more place. I believe that CL should\r\nbe reverted, along with CL 9459044. Unlike fmt's little reused buffer,\r\nthere is API in both bufio.Reader and bufio.Writer that exposes slices into\r\nthe buffers to client code. A badly written client might continue to read\r\nfrom or write to the slice after the buffer is \"freed\", causing failures in\r\ncompletely unrelated pieces of code that just happen to also use bufio.\r\n\r\nI understand that you are after performance and buffer reuse, but there are\r\nsafer ways to achieve that when clients need it.\r\n\r\nFor example you could define a Reset(r io.Reader) on bufio.Reader and a\r\nReset(w io.Writer) on bufio.Writer, to allow clients to reuse a single\r\nbufio.Reader or bufio.Writer for multiple of their own streams. If the\r\nclient screws up, they shoot themselves in the foot. With the current\r\nscheme, in which a client can \"free\" a buffer into the general pool, a bad\r\npiece of code can shoot all the other code in the foot.\r\n\r\nThis kind of thing is exactly why we removed runtime.Free.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 01:34:58.483900",
+			"approval": false
+		},
+		{
+			"sender": "dan.kortschak@adelaide.edu.au",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "FWIW I'd welcome a Reset(r io.Reader) on bufio.Reader as it'd make it\r\npossible for me to drop a fork of bufio that I needed to make for my\r\nseekable gzip reader.\r\n\r\nOn Thu, 2013-08-08 at 21:34 -0400, Russ Cox wrote:\r\n> For example you could define a Reset(r io.Reader) on bufio.Reader and a\r\n> Reset(w io.Writer) on bufio.Writer, to allow clients to reuse a single\r\n> bufio.Reader or bufio.Writer for multiple of their own streams. If the\r\n> client screws up, they shoot themselves in the foot. With the current\r\n> scheme, in which a client can \"free\" a buffer into the general pool, a bad\r\n> piece of code can shoot all the other code in the foot.\r\n\r\n\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 02:28:46.546220",
+			"approval": false
+		}
+	],
+	"owner_email": "bradfitz@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "bradfitz",
+	"subject": "code review 12687043: bufio: add Reader.Close",
+	"created": "2013-08-08 23:41:15.831110",
+	"patchsets": [
+		1,
+		3001,
+		6001
+	],
+	"modified": "2013-08-09 02:28:46.858040",
+	"closed": false,
+	"issue": 12687043
+}

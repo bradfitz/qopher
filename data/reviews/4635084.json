@@ -1,0 +1,427 @@
+{
+	"description": "websocket: Implements new version of WebSocket protocol.\n\nThis introduces new APIs.\n- DialConfig can open client connection using Config, so user can specify protocol version, tls.Config if necessary.\n\n- Message can be used to send/receive text/binary data in a frame.\n- JSON can be used to send/receive JSON data in a frame.\n",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"adg@golang.org",
+		"rsc@golang.org",
+		"m@capitanio.org",
+		"tarmigan@gmail.com",
+		"raul.san@sent.com",
+		"yohcop@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-07-04 01:27:17.050227",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/07/05 06:12:25, adg wrote:\n> On 4 July 2011 21:31,  <mailto:ukai@google.com> wrote:\n> >> Does this return a whole frame? If so, what happens if the provided\n> >\n> > msg is\n> >>\n> >> smaller than the payload?\n> >\n> > No, it only reads payload data, so it discards frame header or so.\n> > if the provided msg is smaller than the payload, it fill the msg and\n> > next ReadText will read rest of payload data.\n> \n> I'm a little confused. What about the common case, where a user is\n> sending and receiving json values, one value per frame.\n> \n> How can they easily use the json package with this new interface?\n> (remember that json's Encoder and Decoder may perform multiple Writes\n> and Reads to send or receive a single json value)\n\nIn this case, we can use TextConn as Reader or Writer for json Decoder or Encoder.\n  TextConn Read will read jsonString in text frame.\n  if decoder's buffer is smaller than the jsonString, decoder will read the rest of jsonString in next Read.\n\n  json Encoder writes marshaled jsonString, so TextConn Write emit the jsonString in a text frame on wire.\n\n-- \nukai\n\n> \n> Or am I misunderstanding the way websockets are used?\n> \n> Andrew",
+			"disapproval": false,
+			"date": "2011-07-05 11:15:13.968553",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Woah, that's a lot of code (thanks!).\n\nTo start let's talk about the interfaces.\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/client.go\nFile src/pkg/websocket/client.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/client.go#newcode67\nsrc/pkg/websocket/client.go:67: origin, _ := http.ParseRequestURL(\"http://localhost/\")\nIt would be worth adding a helper to do this, as you'll need to do it every time.\n\nfunc NewConfig(origin, url string) (*Config, os.Error)\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/client.go#newcode84\nsrc/pkg/websocket/client.go:84: func Dial(url *http.URL, config *Config) (ws FrameConn, err os.Error) {\nWhy bother with a url parameter if it just gets set as config.Location straight away?\n\nThis might be better as two functions:\n\nfunc Dial(origin, url string) (ws FrameConn, err os.Error)\nfunc DialConfig(config *Config) (ws FrameConn, err os.Error)\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/websocket.go\nFile src/pkg/websocket/websocket.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/websocket.go#newcode254\nsrc/pkg/websocket/websocket.go:254: net.Conn\nwhy expose the net.Conn?\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/websocket.go#newcode258\nsrc/pkg/websocket/websocket.go:258: ReadText(msg []byte) (n int, err os.Error)\nDoes this return a whole frame? If so, what happens if the provided msg is smaller than the payload? \n\nIs it necessary to distinguish text payloads from binary payloads?\n\nWhat if instead the FrameConn interface was something\u00a0like:\n\ntype FrameConn interface {\n    FrameReader() io.Reader\n    FrameWriter() io.WriteCloser\n}\n\nwhere the client calls FrameReader and reads from the returned io.Reader until EOF for each frame. And for the Writer they Write the frame and then Close it.\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/websocket.go#newcode283\nsrc/pkg/websocket/websocket.go:283: // NewTextConn creates a new TextConn from the WebSocket connection.\nThis implements the Reader and Writer interfaces, but I'm not sure that's what you want here.",
+			"disapproval": false,
+			"date": "2011-07-04 03:11:04.866446",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for review.\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/client.go\nFile src/pkg/websocket/client.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/client.go#newcode67\nsrc/pkg/websocket/client.go:67: origin, _ := http.ParseRequestURL(\"http://localhost/\")\nOn 2011/07/04 03:11:04, adg wrote:\n> It would be worth adding a helper to do this, as you'll need to do it every\n> time.\n> \n> func NewConfig(origin, url string) (*Config, os.Error)\n\nOk, but I think NewConfig(url, origin) might be better.\nwhat do you think?\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/client.go#newcode84\nsrc/pkg/websocket/client.go:84: func Dial(url *http.URL, config *Config) (ws FrameConn, err os.Error) {\nOn 2011/07/04 03:11:04, adg wrote:\n> Why bother with a url parameter if it just gets set as config.Location straight\n> away?\n> \n> This might be better as two functions:\n> \n> func Dial(origin, url string) (ws FrameConn, err os.Error)\n> func DialConfig(config *Config) (ws FrameConn, err os.Error)\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/websocket.go\nFile src/pkg/websocket/websocket.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/websocket.go#newcode254\nsrc/pkg/websocket/websocket.go:254: net.Conn\nOn 2011/07/04 03:11:04, adg wrote:\n> why expose the net.Conn?\n\nI think websocket is a network connection, so it is natural that it provides net.Conn.\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/websocket.go#newcode258\nsrc/pkg/websocket/websocket.go:258: ReadText(msg []byte) (n int, err os.Error)\nOn 2011/07/04 03:11:04, adg wrote:\n> Does this return a whole frame? If so, what happens if the provided msg is\n> smaller than the payload? \n\nNo, it only reads payload data, so it discards frame header or so.\nif the provided msg is smaller than the payload, it fill the msg and next ReadText will read rest of payload data.\n\n> Is it necessary to distinguish text payloads from binary payloads?\n\nI think so.  text payload is expected to deliver UTF-8 test between server and web browser.\nFor now, web browser can't handle binary payload (no API defined yet)\n\n> \n> What if instead the FrameConn interface was something&nbsp;like:\n> \n> type FrameConn interface {\n>     FrameReader() io.Reader\n>     FrameWriter() io.WriteCloser\n> }\n> \n> where the client calls FrameReader and reads from the returned io.Reader until\n> EOF for each frame. And for the Writer they Write the frame and then Close it.\n\nhttp://codereview.appspot.com/4635084/diff/4001/src/pkg/websocket/websocket.go#newcode283\nsrc/pkg/websocket/websocket.go:283: // NewTextConn creates a new TextConn from the WebSocket connection.\nOn 2011/07/04 03:11:04, adg wrote:\n> This implements the Reader and Writer interfaces, but I'm not sure that's what\n> you want here.\n\nI think most users don't need to read/write whole frame data, but only want to read/write text payload data.\nIf they use TextConn, they could use it for Reader and Writer to read/write text payload data.",
+			"disapproval": false,
+			"date": "2011-07-04 11:31:58.468880",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 4 July 2011 21:31,  <ukai@google.com> wrote:\n>> Does this return a whole frame? If so, what happens if the provided\n>\n> msg is\n>>\n>> smaller than the payload?\n>\n> No, it only reads payload data, so it discards frame header or so.\n> if the provided msg is smaller than the payload, it fill the msg and\n> next ReadText will read rest of payload data.\n\nI'm a little confused. What about the common case, where a user is\nsending and receiving json values, one value per frame.\n\nHow can they easily use the json package with this new interface?\n(remember that json's Encoder and Decoder may perform multiple Writes\nand Reads to send or receive a single json value)\n\nOr am I misunderstanding the way websockets are used?\n\nAndrew\n",
+			"disapproval": false,
+			"date": "2011-07-05 06:12:25.204756",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I am overwhelmed by this API.  Did you intend for it all to be public?\n",
+			"disapproval": false,
+			"date": "2011-07-13 23:32:55.644078",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Wed, Jul 13, 2011 at 16:32, Russ Cox <rsc@golang.org> wrote:\n> I am overwhelmed by this API. \u00a0Did you intend for it all to be public?\n\nSorry, I wasn't done typing and Gmail sent the message anyway.\n\n$ for i in bytes io strings websocket; do echo $(godoc $i | wc -l) $i; done\n315 bytes\n354 io\n201 strings\n485 websocket\n$\n\nI shouldn't have to read that much to use websocket.\n\nIt looks like maybe you just left a lot of stuff capitalized\naccidentally, so I will assume that all the FrameReader\nand Hixie and so on stuff is not part of the API.\n\nFocusing on FrameConn.\nWhat's the difference between Read/Write (in the net.Conn)\nand ReadBytes/WriteBytes?\n\nWhy is it FrameConn and not Conn?\nIs there some other Conn on its way?\n\nI'd like to have just plain type Conn struct {...}\nwith some methods, like we do now, if at all\npossible.  It's okay if the internal implementation\nhas to dispatch to other ones, but the callers\nshould be able to just think about a websocket\nconnection as a singular thing.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-07-13 23:38:55.297060",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/07/13 23:38:55, rsc wrote:\n> On Wed, Jul 13, 2011 at 16:32, Russ Cox <mailto:rsc@golang.org> wrote:\n> > I am overwhelmed by this API. &nbsp;Did you intend for it all to be public?\n> \n> Sorry, I wasn't done typing and Gmail sent the message anyway.\n> \n> $ for i in bytes io strings websocket; do echo $(godoc $i | wc -l) $i; done\n> 315 bytes\n> 354 io\n> 201 strings\n> 485 websocket\n> $\n> \n> I shouldn't have to read that much to use websocket.\n> \n> It looks like maybe you just left a lot of stuff capitalized\n> accidentally, so I will assume that all the FrameReader\n> and Hixie and so on stuff is not part of the API.\n\nI see. I make lots of stuff package local.\n$ godoc websocket | wc -l\n155\n\n> Focusing on FrameConn.\n> What's the difference between Read/Write (in the net.Conn)\n> and ReadBytes/WriteBytes?\n\nRead/Write access all bytes on websocket connection (including websocket frame header bytes).\nReadBytes/WriteBytes access application payload data in binary frames.\n\n> Why is it FrameConn and not Conn?\n> Is there some other Conn on its way?\n\nTextConn wraps FrameConn.  TextConn provides Read/Write access application payload data in text frames.\nI think most users will use this (since no browser have a way to read/write binary frames yet)\n\n> I'd like to have just plain type Conn struct {...}\n> with some methods, like we do now, if at all\n> possible.  It's okay if the internal implementation\n> has to dispatch to other ones, but the callers\n> should be able to just think about a websocket\n> connection as a singular thing.\n\nI see. For now, it just provides an interface to read/write application payload data in text frames.",
+			"disapproval": false,
+			"date": "2011-07-14 11:44:11.625236",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Maybe I'm wrong about this, in which case I'd like to be corrected, but I think this is an important point:\n\nhttp://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go\nFile src/pkg/websocket/websocket.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go#newcode292\nsrc/pkg/websocket/websocket.go:292: func (ws *Conn) Write(msg []byte) (n int, err os.Error) {\nThe semantics of Go's io.Writer and io.Reader interfaces are such that (for example) a single JSON object may be written or read with multiple calls to Write or Read.\n\nUsers of the websocket package should be able to know about frames, and they should be able to write or read frames with multiple calls to Write or Read.\n\nOn 5 July 2011 21:15,  <ukai@google.com> wrote:\n> \u00a0json Encoder writes marshaled jsonString, so TextConn Write emit the\n> jsonString in a text frame on wire.\n\nThis is a happy coincidence, not a given. I think the websocket package needs an interface to explicitly write and read frames with io.Reader/io.Writer.",
+			"disapproval": false,
+			"date": "2011-07-18 00:17:53.308341",
+			"approval": false
+		},
+		{
+			"sender": "islandberry@live.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go\nFile src/pkg/websocket/websocket.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go#newcode288\nsrc/pkg/websocket/websocket.go:288: func (ws *Conn) Read(msg []byte) (n int, err os.Error) {\nHow about changing Read to a method like bufio.ReadLine (http://golang.org/pkg/bufio/#Reader.ReadLine)?   The method returns a slice of the channel's internal buffer, a boolean indicating that there's more data in the frame (isPrefix) and an error.  The application can efficiently build a per frame io.Reader using this  method.",
+			"disapproval": false,
+			"date": "2011-07-18 01:21:16.267689",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go\nFile src/pkg/websocket/websocket.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go#newcode288\nsrc/pkg/websocket/websocket.go:288: func (ws *Conn) Read(msg []byte) (n int, err os.Error) {\nOn 2011/07/18 01:21:16, islandberry wrote:\n> How about changing Read to a method like bufio.ReadLine\n> (http://golang.org/pkg/bufio/#Reader.ReadLine%29?   The method returns a slice of\n> the channel's internal buffer, a boolean indicating that there's more data in\n> the frame (isPrefix) and an error.  The application can efficiently build a per\n> frame io.Reader using this  method.\n\nit would be good idea.\nHow about ReadFrame(msg []byte) (n int, isPrefix bool, err os.Error) ?\n\nhttp://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go#newcode292\nsrc/pkg/websocket/websocket.go:292: func (ws *Conn) Write(msg []byte) (n int, err os.Error) {\nOn 2011/07/18 00:17:53, adg wrote:\n> The semantics of Go's io.Writer and io.Reader interfaces are such that (for\n> example) a single JSON object may be written or read with multiple calls to\n> Write or Read.\n> \n> Users of the websocket package should be able to know about frames, and they\n> should be able to write or read frames with multiple calls to Write or Read.\n> \n> On 5 July 2011 21:15,  <mailto:ukai@google.com> wrote:\n> > &nbsp;json Encoder writes marshaled jsonString, so TextConn Write emit the\n> > jsonString in a text frame on wire.\n> \n> This is a happy coincidence, not a given. I think the websocket package needs an\n> interface to explicitly write and read frames with io.Reader/io.Writer.\n\nHmm.  In this case, I think we could provide a WriteCloser on websocket.Conn that calls single websocket.Conn.Write at Close(), like this.\n\ntype SingleWriter struct {\n  Writer\n  buf []byte\n}\n\nfunc (w *SingleWriter) Write(p []byte) (n int, err os.Error) {\n   w.buf = append(w.buf, p)\n   return len(p), nil\n}\n\nfunc (w *SingleWriter) Close() (err os.Error) {\n   _, err = w.Writer.Write(w.buf)\n   return err\n}\n\nAnyway, user might want to use Marshal, Unmarshal rather than Encoder, Decoder.  If user needs to know frame boundary, he needs to create Encoder, Decoder for every frame. I think it's not so convenient than using Marshal, Unmarshal.",
+			"disapproval": false,
+			"date": "2011-07-19 10:47:54.522443",
+			"approval": false
+		},
+		{
+			"sender": "m@capitanio.org",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/07/19 17:03:41, rsc wrote:\n> It's okay to have packet-based Read/Write implementations.  UDP is one.\n\nThe frame size can be quite huge (63bit). I am not sure if\nhandling of that all should be exposed to the user.\nhttp://www.ietf.org/mail-archive/web/hybi/current/msg07660.html",
+			"disapproval": false,
+			"date": "2011-07-19 19:30:15.329716",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 19 July 2011 20:47,  <ukai@google.com> wrote:\n>\n> http://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go\n> File src/pkg/websocket/websocket.go (right):\n>\n> http://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go#newcode288\n> src/pkg/websocket/websocket.go:288: func (ws *Conn) Read(msg []byte) (n\n> int, err os.Error) {\n> On 2011/07/18 01:21:16, islandberry wrote:\n>>\n>> How about changing Read to a method like bufio.ReadLine\n>> (http://golang.org/pkg/bufio/#Reader.ReadLine%29? \u00a0 The method returns\n>\n> a slice of\n>>\n>> the channel's internal buffer, a boolean indicating that there's more\n>\n> data in\n>>\n>> the frame (isPrefix) and an error. \u00a0The application can efficiently\n>\n> build a per\n>>\n>> frame io.Reader using this \u00a0method.\n>\n> it would be good idea.\n> How about ReadFrame(msg []byte) (n int, isPrefix bool, err os.Error) ?\n>\n> http://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go#newcode292\n> src/pkg/websocket/websocket.go:292: func (ws *Conn) Write(msg []byte) (n\n> int, err os.Error) {\n> On 2011/07/18 00:17:53, adg wrote:\n>>\n>> The semantics of Go's io.Writer and io.Reader interfaces are such that\n>\n> (for\n>>\n>> example) a single JSON object may be written or read with multiple\n>\n> calls to\n>>\n>> Write or Read.\n>\n>> Users of the websocket package should be able to know about frames,\n>\n> and they\n>>\n>> should be able to write or read frames with multiple calls to Write or\n>\n> Read.\n>\n>> On 5 July 2011 21:15, \u00a0<mailto:ukai@google.com> wrote:\n>> > &nbsp;json Encoder writes marshaled jsonString, so TextConn Write\n>\n> emit the\n>>\n>> > jsonString in a text frame on wire.\n>\n>> This is a happy coincidence, not a given. I think the websocket\n>\n> package needs an\n>>\n>> interface to explicitly write and read frames with\n>\n> io.Reader/io.Writer.\n>\n> Hmm. \u00a0In this case, I think we could provide a WriteCloser on\n> websocket.Conn that calls single websocket.Conn.Write at Close(), like\n> this.\n>\n> type SingleWriter struct {\n> \u00a0Writer\n> \u00a0buf []byte\n> }\n>\n> func (w *SingleWriter) Write(p []byte) (n int, err os.Error) {\n> \u00a0 w.buf = append(w.buf, p)\n> \u00a0 return len(p), nil\n> }\n>\n> func (w *SingleWriter) Close() (err os.Error) {\n> \u00a0 _, err = w.Writer.Write(w.buf)\n> \u00a0 return err\n> }\n>\n> Anyway, user might want to use Marshal, Unmarshal rather than Encoder,\n> Decoder. \u00a0If user needs to know frame boundary, he needs to create\n> Encoder, Decoder for every frame. I think it's not so convenient than\n> using Marshal, Unmarshal.\n\nAnother approach would be to provide, simply:\n\nfunc (w *Websocket) Send(frame []byte) os.Error\nfunc (w *Websocket) Receive() (frame []byte, err os.Error)\n\nand a codec interface like the App Engine's memcache package:\n  http://code.google.com/appengine/docs/go/memcache/reference.html#Codec\n\nThen we could provide a JSONCodec implementation as a default.\n\nThat way there's no confusion about the Reader and Writer interfaces.\nIf need be, you could provide a Reader/Writer abstraction on top to\nturn websocket into a pipe.\n\nAndrew\n",
+			"disapproval": false,
+			"date": "2011-07-19 12:42:14.715711",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "It's okay to have packet-based Read/Write implementations.  UDP is one.\n",
+			"disapproval": false,
+			"date": "2011-07-19 17:03:41.125288",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/07/19 12:42:14, adg wrote:\n> On 19 July 2011 20:47,  <mailto:ukai@google.com> wrote:\n> >\n> >\n> http://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go\n> > File src/pkg/websocket/websocket.go (right):\n> >\n> >\n> http://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go#newcode288\n> > src/pkg/websocket/websocket.go:288: func (ws *Conn) Read(msg []byte) (n\n> > int, err os.Error) {\n> > On 2011/07/18 01:21:16, islandberry wrote:\n> >>\n> >> How about changing Read to a method like bufio.ReadLine\n> >> (http://golang.org/pkg/bufio/#Reader.ReadLine%2529? &nbsp; The method returns\n> >\n> > a slice of\n> >>\n> >> the channel's internal buffer, a boolean indicating that there's more\n> >\n> > data in\n> >>\n> >> the frame (isPrefix) and an error. &nbsp;The application can efficiently\n> >\n> > build a per\n> >>\n> >> frame io.Reader using this &nbsp;method.\n> >\n> > it would be good idea.\n> > How about ReadFrame(msg []byte) (n int, isPrefix bool, err os.Error) ?\n> >\n> >\n> http://codereview.appspot.com/4635084/diff/16001/src/pkg/websocket/websocket.go#newcode292\n> > src/pkg/websocket/websocket.go:292: func (ws *Conn) Write(msg []byte) (n\n> > int, err os.Error) {\n> > On 2011/07/18 00:17:53, adg wrote:\n> >>\n> >> The semantics of Go's io.Writer and io.Reader interfaces are such that\n> >\n> > (for\n> >>\n> >> example) a single JSON object may be written or read with multiple\n> >\n> > calls to\n> >>\n> >> Write or Read.\n> >\n> >> Users of the websocket package should be able to know about frames,\n> >\n> > and they\n> >>\n> >> should be able to write or read frames with multiple calls to Write or\n> >\n> > Read.\n> >\n> >> On 5 July 2011 21:15, &nbsp;<mailto:ukai@google.com> wrote:\n> >> > &nbsp;json Encoder writes marshaled jsonString, so TextConn Write\n> >\n> > emit the\n> >>\n> >> > jsonString in a text frame on wire.\n> >\n> >> This is a happy coincidence, not a given. I think the websocket\n> >\n> > package needs an\n> >>\n> >> interface to explicitly write and read frames with\n> >\n> > io.Reader/io.Writer.\n> >\n> > Hmm. &nbsp;In this case, I think we could provide a WriteCloser on\n> > websocket.Conn that calls single websocket.Conn.Write at Close(), like\n> > this.\n> >\n> > type SingleWriter struct {\n> > &nbsp;Writer\n> > &nbsp;buf []byte\n> > }\n> >\n> > func (w *SingleWriter) Write(p []byte) (n int, err os.Error) {\n> > &nbsp; w.buf = append(w.buf, p)\n> > &nbsp; return len(p), nil\n> > }\n> >\n> > func (w *SingleWriter) Close() (err os.Error) {\n> > &nbsp; _, err = w.Writer.Write(w.buf)\n> > &nbsp; return err\n> > }\n> >\n> > Anyway, user might want to use Marshal, Unmarshal rather than Encoder,\n> > Decoder. &nbsp;If user needs to know frame boundary, he needs to create\n> > Encoder, Decoder for every frame. I think it's not so convenient than\n> > using Marshal, Unmarshal.\n> \n> Another approach would be to provide, simply:\n> \n> func (w *Websocket) Send(frame []byte) os.Error\n> func (w *Websocket) Receive() (frame []byte, err os.Error)\n\nok.\n\n> \n> and a codec interface like the App Engine's memcache package:\n>   http://code.google.com/appengine/docs/go/memcache/reference.html#Codec\n> \n> Then we could provide a JSONCodec implementation as a default.\n\nI'm not sure I understand this idea.  Does this mean we provide codec type in websocket package like this?\n\n type Codec struct {\n    // same as memcache.Codec\n }\n\n func (cd Codec) Send(w *websocket.Conn, v interface{}) os.Error\n func (cd Codec) Receive(w *websocket.Conn, v interface{}) os.Error\n\n var JSON = Codec(json.Marshal, json.Unmarshal)\n\n\n> \n> That way there's no confusion about the Reader and Writer interfaces.\n> If need be, you could provide a Reader/Writer abstraction on top to\n> turn websocket into a pipe.\n> \n> Andrew",
+			"disapproval": false,
+			"date": "2011-07-20 10:51:06.702897",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, adg@golang.org, rsc@golang.org, m@capitanio.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-08-04 05:46:36.382659",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, adg@golang.org, rsc@golang.org, m@capitanio.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-08-15 02:09:04.010230",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, adg@golang.org, rsc@golang.org, m@capitanio.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-08-17 09:11:25.051352",
+			"approval": false
+		},
+		{
+			"sender": "tarmigan@gmail.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"tarmigan@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/08/17 09:11:25, ukai wrote:\n> Hello mailto:golang-dev@googlegroups.com, mailto:adg@golang.org, mailto:rsc@golang.org,\n> mailto:m@capitanio.org (cc: mailto:golang-dev@googlegroups.com),\n> \n> Please take another look.\n\nWhat's the status of this review?\n\nI've looked through the code enough to get lost in all of the frameReader, frameWriterFactory, and frameHandlers.  I was worried that it was going to default to binary frames and break my code, but it does not.  The internal interface is a little hard to follow, but the godoc and exported interfaces now look manageable, so the implementation could later change.\n\nHybi-8/10 has hit the Chrome dev and beta channels which broke my old apps.  Installing this patch made my program work again without any changes to my code.  It would be nice to have this patch included before Chrome stable hits v14 and gets hybi-10.\n\nThanks,\nTarmigan",
+			"disapproval": false,
+			"date": "2011-08-19 23:43:22.309929",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"tarmigan@gmail.com",
+				"raul.san@sent.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I'm pretty happy with the API now.\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go\nFile src/pkg/websocket/hixie.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode7\nsrc/pkg/websocket/hixie.go:7: // This file implements a protocol of hixie draft version 75 and 76\nShould it be \"Hixie\" or \"hixie\"?\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode26\nsrc/pkg/websocket/hixie.go:26: var secKeyRandomChars [0x30 - 0x21 + 0x7F - 0x3A]byte\nThis deserves a comment. Lots of magic numbers here.\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode44\nsrc/pkg/websocket/hixie.go:44: // readHixieLength reads frame length for frame type is 0x80-0xFF\neither s/for/with/ or s/is //\n\nditto for the other doc comments\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode45\nsrc/pkg/websocket/hixie.go:45: // defined in hixie draft.\ns/defined/as &/\n\nditto for the other doc comments\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode53\nsrc/pkg/websocket/hixie.go:53: length = length*128 + int64(c&0x7f)\nPerhaps some more explanation - or a link to the relevant part of the spec - in the doc comment is warranted. This is a bit mysterious and there's no way I can tell if it's correct or not.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/client.go\nFile src/pkg/websocket/client.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/client.go#newcode16\nsrc/pkg/websocket/client.go:16: // WebSocket calling errors.\nDialError is an error that occurs while dialling a websocket server.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/client.go#newcode86\nsrc/pkg/websocket/client.go:86: panic(\"Dial: \" + err.String())\nUse log.Fatal in these examples instead, eg:\n  log.Fatal(err)\nYou needn't prefix the errors with \"Dial:\" and such, because the error string should include the relevant context.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/hybi.go\nFile src/pkg/websocket/hybi.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/hybi.go#newcode7\nsrc/pkg/websocket/hybi.go:7: // This file implements a protocol of hybi draft.\nLink to the spec?\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/hybi.go#newcode102\nsrc/pkg/websocket/hybi.go:102: func (buf hybiFrameReaderFactory) NewFrameReader() (frame frameReader, err os.Error) {\nI would like this function to have more comments that describe what it's doing and why. There are a lot of magic constants throughout.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/server.go\nFile src/pkg/websocket/server.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/server.go#newcode18\nsrc/pkg/websocket/server.go:18: handshaker = &hybiServerHandshaker{Config: config}\nput this on the previous line. Make the variable name shorter if you like. (\"hs\")\n\nvar hs serverHandshaker = &hybi...\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/server.go#newcode84\nsrc/pkg/websocket/server.go:84: if conn == nil || err != nil {\nwould conn ever be nil if err == nil ? This seems like a guard against a programming error. If you think it's worth checking, I would do this after the err check:\n\nif conn == nil {\n  panic(\"unexpected nil conn\")\n}\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go\nFile src/pkg/websocket/websocket.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode41\nsrc/pkg/websocket/websocket.go:41: func (err *ProtocolError) String() string { return err.ErrorString }\nThis needn't be a pointer receiver. A string is a pointer, anyway.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode44\nsrc/pkg/websocket/websocket.go:44: ErrBadProtocolVersion   = &ProtocolError{\"bad protocol version\"}\nDrop the &\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode163\nsrc/pkg/websocket/websocket.go:163: // Read implements the standard Read interface:\ns/standard Read/io.Reader/\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode194\nsrc/pkg/websocket/websocket.go:194: // Read implements the standard Write interface:\ns/Read/Write/\n\ns/standard Write/io.Writer/\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode209\nsrc/pkg/websocket/websocket.go:209: // Close implements the standard Close interface.\ns/standard Close/io.Closer/\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode291\nsrc/pkg/websocket/websocket.go:291: // Receive receives single WebSocket frame from ws, unmarshaled by cd.Unmarshal and stores in v.\ns/WebSocket frame/frame/g\n\nWe're in the websocket package, it's clear what kind of frame we're talking about.",
+			"disapproval": false,
+			"date": "2011-08-20 23:30:08.311729",
+			"approval": false
+		},
+		{
+			"sender": "raul.san@sent.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"tarmigan@gmail.com",
+				"raul.san@sent.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/08/19 23:43:22, tarm wrote:\n> On 2011/08/17 09:11:25, ukai wrote:\n> > Hello mailto:golang-dev@googlegroups.com, mailto:adg@golang.org,\n> mailto:rsc@golang.org,\n> > mailto:m@capitanio.org (cc: mailto:golang-dev@googlegroups.com),\n> > \n> \n> Hybi-8/10 has hit the Chrome dev and beta channels which broke my old apps. \n> Installing this patch made my program work again without any changes to my code.\n>  It would be nice to have this patch included before Chrome stable hits v14 and\n> gets hybi-10.\n> \n\"The WebSocket protocol specification is now largely stable, having solved previous security concerns. As such, we\u2019ve updated Chromium to support the latest version (draft-ietf-hybi-thewebsocketprotocol-10) on the dev channel (14.0.835.2). Given that the specification is now in \u201clast-call\u201d and and no further breaking changes are expected, it should now be safe to use WebSockets for production application development.\"\n\nhttp://blog.chromium.org/2011/08/new-websocket-protocol-secure-and.html",
+			"disapproval": false,
+			"date": "2011-08-20 10:54:01.028729",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"tarmigan@gmail.com",
+				"raul.san@sent.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for review.\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go\nFile src/pkg/websocket/hixie.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode7\nsrc/pkg/websocket/hixie.go:7: // This file implements a protocol of hixie draft version 75 and 76\nOn 2011/08/20 23:30:08, adg wrote:\n> Should it be \"Hixie\" or \"hixie\"?\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode26\nsrc/pkg/websocket/hixie.go:26: var secKeyRandomChars [0x30 - 0x21 + 0x7F - 0x3A]byte\nOn 2011/08/20 23:30:08, adg wrote:\n> This deserves a comment. Lots of magic numbers here.\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode44\nsrc/pkg/websocket/hixie.go:44: // readHixieLength reads frame length for frame type is 0x80-0xFF\nOn 2011/08/20 23:30:08, adg wrote:\n> either s/for/with/ or s/is //\n> \n> ditto for the other doc comments\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode45\nsrc/pkg/websocket/hixie.go:45: // defined in hixie draft.\nOn 2011/08/20 23:30:08, adg wrote:\n> s/defined/as &/\n> \n> ditto for the other doc comments\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/41002/src/pkg/websocket/hixie.go#newcode53\nsrc/pkg/websocket/hixie.go:53: length = length*128 + int64(c&0x7f)\nOn 2011/08/20 23:30:08, adg wrote:\n> Perhaps some more explanation - or a link to the relevant part of the spec - in\n> the doc comment is warranted. This is a bit mysterious and there's no way I can\n> tell if it's correct or not.\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/client.go\nFile src/pkg/websocket/client.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/client.go#newcode16\nsrc/pkg/websocket/client.go:16: // WebSocket calling errors.\nOn 2011/08/20 23:30:08, adg wrote:\n> DialError is an error that occurs while dialling a websocket server.\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/client.go#newcode86\nsrc/pkg/websocket/client.go:86: panic(\"Dial: \" + err.String())\nOn 2011/08/20 23:30:08, adg wrote:\n> Use log.Fatal in these examples instead, eg:\n>   log.Fatal(err)\n> You needn't prefix the errors with \"Dial:\" and such, because the error string\n> should include the relevant context.\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/hybi.go\nFile src/pkg/websocket/hybi.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/hybi.go#newcode7\nsrc/pkg/websocket/hybi.go:7: // This file implements a protocol of hybi draft.\nOn 2011/08/20 23:30:08, adg wrote:\n> Link to the spec?\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/hybi.go#newcode102\nsrc/pkg/websocket/hybi.go:102: func (buf hybiFrameReaderFactory) NewFrameReader() (frame frameReader, err os.Error) {\nOn 2011/08/20 23:30:08, adg wrote:\n> I would like this function to have more comments that describe what it's doing\n> and why. There are a lot of magic constants throughout.\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/server.go\nFile src/pkg/websocket/server.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/server.go#newcode18\nsrc/pkg/websocket/server.go:18: handshaker = &hybiServerHandshaker{Config: config}\nOn 2011/08/20 23:30:08, adg wrote:\n> put this on the previous line. Make the variable name shorter if you like.\n> (\"hs\")\n> \n> var hs serverHandshaker = &hybi...\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/server.go#newcode84\nsrc/pkg/websocket/server.go:84: if conn == nil || err != nil {\nOn 2011/08/20 23:30:08, adg wrote:\n> would conn ever be nil if err == nil ? This seems like a guard against a\n> programming error. If you think it's worth checking, I would do this after the\n> err check:\n> \n> if conn == nil {\n>   panic(\"unexpected nil conn\")\n> }\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go\nFile src/pkg/websocket/websocket.go (right):\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode41\nsrc/pkg/websocket/websocket.go:41: func (err *ProtocolError) String() string { return err.ErrorString }\nOn 2011/08/20 23:30:08, adg wrote:\n> This needn't be a pointer receiver. A string is a pointer, anyway.\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode44\nsrc/pkg/websocket/websocket.go:44: ErrBadProtocolVersion   = &ProtocolError{\"bad protocol version\"}\nOn 2011/08/20 23:30:08, adg wrote:\n> Drop the &\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode163\nsrc/pkg/websocket/websocket.go:163: // Read implements the standard Read interface:\nOn 2011/08/20 23:30:08, adg wrote:\n> s/standard Read/io.Reader/\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode194\nsrc/pkg/websocket/websocket.go:194: // Read implements the standard Write interface:\nOn 2011/08/20 23:30:08, adg wrote:\n> s/Read/Write/\n> \n> s/standard Write/io.Writer/\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode209\nsrc/pkg/websocket/websocket.go:209: // Close implements the standard Close interface.\nOn 2011/08/20 23:30:08, adg wrote:\n> s/standard Close/io.Closer/\n\nDone.\n\nhttp://codereview.appspot.com/4635084/diff/51001/src/pkg/websocket/websocket.go#newcode291\nsrc/pkg/websocket/websocket.go:291: // Receive receives single WebSocket frame from ws, unmarshaled by cd.Unmarshal and stores in v.\nOn 2011/08/20 23:30:08, adg wrote:\n> s/WebSocket frame/frame/g\n> \n> We're in the websocket package, it's clear what kind of frame we're talking\n> about.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-08-22 04:55:45.129744",
+			"approval": false
+		},
+		{
+			"sender": "yohcop@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "(friendly ping? approvers? :) )\nThanks a lot !\n",
+			"disapproval": false,
+			"date": "2011-08-25 16:49:11.305241",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"tarmigan@gmail.com",
+				"raul.san@sent.com",
+				"yohcop@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM \n\nUkai, can you please summarize the API changes in the CL description before submitting?\n\nCan we gofix them? (And should we?)",
+			"disapproval": false,
+			"date": "2011-08-25 23:27:43.418051",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"tarmigan@gmail.com",
+				"raul.san@sent.com",
+				"yohcop@gmail.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=88744261dd47 ***\n\nwebsocket: Implements new version of WebSocket protocol.\n\nThis introduces new APIs.\n- DialConfig can open client connection using Config, so user can specify protocol version, tls.Config if necessary.\n\n- Message can be used to send/receive text/binary data in a frame.\n- JSON can be used to send/receive JSON data in a frame.\n\nR=golang-dev, adg, rsc, m, tarmigan, raul.san, yohcop\nCC=golang-dev\nhttp://codereview.appspot.com/4635084\n\nCommitter: Andrew Gerrand <adg@golang.org>",
+			"disapproval": false,
+			"date": "2011-08-26 03:12:19.689486",
+			"approval": false
+		},
+		{
+			"sender": "ukai@google.com",
+			"recipients": [
+				"ukai@google.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"rsc@golang.org",
+				"m@capitanio.org",
+				"tarmigan@gmail.com",
+				"raul.san@sent.com",
+				"yohcop@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for the review.\n\nOn 2011/08/25 23:27:43, adg wrote:\n> LGTM \n> \n> Ukai, can you please summarize the API changes in the CL description before\n> submitting?\n\nUpdate the CL description.\nI think I don't have commit privilege. \nCould you submit it, please?\n\n> Can we gofix them? (And should we?)\nI think it keeps backward compatibility, so we don't need it.\n\nThanks!",
+			"disapproval": false,
+			"date": "2011-08-26 02:28:08.983195",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 26 August 2011 12:28,  <ukai@google.com> wrote:\n> Thanks for the review.\n\nThanks for your patience and for writing the code.\n\nAndrew\n",
+			"disapproval": false,
+			"date": "2011-08-26 03:18:34.592411",
+			"approval": false
+		}
+	],
+	"owner_email": "ukai@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "ukai",
+	"subject": "code review 4635084: websocket: Implements new version of WebSocket protocol.",
+	"created": "2011-06-30 07:01:39.137988",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		9001,
+		16001,
+		26001,
+		29001,
+		41001,
+		41002,
+		50001,
+		51001,
+		59001,
+		67001
+	],
+	"modified": "2011-08-26 03:18:34.592411",
+	"closed": false,
+	"issue": 4635084
+}

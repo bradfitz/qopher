@@ -1,0 +1,135 @@
+{
+	"description": "database/sql: treat pointers as nullable types like encoding/json\n\n- convert from nil pointers to the nil interface{}\n- dereference non-nil pointers\n- convert from nil interface{}s to nil pointers\n- allocate pointers for non-nil interface{}s\n- tests for all of the above",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org",
+		"rogpeppe@gmail.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "awpritchard@gmail.com",
+			"recipients": [
+				"awpritchard@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This patch does add the same behavior for Scan; I've been using it in a database-driven web app for a few weeks now.  I coded it up because interaction with encoding/json was awkward, requiring either an extra struct or a map and some copying boilerplate, to ferry data from database/sql's struct{Int int64, Valid bool} world to json's *int64.\n\nWould it be better to have encoding/json recognize database/sql's Null* types and treat them similarly to how it treats pointers?  In that case, it would be odd to have encoding/json importing database/sql, though.\n\nOn 2012/02/04 20:21:35, bradfitz wrote:\n> If we allow this for parameters then I fear people will expect it to work\n> for Scan too, and then it becomes allocation heavy.\n> \n> I'm torn.\n> \n> Russ?\n>",
+			"disapproval": false,
+			"date": "2012-02-04 20:30:46.022216",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 5 February 2012 02:56, Russ Cox <rsc@golang.org> wrote:\n> This only affects places where people want to use NullInt64 and so on, right?\n> What if instead we dropped those types in favor of *int64?\n> It seems like the allocations would only happen in the case where\n> you are trying to distinguish null from value.\n\n+1\n\nto be fair, that might be quite turn out to be a problem\nin some cases, but presumably the caller could use ScannerInto\nto save the allocation then.\n",
+			"disapproval": false,
+			"date": "2012-02-06 11:15:51.221034",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This only affects places where people want to use NullInt64 and so on, right?\nWhat if instead we dropped those types in favor of *int64?\nIt seems like the allocations would only happen in the case where\nyou are trying to distinguish null from value.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-05 02:56:15.227960",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If we allow this for parameters then I fear people will expect it to work\nfor Scan too, and then it becomes allocation heavy.\n\nI'm torn.\n\nRuss?\n\n\nOn Sat, Feb 4, 2012 at 3:42 AM, <awpritchard@gmail.com> wrote:\n\n> Reviewers: golang-dev_googlegroups.com,\n>\n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n>\n>\n> Description:\n> database/sql: treat pointers as nullable types like encoding/json\n>\n> - convert from nil pointers to the nil interface{}\n> - dereference non-nil pointers\n> - convert from nil interface{}s to nil pointers\n> - allocate pointers for non-nil interface{}s\n> - tests for all of the above\n>\n> Please review this at http://codereview.appspot.com/**5630052/<http://codereview.appspot.com/5630052/>\n>\n> Affected files:\n>  M src/pkg/database/sql/convert.**go\n>  M src/pkg/database/sql/convert_**test.go\n>  M src/pkg/database/sql/driver/**types.go\n>  M src/pkg/database/sql/driver/**types_test.go\n>\n>\n> Index: src/pkg/database/sql/convert.**go\n> ==============================**==============================**=======\n> --- a/src/pkg/database/sql/**convert.go\n> +++ b/src/pkg/database/sql/**convert.go\n> @@ -102,6 +102,14 @@\n>        }\n>\n>        switch dv.Kind() {\n> +       case reflect.Ptr:\n> +               if src == nil {\n> +                       dv.Set(reflect.Zero(dv.Type())**)\n> +                       return nil\n> +               } else {\n> +                       dv.Set(reflect.New(dv.Type().**Elem()))\n> +                       return convertAssign(dv.Interface(), src)\n> +               }\n>        case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,\n> reflect.Int64:\n>                s := asString(src)\n>                i64, err := strconv.ParseInt(s, 10, dv.Type().Bits())\n> Index: src/pkg/database/sql/convert_**test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/database/sql/**convert_test.go\n> +++ b/src/pkg/database/sql/**convert_test.go\n> @@ -13,6 +13,7 @@\n>  )\n>\n>  var someTime = time.Unix(123, 0)\n> +var answer int64 = 42\n>\n>  type conversionTest struct {\n>        s, d interface{} // source and destination\n> @@ -26,6 +27,8 @@\n>        wanttime time.Time\n>        wantbool bool // used if d is of type *bool\n>        wanterr  string\n> +       wantptr  *int64 // if non-nil, *d's pointed value must be equal to\n> *wantptr\n> +       wantnil  bool   // if true, *d must be *int64(nil)\n>  }\n>\n>  // Target variables for scanning into.\n> @@ -41,6 +44,7 @@\n>        scanf32    float32\n>        scanf64    float64\n>        scantime   time.Time\n> +       scanptr    *int64\n>  )\n>\n>  var conversionTests = []conversionTest{\n> @@ -95,6 +99,14 @@\n>        {s: float64(1.5), d: &scanf32, wantf32: float32(1.5)},\n>        {s: \"1.5\", d: &scanf32, wantf32: float32(1.5)},\n>        {s: \"1.5\", d: &scanf64, wantf64: float64(1.5)},\n> +\n> +       // Pointers\n> +       {s: interface{}(nil), d: &scanptr, wantnil: true},\n> +       {s: int64(42), d: &scanptr, wantptr: &answer},\n> +}\n> +\n> +func intPtrValue(intptr interface{}) interface{} {\n> +       return reflect.Indirect(reflect.**Indirect(reflect.ValueOf(**\n> intptr))).Int()\n>  }\n>\n>  func intValue(intptr interface{}) int64 {\n> @@ -152,6 +164,16 @@\n>                if !ct.wanttime.IsZero() && !ct.wanttime.Equal(timeValue(**ct.d))\n> {\n>                        errf(\"want time %v, got %v\", ct.wanttime,\n> timeValue(ct.d))\n>                }\n> +               if ct.wantnil && *ct.d.(**int64) != nil {\n> +                       errf(\"want nil, got %v\", intPtrValue(ct.d))\n> +               }\n> +               if ct.wantptr != nil {\n> +                       if *ct.d.(**int64) == nil {\n> +                               errf(\"want pointer to %v, got nil\",\n> *ct.wantptr)\n> +                       } else if *ct.wantptr != intPtrValue(ct.d) {\n> +                               errf(\"want pointer to %v, got %v\",\n> *ct.wantptr, intPtrValue(ct.d))\n> +                       }\n> +               }\n>        }\n>  }\n>\n> Index: src/pkg/database/sql/driver/**types.go\n> ==============================**==============================**=======\n> --- a/src/pkg/database/sql/driver/**types.go\n> +++ b/src/pkg/database/sql/driver/**types.go\n> @@ -248,6 +248,13 @@\n>\n>        rv := reflect.ValueOf(v)\n>        switch rv.Kind() {\n> +       case reflect.Ptr:\n> +               // indirect pointers\n> +               if rv.IsNil() {\n> +                       return nil, nil\n> +               } else {\n> +                       return defaultConverter{}.**\n> ConvertValue(rv.Elem().**Interface())\n> +               }\n>        case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,\n> reflect.Int64:\n>                return rv.Int(), nil\n>        case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:\n> Index: src/pkg/database/sql/driver/**types_test.go\n> ==============================**==============================**=======\n> --- a/src/pkg/database/sql/driver/**types_test.go\n> +++ b/src/pkg/database/sql/driver/**types_test.go\n> @@ -18,6 +18,7 @@\n>  }\n>\n>  var now = time.Now()\n> +var answer int64 = 42\n>\n>  var valueConverterTests = []valueConverterTest{\n>        {Bool, \"true\", true, \"\"},\n> @@ -37,6 +38,9 @@\n>        {c: Bool, in: \"foo\", err: \"sql/driver: couldn't convert \\\"foo\\\"\n> into type bool\"},\n>        {c: Bool, in: 2, err: \"sql/driver: couldn't convert 2 into type\n> bool\"},\n>        {DefaultParameterConverter, now, now, \"\"},\n> +       {DefaultParameterConverter, (*int64)(nil), nil, \"\"},\n> +       {DefaultParameterConverter, &answer, answer, \"\"},\n> +       {DefaultParameterConverter, &now, now, \"\"},\n>  }\n>\n>  func TestValueConverters(t *testing.T) {\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-04 20:21:35.825315",
+			"approval": false
+		},
+		{
+			"sender": "awpritchard@gmail.com",
+			"recipients": [
+				"awpritchard@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-04 11:42:12.273152",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Okay, we've decided to allow this, as well as keeping NullString for people\nwho care about allocations (and as an example of how to use the ScannerInto\ninterface).  I'm happy as long as both Scan and parameters both accept\npointers.\n\nCould you re-sync this patch against tip and mail it out again?  I think I\nbroke the clean merge with my *interface{} change.\n\nThanks!\n\n\nOn Sat, Feb 4, 2012 at 12:30 PM, <awpritchard@gmail.com> wrote:\n\n> This patch does add the same behavior for Scan; I've been using it in a\n> database-driven web app for a few weeks now.  I coded it up because\n> interaction with encoding/json was awkward, requiring either an extra\n> struct or a map and some copying boilerplate, to ferry data from\n> database/sql's struct{Int int64, Valid bool} world to json's *int64.\n>\n> Would it be better to have encoding/json recognize database/sql's Null*\n> types and treat them similarly to how it treats pointers?  In that case,\n> it would be odd to have encoding/json importing database/sql, though.\n>\n>\n> On 2012/02/04 20:21:35, bradfitz wrote:\n>\n>> If we allow this for parameters then I fear people will expect it to\n>>\n> work\n>\n>> for Scan too, and then it becomes allocation heavy.\n>>\n>\n>  I'm torn.\n>>\n>\n>  Russ?\n>>\n>\n>\n> http://codereview.appspot.com/**5630052/<http://codereview.appspot.com/5630052/>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-06 19:07:52.145563",
+			"approval": false
+		},
+		{
+			"sender": "awpritchard@gmail.com",
+			"recipients": [
+				"awpritchard@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, rsc@golang.org, rogpeppe@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-02-06 19:44:15.628204",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nThanks!\n\n\nOn Mon, Feb 6, 2012 at 11:44 AM, <awpritchard@gmail.com> wrote:\n\n> Hello golang-dev@googlegroups.com, bradfitz@golang.org, rsc@golang.org,\n> rogpeppe@gmail.com (cc: golang-dev@googlegroups.com),\n>\n> Please take another look.\n>\n>\n> http://codereview.appspot.com/**5630052/<http://codereview.appspot.com/5630052/>\n>\n",
+			"disapproval": false,
+			"date": "2012-02-08 06:14:02.103968",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"awpritchard@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"rogpeppe@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=0eab3b57c894 ***\n\ndatabase/sql: treat pointers as nullable types like encoding/json\n\n- convert from nil pointers to the nil interface{}\n- dereference non-nil pointers\n- convert from nil interface{}s to nil pointers\n- allocate pointers for non-nil interface{}s\n- tests for all of the above\n\nR=golang-dev, bradfitz, rsc, rogpeppe\nCC=golang-dev\nhttp://codereview.appspot.com/5630052\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2012-02-08 06:14:21.912711",
+			"approval": false
+		}
+	],
+	"owner_email": "awpritchard@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "awpritchard",
+	"subject": "code review 5630052: database/sql: treat pointers as nullable types like enc...",
+	"created": "2012-02-04 11:34:21.997410",
+	"patchsets": [
+		1,
+		2001,
+		2002,
+		9001
+	],
+	"modified": "2012-02-08 06:14:21.912711",
+	"closed": false,
+	"issue": 5630052
+}

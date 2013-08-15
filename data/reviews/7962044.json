@@ -1,0 +1,127 @@
+{
+	"description": "database/sql: optimized []byte copy + []byte(nil) -> *interface fix\n\nMake the copy directly in the convert switch instead of an extra loop.\nAlso stops converting nil-[]byte to zero-[]byte when assigning to *interface",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"google@julienschmidt.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/7962044/diff/14001/src/pkg/database/sql/convert.go\nFile src/pkg/database/sql/convert.go (right):\n\nhttps://codereview.appspot.com/7962044/diff/14001/src/pkg/database/sql/convert.go#newcode115\nsrc/pkg/database/sql/convert.go:115: if s != nil {\nshouldn't this still assign to *d always, even if s == nil?  why don't you make this just:\n\n*d = cloneBytes(s)\n\nfunc cloneBytes(b []byte) []byte {\n   if b == nil {\n       return nil\n   } else {\n       c := make([]byte, len(b))\n       copy(c, b)\n       return c\n   } \n}\n\nhttps://codereview.appspot.com/7962044/diff/14001/src/pkg/database/sql/convert.go#newcode125\nsrc/pkg/database/sql/convert.go:125: if s != nil {\n*d = cloneBytes(s)",
+			"disapproval": false,
+			"date": "2013-03-23 23:40:43.802350",
+			"approval": false
+		},
+		{
+			"sender": "google@julienschmidt.com",
+			"recipients": [
+				"google@julienschmidt.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: bradfitz@golang.org, golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-03-23 02:56:27.861460",
+			"approval": false
+		},
+		{
+			"sender": "google@julienschmidt.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "\r\n\r\nOn Sunday, March 24, 2013 12:40:43 AM UTC+1, Brad Fitzpatrick wrote:\r\n>\r\n> https://codereview.appspot.com/7962044/diff/14001/src/pkg/database/sql/convert.go#newcode115 \r\n>\r\n> src/pkg/database/sql/convert.go:115<https://codereview.appspot.com/7962044/diff/14001/src/pkg/database/sql/convert.go#newcode115src/pkg/database/sql/convert.go:115>: \r\n> if s != nil { \r\n> shouldn't this still assign to *d always, even if s == nil?\r\n\r\nnil is the zero value so that assignment of nil is dispensable \r\n\r\n\r\nwhy don't you make this just: \r\n>\r\n> *d = cloneBytes(s) \r\n>\r\n> func cloneBytes(b []byte) []byte { \r\n>     if b == nil { \r\n>         return nil \r\n>     } else { \r\n>         c := make([]byte, len(b)) \r\n>         copy(c, b) \r\n>         return c \r\n>     } \r\n> } \r\n\r\n \r\nThis would be nice but it doesn't work: \"convert_test.go:182: convertAssign \r\n#68: for [] ([]uint8) -> *interface {}, want interface <nil>, got []byte{} \"\r\n\r\nThis works, though:\r\n\r\nif s == nil {\r\n    *d = nil\r\n} else {\r\n    *d = cloneBytes(s)\r\n}\r\n\r\nfunc cloneBytes(b []byte) []byte { \r\n    c := make([]byte, len(b)) \r\n    copy(c, b) \r\n    return c \r\n}\r\n",
+			"disapproval": false,
+			"date": "2013-03-24 03:10:13.628530",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Sat, Mar 23, 2013 at 8:10 PM, Julien Schmidt <google@julienschmidt.com>wrote:\r\n\r\n>\r\n>\r\n> On Sunday, March 24, 2013 12:40:43 AM UTC+1, Brad Fitzpatrick wrote:\r\n>>\r\n>> https://codereview.appspot.**com/7962044/diff/14001/src/**\r\n>> pkg/database/sql/convert.go#**newcode115\r\n>> src/pkg/database/sql/convert.**go:115<https://codereview.appspot.com/7962044/diff/14001/src/pkg/database/sql/convert.go#newcode115src/pkg/database/sql/convert.go:115>:\r\n>> if s != nil {\r\n>> shouldn't this still assign to *d always, even if s == nil?\r\n>\r\n> nil is the zero value so that assignment of nil is dispensable\r\n>\r\n>\r\n> why don't you make this just:\r\n>>\r\n>> *d = cloneBytes(s)\r\n>>\r\n>> func cloneBytes(b []byte) []byte {\r\n>>     if b == nil {\r\n>>         return nil\r\n>>     } else {\r\n>>         c := make([]byte, len(b))\r\n>>         copy(c, b)\r\n>>         return c\r\n>>     }\r\n>> }\r\n>\r\n>\r\n> This would be nice but it doesn't work: \"convert_test.go:182:\r\n> convertAssign #68: for [] ([]uint8) -> *interface {}, want interface <nil>,\r\n> got []byte{} \"\r\n>\r\n\r\nThe testcase is wrong.  Copying a []byte(nil) to a *interface{} should put\r\na nil []byte inside the target interface.\r\n\r\nAdd this to your patch:\r\n\r\ndiff -r 80abb54e438e src/pkg/database/sql/convert_test.go\r\n--- a/src/pkg/database/sql/convert_test.go Mon Mar 25 08:43:51 2013 -0700\r\n+++ b/src/pkg/database/sql/convert_test.go Mon Mar 25 09:10:06 2013 -0700\r\n@@ -143,6 +143,7 @@\r\n  {s: []byte(\"byteslice\"), d: &scaniface, wantiface: []byte(\"byteslice\")},\r\n  {s: true, d: &scaniface, wantiface: true},\r\n  {s: nil, d: &scaniface},\r\n+ {s: []byte(nil), d: &scaniface, wantiface: []byte(nil),},\r\n }\r\n\r\n func intPtrValue(intptr interface{}) interface{} {\r\n@@ -219,9 +220,12 @@\r\n  errf(\"want interface %#v, got %#v\", ct.wantiface, scaniface)\r\n  continue\r\n  }\r\n  if srcBytes, ok := ct.s.([]byte); ok {\r\n  dstBytes := (*ifptr).([]byte)\r\n- if &dstBytes[0] == &srcBytes[0] {\r\n+ if len(srcBytes) > 0 && &dstBytes[0] == &srcBytes[0] {\r\n  errf(\"copy into interface{} didn't copy []byte data\")\r\n  }\r\n  }\r\n",
+			"disapproval": false,
+			"date": "2013-03-25 16:12:36.472030",
+			"approval": false
+		},
+		{
+			"sender": "google@julienschmidt.com",
+			"recipients": [
+				"google@julienschmidt.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/03/25 16:12:36, bradfitz wrote:\n> The testcase is wrong.  Copying a []byte(nil) to a *interface{} should put\n> a nil []byte inside the target interface.\n> \n> Add this to your patch:\n> \n> diff -r 80abb54e438e src/pkg/database/sql/convert_test.go\n> --- a/src/pkg/database/sql/convert_test.go Mon Mar 25 08:43:51 2013 -0700\n> +++ b/src/pkg/database/sql/convert_test.go Mon Mar 25 09:10:06 2013 -0700\n> @@ -143,6 +143,7 @@\n>   {s: []byte(\"byteslice\"), d: &scaniface, wantiface: []byte(\"byteslice\")},\n>   {s: true, d: &scaniface, wantiface: true},\n>   {s: nil, d: &scaniface},\n> + {s: []byte(nil), d: &scaniface, wantiface: []byte(nil),},\n>  }\n> \n>  func intPtrValue(intptr interface{}) interface{} {\n> @@ -219,9 +220,12 @@\n>   errf(\"want interface %#v, got %#v\", ct.wantiface, scaniface)\n>   continue\n>   }\n>   if srcBytes, ok := ct.s.([]byte); ok {\n>   dstBytes := (*ifptr).([]byte)\n> - if &dstBytes[0] == &srcBytes[0] {\n> + if len(srcBytes) > 0 && &dstBytes[0] == &srcBytes[0] {\n>   errf(\"copy into interface{} didn't copy []byte data\")\n>   }\n>   }\n\nThe confusing story with nil values and interfaces again... fixed.",
+			"disapproval": false,
+			"date": "2013-03-25 17:57:45.401280",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"google@julienschmidt.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2013-03-26 00:41:39.949330",
+			"approval": true
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"google@julienschmidt.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as https://code.google.com/p/go/source/detail?r=450035404e2f ***\n\ndatabase/sql: optimized []byte copy + []byte(nil) -> *interface fix\n\nMake the copy directly in the convert switch instead of an extra loop.\nAlso stops converting nil-[]byte to zero-[]byte when assigning to *interface\n\nR=golang-dev, bradfitz\nCC=golang-dev\nhttps://codereview.appspot.com/7962044\n\nCommitter: Brad Fitzpatrick <bradfitz@golang.org>",
+			"disapproval": false,
+			"date": "2013-03-26 00:43:34.515150",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"google@julienschmidt.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=close",
+			"disapproval": false,
+			"date": "2013-07-21 10:22:17.749900",
+			"approval": false
+		}
+	],
+	"owner_email": "google@julienschmidt.com",
+	"private": false,
+	"base_url": "",
+	"owner": "julienschmidt",
+	"subject": "code review 7962044: database/sql: optimized []byte copy + []byte(nil) -> *i...",
+	"created": "2013-03-23 02:44:09.851460",
+	"patchsets": [
+		1,
+		14001,
+		19001,
+		28001
+	],
+	"modified": "2013-07-21 10:22:17.877260",
+	"closed": false,
+	"issue": 7962044
+}

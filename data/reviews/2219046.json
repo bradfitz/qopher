@@ -1,0 +1,97 @@
+{
+	"description": "Modifies the helper Make.* files to support the arg LOCALDEPS, along the line of DEPS (for package dependencies) but does not automatically \"gomake install\" their contents, instead just allowing the dependencies to be linked in-place. This allows (for example) a main package to contain packages that, while required, should not be installed (to prevent namespace pollution, or in cases where $GOROOT is not writable).",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> FWIW: While I am happy to have this submitted as-is, I would also be\n> very happy to have this just incite a discussion about package usage\n> and installation paths in general. As far as I'm aware, the current\n> state of the art is basically: if code depends on a package, that\n> package is always installed into $GOROOT via \"gomake install\" before\n> usage.\n\nYes.\n\n> Primarily, if I'm building a binary (or some top-level package), I\n> might like to separate out part of the code into sub-packages, purely\n> from an organisational point of view. After I've built the final\n> product, I don't need or want the dependencies, and I probably don't\n> also want them available to the rest of the system.\n>\n> I've two other comments on the whole process. Firstly, $GOROOT might\n> not even be writable, which is kind of an overarching hint that the\n> current start of the art isn't maintainable in the long term.\n\nThe system changes enough that you kind of have\nto assume $GOROOT is writable if you're going to keep up.\nWe're explicitly not supporting other directories yet.\n\n> Secondly, binaries with these kinds of transient/organisational\n> packages might end up colliding with other installed packages; and I'd\n> always like something I download and explicitly install manually to\n> take precedence over some transient package used in building something\n> else.\n\nThis can't happen.  You're supposed to pick import paths\nthat are globally unique.  If you don't, the symbols will collide\nin the linker and you will get link errors.  These so-called\ntransient packages are not transient: they exist in the final\nbinary even after you delete the intermediate objects.\nThey take up part of the import path name space, so you\nhave to be careful not to collide.  The way to do that is\nto use a unique name at the beginning of the import paths.\nFor example, all the import paths for internal Google code\nbegin with \"google\" and the goinstall paths disambiguate\nby using the project name (github.com/asdf, asdf.googlecode.com, etc).\n\nThe way these makefile changes work, they invite people\nto use short names and then collide.  I think the right fix will\nbe to have a separate tree where installed binaries go,\nnot to pluck them out of _obj.  But I'd like to put that off.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2010-09-27 14:14:20.497291",
+			"approval": false
+		},
+		{
+			"sender": "sam.thorogood@gmail.com",
+			"recipients": [
+				"sam.thorogood@gmail.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello adg, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change.",
+			"disapproval": false,
+			"date": "2010-09-27 05:46:15.058980",
+			"approval": false
+		},
+		{
+			"sender": "sam.thorogood@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "FWIW: While I am happy to have this submitted as-is, I would also be\nvery happy to have this just incite a discussion about package usage\nand installation paths in general. As far as I'm aware, the current\nstate of the art is basically: if code depends on a package, that\npackage is always installed into $GOROOT via \"gomake install\" before\nusage.\n\nPrimarily, if I'm building a binary (or some top-level package), I\nmight like to separate out part of the code into sub-packages, purely\nfrom an organisational point of view. After I've built the final\nproduct, I don't need or want the dependencies, and I probably don't\nalso want them available to the rest of the system.\n\nI've two other comments on the whole process. Firstly, $GOROOT might\nnot even be writable, which is kind of an overarching hint that the\ncurrent start of the art isn't maintainable in the long term.\nSecondly, binaries with these kinds of transient/organisational\npackages might end up colliding with other installed packages; and I'd\nalways like something I download and explicitly install manually to\ntake precedence over some transient package used in building something\nelse.\n\nOn Mon, Sep 27, 2010 at 15:46,  <sam.thorogood@gmail.com> wrote:\n> Reviewers: adg,\n>\n> Message:\n> Hello adg, adg@golang.org (cc: golang-dev@googlegroups.com),\n>\n> I'd like you to review this change.\n>\n>\n> Description:\n> Modifies the helper Make.* files to support the arg LOCALDEPS, along the\n> line of DEPS (for package dependencies) but does not automatically\n> \"gomake install\" their contents, instead just allowing the dependencies\n> to be linked in-place. This allows (for example) a main package to\n> contain packages that, while required, should not be installed (to\n> prevent namespace pollution, or in cases where $GOROOT is not writable).\n>\n> Please review this at http://codereview.appspot.com/2219046/\n>\n> Affected files:\n> \u00a0M src/Make.cmd\n> \u00a0M src/Make.common\n> \u00a0M src/Make.pkg\n>\n>\n> Index: src/Make.cmd\n> ===================================================================\n> --- a/src/Make.cmd\n> +++ b/src/Make.cmd\n> @@ -11,12 +11,17 @@\n> \u00a0include $(QUOTED_GOROOT)/src/Make.common\n>\n> \u00a0PREREQ+=$(patsubst %,%.make,$(DEPS))\n> +PREREQ+=$(patsubst %,%.make_local,$(LOCALDEPS))\n> +\n> +LDEP_PATH=$(LOCALDEPS:%=%/_obj)\n> +LDEP_LINK=$(LDEP_PATH:%=-L %)\n> +LDEP_INC=$(LDEP_PATH:%=-I %)\n>\n> \u00a0$(TARG): _go_.$O $(OFILES)\n> - \u00a0 \u00a0 \u00a0 $(LD) -o $@ _go_.$O $(OFILES)\n> + \u00a0 \u00a0 \u00a0 $(LD) $(LDEP_LINK) -o $@ _go_.$O $(OFILES)\n>\n> \u00a0_go_.$O: $(GOFILES) $(PREREQ)\n> - \u00a0 \u00a0 \u00a0 $(GC) -o $@ $(GOFILES)\n> + \u00a0 \u00a0 \u00a0 $(GC) $(LDEP_INC) -o $@ $(GOFILES)\n>\n> \u00a0install: $(QUOTED_GOBIN)/$(TARG)\n>\n> Index: src/Make.common\n> ===================================================================\n> --- a/src/Make.common\n> +++ b/src/Make.common\n> @@ -8,6 +8,9 @@\n> \u00a0%.make:\n> \u00a0 \u00a0 \u00a0 \u00a0(cd $* && gomake install)\n>\n> +%.make_local:\n> + \u00a0 \u00a0 \u00a0 (cd $* && gomake)\n> +\n> \u00a0.PHONY: all clean nuke install coverage test bench testpackage-clean\\\n> \u00a0 \u00a0 \u00a0 \u00a0importpath dir\n>\n> Index: src/Make.pkg\n> ===================================================================\n> --- a/src/Make.pkg\n> +++ b/src/Make.pkg\n> @@ -45,6 +45,11 @@\n> \u00a0endif\n>\n> \u00a0PREREQ+=$(patsubst %,%.make,$(DEPS))\n> +PREREQ+=$(patsubst %,%.make_local,$(LOCALDEPS))\n> +\n> +LDEP_PATH=$(LOCALDEPS:%=%/_obj)\n> +LDEP_LINK=$(LDEP_PATH:%=-L %)\n> +LDEP_INC=$(LDEP_PATH:%=-I %)\n>\n> \u00a0coverage:\n> \u00a0 \u00a0 \u00a0 \u00a0gotest\n> @@ -71,10 +76,10 @@\n> \u00a0 \u00a0 \u00a0 \u00a0cp _obj/$(TARG).a \"$@\"\n>\n> \u00a0_go_.$O: $(GOFILES) $(PREREQ)\n> - \u00a0 \u00a0 \u00a0 $(GC) -o $@ $(GOFILES)\n> + \u00a0 \u00a0 \u00a0 $(GC) $(LDEP_INC) -o $@ $(GOFILES)\n>\n> \u00a0_gotest_.$O: $(GOFILES) $(GOTESTFILES) $(PREREQ)\n> - \u00a0 \u00a0 \u00a0 $(GC) -o $@ $(GOFILES) $(GOTESTFILES)\n> + \u00a0 \u00a0 \u00a0 $(GC) $(LDEP_LINK) -o $@ $(GOFILES) $(GOTESTFILES)\n>\n> \u00a0_obj/$(TARG).a: _go_.$O $(OFILES)\n> \u00a0 \u00a0 \u00a0 \u00a0@mkdir -p _obj/$(dir)\n>\n>\n>\n",
+			"disapproval": false,
+			"date": "2010-09-27 07:06:52.903951",
+			"approval": false
+		},
+		{
+			"sender": "sam.thorogood@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> The system changes enough that you kind of have\n> to assume $GOROOT is writable if you're going to keep up.\n> We're explicitly not supporting other directories yet.\n>\n\nOkay. Regardless of this discussion - and I appreciate the in-depth\nreply - I feel as if this issue will mostly get hit as a function of\nGo's success (e.g. if someone decides to build a system package, or\ninstall Go as default on some academic system), so while I'd like it\nto be addressed, I'm also looking forward to seeing more people\ncomplain about it. ;-)\n\n> This can't happen. \u00a0You're supposed to pick import paths\n> that are globally unique. \u00a0If you don't, the symbols will collide\n> in the linker and you will get link errors. \u00a0These so-called\n> transient packages are not transient: they exist in the final\n> binary even after you delete the intermediate objects.\n> They take up part of the import path name space, so you\n> have to be careful not to collide. \u00a0The way to do that is\n> to use a unique name at the beginning of the import paths.\n> For example, all the import paths for internal Google code\n> begin with \"google\" and the goinstall paths disambiguate\n> by using the project name (github.com/asdf, asdf.googlecode.com, etc).\n>\n\nI've observed what you mean about the import path namespace: the final\npackage files (blah.a) still depend on other packages and it's easy to\npollute their namespace. However, this isn't the case in executable\nfiles; they're isolated and statically linked.\n\nAs an experiment and an aside, I've set up a quick test rig: a binary\nlinked to a package included via LOCALDEPS, called 'regexp'. This\nlocal package took precedence, and didn't overwrite the installed\nversion. If I change this to being DEPS, I can trivially overwrite the\nsystem package. Obviously this is bad behaviour (and perhaps reflects\nthe convoluted use case of wanting a unique 'regexp' package) but it\nstill embodies one of my concerns.\n\nSo, I'm not sure what to make of the requirement to preface all\npackages with some unique name. Effective Go hints at using short,\nconcise package names. And, as far as I was aware, arguments towards\nJava-style fully-qualified package names were shot down early in the\npiece. I see this as somewhat of an ambiguous middle ground, although\nI will concede (perhaps 'concede' is not the right word; maybe\n'happily defer to a more authoritative source' :) ) that this level of\nuniqueness is a practical solution to my specific issues.\n\n> The way these makefile changes work, they invite people\n> to use short names and then collide. \u00a0I think the right fix will\n> be to have a separate tree where installed binaries go,\n> not to pluck them out of _obj. \u00a0But I'd like to put that off.\n>\n\nI suppose it's more of a style nitpick now, especially if the eventual\nplan is to have something like a separate tree for packages, e.g.\nsomething like a $GOLIB path. I'd like to use these short package\nnames for these transient/organisational packages; I'd also like to\n(by design) not be able to collide with other projects that just\n'decide' to use short names (because they're happy to be viewed as the\ncanonical source of some implementation), or other projects that might\nuse these transient packages (even if perhaps this is the 'wrong'\napproach).\n\nIf it is right that the eventual plan is to have Go support this\nalternative tree, I might have a go at the implementation you want to\nput off :). It seems as if it should be fairly trivial, whether\naddressed from a Makefile point of view (i.e. more 6g -I and 6l -L\ncommands) or from an internal view (i.e. 6g/6l automatically look in\n$GOLIB).\n",
+			"disapproval": false,
+			"date": "2010-09-28 00:56:33.330575",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": ">> This can't happen. \u00a0You're supposed to pick import paths\n>> that are globally unique. \u00a0If you don't, the symbols will collide\n>> in the linker and you will get link errors. \u00a0These so-called\n>> transient packages are not transient: they exist in the final\n>> binary even after you delete the intermediate objects.\n>> They take up part of the import path name space, so you\n>> have to be careful not to collide. \u00a0The way to do that is\n>> to use a unique name at the beginning of the import paths.\n>> For example, all the import paths for internal Google code\n>> begin with \"google\" and the goinstall paths disambiguate\n>> by using the project name (github.com/asdf, asdf.googlecode.com, etc).\n>\n> I've observed what you mean about the import path namespace: the final\n> package files (blah.a) still depend on other packages and it's easy to\n> pollute their namespace. However, this isn't the case in executable\n> files; they're isolated and statically linked.\n\nIf you manage to create an executable, then yes the opportunity\nfor link conflicts has gone without incident.  But there is no guarantee\nthat your build will work after updating to the next Go release.\nThe only way to do that is to use a more descriptive import path,\none that begins with a name you can lay claim to.  If you use\na package imported as 'util' and then Go adds a standard 'util',\nboom, you've got a conflict.  Or if you want to use some other\ncode that tries to have a 'util', boom, you've got a conflict.\nHaving to put everything in $GOROOT makes you think about\nthat issue; this CL makes you think you're immune to it.\nI think the long term fix is to allow a small number of alternate\ninstallation paths, not to enumerate every possible package's\n_obj directory.  You'd install the objects to some central-but-\nnot-$GOROOT location using distinguishing import paths,\nlink your binary, and then delete that location during make clean.\n\n> As an experiment and an aside, I've set up a quick test rig: a binary\n> linked to a package included via LOCALDEPS, called 'regexp'. This\n> local package took precedence, and didn't overwrite the installed\n> version. If I change this to being DEPS, I can trivially overwrite the\n> system package. Obviously this is bad behaviour (and perhaps reflects\n> the convoluted use case of wanting a unique 'regexp' package) but it\n> still embodies one of my concerns.\n\nYes, well don't do that.\n\n> So, I'm not sure what to make of the requirement to preface all\n> packages with some unique name. Effective Go hints at using short,\n> concise package names.\n\nYou are conflating package names with import paths.\nvector is a package name; \"container/vector\" is an import path.\nI am saying that you can call your package regexp but\nthat you should import it as \"mycode/regexp\" where mycode\nis some prefix you use for all your code.\n\nHere's an experiment for you.  Create a tree with your own\npackage named regexp defining func MyRegexp() using a\nMakefile with TARG=regexp and built only in _obj, as this CL\nproposes.  Don't implement a function MustParse.\nThen write a package main that imports your regexp using\nimport \"regexp\" and calls MyRegexp and also has an\nimport \"mime/multipart\" and calls multipart.NewReader(nil, \"\").\nTry to come up with a 6l command line that will link the\nprogram.  You won't be able to, because the import \"regexp\"\nin your main package and the import \"regexp\" in the multipart\npackage are required to resolve to the same package - they\nhave the same import path.  But one needs to resolve to your\nregexp and one needs to resolve to the system one.\nAnd your program doesn't even appear to be using regexp.\n\nThis is why it's not okay to just pick your own tiny path\nnames and assume that enumerating all the _obj directories\nwill suffice.\n\nOn a more aesthetic level, one of the nicest things about\nthe compiler tool chain we're using is that you just say 6l main.6.\nRequiring a -L argument for every package that 6l will need\nis a major abstraction violation: if main imports some package\nwhich imports some other package which adds an import of\nsome new package, then the \"list all the -L arguments\" approach\nrequires changing the 6l command line because some package\nyou've never heard of added an import.  That's an awful way\nto build software.\n\nNo one is saying that using only $GOROOT is the right long term\nsolution, but it works well now and has advantages for a system\nthat is undergoing such rapid change.  Please, let's leave\nthis alone for now.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2010-09-28 01:40:29.556257",
+			"approval": false
+		},
+		{
+			"sender": "sam.thorogood@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> Here's an experiment for you. \u00a0Create a tree with your own\n> package named regexp defining func MyRegexp() using a\n> Makefile with TARG=regexp and built only in _obj, as this CL\n> proposes. \u00a0Don't implement a function MustParse.\n> Then write a package main that imports your regexp using\n> import \"regexp\" and calls MyRegexp and also has an\n> import \"mime/multipart\" and calls multipart.NewReader(nil, \"\").\n> Try to come up with a 6l command line that will link the\n> program. \u00a0You won't be able to, because the import \"regexp\"\n> in your main package and the import \"regexp\" in the multipart\n> package are required to resolve to the same package - they\n> have the same import path. \u00a0But one needs to resolve to your\n> regexp and one needs to resolve to the system one.\n> And your program doesn't even appear to be using regexp.\n>\n\nRight, this is basically what I meant by final packages still depend\non others. Thank you for explaining it in more detail than I did.\n\n> On a more aesthetic level, one of the nicest things about\n> the compiler tool chain we're using is that you just say 6l main.6.\n> Requiring a -L argument for every package that 6l will need\n> is a major abstraction violation: if main imports some package\n> which imports some other package which adds an import of\n> some new package, then the \"list all the -L arguments\" approach\n> requires changing the 6l command line because some package\n> you've never heard of added an import. \u00a0That's an awful way\n> to build software.\n>\n> No one is saying that using only $GOROOT is the right long term\n> solution, but it works well now and has advantages for a system\n> that is undergoing such rapid change. \u00a0Please, let's leave\n> this alone for now.\n>\n> Russ\n>\n\nAll right. I'm sorry to have dragged you into a bit of an argument\nover this; thanks for replying and voicing your concerns.\n",
+			"disapproval": false,
+			"date": "2010-09-28 01:48:36.325706",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"sam.thorogood@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2010-10-19 03:50:28.868166",
+			"approval": false
+		}
+	],
+	"owner_email": "sam.thorogood@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Sam",
+	"subject": "code review 2219046: Modifies the helper Make.* files to support the arg LOC...",
+	"created": "2010-09-27 05:44:48.850812",
+	"patchsets": [
+		1,
+		2001
+	],
+	"modified": "2010-10-19 03:50:28.868166",
+	"closed": false,
+	"issue": 2219046
+}

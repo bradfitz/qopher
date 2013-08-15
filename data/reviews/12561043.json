@@ -1,0 +1,127 @@
+{
+	"description": "archive/tar: Fix support for long links and improve PAX support.\n\nThe tar/archive code from golang has a problem with linknames with length >\n100. A pax header is added but the original header still written with a too\nlong field length.\n\nAs it is clear that pax support is incomplete I have added missing\nimplementation parts.\n\nThis commit contains code from the golang project in the folder tar/archiv.\n\nThe following pax header records are now automatically written:\n\n- gname)\n- linkpath\n- path\n- uname\n\nThe following fields can be written with PAX, but the default is to use the\nstar binary extension.\n\n- gid  (value > 2097151)\n- size (value > 8589934591)\n- uid (value > 2097151)\n\nThe string fields are written when the value is longer as the field or if the\nstring contains a char that is not encodable as 7-bit ASCII value.\n\nThe change was tested against a current ubuntu-cloud image tarball comparing\nthe compressed result.\n\n+ added some automated tests for the new functionality.\n\nFixes issue 6056.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"marco.hennings@freiheit.com"
+	],
+	"reviewers": [
+		"dsymonds@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "marco.hennings@freiheit.com",
+			"recipients": [
+				"marco.hennings@freiheit.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com, marco.hennings@freiheit.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-08-06 19:52:59.687020",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"marco.hennings@freiheit.com",
+				"golang-dev@googlegroups.com",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"marco.hennings@freiheit.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=adg",
+			"disapproval": false,
+			"date": "2013-08-06 22:34:48.899960",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"marco.hennings@freiheit.com",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"marco.hennings@freiheit.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=dsymonds\n\nHe wrote this stuff.",
+			"disapproval": false,
+			"date": "2013-08-12 05:38:35.211230",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"marco.hennings@freiheit.com",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"marco.hennings@freiheit.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "A few places I've asked you to merge/revert things because the changes are unnecessary. Please try to keep the diff minimal so it's easier to review and there's less chance of an unexpected change sneaking in.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go\nFile src/pkg/archive/tar/common.go (right):\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode180\nsrc/pkg/archive/tar/common.go:180: PAX_ATIME    = \"atime\"\nunless users actually need to use these constants (and I'm not sure they do), unexport them.\n\nEither way, ditch the underscore. This should either be paxAtime or PaxAtime.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode278\nsrc/pkg/archive/tar/common.go:278: func isASCII7Bit(s string) bool {\nisASCII is fine\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode279\nsrc/pkg/archive/tar/common.go:279: for _, character := range s {\nfor _, c := range s {\n  if c >= 0x80 {\n    return false\n  }\n}\nreturn true\n\n\nand do similar below\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode287\nsrc/pkg/archive/tar/common.go:287: func stripTo7Bits(s string) string {\ntoASCII\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode288\nsrc/pkg/archive/tar/common.go:288: var buffer bytes.Buffer\nbuffer -> buf\n\nalso, this function is generating unnecessary garbage in the common case (all ASCII). Start with\n  if isASCII(s) {\n    return s\n  }\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode297\nsrc/pkg/archive/tar/common.go:297: func stripTo7BitsAndShorten(s string, maxLen int) string {\nI don't think there's a need for this. Just use toASCII and take a subslice.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go\nFile src/pkg/archive/tar/writer.go (right):\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode27\nsrc/pkg/archive/tar/writer.go:27: errFieldTooLongNoAscii = errors.New(\"archive/tar: header field too long or contains invalid values\")\nerrInvalidHeader\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode84\nsrc/pkg/archive/tar/writer.go:84: func (tw *Writer) fillHeaderField(b []byte, paxHeader map[string]string, paxKeyword string, s string) {\nmerge this into cString\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode124\nsrc/pkg/archive/tar/writer.go:124: func (tw *Writer) fillNumericHeaderField(b []byte, paxHeader map[string]string, paxKeyword string, x int64) {\nmerge these two into numeric and pass a bool called long.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode161\nsrc/pkg/archive/tar/writer.go:161: //  As this method is called internally by writePax header it allows to\ndrop the space before \"As\"\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode332\nsrc/pkg/archive/tar/writer.go:332: func paxHeader(keyword string, value string) string {\nI don't see any merit in changing this function. It's the same as passing in keyword+\"=\"+value. Please revert.",
+			"disapproval": false,
+			"date": "2013-08-13 04:18:26.042800",
+			"approval": false
+		},
+		{
+			"sender": "marco.hennings@freiheit.com",
+			"recipients": [
+				"marco.hennings@freiheit.com",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"marco.hennings@freiheit.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've updated the code based on your comments. Please continue the review.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go\nFile src/pkg/archive/tar/common.go (right):\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode180\nsrc/pkg/archive/tar/common.go:180: PAX_ATIME    = \"atime\"\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> unless users actually need to use these constants (and I'm not sure they do),\n> unexport them.\n> \n> Either way, ditch the underscore. This should either be paxAtime or PaxAtime.\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode278\nsrc/pkg/archive/tar/common.go:278: func isASCII7Bit(s string) bool {\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> isASCII is fine\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode279\nsrc/pkg/archive/tar/common.go:279: for _, character := range s {\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> for _, c := range s {\n>   if c >= 0x80 {\n>     return false\n>   }\n> }\n> return true\n> \n> \n> and do similar below\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode287\nsrc/pkg/archive/tar/common.go:287: func stripTo7Bits(s string) string {\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> toASCII\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode288\nsrc/pkg/archive/tar/common.go:288: var buffer bytes.Buffer\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> buffer -> buf\n> \n> also, this function is generating unnecessary garbage in the common case (all\n> ASCII). Start with\n>   if isASCII(s) {\n>     return s\n>   }\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/common.go#newcode297\nsrc/pkg/archive/tar/common.go:297: func stripTo7BitsAndShorten(s string, maxLen int) string {\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> I don't think there's a need for this. Just use toASCII and take a subslice.\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go\nFile src/pkg/archive/tar/writer.go (right):\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode27\nsrc/pkg/archive/tar/writer.go:27: errFieldTooLongNoAscii = errors.New(\"archive/tar: header field too long or contains invalid values\")\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> errInvalidHeader\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode84\nsrc/pkg/archive/tar/writer.go:84: func (tw *Writer) fillHeaderField(b []byte, paxHeader map[string]string, paxKeyword string, s string) {\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> merge this into cString\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode124\nsrc/pkg/archive/tar/writer.go:124: func (tw *Writer) fillNumericHeaderField(b []byte, paxHeader map[string]string, paxKeyword string, x int64) {\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> merge these two into numeric and pass a bool called long.\n\nTo be consistent with the naming on writePaxHeader I called the bool allowPax. I hope this matches what you required good enough.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode161\nsrc/pkg/archive/tar/writer.go:161: //  As this method is called internally by writePax header it allows to\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> drop the space before \"As\"\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/12001/src/pkg/archive/tar/writer.go#newcode332\nsrc/pkg/archive/tar/writer.go:332: func paxHeader(keyword string, value string) string {\nOn 2013/08/13 04:18:26, dsymonds wrote:\n> I don't see any merit in changing this function. It's the same as passing in\n> keyword+\"=\"+value. Please revert.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-08-13 12:56:23.980720",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"marco.hennings@freiheit.com",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"marco.hennings@freiheit.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "getting close. thanks for this.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/common.go\nFile src/pkg/archive/tar/common.go (right):\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/common.go#newcode295\nsrc/pkg/archive/tar/common.go:295: buf.WriteRune(c)\nhere you know it's ASCII, so use buf.WriteByte(byte(c))\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go\nFile src/pkg/archive/tar/writer.go (right):\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode71\nsrc/pkg/archive/tar/writer.go:71: func (tw *Writer) cString(b []byte, s string, paxHeader map[string]string, paxKeyword string, allowPax bool) {\nput the allowPax arg before paxHeader and paxKeyword so it's clearer that if it's false the remaining args will be ignored. Put paxKeyword next, and paxHeader last.\n\nfunc (tw *Writer) cString(b []byte, s string, allowPax bool, paxKeyword string, paxHeader map[string]string)\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode143\nsrc/pkg/archive/tar/writer.go:143: // As this method is called internally by writePax header it allows to\ns/it allows to/to allow it to/\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode157\nsrc/pkg/archive/tar/writer.go:157: paxHeaderRecords := make(map[string]string)\npaxHeader is the name for this map elsewhere, so rename this var.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode240\nsrc/pkg/archive/tar/writer.go:240: if allowPax {\nif !allowPax {\n  return errInvalidHeader\n}\nif err := tw.writePAXHeader(...); err != nil {\n  return err\n}\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode249\nsrc/pkg/archive/tar/writer.go:249: tw.pad = -tw.nb & (blockSize - 1) // blockSize is a power of two\ncan you rephrase this so it doesn't rely on integer two's complement properties?\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode278\nsrc/pkg/archive/tar/writer.go:278: func (tw *Writer) writePAXHeader(hdr *Header, paxHeaderRecords map[string]string) error {\npaxHeader\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode293\nsrc/pkg/archive/tar/writer.go:293: if len(ascii) > 100 {\nshould this really be silently truncating the name?",
+			"disapproval": false,
+			"date": "2013-08-15 01:06:32.788610",
+			"approval": false
+		},
+		{
+			"sender": "marco.hennings@freiheit.com",
+			"recipients": [
+				"marco.hennings@freiheit.com",
+				"dsymonds@golang.org",
+				"golang-dev@googlegroups.com",
+				"marco.hennings@freiheit.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I have updated changeset based on your comments.\n\nPlease continue the review.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/common.go\nFile src/pkg/archive/tar/common.go (right):\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/common.go#newcode295\nsrc/pkg/archive/tar/common.go:295: buf.WriteRune(c)\nOn 2013/08/15 01:06:33, dsymonds wrote:\n> here you know it's ASCII, so use buf.WriteByte(byte(c))\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go\nFile src/pkg/archive/tar/writer.go (right):\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode71\nsrc/pkg/archive/tar/writer.go:71: func (tw *Writer) cString(b []byte, s string, paxHeader map[string]string, paxKeyword string, allowPax bool) {\nOn 2013/08/15 01:06:33, dsymonds wrote:\n> put the allowPax arg before paxHeader and paxKeyword so it's clearer that if\n> it's false the remaining args will be ignored. Put paxKeyword next, and\n> paxHeader last.\n> \n> func (tw *Writer) cString(b []byte, s string, allowPax bool, paxKeyword string,\n> paxHeader map[string]string)\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode143\nsrc/pkg/archive/tar/writer.go:143: // As this method is called internally by writePax header it allows to\nOn 2013/08/15 01:06:33, dsymonds wrote:\n> s/it allows to/to allow it to/\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode157\nsrc/pkg/archive/tar/writer.go:157: paxHeaderRecords := make(map[string]string)\nOn 2013/08/15 01:06:33, dsymonds wrote:\n> paxHeader is the name for this map elsewhere, so rename this var.\n\nThere is a nameconflict with the function paxHeader. So i've renamed all occurances to paxHeaders.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode240\nsrc/pkg/archive/tar/writer.go:240: if allowPax {\nOn 2013/08/15 01:06:33, dsymonds wrote:\n> if !allowPax {\n>   return errInvalidHeader\n> }\n> if err := tw.writePAXHeader(...); err != nil {\n>   return err\n> }\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode249\nsrc/pkg/archive/tar/writer.go:249: tw.pad = -tw.nb & (blockSize - 1) // blockSize is a power of two\nOn 2013/08/15 01:06:33, dsymonds wrote:\n> can you rephrase this so it doesn't rely on integer two's complement properties?\n\nI have moved the line from above, as it is neccessary to calculate the padding after writing the pax header. \n\nBut i agree that is strange to see an optimization like this. I've replaced it with a simpler to understand term.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode278\nsrc/pkg/archive/tar/writer.go:278: func (tw *Writer) writePAXHeader(hdr *Header, paxHeaderRecords map[string]string) error {\nOn 2013/08/15 01:06:33, dsymonds wrote:\n> paxHeader\n\nDone.\n\nhttps://codereview.appspot.com/12561043/diff/19001/src/pkg/archive/tar/writer.go#newcode293\nsrc/pkg/archive/tar/writer.go:293: if len(ascii) > 100 {\nOn 2013/08/15 01:06:33, dsymonds wrote:\n> should this really be silently truncating the name?\n\nyes, this is the same behaviour that gnu tar provides.\n\nThe name of the pax header is not relevant for the name of the extracted file, as it is stored in the pax header content.",
+			"disapproval": false,
+			"date": "2013-08-15 09:52:45.258130",
+			"approval": false
+		}
+	],
+	"owner_email": "marco.hennings@freiheit.com",
+	"private": false,
+	"base_url": "",
+	"owner": "mhennings",
+	"subject": "code review 12561043: archive/tar: Fix support for long links and improve PAX...",
+	"created": "2013-08-06 19:42:27.618730",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		12001,
+		19001,
+		30001
+	],
+	"modified": "2013-08-15 09:52:45.649960",
+	"closed": false,
+	"issue": 12561043
+}

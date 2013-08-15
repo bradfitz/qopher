@@ -1,0 +1,128 @@
+{
+	"description": "vmac: Create vmac package",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "nicksnyder@google.com",
+			"recipients": [
+				"nicksnyder@google.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change.",
+			"disapproval": false,
+			"date": "2011-01-13 01:24:24.286171",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"nicksnyder@google.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "taking review",
+			"disapproval": false,
+			"date": "2011-01-13 02:01:00.028951",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Wed, Jan 12, 2011 at 9:01 PM,  <agl@golang.org> wrote:\n> taking review\n\nBefore I do a review, could you explain the what need you have for\nVMAC? VMAC is a rarely used primitive.\n\nCheers\n\nAGL\n",
+			"disapproval": false,
+			"date": "2011-01-13 02:13:43.932996",
+			"approval": false
+		},
+		{
+			"sender": "nicksnyder@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "There is a use case within Google for it. Check out the \"Go vmac package\"\nwave you are already on for a more specific answer. If you think this should\njust be a package internal to Google I guess we could do that too.\n\nNick\n\nOn Wed, Jan 12, 2011 at 6:13 PM, Adam Langley <agl@golang.org> wrote:\n\n> On Wed, Jan 12, 2011 at 9:01 PM,  <agl@golang.org> wrote:\n> > taking review\n>\n> Before I do a review, could you explain the what need you have for\n> VMAC? VMAC is a rarely used primitive.\n>\n> Cheers\n>\n> AGL\n>\n",
+			"disapproval": false,
+			"date": "2011-01-13 05:27:21.409296",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"nicksnyder@google.com",
+				"agl@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/3974041/diff/2001/src/pkg/crypto/vmac/Makefile\nFile src/pkg/crypto/vmac/Makefile (right):\n\nhttp://codereview.appspot.com/3974041/diff/2001/src/pkg/crypto/vmac/Makefile#newcode1\nsrc/pkg/crypto/vmac/Makefile:1: # Copyright 2009 The Go Authors. All rights reserved.\n2011\n\nhttp://codereview.appspot.com/3974041/diff/2001/src/pkg/crypto/vmac/vmac.go\nFile src/pkg/crypto/vmac/vmac.go (right):\n\nhttp://codereview.appspot.com/3974041/diff/2001/src/pkg/crypto/vmac/vmac.go#newcode10\nsrc/pkg/crypto/vmac/vmac.go:10: \"crypto/block\"\ncrypto/block is deprecated, use crypto/cipher.\n\nhttp://codereview.appspot.com/3974041/diff/2001/src/pkg/crypto/vmac/vmac.go#newcode17\nsrc/pkg/crypto/vmac/vmac.go:17: l1keylen  = 1024\nI feel that something like numL1KeyBits and numL1KeyBytes would be more expressive in the code, although I admit that it's nice to mirror the specification. Up to you here.\n\nhttp://codereview.appspot.com/3974041/diff/2001/src/pkg/crypto/vmac/vmac.go#newcode22\nsrc/pkg/crypto/vmac/vmac.go:22: var m64 = new(big.Int).Lsh(one, 64)                                                                                       // 2^64\nYou should consider if the code should really use big. It's a large dependency and fixed function code is typically 3-4x faster than generic MPI code.\n\nGo doesn't give you a 128-bit type, so the 64-bit mults are truncating I'm afraid. So I would suggest that you use only 32 bit inputs to the 64-bit mult to avoid truncation.\n\nThus, a 128-bit value could be represented as four uint32s. The lack of add-with-carry is a pain and I did wonder if it would be best to expose addWW from big, but it's very short so I think I would duplicate it. See addWW_g in big/arith.go for MPI addition.\n\nFor multiplication, treat the four values as a polynomial in 2^32. Thus you need to calculate (a*2^96 + b*2^64 + c*2^32 + d) * (e*2^96 ...). If you are working mod 2^128 then any results which fall at 2^128 or above can be dropped.\n\nWhen you sum the results of the 32x32 mults, the intermediate results will overflow. You can handle the carries or you could use a polynomial in 2^25 or 2^26 (and five values).\n\nIf that's too much work, then just use big.\n\nhttp://codereview.appspot.com/3974041/diff/2001/src/pkg/crypto/vmac/vmac.go#newcode37\nsrc/pkg/crypto/vmac/vmac.go:37: func (h *Hash) Write(p []byte) (n int, err os.Error) {\n(I'm skipping much of the code here because I think that it'll change.)\n\nHash functions should be online, i.e. incremental. Sometimes it's useful to write very fast, one-shot versions of the code but they should implement a different interface.\n\nThe design here mirrors the specification, but vmac can be made to be incremental.\n\nL1 works on blocks of 128 bytes and outputs blocks of 16 bytes. If you want to support 128-bit tags (and you probably should) then you need to keep track of two streams.\n\nSo I suggest that the object have a 128 byte buffer which it fills up and, once full, transforms via L1.\n\nL2 is more like a standard hash function, it has a fixed length output which is updated. So, when L1 produces a new value the L2 function should update the running L2 value. (Again, for 128-bit tags there would need to be two running values.)",
+			"disapproval": false,
+			"date": "2011-01-13 17:53:13.682335",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "This code definitely should not use package big.\nThe only reason people use vmac is because it\ncan be implemented efficiently.\n\nTo start, you can use a portable 64x64 -> 128 multiply\nhttp://golang.org/src/pkg/runtime/softfloat64.go#L418\n\nOnce the code is done we can think about maybe\nwriting nh in assembly on amd64.  But that's for later.\n\nIn general I think you should be using fixed-size\nintegers instead of fixed-size byte slices whenever\npossible.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-01-13 18:14:23.732218",
+			"approval": false
+		},
+		{
+			"sender": "agl@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Thu, Jan 13, 2011 at 1:14 PM, Russ Cox <rsc@golang.org> wrote:\n> To start, you can use a portable 64x64 -> 128 multiply\n> http://golang.org/src/pkg/runtime/softfloat64.go#L418\n\nIndeed, any code should be designed so that it would be easy to drop\nin asm versions of the critical functions.\n\nI really would consider the advantages of a 25 or 26 bit limb schedule\nhowever. Saturated limbs are obvious, comment but often suboptimal.\n\nOr you could bug for a language change to add 128-bit values like GCC did :)\n\n\nAGL\n",
+			"disapproval": false,
+			"date": "2011-01-13 18:19:14.908180",
+			"approval": false
+		},
+		{
+			"sender": "nickdsnyder@gmail.com",
+			"recipients": [
+				"nicksnyder@google.com",
+				"agl@golang.org",
+				"rsc@golang.org",
+				"nickdsnyder@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I really appreciate all of your comments, but it looks like the amount of time/effort it would take to fix the code is more than I can muster in the forseeable future. I posted my code at https://github.com/nicksnyder/vmac.go in case anyone finds the code useful.",
+			"disapproval": false,
+			"date": "2011-06-13 19:03:33.593558",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"nicksnyder@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "removing reviewers",
+			"disapproval": false,
+			"date": "2011-06-13 19:26:54.615427",
+			"approval": false
+		}
+	],
+	"owner_email": "nicksnyder@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "nicksnyder",
+	"subject": "code review 3974041: vmac: Create vmac package",
+	"created": "2011-01-13 01:10:47.162718",
+	"patchsets": [
+		1,
+		2001
+	],
+	"modified": "2011-06-13 19:26:54.615613",
+	"closed": false,
+	"issue": 3974041
+}

@@ -1,0 +1,98 @@
+{
+	"description": "encoding/base64: Add a reader that discard \\n and \\r\n\nThe decoder gets confused by \\n and \\r, so filter these out\nusing a small Reader that discards these.\n\nThe same issue applies to the encoding/base32 package.\nFixes issue 4779",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"rsc@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "remigius.gieben@gmail.com",
+			"recipients": [
+				"remigius.gieben@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-03-10 07:45:14.964740",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The first line of your commit description should summarize what it fixes,\r\nnot how it fixes it.  A reader is an implementation detail, and this almost\r\nmakes it sound like you're adding a new public API (add a reader!, until I\r\nsee the actual patch.  Maybe just \"ignore newlines when decoding\".\r\n\r\nAlso, regarding the TODO--- why not just fix it now, as long as you're\r\nhere?  If it's something that needs fixing.  I looked at\r\nhttps://tools.ietf.org/html/rfc4648#section-3.1 which is referenced from\r\nthe issue, but I'm not sure that's what the TODO is referencing.  What is\r\nspecial about \\r\\n together?\r\n\r\n\r\nOn Sat, Mar 9, 2013 at 11:45 PM, <remigius.gieben@gmail.com> wrote:\r\n\r\n> Reviewers: golang-dev1,\r\n>\r\n> Message:\r\n> Hello golang-dev@googlegroups.com,\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go\r\n>\r\n>\r\n> Description:\r\n> encoding/base64: Add a reader that discard \\n and \\r\r\n>\r\n> The decoder gets confused by \\n and \\r, so filter these out\r\n> using a small Reader that discards these.\r\n>\r\n> The same issue applies to the encoding/base32 package.\r\n> Fixes issue 4779\r\n>\r\n> Please review this at https://codereview.appspot.**com/7679043/<https://codereview.appspot.com/7679043/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/encoding/base32/**base32.go\r\n>   M src/pkg/encoding/base32/**base32_test.go\r\n>   M src/pkg/encoding/base64/**base64.go\r\n>   M src/pkg/encoding/base64/**base64_test.go\r\n>\r\n>\r\n> Index: src/pkg/encoding/base32/**base32.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/encoding/base32/**base32.go\r\n> +++ b/src/pkg/encoding/base32/**base32.go\r\n> @@ -220,6 +220,28 @@\r\n>   * Decoder\r\n>   */\r\n>\r\n> +// Reader thats discards \\n and \\r from its input\r\n> +type discardReader struct {\r\n> +       io.Reader\r\n> +}\r\n> +\r\n> +func (d *discardReader) Read(p []byte) (n int, err error) {\r\n> +       n, err = d.Reader.Read(p)\r\n> +       // TODO: could check for adjacent \\n and \\r's\r\n> +       for i := 0; i < n; i++ {\r\n> +               if p[i] == '\\n' || p[i] == '\\r' {\r\n> +                       if i+1 == n {\r\n> +                               n--\r\n> +                       } else {\r\n> +                               p = append(p[:i], p[i+1:]...)\r\n> +                               n--\r\n> +                               i--\r\n> +                       }\r\n> +               }\r\n> +       }\r\n> +       return\r\n> +}\r\n> +\r\n>  type CorruptInputError int64\r\n>\r\n>  func (e CorruptInputError) Error() string {\r\n> @@ -379,7 +401,7 @@\r\n>\r\n>  // NewDecoder constructs a new base32 stream decoder.\r\n>  func NewDecoder(enc *Encoding, r io.Reader) io.Reader {\r\n> -       return &decoder{enc: enc, r: r}\r\n> +       return &decoder{enc: enc, r: &discardReader{r}}\r\n>  }\r\n>\r\n>  // DecodedLen returns the maximum length in bytes of the decoded data\r\n> Index: src/pkg/encoding/base32/**base32_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/encoding/base32/**base32_test.go\r\n> +++ b/src/pkg/encoding/base32/**base32_test.go\r\n> @@ -15,6 +15,10 @@\r\n>         decoded, encoded string\r\n>  }\r\n>\r\n> +type testtriplet struct {\r\n> +       decoded, encodedNewline, encoded string\r\n> +}\r\n> +\r\n>  var pairs = []testpair{\r\n>         // RFC 4648 examples\r\n>         {\"\", \"\"},\r\n> @@ -36,6 +40,14 @@\r\n>         {\"sure.\", \"ON2XEZJO\"},\r\n>  }\r\n>\r\n> +var triplets = []testtriplet{\r\n> +       {\"\", \"\\n\", \"\"},\r\n> +       {\"f\", \"M\\r\\nY======\", \"MY======\"},\r\n> +       {\"fo\", \"MZXQ====\\n\\r\", \"MZXQ====\"},\r\n> +       {\"foo\", \"MZXW\\r6=\\n==\", \"MZXW6===\"},\r\n> +       {\"foob\", \"MZXW6Y\\rQ=\", \"MZXW6YrQ=\"},\r\n> +}\r\n> +\r\n>  var bigtest = testpair{\r\n>         \"Twas brillig, and the slithy toves\",\r\n>         \"**KR3WC4ZAMJZGS3DMNFTSYIDBNZSCA5**DIMUQHG3DJORUHSIDUN53GK4Y=\",\r\n> @@ -136,6 +148,16 @@\r\n>         }\r\n>  }\r\n>\r\n> +// Issue is about base64, but is needed for base32 too.\r\n> +func TestDecoderIssue4779(t *testing.T) {\r\n> +       for _, p := range triplets {\r\n> +               decoder := NewDecoder(StdEncoding, bytes.NewBufferString(p.\r\n> **encodedNewline))\r\n> +               dbuf, err := ioutil.ReadAll(decoder)\r\n> +               testEqual(t, \"Decoding of %q = error %v, want %v\",\r\n> p.encodedNewline, err, error(nil))\r\n> +               testEqual(t, \"Decoding of %q = %q, want %q\",\r\n> p.encodedNewline, string(dbuf), p.decoded)\r\n> +       }\r\n> +}\r\n> +\r\n>  func TestDecodeCorrupt(t *testing.T) {\r\n>         type corrupt struct {\r\n>                 e string\r\n> Index: src/pkg/encoding/base64/**base64.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/encoding/base64/**base64.go\r\n> +++ b/src/pkg/encoding/base64/**base64.go\r\n> @@ -200,6 +200,28 @@\r\n>   * Decoder\r\n>   */\r\n>\r\n> +// Reader thats discards \\n and \\r from its input\r\n> +type discardReader struct {\r\n> +       io.Reader\r\n> +}\r\n> +\r\n> +func (d *discardReader) Read(p []byte) (n int, err error) {\r\n> +       n, err = d.Reader.Read(p)\r\n> +       // TODO: could check for adjacent \\n and \\r's\r\n> +       for i := 0; i < n; i++ {\r\n> +               if p[i] == '\\n' || p[i] == '\\r' {\r\n> +                       if i+1 == n {\r\n> +                               n--\r\n> +                       } else {\r\n> +                               p = append(p[:i], p[i+1:]...)\r\n> +                               n--\r\n> +                               i--\r\n> +                       }\r\n> +               }\r\n> +       }\r\n> +       return\r\n> +}\r\n> +\r\n>  type CorruptInputError int64\r\n>\r\n>  func (e CorruptInputError) Error() string {\r\n> @@ -345,7 +367,7 @@\r\n>\r\n>  // NewDecoder constructs a new base64 stream decoder.\r\n>  func NewDecoder(enc *Encoding, r io.Reader) io.Reader {\r\n> -       return &decoder{enc: enc, r: r}\r\n> +       return &decoder{enc: enc, r: &discardReader{r}}\r\n>  }\r\n>\r\n>  // DecodedLen returns the maximum length in bytes of the decoded data\r\n> Index: src/pkg/encoding/base64/**base64_test.go\r\n> ==============================**==============================**=======\r\n> --- a/src/pkg/encoding/base64/**base64_test.go\r\n> +++ b/src/pkg/encoding/base64/**base64_test.go\r\n> @@ -17,6 +17,10 @@\r\n>         decoded, encoded string\r\n>  }\r\n>\r\n> +type testtriplet struct {\r\n> +       decoded, encodedNewline, encoded string\r\n> +}\r\n> +\r\n>  var pairs = []testpair{\r\n>         // RFC 3548 examples\r\n>         {\"\\x14\\xfb\\x9c\\x03\\xd9\\x7e\", \"FPucA9l+\"},\r\n> @@ -43,6 +47,19 @@\r\n>         {\"sure.\", \"c3VyZS4=\"},\r\n>  }\r\n>\r\n> +var triplets = []testtriplet{\r\n> +       {\"\\x14\\xfb\\x9c\\x03\\xd9\\x7e\", \"\\nFPucA9l+\", \"FPucA9l+\"},\r\n> +       {\"\\x14\\xfb\\x9c\\x03\\xd9\", \"F\\nPucA9k=\", \"FPucA9k=\"},\r\n> +       {\"\\x14\\xfb\\x9c\\x03\", \"FPucAw=\\n=\", \"FPucAw==\"},\r\n> +       {\"\\x14\\xfb\\x9c\\x03\", \"FPucAw=\\n=\\n\", \"FPucAw==\"},\r\n> +\r\n> +       {\"\", \"\\n\", \"\"},\r\n> +       {\"f\", \"Z\\r\\ng==\", \"Zg==\"},\r\n> +       {\"fo\", \"Zm8=\\n\\r\", \"Zm8=r\"},\r\n> +       {\"foo\", \"Zm9\\rv\", \"Zm9v\"},\r\n> +       {\"foob\", \"Zm9vYg=\\r=\", \"Zm9vYg==\"},\r\n> +}\r\n> +\r\n>  var bigtest = testpair{\r\n>         \"Twas brillig, and the slithy toves\",\r\n>         \"**VHdhcyBicmlsbGlnLCBhbmQgdGhlIH**NsaXRoeSB0b3Zlcw==\",\r\n> @@ -141,6 +158,15 @@\r\n>         }\r\n>  }\r\n>\r\n> +func TestDecoderIssue4779(t *testing.T) {\r\n> +       for _, p := range triplets {\r\n> +               decoder := NewDecoder(StdEncoding, bytes.NewBufferString(p.\r\n> **encodedNewline))\r\n> +               dbuf, err := ioutil.ReadAll(decoder)\r\n> +               testEqual(t, \"Decoding of %q = error %v, want %v\",\r\n> p.encodedNewline, err, error(nil))\r\n> +               testEqual(t, \"Decoding of %q = %q, want %q\",\r\n> p.encodedNewline, string(dbuf), p.decoded)\r\n> +       }\r\n> +}\r\n> +\r\n>  func TestDecodeCorrupt(t *testing.T) {\r\n>         type corrupt struct {\r\n>                 e string\r\n>\r\n>\r\n> --\r\n>\r\n> ---You received this message because you are subscribed to the Google\r\n> Groups \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@**googlegroups.com<golang-dev%2Bunsubscribe@googlegroups.com>\r\n> .\r\n> For more options, visit https://groups.google.com/**groups/opt_out<https://groups.google.com/groups/opt_out>\r\n> .\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-03-10 15:42:07.945320",
+			"approval": false
+		},
+		{
+			"sender": "remigius.gieben@gmail.com",
+			"recipients": [
+				"remigius.gieben@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ok, I'll change the first line in the commit message.\n\nThe TODO is about looking for multiple \\n and \\r next to each other, to minimize the mem-moves and make it faster. But I hope I can get away with just removing the TODO line.",
+			"disapproval": false,
+			"date": "2013-03-11 15:25:41.732360",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"remigius.gieben@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What is the relation of this CL to https://codereview.appspot.com/7311069/ ?",
+			"disapproval": false,
+			"date": "2013-03-11 20:13:15.725870",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This CL appears to change only the reader interface, not the raw Decode\r\nmethods. The CL 7311069 seems to do both. I suggest we go with that one.\r\n",
+			"disapproval": false,
+			"date": "2013-03-11 20:51:26.427280",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"remigius.gieben@gmail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=close\n\nFixed elsewhere.",
+			"disapproval": false,
+			"date": "2013-06-21 16:16:05.988190",
+			"approval": false
+		}
+	],
+	"owner_email": "remigius.gieben@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "Miek Gieben",
+	"subject": "code review 7679043: encoding/base64: Add a reader that discard \\n and \\r",
+	"created": "2013-03-10 07:43:32.110930",
+	"patchsets": [
+		1,
+		1002,
+		4001
+	],
+	"modified": "2013-06-21 16:16:06.090240",
+	"closed": false,
+	"issue": 7679043
+}

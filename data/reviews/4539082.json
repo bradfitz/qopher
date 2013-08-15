@@ -1,0 +1,299 @@
+{
+	"description": "      xml: add Marshal and MarshalIndent\n\nI have written up a Marshal and MarshalIndent pair that should\nclosely reflect the way that Unmarshal works.  I would love feedback\non making this code more accessible and efficient... I haven't used\nreflecton on this scale before, so there is probably a lot of work\nthat can be done on that.\n\nSome potentially controversial things:\n- All tag names are lower-cased by default.\n- Zero-valued struct values are skipped.\n- No namespace prefix (o:tag, etc) mechanism is supplied.\n- You are allowed to marshal non-struct values (even though unmarshal\n  cannot handle them).\n- A tag for a non-XMLName struct field that isn't \"attr\", \"chardata\",\n  or \"innerxml\" is used as the name of the tag.  This could wreak\n  havoc if you try to marshal a protobuf struct.\n- The \"innerxml\" and \"chardata\" are inserted verbatim.  If you try to\n  marshal something straight from unmarshal, the results could be\n  unexpected (remove \"innerxml\" support from Marshal would be one\n  possible solution).",
+	"cc": [
+		"rsc@golang.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-05-25 00:14:31.540640",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4539082/diff/7/src/pkg/xml/atom_test.go\nFile src/pkg/xml/atom_test.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/atom_test.go#newcode6\nsrc/pkg/xml/atom_test.go:6: var atom_value = &Feed{\nno underscores; mixedCaps\nthroughout\nsee http://golang.org/doc/effective_go.html#names\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode1\nsrc/pkg/xml/marshal.go:1: // Copyright 2011 Google Inc. All Rights Reserved.\nwrong copyright tags; see http://golang.org/doc/contribute.html\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode54\nsrc/pkg/xml/marshal.go:54: func Marshal(v interface{}) (data []byte, err os.Error) {\nI'd make this \n\nfunc Marshal(w io.Writer, val interface{}) os.Error\n\nby analogy with Unmarshal.  You'll probably want to\nstart by doing\n\nbw := bufio.NewWriter(w)\n\nand then pass the *bufio.Writer throughout.\n\ni think you want a \n\ntype printer struct {\n    w *bufio.Writer\n    ... other fields probably ...\n}\n\nand then all the helpers are methods on printer.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode59\nsrc/pkg/xml/marshal.go:59: // MarshalIndent formats the given value in the same way as Marshal, except the resulting XML\nlet's leave this for a different CL.\nwould be better as a filter, like json.Indent is,\nso you can apply it to any xml.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode130\nsrc/pkg/xml/marshal.go:130: func marshalValue(buf *bytes.Buffer, val reflect.Value, name string,\nI think this is more complicated than it needs to be.\nLook at package json's encodeState.reflectValue.\nIt manages to get by with a single place that switches\non kind.  There are three or four places below, and\nI think they can probably be reduced.\n\nThe general structure of the body of function should be\n\nptr check\nmethod check\nprint \"<tag\"\nprint attributes if any\nprint \">\"\nprint body (main switch on val.Kind())\nprint \"</tag>\"\nreturn\n\nAs written there are many special cases and I think you\ncan avoid most of them.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode132\nsrc/pkg/xml/marshal.go:132: for {\nYou do have to do something with pointers.  I'd do\n\nswitch val.Kind() {\ncase reflect.Ptr, reflect.Interface:\n    if val.IsNil() {\n        return\n    }\n    p.reflectValue(val.Elem())\n    return\n}\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode145\nsrc/pkg/xml/marshal.go:145: name = val.Kind().String()\nSeems wrong to have a tag named <slice> just because\nthis is a slice.  Require the caller to pass this in.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode163\nsrc/pkg/xml/marshal.go:163: openTag(buf, prefix, indent, name)\nIn the structure suggested above, the tag lines all go away.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode190\nsrc/pkg/xml/marshal.go:190: case reflect.Map:\nI'd say just leave maps out for now.\n\ndefault:\n    return &UnsupportedTypeError{val.Type()}\n\n(see same type in json)\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode210\nsrc/pkg/xml/marshal.go:210: case reflect.Interface, reflect.Struct:\ns/reflect.Interface, //\n\nInterface was handled above.  This code only works on struct.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode218\nsrc/pkg/xml/marshal.go:218: var attrIdx, childIdx, rawIdx []int\nThese slices are probably not worth their weight.\nSince the open tag stuff was handled above, just\nprocess each field one at a time and handle it when\nit happens.\n\nfor i := 0; i < typ.NumField(); i++ {\n    f := typ.Field(i)\n    if f.PkgPath != \"\" || f.Tag == \"attr\" {\n        continue\n    }\n    if f.Tag == \"chardata\" {\n        ...\n        continue\n    }\n    if f.Tag == \"innerxml\" {\n        ...\n        continue\n    }\n    p.reflectValue(val.Field(i))\n}\n\nThe handling of the open tag above would be a similar loop:\n\nfmt.Fprint(b.w, \"<%s\", tag)\nif typ.Kind() == reflect.Struct {\n    v = val.FieldByName(\"XMLName\")\n    if v.IsValid() {\n        ... name space\n    }\n    for i := 0; i < typ.NumField(); i++ {\n        f := typ.Field(i)\n        if f.PkgPath != \"\" || f.Tag != \"attr\" {\n            continue\n        }\n        ... attribute\n    }\n}\nfmt.Fprint(b.w, \">\")\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode221\nsrc/pkg/xml/marshal.go:221: if !unicode.IsUpper(int(field.Name[0])) { // TODO(kevlar): utf8?\nLook at what json does.  (Good advice in general.)\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode358\nsrc/pkg/xml/marshal.go:358: // Skip zero values\nSurprising to me.  I'd say leave them in.\nJson doesn't skip them.  Just expensive for no reason.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode415\nsrc/pkg/xml/marshal.go:415: // A MarshalXMLError is returned when Marshal or MarshalIndent encounter a type\nalready in package xml.  MarshalError is fine\nprobably don't need it anyway.  the only error\nis unsupported type.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode427\nsrc/pkg/xml/marshal.go:427: func (mxe *MarshalXMLError) String() string {\ns/mxe/e/",
+			"disapproval": false,
+			"date": "2011-05-25 03:12:58.751846",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "This is getting much simpler.  Nice.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode64\nsrc/pkg/xml/marshal.go:64: func (p *printer) openTag(tag string, params []string) {\nnow that these are only in one place you could just inline them.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode108\nsrc/pkg/xml/marshal.go:108: // Slices and arrays iterate over the elements. They do not have an enclosing tag.\n[]byte is an exception here, no?\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode119\nsrc/pkg/xml/marshal.go:119: attr := []string{}\nPlease just write the attributes out directly instead of making a slice.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode164\nsrc/pkg/xml/marshal.go:164: case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,\nBool, Uintptr.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode169\nsrc/pkg/xml/marshal.go:169: fmt.Fprint(p, val.Interface())\nPlease handle each case separately, so that print doesn't have to redo the effort:\n\ncase reflect.Int, reflect.Int8, ...:\n    p.Write([]byte(strconv.Itoa64(val.Int()))\n\netc\n\nWhen you get to reflect.String remember that you need to escape it.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode179\nsrc/pkg/xml/marshal.go:179: name := strings.ToLower(ftyp.Name)\nname := ftyp.Name\n\nthe atom example may need fixing.",
+			"disapproval": false,
+			"date": "2011-06-03 18:53:53.320307",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL\n\nDown to ~300 lines from ~450.  If you do indeed think I should print <tag></tag> instead of <tag/>, then it'll drop further.\n\nThanks for the review!\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/atom_test.go\nFile src/pkg/xml/atom_test.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/atom_test.go#newcode6\nsrc/pkg/xml/atom_test.go:6: var atom_value = &Feed{\nOn 2011/05/25 03:12:58, rsc wrote:\n> no underscores; mixedCaps\n> throughout\n> see http://golang.org/doc/effective_go.html#names\n\nDone.  I'm so bad at that game.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode1\nsrc/pkg/xml/marshal.go:1: // Copyright 2011 Google Inc. All Rights Reserved.\nOn 2011/05/25 03:12:58, rsc wrote:\n> wrong copyright tags; see http://golang.org/doc/contribute.html\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode54\nsrc/pkg/xml/marshal.go:54: func Marshal(v interface{}) (data []byte, err os.Error) {\nOn 2011/05/25 03:12:58, rsc wrote:\n> I'd make this \n> \n> func Marshal(w io.Writer, val interface{}) os.Error\n> \n> by analogy with Unmarshal.  You'll probably want to\n> start by doing\n> \n> bw := bufio.NewWriter(w)\n> \n> and then pass the *bufio.Writer throughout.\n> \n> i think you want a \n> \n> type printer struct {\n>     w *bufio.Writer\n>     ... other fields probably ...\n> }\n> \n> and then all the helpers are methods on printer.\n\nDone.  I had the old signature to emulate json.Marshal(v interface{}) ([]bytes, os.Error).\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode59\nsrc/pkg/xml/marshal.go:59: // MarshalIndent formats the given value in the same way as Marshal, except the resulting XML\nOn 2011/05/25 03:12:58, rsc wrote:\n> let's leave this for a different CL.\n> would be better as a filter, like json.Indent is,\n> so you can apply it to any xml.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode130\nsrc/pkg/xml/marshal.go:130: func marshalValue(buf *bytes.Buffer, val reflect.Value, name string,\nOn 2011/05/25 03:12:58, rsc wrote:\n> I think this is more complicated than it needs to be.\n> Look at package json's encodeState.reflectValue.\n> It manages to get by with a single place that switches\n> on kind.  There are three or four places below, and\n> I think they can probably be reduced.\n> \n> The general structure of the body of function should be\n> \n> ptr check\n> method check\n> print \"<tag\"\n> print attributes if any\n> print \">\"\n> print body (main switch on val.Kind())\n> print \"</tag>\"\n> return\n> \n> As written there are many special cases and I think you\n> can avoid most of them.\n\nSimplified quite a bit, but I still have some switches.  Did you actually want me to drop the empty tag shorthand notation?  With the zero checks, it isn't used a whole lot, but in the atom_test case the link turns into <link href=\"\"></link> when your example output had it as <link href=\"\"/>.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode132\nsrc/pkg/xml/marshal.go:132: for {\nOn 2011/05/25 03:12:58, rsc wrote:\n> You do have to do something with pointers.  I'd do\n> \n> switch val.Kind() {\n> case reflect.Ptr, reflect.Interface:\n>     if val.IsNil() {\n>         return\n>     }\n>     p.reflectValue(val.Elem())\n>     return\n> }\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode145\nsrc/pkg/xml/marshal.go:145: name = val.Kind().String()\nOn 2011/05/25 03:12:58, rsc wrote:\n> Seems wrong to have a tag named <slice> just because\n> this is a slice.  Require the caller to pass this in.\n\nDone; the top level is now the only one that guesses its own name (in case it doesn't have an XMLName).\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode163\nsrc/pkg/xml/marshal.go:163: openTag(buf, prefix, indent, name)\nOn 2011/05/25 03:12:58, rsc wrote:\n> In the structure suggested above, the tag lines all go away.\n\nDone.\n\nThough it turns out that purely because of the empty tag shorthand, you end up with logic in every case anyway.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode190\nsrc/pkg/xml/marshal.go:190: case reflect.Map:\nOn 2011/05/25 03:12:58, rsc wrote:\n> I'd say just leave maps out for now.\n> \n> default:\n>     return &UnsupportedTypeError{val.Type()}\n> \n> (see same type in json)\n\nAh, I thought maps were handled this way by unmarshal.  Done.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode210\nsrc/pkg/xml/marshal.go:210: case reflect.Interface, reflect.Struct:\nOn 2011/05/25 03:12:58, rsc wrote:\n> s/reflect.Interface, //\n> \n> Interface was handled above.  This code only works on struct.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode218\nsrc/pkg/xml/marshal.go:218: var attrIdx, childIdx, rawIdx []int\nOn 2011/05/25 03:12:58, rsc wrote:\n> These slices are probably not worth their weight.\n> Since the open tag stuff was handled above, just\n> process each field one at a time and handle it when\n> it happens.\n> \n> for i := 0; i < typ.NumField(); i++ {\n>     f := typ.Field(i)\n>     if f.PkgPath != \"\" || f.Tag == \"attr\" {\n>         continue\n>     }\n>     if f.Tag == \"chardata\" {\n>         ...\n>         continue\n>     }\n>     if f.Tag == \"innerxml\" {\n>         ...\n>         continue\n>     }\n>     p.reflectValue(val.Field(i))\n> }\n> \n> The handling of the open tag above would be a similar loop:\n> \n> fmt.Fprint(b.w, \"<%s\", tag)\n> if typ.Kind() == reflect.Struct {\n>     v = val.FieldByName(\"XMLName\")\n>     if v.IsValid() {\n>         ... name space\n>     }\n>     for i := 0; i < typ.NumField(); i++ {\n>         f := typ.Field(i)\n>         if f.PkgPath != \"\" || f.Tag != \"attr\" {\n>             continue\n>         }\n>         ... attribute\n>     }\n> }\n> fmt.Fprint(b.w, \">\")\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode221\nsrc/pkg/xml/marshal.go:221: if !unicode.IsUpper(int(field.Name[0])) { // TODO(kevlar): utf8?\nOn 2011/05/25 03:12:58, rsc wrote:\n> Look at what json does.  (Good advice in general.)\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode358\nsrc/pkg/xml/marshal.go:358: // Skip zero values\nOn 2011/05/25 03:12:58, rsc wrote:\n> Surprising to me.  I'd say leave them in.\n> Json doesn't skip them.  Just expensive for no reason.\n> \n\nIn the test case you gave me via email, you omitted zero values in the XML output.  For things like the atom test, there are quite a few fields that get omitted.  I did a benchmark, and omitting them actually makes marshaling a large structure 10% faster even though the zero check itself is somewhat expensive.\n\nIn terms of the surprise factor, it shouldn't be too surprising, because we expect XML to ignore things that have no data at all.  Also, the values skipped here are only those that will be left alone (zero, if you start with an empty structure) by unmarshal.  For values that you want to always print, I propose adding an \"explicit\" tag that will force them to be printed even if they are zero, for instance if you have indices and zero is valid, a human might want to see that zero value (though a computer would probably assume zero).\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode415\nsrc/pkg/xml/marshal.go:415: // A MarshalXMLError is returned when Marshal or MarshalIndent encounter a type\nOn 2011/05/25 03:12:58, rsc wrote:\n> already in package xml.  MarshalError is fine\n> probably don't need it anyway.  the only error\n> is unsupported type.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/7/src/pkg/xml/marshal.go#newcode427\nsrc/pkg/xml/marshal.go:427: func (mxe *MarshalXMLError) String() string {\nOn 2011/05/25 03:12:58, rsc wrote:\n> s/mxe/e/\n\nDone.",
+			"disapproval": false,
+			"date": "2011-05-27 22:06:35.665130",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode35\nsrc/pkg/xml/marshal.go:35: type xmlPrinter struct {\nIn package xml, it's redundant to name things xmlFoo.\ns/xmlPrinter/printer/\ns/xp/p/\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode42\nsrc/pkg/xml/marshal.go:42: //  - If the type is named, that is the name of the top-level tag\nThis comment is, I think, out of date.\nI hope that making it describe the new simpler code\nwill also shorten it.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode71\nsrc/pkg/xml/marshal.go:71: // TODO(kevlar): Would an exported MarshalInto appreciably faster?  Useful?\ndelete\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode93\nsrc/pkg/xml/marshal.go:93: var (\nuse := instead of a var block\n\nkind := val.Kind()\ntyp := val.Type()\n\nleave attr and serial until closer to where they are set/used\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode109\nsrc/pkg/xml/marshal.go:109: name = strings.ToLower(typ.Name())\nWhy does this override the name that was passed in?\nLet the top-level call pass in a name and then I think\nthe topLevel bool and this code can go away.\nAlso var attr []string does not allocated; attr := []string{} does.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode129\nsrc/pkg/xml/marshal.go:129: buf := bytes.NewBuffer(nil)\nshould not need the buffer.\n\n... slice and array code (below) ...\n\n// A struct with an XMLName field specifies the tag name.\nif kind == reflect.Struct {\n    ... find, record name, xmlns\n}\n\nemit <tag\n\n// \"attr\" field tags become attributes\nif kind == reflect.Struct {\n    ... attr loop ...\n}\n\nemit >\n\nswitch on kind for data\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode180\nsrc/pkg/xml/marshal.go:180: // Slices are printed serially, so no open or close tag is used\n// Slices and arrays iterate over the elements.\n// They do not have an enclosing tag.\nif kind == reflect.Slice || kind == reflect.Array {\n   .. code from swtich below\n   return\n}",
+			"disapproval": false,
+			"date": "2011-06-03 17:43:54.013784",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode191\nsrc/pkg/xml/marshal.go:191: name := strings.ToLower(ftyp.Name)\nOn 2011/06/03 21:21:12, rsc wrote:\n> name := ftyp.Name\n> \n> no ToLower\n\nYou want capitalized tag names?\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode204\nsrc/pkg/xml/marshal.go:204: case \"innerxml\", \"attr\":\nOn 2011/06/03 21:21:12, rsc wrote:\n> attr is a continue\n> \n> innerxml should be\n> p.Write(val.Field(i).Interface().([]byte))\n\nSo you have to explicitly clear out innerxml if you don't want to duplicate the data?",
+			"disapproval": false,
+			"date": "2011-06-03 21:37:13.888387",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Ping",
+			"disapproval": false,
+			"date": "2011-06-03 17:28:34.821087",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode227\nsrc/pkg/xml/marshal.go:227: // Skip zero values\nI still think this is wrong.\nIf the value is nil then the recursive call will skip it,\nso that doesn't have to be handled here.\nSkipping zero numbers and structs is strange.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode272\nsrc/pkg/xml/marshal.go:272: xp.WriteByte('/')\nI think it's fine to skip this optimization for now.",
+			"disapproval": false,
+			"date": "2011-06-03 17:33:22.185279",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode35\nsrc/pkg/xml/marshal.go:35: type xmlPrinter struct {\nOn 2011/06/03 17:43:54, rsc wrote:\n> In package xml, it's redundant to name things xmlFoo.\n> s/xmlPrinter/printer/\n> s/xp/p/\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode42\nsrc/pkg/xml/marshal.go:42: //  - If the type is named, that is the name of the top-level tag\nOn 2011/06/03 17:43:54, rsc wrote:\n> This comment is, I think, out of date.\n> I hope that making it describe the new simpler code\n> will also shorten it.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode71\nsrc/pkg/xml/marshal.go:71: // TODO(kevlar): Would an exported MarshalInto appreciably faster?  Useful?\nOn 2011/06/03 17:43:54, rsc wrote:\n> delete\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode93\nsrc/pkg/xml/marshal.go:93: var (\nOn 2011/06/03 17:43:54, rsc wrote:\n> use := instead of a var block\n> \n> kind := val.Kind()\n> typ := val.Type()\n> \n> leave attr and serial until closer to where they are set/used\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode109\nsrc/pkg/xml/marshal.go:109: name = strings.ToLower(typ.Name())\nOn 2011/06/03 17:43:54, rsc wrote:\n> Why does this override the name that was passed in?\n> Let the top-level call pass in a name and then I think\n> the topLevel bool and this code can go away.\n> Also var attr []string does not allocated; attr := []string{} does.\n> \n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode129\nsrc/pkg/xml/marshal.go:129: buf := bytes.NewBuffer(nil)\nOn 2011/06/03 17:43:54, rsc wrote:\n> should not need the buffer.\n> \n> ... slice and array code (below) ...\n> \n> // A struct with an XMLName field specifies the tag name.\n> if kind == reflect.Struct {\n>     ... find, record name, xmlns\n> }\n> \n> emit <tag\n> \n> // \"attr\" field tags become attributes\n> if kind == reflect.Struct {\n>     ... attr loop ...\n> }\n> \n> emit >\n> \n> switch on kind for data \n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode180\nsrc/pkg/xml/marshal.go:180: // Slices are printed serially, so no open or close tag is used\nOn 2011/06/03 17:43:54, rsc wrote:\n> // Slices and arrays iterate over the elements.\n> // They do not have an enclosing tag.\n> if kind == reflect.Slice || kind == reflect.Array {\n>    .. code from swtich below\n>    return\n> }\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode227\nsrc/pkg/xml/marshal.go:227: // Skip zero values\nOn 2011/06/03 17:33:22, rsc wrote:\n> I still think this is wrong.\n> If the value is nil then the recursive call will skip it,\n> so that doesn't have to be handled here.\n> Skipping zero numbers and structs is strange.\nFair enough.\n\nhttp://codereview.appspot.com/4539082/diff/8001/src/pkg/xml/marshal.go#newcode272\nsrc/pkg/xml/marshal.go:272: xp.WriteByte('/')\nOn 2011/06/03 17:33:22, rsc wrote:\n> I think it's fine to skip this optimization for now.\n\nDone.",
+			"disapproval": false,
+			"date": "2011-06-03 18:37:56.649639",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode64\nsrc/pkg/xml/marshal.go:64: func (p *printer) openTag(tag string, params []string) {\nOn 2011/06/03 18:53:53, rsc wrote:\n> now that these are only in one place you could just inline them.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode108\nsrc/pkg/xml/marshal.go:108: // Slices and arrays iterate over the elements. They do not have an enclosing tag.\nOn 2011/06/03 18:53:53, rsc wrote:\n> []byte is an exception here, no?\n\nIndeed.  Done and test added.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode119\nsrc/pkg/xml/marshal.go:119: attr := []string{}\nOn 2011/06/03 18:53:53, rsc wrote:\n> Please just write the attributes out directly instead of making a slice.\n\nOops, I meant to do that already.  Done.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode164\nsrc/pkg/xml/marshal.go:164: case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,\nOn 2011/06/03 18:53:53, rsc wrote:\n> Bool, Uintptr.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode169\nsrc/pkg/xml/marshal.go:169: fmt.Fprint(p, val.Interface())\nOn 2011/06/03 18:53:53, rsc wrote:\n> Please handle each case separately, so that print doesn't have to redo the\n> effort:\n> \n> case reflect.Int, reflect.Int8, ...:\n>     p.Write([]byte(strconv.Itoa64(val.Int()))\n> \n> etc\n> \n> When you get to reflect.String remember that you need to escape it.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/11002/src/pkg/xml/marshal.go#newcode179\nsrc/pkg/xml/marshal.go:179: name := strings.ToLower(ftyp.Name)\nOn 2011/06/03 18:53:53, rsc wrote:\n> name := ftyp.Name\n> \n> the atom example may need fixing.\n\nI added the relevant empty fields already, and the tests pass.  Is that what you mean?\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode146\nsrc/pkg/xml/marshal.go:146: continue\nDoes this also need to be escapped?  Before, or after it's quoted?\n\nIf so, intuitively I think it should be:\nValue: \"3.14 < 42\" // turns into:\nvalue=\"3.14 &lt; 42\"\nwhich would mean quote(escape(str))?\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode163\nsrc/pkg/xml/marshal.go:163: switch k := val.Kind(); k {\nIs there an easier way than defering this to fmt?  The fmt logic seems more complicated than I wanted to inline here.\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode170\nsrc/pkg/xml/marshal.go:170: case reflect.Struct:\nIs this the right thing to do for Uintptr?  JSON just prints it out.",
+			"disapproval": false,
+			"date": "2011-06-03 21:00:26.053787",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode146\nsrc/pkg/xml/marshal.go:146: p.WriteString(strconv.Quote(str))\nOn 2011/06/03 21:00:26, kevlar wrote:\n> Does this also need to be escapped?  Before, or after it's quoted?\n> \n> If so, intuitively I think it should be:\n> Value: \"3.14 < 42\" // turns into:\n> value=\"3.14 &lt; 42\"\n> which would mean quote(escape(str))?\n\nyou shouldn't use strconv.Quote.\nThat uses Go quoting rules.\n\np.WriteString(`=\"`)\nEscape(p, str)\np.WriteString(`\"`)\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode149\nsrc/pkg/xml/marshal.go:149: // \"innerxml\": write XML and return?\ndelete\n(can't return here, haven't finished the tag.\nthe right place for innerxml is below.)\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode163\nsrc/pkg/xml/marshal.go:163: fmt.Fprintf(p, \"%g\", val.Complex())\nOn 2011/06/03 21:00:26, kevlar wrote:\n> Is there an easier way than defering this to fmt?  The fmt logic seems more\n> complicated than I wanted to inline here.\n\nYou could just not allow complex.\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode170\nsrc/pkg/xml/marshal.go:170: p.WriteString(strconv.Uitob64(val.Uint(), 16))\nOn 2011/06/03 21:00:26, kevlar wrote:\n> Is this the right thing to do for Uintptr?  JSON just prints it out.\n\nI think it's fine to put Uintptr up above with the other Uint cases.\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode191\nsrc/pkg/xml/marshal.go:191: name := strings.ToLower(ftyp.Name)\nname := ftyp.Name\n\nno ToLower\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode200\nsrc/pkg/xml/marshal.go:200: p.Write(elem)\nchardata needs the same escaping\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode204\nsrc/pkg/xml/marshal.go:204: case \"innerxml\", \"attr\":\nattr is a continue\n\ninnerxml should be\np.Write(val.Field(i).Interface().([]byte))",
+			"disapproval": false,
+			"date": "2011-06-03 21:21:12.365547",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL\n\nSorry this took so long; I made a silly mistake in fixing the case in the atom test.\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode191\nsrc/pkg/xml/marshal.go:191: name := strings.ToLower(ftyp.Name)\nOn 2011/06/03 21:37:13, kevlar wrote:\n> On 2011/06/03 21:21:12, rsc wrote:\n> > name := ftyp.Name\n> > \n> > no ToLower\n> \n> You want capitalized tag names?\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode204\nsrc/pkg/xml/marshal.go:204: case \"innerxml\", \"attr\":\nOn 2011/06/03 21:37:13, kevlar wrote:\n> On 2011/06/03 21:21:12, rsc wrote:\n> > attr is a continue\n> > \n> > innerxml should be\n> > p.Write(val.Field(i).Interface().([]byte))\n> \n> So you have to explicitly clear out innerxml if you don't want to duplicate the\n> data?\n\nDone.",
+			"disapproval": false,
+			"date": "2011-06-03 22:44:25.215749",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode146\nsrc/pkg/xml/marshal.go:146: p.WriteString(strconv.Quote(str))\nOn 2011/06/03 21:21:12, rsc wrote:\n> On 2011/06/03 21:00:26, kevlar wrote:\n> > Does this also need to be escapped?  Before, or after it's quoted?\n> > \n> > If so, intuitively I think it should be:\n> > Value: \"3.14 < 42\" // turns into:\n> > value=\"3.14 &lt; 42\"\n> > which would mean quote(escape(str))?\n> \n> you shouldn't use strconv.Quote.\n> That uses Go quoting rules.\n> \n> p.WriteString(`=\"`)\n> Escape(p, str)\n> p.WriteString(`\"`)\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode149\nsrc/pkg/xml/marshal.go:149: // \"innerxml\": write XML and return?\nOn 2011/06/03 21:21:12, rsc wrote:\n> delete\n> (can't return here, haven't finished the tag.\n> the right place for innerxml is below.)\n> \n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode163\nsrc/pkg/xml/marshal.go:163: fmt.Fprintf(p, \"%g\", val.Complex())\nOn 2011/06/03 21:21:12, rsc wrote:\n> On 2011/06/03 21:00:26, kevlar wrote:\n> > Is there an easier way than defering this to fmt?  The fmt logic seems more\n> > complicated than I wanted to inline here.\n> \n> You could just not allow complex.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode170\nsrc/pkg/xml/marshal.go:170: p.WriteString(strconv.Uitob64(val.Uint(), 16))\nOn 2011/06/03 21:21:12, rsc wrote:\n> On 2011/06/03 21:00:26, kevlar wrote:\n> > Is this the right thing to do for Uintptr?  JSON just prints it out.\n> \n> I think it's fine to put Uintptr up above with the other Uint cases.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/4003/src/pkg/xml/marshal.go#newcode200\nsrc/pkg/xml/marshal.go:200: p.Write(elem)\nOn 2011/06/03 21:21:12, rsc wrote:\n> chardata needs the same escaping\n\nDone.",
+			"disapproval": false,
+			"date": "2011-06-03 21:44:19.287470",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> So you have to explicitly clear out innerxml if you don't want to\n> duplicate the data?\n\nPeople who use innerxml are presumed to know what they are doing.\n",
+			"disapproval": false,
+			"date": "2011-06-03 21:51:13.403393",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Getting very close.\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode33\nsrc/pkg/xml/marshal.go:33: // Marshal formats the given value as a top-level XML tag whose contents represent\n// Marshal writes an XML-formatted representation of v to w.\n//\n// If v implements Marshaler, then Marshal calls its MarshalXML method.\n// Otherwise, Marshal uses the following procedure to create the XML.\n//\n// Marshal handles an array or slice by marshalling each of the elements.\n// Marshal handles a pointer by marshalling the value it points at or,\n// if the pointer is nil, by writing nothing.\n// Marshal handles an interface value by marshalling the value it contains or,\n// if the interface value is nil, by writing nothing.\n// Marshal handles all other data by writing a single XML element containing the data.\n// The name of that XML element is taken from, in order of preference:\n//     - the tag on an XMLName field, if the data is a struct\n//     - the value of an XMLName field of type xml.Name\n//     - the tag of the struct field used to obtain the data\n//     - the name of the struct field used to obtain the data\n//     - the name '???'.\n// The XML element for a struct contains marshalled elements for each of the\n// exported fields of the struct, with these exceptions:\n//     - the XMLName field, described above, is omitted.\n//     - a field with tag \"attr\" becomes an attribute in the XML element.\n//     - a field with tag \"chardata\" is written as character data,\n//        not as an XML element.\n//     - a field with tag \"innerxml\" is written verbatim,\n//        not subject to the usual marshalling procedure.\n// Marshal will return an error if asked to marshal a channel, function, or map.\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode52\nsrc/pkg/xml/marshal.go:52: func Marshal(w io.Writer, tagName string, v interface{}) (err os.Error) {\nI think I'd drop tagName.  Structs should have XMLName elements.\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode54\nsrc/pkg/xml/marshal.go:54: err = p.marshalValue(reflect.ValueOf(v), tagName)\ns/tagName/\"???\"\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode74\nsrc/pkg/xml/marshal.go:74: // Try Marshaler\nShould be above the pointer check.\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode96\nsrc/pkg/xml/marshal.go:96: // XMLname\nFind XML name.\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode99\nsrc/pkg/xml/marshal.go:99: if xn := val.FieldByName(\"XMLName\"); xn.IsValid() {\nif f, ok := typ.FieldByName(\"XMLName\"); ok {\n    if tag := f.Tag; tag != \"\" {\n        if i := strings.Index(tag, \" \"); i >= 0 {\n            xmlns, name = tag[:i], tag[i+1:]\n        } else {\n            name = tag\n        }\n    } else if v, ok := val.FieldByIndex(f.Index).Interface().(Name); ok && v.Local != \"\" {\n        xmlns, name = v.Space, v.Local\n    }\n}\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode134\nsrc/pkg/xml/marshal.go:134: field := typ.Field(i)\nif f := typ.Field(i); f.PkgPath != \"\" && f.Tag == \"attr\" {\n    ...\n}\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode179\nsrc/pkg/xml/marshal.go:179: fval := val.Field(i)\nsave until you need it",
+			"disapproval": false,
+			"date": "2011-06-14 16:49:11.815428",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I realized that I didn't have an innerxml test case (other than atom, but it's cleared out and not tested for marshaling), and realized that the current bahvior is a bit odd.\n\nIf you want to be able to provide the raw XML yourself, you have two options: implement the Marshaler interface, or have all of the fields be pointers so that they can be nil'd out and ignored.  If you have any integers, for instance, they will be marshaled along with the raw innerxml.  Thus, should the first innerxml field be remembered during inspection of the arguments and printed in lieu of all of the structure's fields?  This would seem to be the proper inverse of Unmarshal, if I read the docs correctly.",
+			"disapproval": false,
+			"date": "2011-06-07 20:16:48.048663",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "ping",
+			"disapproval": false,
+			"date": "2011-06-13 17:47:22.539867",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go\nFile src/pkg/xml/marshal.go (right):\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode33\nsrc/pkg/xml/marshal.go:33: // Marshal formats the given value as a top-level XML tag whose contents represent\nOn 2011/06/14 16:49:11, rsc wrote:\n> // Marshal writes an XML-formatted representation of v to w.\n> //\n> // If v implements Marshaler, then Marshal calls its MarshalXML method.\n> // Otherwise, Marshal uses the following procedure to create the XML.\n> //\n> // Marshal handles an array or slice by marshalling each of the elements.\n> // Marshal handles a pointer by marshalling the value it points at or,\n> // if the pointer is nil, by writing nothing.\n> // Marshal handles an interface value by marshalling the value it contains or,\n> // if the interface value is nil, by writing nothing.\n> // Marshal handles all other data by writing a single XML element containing the\n> data.\n> // The name of that XML element is taken from, in order of preference:\n> //     - the tag on an XMLName field, if the data is a struct\n> //     - the value of an XMLName field of type xml.Name\n> //     - the tag of the struct field used to obtain the data\n> //     - the name of the struct field used to obtain the data\n> //     - the name '???'.\n> // The XML element for a struct contains marshalled elements for each of the\n> // exported fields of the struct, with these exceptions:\n> //     - the XMLName field, described above, is omitted.\n> //     - a field with tag \"attr\" becomes an attribute in the XML element.\n> //     - a field with tag \"chardata\" is written as character data,\n> //        not as an XML element.\n> //     - a field with tag \"innerxml\" is written verbatim,\n> //        not subject to the usual marshalling procedure.\n> // Marshal will return an error if asked to marshal a channel, function, or map.\n\nThanks!\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode52\nsrc/pkg/xml/marshal.go:52: func Marshal(w io.Writer, tagName string, v interface{}) (err os.Error) {\nOn 2011/06/14 16:49:11, rsc wrote:\n> I think I'd drop tagName.  Structs should have XMLName elements.\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode54\nsrc/pkg/xml/marshal.go:54: err = p.marshalValue(reflect.ValueOf(v), tagName)\nOn 2011/06/14 16:49:11, rsc wrote:\n> s/tagName/\"???\"\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode99\nsrc/pkg/xml/marshal.go:99: if xn := val.FieldByName(\"XMLName\"); xn.IsValid() {\nOn 2011/06/14 16:49:11, rsc wrote:\n> if f, ok := typ.FieldByName(\"XMLName\"); ok {\n>     if tag := f.Tag; tag != \"\" {\n>         if i := strings.Index(tag, \" \"); i >= 0 {\n>             xmlns, name = tag[:i], tag[i+1:]\n>         } else {\n>             name = tag\n>         }\n>     } else if v, ok := val.FieldByIndex(f.Index).Interface().(Name); ok &&\n> v.Local != \"\" {\n>         xmlns, name = v.Space, v.Local\n>     }\n> }\n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode134\nsrc/pkg/xml/marshal.go:134: field := typ.Field(i)\nOn 2011/06/14 16:49:11, rsc wrote:\n> if f := typ.Field(i); f.PkgPath != \"\" && f.Tag == \"attr\" {\n>     ...\n> }\n> \n\nDone.\n\nhttp://codereview.appspot.com/4539082/diff/2003/src/pkg/xml/marshal.go#newcode179\nsrc/pkg/xml/marshal.go:179: fval := val.Field(i)\nOn 2011/06/14 16:49:11, rsc wrote:\n> save until you need it\n\nInlined at its one use.",
+			"disapproval": false,
+			"date": "2011-06-15 23:17:49.851133",
+			"approval": false
+		},
+		{
+			"sender": "kevlar@google.com",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Ping",
+			"disapproval": false,
+			"date": "2011-06-27 16:12:46.019102",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"kevlar@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=85fe786bbd63 ***\n\nxml: add Marshal and MarshalIndent\n\nI have written up a Marshal and MarshalIndent pair that should\nclosely reflect the way that Unmarshal works.  I would love feedback\non making this code more accessible and efficient... I haven't used\nreflecton on this scale before, so there is probably a lot of work\nthat can be done on that.\n\nSome potentially controversial things:\n- All tag names are lower-cased by default.\n- Zero-valued struct values are skipped.\n- No namespace prefix (o:tag, etc) mechanism is supplied.\n- You are allowed to marshal non-struct values (even though unmarshal\n  cannot handle them).\n- A tag for a non-XMLName struct field that isn't \"attr\", \"chardata\",\n  or \"innerxml\" is used as the name of the tag.  This could wreak\n  havoc if you try to marshal a protobuf struct.\n- The \"innerxml\" and \"chardata\" are inserted verbatim.  If you try to\n  marshal something straight from unmarshal, the results could be\n  unexpected (remove \"innerxml\" support from Marshal would be one\n  possible solution).\n\nR=rsc\nCC=golang-dev\nhttp://codereview.appspot.com/4539082\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2011-06-27 23:07:30.351124",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "LGTM\n",
+			"disapproval": false,
+			"date": "2011-06-27 21:55:23.282135",
+			"approval": true
+		}
+	],
+	"owner_email": "kevlar@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "kevlar",
+	"subject": "code review 4539082:       xml: add Marshal and MarshalIndent",
+	"created": "2011-05-25 00:09:40.961214",
+	"patchsets": [
+		1,
+		2001,
+		7,
+		8001,
+		11002,
+		4003,
+		19001,
+		14013,
+		2003,
+		26001
+	],
+	"modified": "2011-06-27 21:55:23.282135",
+	"closed": false,
+	"issue": 4539082
+}

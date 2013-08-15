@@ -1,0 +1,122 @@
+{
+	"description": "runtime: don't run finalizers if we're still on the g0 stack.",
+	"cc": [],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"rsc@golang.org",
+		"dvyukov@google.com",
+		"khr@google.com"
+	],
+	"messages": [
+		{
+			"sender": "khr@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://khr%40golang.org@code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2013-07-16 21:42:56.968950",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Not sure. Seems like g0 can do everything there except the gosched. Maybe\r\nthe test should be just around the gosched? If we do a garbage collection\r\non g0 it seems like we probably do still want to allow finalizers to run.\r\n",
+			"disapproval": false,
+			"date": "2013-08-01 21:04:52.857920",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"khr@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I wonder how it ever worked before...\n\nIt seems that we never call mallocgc on g0 w/o also setting m->locks or passing FlagNoInvokeGC. I've added the following check, and it never fired during 'go test std'.\nLet's add an explicit check that GC is not called on g0 instead. The less variants we have the better.\n\ndiff -r adc2b4f10096 src/pkg/runtime/malloc.goc\n--- a/src/pkg/runtime/malloc.goc\tMon Aug 05 13:35:42 2013 +1000\n+++ b/src/pkg/runtime/malloc.goc\tMon Aug 05 20:04:45 2013 +0400\n@@ -40,6 +40,8 @@\n \tMSpan *s;\n \tMLink *v;\n \n+\tif(g == m->g0 && m->locks == 0 && !(flag & FlagNoInvokeGC))\n+\t\truntime\u00b7throw(\"g0 tries to GC\");\n \tif(runtime\u00b7gcwaiting && g != m->g0 && m->locks == 0 && !(flag & FlagNoInvokeGC))\n \t\truntime\u00b7gosched();\n \tif(size == 0) {\n\nhttps://codereview.appspot.com/11386044/diff/1/src/pkg/runtime/mgc0.c\nFile src/pkg/runtime/mgc0.c (right):\n\nhttps://codereview.appspot.com/11386044/diff/1/src/pkg/runtime/mgc0.c#newcode2020\nsrc/pkg/runtime/mgc0.c:2020: if(g != m->g0 && finq != nil) {\n// ... now that we're back on g stack...\nif(g != m->g0 ...)\n\nlooks a bit confusing :)",
+			"disapproval": false,
+			"date": "2013-08-05 16:08:00.763690",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I've left the finalizer thread kickoff unconditional on whether we're on\r\ng0, and made the gosched call conditional and moved it later. I put it\r\nafter the stack guard restore - let me know if that's the right place (or\r\nif it matters).\r\n\r\nDmitry, I've added your check as well.\r\n\r\n\r\nOn Mon, Aug 5, 2013 at 9:08 AM, <dvyukov@google.com> wrote:\r\n\r\n> I wonder how it ever worked before...\r\n>\r\n> It seems that we never call mallocgc on g0 w/o also setting m->locks or\r\n> passing FlagNoInvokeGC. I've added the following check, and it never\r\n> fired during 'go test std'.\r\n> Let's add an explicit check that GC is not called on g0 instead. The\r\n> less variants we have the better.\r\n>\r\n> diff -r adc2b4f10096 src/pkg/runtime/malloc.goc\r\n> --- a/src/pkg/runtime/malloc.goc        Mon Aug 05 13:35:42 2013 +1000\r\n> +++ b/src/pkg/runtime/malloc.goc        Mon Aug 05 20:04:45 2013 +0400\r\n> @@ -40,6 +40,8 @@\r\n>         MSpan *s;\r\n>         MLink *v;\r\n>\r\n> +       if(g == m->g0 && m->locks == 0 && !(flag & FlagNoInvokeGC))\r\n> +               runtime\u00b7throw(\"g0 tries to GC\");\r\n>         if(runtime\u00b7gcwaiting && g != m->g0 && m->locks == 0 && !(flag &\r\n> FlagNoInvokeGC))\r\n>                 runtime\u00b7gosched();\r\n>         if(size == 0) {\r\n>\r\n>\r\n>\r\n> https://codereview.appspot.**com/11386044/diff/1/src/pkg/**runtime/mgc0.c<https://codereview.appspot.com/11386044/diff/1/src/pkg/runtime/mgc0.c>\r\n> File src/pkg/runtime/mgc0.c (right):\r\n>\r\n> https://codereview.appspot.**com/11386044/diff/1/src/pkg/**\r\n> runtime/mgc0.c#newcode2020<https://codereview.appspot.com/11386044/diff/1/src/pkg/runtime/mgc0.c#newcode2020>\r\n> src/pkg/runtime/mgc0.c:2020: if(g != m->g0 && finq != nil) {\r\n> // ... now that we're back on g stack...\r\n> if(g != m->g0 ...)\r\n>\r\n> looks a bit confusing :)\r\n>\r\n> https://codereview.appspot.**com/11386044/<https://codereview.appspot.com/11386044/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-05 21:03:29.494620",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"khr@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"khr@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2013/08/05 21:03:29, khr1 wrote:\n> I've left the finalizer thread kickoff unconditional on whether we're on\n> g0, and made the gosched call conditional and moved it later. I put it\n> after the stack guard restore - let me know if that's the right place (or\n> if it matters).\n> \n> Dmitry, I've added your check as well.\n\n\nThe check was intended only to verify that we do not call GC from g0. It is expensive for malloc fast path.\nI meant to add:\nif(g == m->g0)\n  runtime.throw(\"GC on g0\");\nto the beginning of runtime.gc().\nThen we will have a simple invariant that GC is never triggered on g0, but the GC itself (including helper threads) is always on g0.\nThen you can leave runtime\u00b7gosched() in the bottom of runtime.gc().\n\n\n\n\n> On Mon, Aug 5, 2013 at 9:08 AM, <mailto:dvyukov@google.com> wrote:\n> \n> > I wonder how it ever worked before...\n> >\n> > It seems that we never call mallocgc on g0 w/o also setting m->locks or\n> > passing FlagNoInvokeGC. I've added the following check, and it never\n> > fired during 'go test std'.\n> > Let's add an explicit check that GC is not called on g0 instead. The\n> > less variants we have the better.\n> >\n> > diff -r adc2b4f10096 src/pkg/runtime/malloc.goc\n> > --- a/src/pkg/runtime/malloc.goc        Mon Aug 05 13:35:42 2013 +1000\n> > +++ b/src/pkg/runtime/malloc.goc        Mon Aug 05 20:04:45 2013 +0400\n> > @@ -40,6 +40,8 @@\n> >         MSpan *s;\n> >         MLink *v;\n> >\n> > +       if(g == m->g0 && m->locks == 0 && !(flag & FlagNoInvokeGC))\n> > +               runtime\u00b7throw(\"g0 tries to GC\");\n> >         if(runtime\u00b7gcwaiting && g != m->g0 && m->locks == 0 && !(flag &\n> > FlagNoInvokeGC))\n> >                 runtime\u00b7gosched();\n> >         if(size == 0) {\n> >\n> >\n> >\n> >\n> https://codereview.appspot.**com/11386044/diff/1/src/pkg/**runtime/mgc0.c%3Chttps://codereview.appspot.com/11386044/diff/1/src/pkg/runtime/mgc0.c>\n> > File src/pkg/runtime/mgc0.c (right):\n> >\n> > https://codereview.appspot.**com/11386044/diff/1/src/pkg/**\n> >\n> runtime/mgc0.c#newcode2020<https://codereview.appspot.com/11386044/diff/1/src/pkg/runtime/mgc0.c#newcode2020>\n> > src/pkg/runtime/mgc0.c:2020: if(g != m->g0 && finq != nil) {\n> > // ... now that we're back on g stack...\n> > if(g != m->g0 ...)\n> >\n> > looks a bit confusing :)\n> >\n> >\n> https://codereview.appspot.**com/11386044/%3Chttps://codereview.appspot.com/11386044/>\n> >",
+			"disapproval": false,
+			"date": "2013-08-06 09:23:59.883660",
+			"approval": false
+		},
+		{
+			"sender": "khr@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't think I understand why we can't trigger GC from g0.  For instance,\r\nruntime\u00b7stackalloc (which runs on g0) calls mallocgc with FlagNoInvokeGC.\r\n I don't see why it needs to pass that flag, triggering GC at that point\r\nshould be fine.  We'll have both stack split and GC on the g0 stack, but\r\nthat's ok.\r\n\r\n\r\nOn Tue, Aug 6, 2013 at 2:24 AM, <dvyukov@google.com> wrote:\r\n\r\n> On 2013/08/05 21:03:29, khr1 wrote:\r\n>\r\n>> I've left the finalizer thread kickoff unconditional on whether we're\r\n>>\r\n> on\r\n>\r\n>> g0, and made the gosched call conditional and moved it later. I put it\r\n>> after the stack guard restore - let me know if that's the right place\r\n>>\r\n> (or\r\n>\r\n>> if it matters).\r\n>>\r\n>\r\n>  Dmitry, I've added your check as well.\r\n>>\r\n>\r\n>\r\n> The check was intended only to verify that we do not call GC from g0. It\r\n> is expensive for malloc fast path.\r\n> I meant to add:\r\n> if(g == m->g0)\r\n>   runtime.throw(\"GC on g0\");\r\n> to the beginning of runtime.gc().\r\n> Then we will have a simple invariant that GC is never triggered on g0,\r\n> but the GC itself (including helper threads) is always on g0.\r\n> Then you can leave runtime\u00b7gosched() in the bottom of runtime.gc().\r\n>\r\n>\r\n>\r\n>\r\n>\r\n>  On Mon, Aug 5, 2013 at 9:08 AM, <mailto:dvyukov@google.com> wrote:\r\n>>\r\n>\r\n>  > I wonder how it ever worked before...\r\n>> >\r\n>> > It seems that we never call mallocgc on g0 w/o also setting m->locks\r\n>>\r\n> or\r\n>\r\n>> > passing FlagNoInvokeGC. I've added the following check, and it never\r\n>> > fired during 'go test std'.\r\n>> > Let's add an explicit check that GC is not called on g0 instead. The\r\n>> > less variants we have the better.\r\n>> >\r\n>> > diff -r adc2b4f10096 src/pkg/runtime/malloc.goc\r\n>> > --- a/src/pkg/runtime/malloc.goc        Mon Aug 05 13:35:42 2013\r\n>>\r\n> +1000\r\n>\r\n>> > +++ b/src/pkg/runtime/malloc.goc        Mon Aug 05 20:04:45 2013\r\n>>\r\n> +0400\r\n>\r\n>> > @@ -40,6 +40,8 @@\r\n>> >         MSpan *s;\r\n>> >         MLink *v;\r\n>> >\r\n>> > +       if(g == m->g0 && m->locks == 0 && !(flag & FlagNoInvokeGC))\r\n>> > +               runtime\u00b7throw(\"g0 tries to GC\");\r\n>> >         if(runtime\u00b7gcwaiting && g != m->g0 && m->locks == 0 &&\r\n>>\r\n> !(flag &\r\n>\r\n>> > FlagNoInvokeGC))\r\n>> >                 runtime\u00b7gosched();\r\n>> >         if(size == 0) {\r\n>> >\r\n>> >\r\n>> >\r\n>> >\r\n>>\r\n>\r\n> https://codereview.appspot.****com/11386044/diff/1/src/pkg/****\r\n> runtime/mgc0.c%3Chttps://coder**eview.appspot.com/11386044/**\r\n> diff/1/src/pkg/runtime/mgc0.c<http://codereview.appspot.com/11386044/diff/1/src/pkg/runtime/mgc0.c>\r\n> >\r\n>\r\n>> > File src/pkg/runtime/mgc0.c (right):\r\n>> >\r\n>> > https://codereview.appspot.****com/11386044/diff/1/src/pkg/**\r\n>> >\r\n>>\r\n>\r\n> runtime/mgc0.c#newcode2020<htt**ps://codereview.appspot.com/**\r\n> 11386044/diff/1/src/pkg/**runtime/mgc0.c#newcode2020<https://codereview.appspot.com/11386044/diff/1/src/pkg/runtime/mgc0.c#newcode2020>\r\n> >\r\n>\r\n>  > src/pkg/runtime/mgc0.c:2020: if(g != m->g0 && finq != nil) {\r\n>> > // ... now that we're back on g stack...\r\n>> > if(g != m->g0 ...)\r\n>> >\r\n>> > looks a bit confusing :)\r\n>> >\r\n>> >\r\n>>\r\n>\r\n> https://codereview.appspot.****com/11386044/%3Chttps://codere**\r\n> view.appspot.com/11386044/ <http://codereview.appspot.com/11386044/>>\r\n>\r\n>> >\r\n>>\r\n>\r\n>\r\n> https://codereview.appspot.**com/11386044/<https://codereview.appspot.com/11386044/>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-08-06 23:37:38.523750",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"khr@golang.org",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"dvyukov@google.com",
+				"khr@google.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\n\nI'll let dmitriy comment on the GC on g0 issue. I don't see why it's a problem either, unless we're worried about things stacking up, as it were.",
+			"disapproval": false,
+			"date": "2013-08-13 16:28:28.568090",
+			"approval": true
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Aug 13, 2013 at 8:28 PM, <rsc@golang.org> wrote:\r\n\r\n> LGTM\r\n>\r\n> I'll let dmitriy comment on the GC on g0 issue. I don't see why it's a\r\n> problem either, unless we're worried about things stacking up, as it\r\n> were.\r\n>\r\n\r\n\r\nI mean that we need either allow it and use it, or disallow it. Allowing GC\r\non g0, but not having any single use is senseless.\r\nIf the plan is to actually trigger GC on g0 in future CLs, then I am fine\r\nwith it.\r\n\r\nCurrent CL is inconsistent -- it both prohibits GC on g0 and plans for it.\r\n\r\nI am fine with 2 options:\r\n1. Prohibit GC on g0 (but please not on malloc fast path) and assume that\r\nwe are not on g0 when GC starts.\r\n2. Allow GC on g0 and actually trigger it in stackalloc/etc.\r\n",
+			"disapproval": false,
+			"date": "2013-08-13 16:42:47.873750",
+			"approval": false
+		}
+	],
+	"owner_email": "khr@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "khr",
+	"subject": "code review 11386044: runtime: don't run finalizers if we're still on the g0 ...",
+	"created": "2013-07-16 21:42:52.866260",
+	"patchsets": [
+		1,
+		7001,
+		10001
+	],
+	"modified": "2013-08-13 19:44:53.439190",
+	"closed": false,
+	"issue": 11386044
+}

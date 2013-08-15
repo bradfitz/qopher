@@ -1,0 +1,104 @@
+{
+	"description": "A a function NewPainter to draw from an arbitrary source image to an arbitrary destination.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"nigeltao@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao_golang (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change.",
+			"disapproval": false,
+			"date": "2010-06-11 13:18:24.823572",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I'm not sure that this is the right approach. Calling draw.DrawMask on each span could be relatively expensive. It might be better to accumulate all the spans into one mask image (whether that's an image.Alpha16 or a new Image type implemented as a run of spans) and then just do one draw.DrawMask(..., mask, ...) call.\n\nI'm sounding like a stuck record, but let me think about it...\n\nhttp://codereview.appspot.com/1592044/diff/7001/8001\nFile freetype/raster/paint.go (right):\n\nhttp://codereview.appspot.com/1592044/diff/7001/8001#newcode259\nfreetype/raster/paint.go:259: // slow but comprehensive.\nDoc comments should start with a noun, and be complete sentences.\n\nhttp://codereview.appspot.com/1592044/diff/7001/8001#newcode286\nfreetype/raster/paint.go:286: draw.Color(a | a<<8 | a<<16 | a<<24),\ndraw.Color should be considered deprecated. Please use an image.ColorImage of an image.Alpha16Color instead.",
+			"disapproval": false,
+			"date": "2010-06-16 02:25:18.678652",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 16 June 2010 03:25,  <nigeltao@golang.org> wrote:\n> I'm not sure that this is the right approach. Calling draw.DrawMask on\n> each span could be relatively expensive. It might be better to\n> accumulate all the spans into one mask image (whether that's an\n> image.Alpha16 or a new Image type implemented as a run of spans) and\n> then just do one draw.DrawMask(..., mask, ...) call.\n\nyes, i'm sure there are lots of possible optimisations,\nbut for the moment, can we start with an implementation\nthat just works? it's still useful even if slow; for\ninstance i'm using it once to create a source image that\nwill be used many times.\n\n> http://codereview.appspot.com/1592044/diff/7001/8001#newcode286\n> freetype/raster/paint.go:286: draw.Color(a | a<<8 | a<<16 | a<<24),\n> draw.Color should be considered deprecated. Please use an\n> image.ColorImage of an image.Alpha16Color instead.\n\nif it had been there, i'd have used it! thanks.\n",
+			"disapproval": false,
+			"date": "2010-06-16 07:48:48.461604",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2010/06/16 07:48:48, rog wrote:\n> yes, i'm sure there are lots of possible optimisations,\n> but for the moment, can we start with an implementation\n> that just works? it's still useful even if slow; for\n> instance i'm using it once to create a source image that\n> will be used many times.\n\nCan you describe your use case? I'm having trouble imagining when I'd want to e.g. draw some text with a lolcat image source. Sure, patterned text is a great technical demo but I don't see the utility. Then again, I'm a grumpy old stodge who doesn't see the point of partially transparent xterms either.\n\nFor the use cases I do have (e.g. text editor), the existing RGBAPainter works for me. If you want to do custom painting then you can write your own Painter in your own package without having to touch the freetype/raster package, but at the moment I suspect it's rare enough (and that there's an existing alternative approach of painting to an intermediate image.Alpha mask) that means I hesitate to put it into freetype/raster.\n\nFinally, if your destination images are always image.RGBA, it might be better to simply adapt RGBAPainter to have an image.Image source instead of just an image.Color source, rather than adding a slow genericImagePainter type.",
+			"disapproval": false,
+			"date": "2010-06-16 23:25:54.827559",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 17 June 2010 00:25,  <nigeltao@golang.org> wrote:\n> On 2010/06/16 07:48:48, rog wrote:\n> Can you describe your use case? I'm having trouble imagining when I'd\n> want to e.g. draw some text with a lolcat image source. Sure, patterned\n> text is a great technical demo but I don't see the utility. Then again,\n> I'm a grumpy old stodge who doesn't see the point of partially\n> transparent xterms either.\n\nit's the destination i'm concerned with, not the source.\n\nmy use case is that i've been trying to put together a\nframework for composing arbitrary graphical widgets,\nand that framework does not specify that the image\nbeing drawn onto must be an image.RGBA.\n\nthis means that the widgets themselves are written\nto be agnostic about what they're drawing onto,\nwhich means that the package as a whole becomes\nmore flexible.\n\nit means that, for instance, i can use the same machinery\nto draw onto a high quality RGBA64 image if i wish;\nor i could extract the transparency properties of the\nresulting image by drawing onto an Alpha.\n\nyes, i could create a custom \"general\" painter that\ndoes a switch on image type and invokes the appropriate\nspecialised raster painter, but it seems to me that this\nis useful functionality, and should live in raster itself.\n\n\nhere's a more specific example, which presupposes CL 1636044:\n\nin this framework, each widget knows how and where to draw itself.\nit implements a Draw method:\n\n    Draw(dst draw.Image, clipr draw.Rectangle)\n\nit also implements a Bbox method, to enable\nthe caller to find out the bounding box of the widget:\n\n    Bbox() draw.Rectangle\n\ni wish to implement scrolling in this framework, so that\nan arbitrary widget can be panned about in the\nwindow, with only some sub-rectangle of the widget visible\nat any one time. one way of doing this would be\nto create a temporary image of size widget.Bbox().Max,\nhave the widget draw into that, then copy to the destination.\nthis could be very wasteful of space, however,\nand there's an alternative: create an image that only\nprovides backing for some sub-rectangle of its purported size.\ni wrote a function to do that (only possible with CL 1636044):\n\n// SliceImage returns an image which is a view onto a portion of img.\n// The returned image has the specified width and height,\n// but all draw operations are clipped to r.\n// The origin of img is aligned with p. Where img\n// overlaps with r, it will be used for drawing operations.\n//\nfunc SliceImage(width, height int, r draw.Rectangle,\n    img draw.Image, p draw.Point) draw.Image\n\ngiven this, scrolling becomes straightforward - the widget thinks\nit's drawing at its usual position, but the actual draw operations\nare translated into the actual destination window coordinates.\n\nanother example that uses the same mechanism allows an\nimage \"snapshot\" to be taken of an image, that can be later\nused as a cache source for actually drawing it (that's the\nexample i alluded to in my previous email).\n\n> (and that there's an existing alternative approach of painting to an\n> intermediate image.Alpha mask)\n\nthis can be very expensive when there are many\nnot affected by the draw operation (for example a long diagonal line).\nthe overhead is definitely user-perceptible.\n\nfootnote: (sorry about the length of all this). the original\nplan 9/inferno primitives allowed an image to have an\narbitrary origin - if all the draw and image interfaces were\nchanged to allow this, then some of my need for this\nchange would go away, but i think it's justified anyway\nfor the reasons mentioned earlier.\n\nthanks for bearing with me here.\n",
+			"disapproval": false,
+			"date": "2010-06-17 08:47:12.429079",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 17 June 2010 18:47, roger peppe <rogpeppe@gmail.com> wrote:\n> footnote: (sorry about the length of all this). the original\n> plan 9/inferno primitives allowed an image to have an\n> arbitrary origin - if all the draw and image interfaces were\n> changed to allow this, then some of my need for this\n> change would go away, but i think it's justified anyway\n> for the reasons mentioned earlier.\n\nI'm not sure if it belongs in the image.Image interface, but an origin\nand bounds might be worth putting into the struct types like\nimage.RGBA. Currently we don't have a good way to detect overlapping\nRGBA images if their slices are sliced from the same backing array,\nand we probably need that if you want to use draw.Draw to copy pixels\naround when scrolling.\n",
+			"disapproval": false,
+			"date": "2010-06-18 01:15:14.573283",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 18 June 2010 11:15, Nigel Tao <nigel.tao.gnome@gmail.com> wrote:\n> I'm not sure if it belongs in the image.Image interface, but an origin\n> and bounds might be worth putting into the struct types like\n> image.RGBA.\n\nThis is http://codereview.appspot.com/1849041\n",
+			"disapproval": false,
+			"date": "2010-07-15 06:41:51.570181",
+			"approval": false
+		}
+	],
+	"owner_email": "rogpeppe@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "rog",
+	"subject": "code review 1592044: A a function NewPainter to draw from an arbitrary sourc...",
+	"created": "2010-06-11 13:12:06.297963",
+	"patchsets": [
+		1,
+		2001,
+		7001
+	],
+	"modified": "2010-07-15 06:41:51.570181",
+	"closed": false,
+	"issue": 1592044
+}

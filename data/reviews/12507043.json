@@ -1,0 +1,177 @@
+{
+	"description": "cmd/vet: add an \"unused\" module\nThe algorithm is straightforward although some corner cases are tricky.\nWe use the go/types Object map to iterate over the identifiers. A used\nidentifier will appear at least twice: once at the declaration, once at the use.\nAn unused identifier will appear only once: at its declaration. Thus we\nreference count the identifiers and those with only one appearance\nare errors. Moreover, by luck, that one instance is the correct place\nto flag the error.\n\nTricky cases:\n- implicit declarations such as in import clauses and type switches.\n        - handled through the Implicits map.\n- methods used only through interfaces\n        - done by cross-checking methods and interfaces\n- fields in nonce structs (these appear often in tests)\n        - not handled yet\n\nThe nonce struct case is unsolved yet because the right heuristic is not\nclear.\n\nThis check is enabled by default. It's a little noisy, especially inside tests,\nbut it's already found lots of cruft in the standard library so I think it's\nworth turning on. Heuristics will improve to reduce noise.\n\nFixes issue 4827.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"dominik.honnef@gmail.com",
+		"gri@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://code.google.com/p/go.tools",
+			"disapproval": false,
+			"date": "2013-08-06 06:18:33.882930",
+			"approval": false
+		},
+		{
+			"sender": "dominik.honnef@gmail.com",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dominik.honnef@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12507043/diff/1/cmd/vet/unused.go\nFile cmd/vet/unused.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/1/cmd/vet/unused.go#newcode20\ncmd/vet/unused.go:20: // use increments the reference count for the identifier, if it's not exported and not the blank identifier.\n\"useIdentifier increments ...\"\n\nhttps://codereview.appspot.com/12507043/diff/1/cmd/vet/unused.go#newcode43\ncmd/vet/unused.go:43: if obj == nil {\nSame condition twice, collapse into single if?\n\nhttps://codereview.appspot.com/12507043/diff/1/cmd/vet/unused.go#newcode179\ncmd/vet/unused.go:179: // This doesn't count as a use of the actual interface. Just having a type satisfy it its not sufficient;\nits \u2192 is",
+			"disapproval": false,
+			"date": "2013-08-07 02:01:04.041010",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dominik.honnef@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dominik.honnef@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-08-07 04:17:25.072120",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dominik.honnef@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What's the reason for having a use _count_ as opposed to a _use_ bit? Is it so that you don't have to distinguish between lhs and rhs of an assignment? Is it possible the the count heuristic can fail in cases where a use bit would not?\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/main.go\nFile cmd/vet/main.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/main.go#newcode48\ncmd/vet/main.go:48: \"unused\":      flag.Bool(\"unused\", false, \"check for unused unexported package-level identifiers\"),\nCL desc says it's on by default\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/testdata/unused.go\nFile cmd/vet/testdata/unused.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/testdata/unused.go#newcode19\ncmd/vet/testdata/unused.go:19: // Implicitly declared variables in type switches should not trigger an error.\n- should also have a test with an explicitly declared variable\n- also, please add a test of the form\n\nswitch t := t; t := t.(type) { ... }\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go\nFile cmd/vet/unused.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode10\ncmd/vet/unused.go:10: \"code.google.com/p/go.tools/go/types\"\nput this at the bottom in separate section\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode83\ncmd/vet/unused.go:83: // Now the types, which may contain functions, as in f(fn func(a int)): we need to mark \"a\".\none might have an in-line interface type - presumably all methods of that interface should be marked as well\n\nperhaps have a useType function instead?\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode96\ncmd/vet/unused.go:96: case *ast.FuncType:\nsame here: factor out this code into a useType function\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode114\ncmd/vet/unused.go:114: case *ast.FuncType:\nuseType\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode124\ncmd/vet/unused.go:124: // useMethod remember the method declaration, if the method is not exported,\nremembers\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode146\ncmd/vet/unused.go:146: case *ast.Ident:\nI'd check for the base type and then do the indirect only once.\n\nrecvPtrType = types.NewPointer(deref(pkg.idents[node].Type()))\n\nand define:\n\n// If typ is of the (unnamed) form *T, deref(typ) returns T, otherwise it returns typ.\nfunc deref(typ types.Type) types.Type {\n   if p, _ := typ.(*types.Pointer); p != nil {\n      typ = p.Elem()\n   }\n   return typ\n}\n\nwill be easier to read\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode148\ncmd/vet/unused.go:148: recvPtrType = types.NewPointer(pkg.idents[node].Type())\nbaseTypeObj = pkg.idents[node]\n\nand factor out the NewPointer computation ?\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode151\ncmd/vet/unused.go:151: recvPtrType = types.NewPointer(pkg.idents[node.X.(*ast.Ident)].Type())\nsimilarly\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode154\ncmd/vet/unused.go:154: }\nrecvPtrType := types.NewPointer(baseTypeObj.Type()) ?\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode155\ncmd/vet/unused.go:155: // Search all interfaces for types this method appears in.\nthis comment is hard to understand - you are not searching the interfaces for types, you are searching for types that might satisfy the interfaces, don't you?\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode156\ncmd/vet/unused.go:156: for _, interSpec := range pkg.interfaces {\ns/inter/iface/\n\niface seems established shortcut - inter is a bit confusing\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode162\ncmd/vet/unused.go:162: if !types.IsAssignableTo(recvPtrType, interType) {\nOnce a recvType is assignable to the interType, doesn't that mean that the intersection of methods (i.e., all methods the exist on the interface type) are used?\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode165\ncmd/vet/unused.go:165: // We're using the method.\n// We might be using the method.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode167\ncmd/vet/unused.go:167: // We're using this method of the interface. Searching for it by name is good enough.\nThere may be multiple non-exported names that are the same (because the package path needs to be considered as well). You can use an objects' Id() as a unique identifier for comparison.",
+			"disapproval": false,
+			"date": "2013-08-07 22:40:42.047890",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dominik.honnef@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12507043/diff/6001/cmd/vet/main.go\nFile cmd/vet/main.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/main.go#newcode48\ncmd/vet/main.go:48: \"unused\":      flag.Bool(\"unused\", false, \"check for unused unexported package-level identifiers\"),\nOn 2013/08/07 22:40:42, gri wrote:\n> CL desc says it's on by default\n\nIt is on by default. Notice that all the others are false too, except \"all\" is true and this is a map. They are enabled through the vet function, in particular line 61:\n\n      return *report[\"all\"] || *report[name]\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/testdata/unused.go\nFile cmd/vet/testdata/unused.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/testdata/unused.go#newcode19\ncmd/vet/testdata/unused.go:19: // Implicitly declared variables in type switches should not trigger an error.\nOn 2013/08/07 22:40:42, gri wrote:\n> - should also have a test with an explicitly declared variable\n> - also, please add a test of the form\n> \n> switch t := t; t := t.(type) { ... }\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go\nFile cmd/vet/unused.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode10\ncmd/vet/unused.go:10: \"code.google.com/p/go.tools/go/types\"\nOn 2013/08/07 22:40:42, gri wrote:\n> put this at the bottom in separate section\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode83\ncmd/vet/unused.go:83: // Now the types, which may contain functions, as in f(fn func(a int)): we need to mark \"a\".\nOn 2013/08/07 22:40:42, gri wrote:\n> one might have an in-line interface type - presumably all methods of that\n> interface should be marked as well\n> \n> perhaps have a useType function instead?\n\ni couldn't make this work. need to think about it some more. the interaction of ast.Nodes with Type fields, FuncTypes and InterfaceTypes and StructTypes, types.Type, TypeSpecs and so on makes this all a hall of mirrors. today i got a compiler message that said roughly,\n\n  can't use typ of type types.Type as arg to Type; missing method method\n\ni'll take another crack at it tomorrow.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode124\ncmd/vet/unused.go:124: // useMethod remember the method declaration, if the method is not exported,\nOn 2013/08/07 22:40:42, gri wrote:\n> remembers\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode146\ncmd/vet/unused.go:146: case *ast.Ident:\nOn 2013/08/07 22:40:42, gri wrote:\n> I'd check for the base type and then do the indirect only once.\n> \n> recvPtrType = types.NewPointer(deref(pkg.idents[node].Type()))\n> \n> and define:\n> \n> // If typ is of the (unnamed) form *T, deref(typ) returns T, otherwise it\n> returns typ.\n> func deref(typ types.Type) types.Type {\n>    if p, _ := typ.(*types.Pointer); p != nil {\n>       typ = p.Elem()\n>    }\n>    return typ\n> }\n> \n> will be easier to read\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode148\ncmd/vet/unused.go:148: recvPtrType = types.NewPointer(pkg.idents[node].Type())\nOn 2013/08/07 22:40:42, gri wrote:\n> baseTypeObj = pkg.idents[node]\n> \n> and factor out the NewPointer computation ?\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode151\ncmd/vet/unused.go:151: recvPtrType = types.NewPointer(pkg.idents[node.X.(*ast.Ident)].Type())\nOn 2013/08/07 22:40:42, gri wrote:\n> similarly\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode154\ncmd/vet/unused.go:154: }\nOn 2013/08/07 22:40:42, gri wrote:\n> recvPtrType := types.NewPointer(baseTypeObj.Type()) ?\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode155\ncmd/vet/unused.go:155: // Search all interfaces for types this method appears in.\nOn 2013/08/07 22:40:42, gri wrote:\n> this comment is hard to understand - you are not searching the interfaces for\n> types, you are searching for types that might satisfy the interfaces, don't you?\n\nI'm doing what it says. Loop over the interfaces, find ones that the type satisfies. But I've rejiggered a bit by adding an extra loop to see that the method appears in the interface.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode156\ncmd/vet/unused.go:156: for _, interSpec := range pkg.interfaces {\nOn 2013/08/07 22:40:42, gri wrote:\n> s/inter/iface/\n> \n> iface seems established shortcut - inter is a bit confusing\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode162\ncmd/vet/unused.go:162: if !types.IsAssignableTo(recvPtrType, interType) {\nOn 2013/08/07 22:40:42, gri wrote:\n> Once a recvType is assignable to the interType, doesn't that mean that the\n> intersection of methods (i.e., all methods the exist on the interface type) are\n> used?\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode165\ncmd/vet/unused.go:165: // We're using the method.\nOn 2013/08/07 22:40:42, gri wrote:\n> // We might be using the method.\n\nDone.\n\nhttps://codereview.appspot.com/12507043/diff/6001/cmd/vet/unused.go#newcode167\ncmd/vet/unused.go:167: // We're using this method of the interface. Searching for it by name is good enough.\nOn 2013/08/07 22:40:42, gri wrote:\n> There may be multiple non-exported names that are the same (because the package\n> path needs to be considered as well). You can use an objects' Id() as a unique\n> identifier for comparison.\n\nDone.",
+			"disapproval": false,
+			"date": "2013-08-08 06:38:36.034510",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dominik.honnef@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dominik.honnef@gmail.com, gri@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-08-08 06:38:57.695860",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "For the record, the actual message was:\r\n\r\n./unused.go:149: cannot use method.Recv.List[0].Type (type ast.Expr) as\r\ntype types.Type in function argument:\r\nast.Expr does not implement types.Type (missing MethodSet method)\r\n\r\nThe word \"type\" appears seven times.\r\n",
+			"disapproval": false,
+			"date": "2013-08-08 06:59:54.703190",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dominik.honnef@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "looking forward to the general useType function\n\nhttps://codereview.appspot.com/12507043/diff/14001/cmd/vet/main.go\nFile cmd/vet/main.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/14001/cmd/vet/main.go#newcode448\ncmd/vet/main.go:448: if d.Body == nil {\nwhy is this here and below? could use a comment.\n\nhttps://codereview.appspot.com/12507043/diff/14001/cmd/vet/unused.go\nFile cmd/vet/unused.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/14001/cmd/vet/unused.go#newcode17\ncmd/vet/unused.go:17: file  *File // File holding first use we see. For unused items, this is sure to be the declaration.\nI don't understand why this is true. On the package level, an identifier might be used textually before it's declaration if this code operates on more than one file.",
+			"disapproval": false,
+			"date": "2013-08-08 23:16:59.283540",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Please explain for the incompetent here how the useType function would\r\nwork. What is its signature? Keep in mind I need a TypeSpec in there in\r\nsome cases but don't always have one.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-08-09 00:37:08.376480",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dominik.honnef@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "https://codereview.appspot.com/12507043/diff/14001/cmd/vet/main.go\nFile cmd/vet/main.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/14001/cmd/vet/main.go#newcode448\ncmd/vet/main.go:448: if d.Body == nil {\nOn 2013/08/08 23:16:59, gri wrote:\n> why is this here and below? could use a comment.\n\nbecause it's of the form\n\nfunc implementInAssembler()\n\nwill add a comment.\n\n-rob\n\nhttps://codereview.appspot.com/12507043/diff/14001/cmd/vet/unused.go\nFile cmd/vet/unused.go (right):\n\nhttps://codereview.appspot.com/12507043/diff/14001/cmd/vet/unused.go#newcode17\ncmd/vet/unused.go:17: file  *File // File holding first use we see. For unused items, this is sure to be the declaration.\nOn 2013/08/08 23:16:59, gri wrote:\n> I don't understand why this is true. On the package level, an identifier might\n> be used textually before it's declaration if this code operates on more than one\n> file.\n\nIt's only true for *unused* identifiers. That's the whole point of this file.",
+			"disapproval": false,
+			"date": "2013-08-09 00:38:27.310730",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"dominik.honnef@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dominik.honnef@gmail.com, gri@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2013-08-13 05:30:02.666400",
+			"approval": false
+		}
+	],
+	"owner_email": "r@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "r",
+	"subject": "code review 12507043: cmd/vet: add an \"unused\" module",
+	"created": "2013-08-06 06:18:23.304770",
+	"patchsets": [
+		1,
+		6001,
+		14001,
+		22001
+	],
+	"modified": "2013-08-13 05:30:05.322710",
+	"closed": false,
+	"issue": 12507043
+}

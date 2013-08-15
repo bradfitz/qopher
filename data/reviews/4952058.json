@@ -1,0 +1,217 @@
+{
+	"description": "windows/amd64: use dynamic thread local storage.",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"jp@webmaster.ms",
+		"rsc@golang.org"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/08 10:42:45, vcc wrote:\n> PTAL\n\nWouldn't something like \"if(TlsAlloc()!=1 && TlsAlloc()!=2) panic()\" in the beginning of execution be a simpler solution ?\nOr switching to the static TLS.\nRemembering the TLS index seems superfluous, it supposes to be always the same value.",
+			"disapproval": false,
+			"date": "2011-09-08 11:25:44.942671",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "This adds an instruction and a memory reference\n(to runtime.tlsindex) to the beginning of every function\nbody in the whole program.\n\nWhy did the current code work?\nWhy isn't it enough anymore?\n\nOn other systems that insist on handing out\nTLS references (for example, OS X), we cut\nthe code back down to one instruction by\nassuming we can get a specific index since\nwe are running so early in the program's lifetime.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-07 18:32:08.619780",
+			"approval": false
+		},
+		{
+			"sender": "vcc.163@gmail.com",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/07 19:09:19, jp wrote:\n> On 2011/09/07 18:54:40, rsc wrote:\n> \n> Oops, actually it uses dynamic tls, seizing the first 2 cells without calling\n> TlsAlloc(). \n> Exactly as you described OS X.\n> \n> A bug can appear if Go code will call a DLL which uses TlsAlloc(), then the DLL\n> can overwrite Go's values.\n> So, it has sense to call TlsAlloc() and reserve the indices.\n\nYes. windows/386 also need do this to fixes this bug.\n\n> Or to switch to the static TLS.\n> \n> > On Wed, Sep 7, 2011 at 14:49,  <mailto:jp@webmaster.ms> wrote:\n> > > Go uses static TLS.\n> > \n> > Great, thanks for the explanation.\n> > \n> > Wei, why should we change to dynamic TLS?\n> > \n> > Russ",
+			"disapproval": false,
+			"date": "2011-09-08 10:41:27.874246",
+			"approval": false
+		},
+		{
+			"sender": "vcc.163@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "In real world, my problem is use\ngo-odbc<https://github.com/weigj/go-odbc> with Oracle Database using\nOracle ODBC driver.\n\n2011/9/9  <jp@webmaster.ms>:\n> On 2011/09/08 15:40:38, jp wrote:\n>>\n>> On 2011/09/08 14:52:36, vcc wrote:\n>> > 2011/9/8 \u00a0<jp@webmaster.ms>:\n>> > > On 2011/09/08 10:42:45, vcc wrote:\n>> > > Wouldn't something like \"if(TlsAlloc()!=1 && TlsAlloc()!=2)\n>\n> panic()\" in\n>>\n>> > > the beginning of execution be a simpler solution ?\n>> >\n>> > Not work, I got TlsAlloc() return 6 for one test program, can't\n>\n> assume\n>>\n>> > TlsAlloc() return values.\n>> >\n>> > > Or switching to the static TLS.\n>> >\n>> > We are already using static TLS, 0x58(GS) is thread's\n>> > ThreadLocalStoragePointer for static TLS, but we just set it to one\n>> > buffer and don't setup and manage .tls, so if other dlls has static\n>> > TLS will \u00a0reset ThreadLocalStoragePointer, will fail.\n>\n>> By static TLS I mean the 64 entries starting from 0xE10(FS) on 386\n>\n> (and some\n>>\n>> similar big number on amd64):\n>> http://en.wikipedia.org/wiki/Win32_Thread_Information_Block\n>\n>> They intended to be allocated during link time and do not interfere\n>\n> with the\n>>\n>> cells allocated by TlsAlloc()\n>\n> Sorry again, these 64 cell are first 64 allocated by TlsAlloc.\n> So they do not interfere with the cells pointed by\n> ThreadLocalStoragePointer which is currently used in Go runtime.\n>\n> Can you provide a test case of TLS corruption you are fighting with ?\n> I did the following test with no problem\n> var (\n> \u00a0 \u00a0 \u00a0 \u00a0modkernel32 = syscall.NewLazyDLL(\"kernel32.dll\")\n>\n> \u00a0 \u00a0 \u00a0 \u00a0procTlsAlloc = modkernel32.NewProc(\"TlsAlloc\")\n> \u00a0 \u00a0 \u00a0 \u00a0procTlsSetValue = modkernel32.NewProc(\"TlsSetValue\")\n> )\n> func TlsAlloc() int {\n> \u00a0 \u00a0 \u00a0 \u00a0r1, _, _ := syscall.Syscall(procTlsAlloc.Addr(), 0, 0, 0, 0)\n> \u00a0 \u00a0 \u00a0 \u00a0return int(r1)\n> }\n> func TlsSetValue(i int, v uintptr) {\n> \u00a0 \u00a0 \u00a0 \u00a0syscall.Syscall(procTlsSetValue.Addr(), 2, uintptr(i), v, 0)\n> }\n> func main() {\n> \u00a0 \u00a0 \u00a0 \u00a0for j:=0; j<1000; j++ {\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0i := TlsAlloc();\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0TlsSetValue(i, 100)\n> \u00a0 \u00a0 \u00a0 \u00a0}\n> }\n>\n>\n>> >\n>> > I think dynamic TLS is simple and reliable, should use it instead of\n>\n> static\n>>\n>> TLS.\n>> >\n>> > >\n>> > > http://codereview.appspot.com/4952058/\n>> > >\n>\n>\n>\n> http://codereview.appspot.com/4952058/\n>\n",
+			"disapproval": false,
+			"date": "2011-09-10 03:08:29.831717",
+			"approval": false
+		},
+		{
+			"sender": "vcc.163@gmail.com",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "PTAL",
+			"disapproval": false,
+			"date": "2011-09-08 10:42:45.949030",
+			"approval": false
+		},
+		{
+			"sender": "vcc.163@gmail.com",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com,\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-09-07 15:00:24.556123",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/07 15:00:24, vcc wrote:\n> Hello mailto:golang-dev@googlegroups.com,\n> \n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n\nWhat the problem does it solve ?",
+			"disapproval": false,
+			"date": "2011-09-07 15:26:02.493307",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/07 18:54:40, rsc wrote:\n\nOops, actually it uses dynamic tls, seizing the first 2 cells without calling TlsAlloc(). \nExactly as you described OS X.\n\nA bug can appear if Go code will call a DLL which uses TlsAlloc(), then the DLL can overwrite Go's values.\nSo, it has sense to call TlsAlloc() and reserve the indices.\nOr to switch to the static TLS.\n\n> On Wed, Sep 7, 2011 at 14:49,  <mailto:jp@webmaster.ms> wrote:\n> > Go uses static TLS.\n> \n> Great, thanks for the explanation.\n> \n> Wei, why should we change to dynamic TLS?\n> \n> Russ",
+			"disapproval": false,
+			"date": "2011-09-07 19:09:19.323165",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/07 18:32:08, rsc wrote:\n> This adds an instruction and a memory reference\n> (to runtime.tlsindex) to the beginning of every function\n> body in the whole program.\n> \n> Why did the current code work?\n> Why isn't it enough anymore?\n> \n> On other systems that insist on handing out\n> TLS references (for example, OS X), we cut\n> the code back down to one instruction by\n> assuming we can get a specific index since\n> we are running so early in the program's lifetime.\n> \n> Russ\n\nWindows has 2 tls: static and dynamic.\n\nStatic TLS variables look in C source like \"__declspec(thread) int x;\"\nIndices of them are allocated by linker.\nIt is possible to have up to 64 static TLS variables.\n\nDynamic TLS values are allocated in runtime by calling TlsAlloc() API.\nThere are up to 1024 of them.\n\nGo uses static TLS.",
+			"disapproval": false,
+			"date": "2011-09-07 18:49:13.950659",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/08 14:52:36, vcc wrote:\n> 2011/9/8  <jp@webmaster.ms>:\n> > On 2011/09/08 10:42:45, vcc wrote:\n> > Wouldn't something like \"if(TlsAlloc()!=1 && TlsAlloc()!=2) panic()\" in\n> > the beginning of execution be a simpler solution ?\n> \n> Not work, I got TlsAlloc() return 6 for one test program, can't assume\n> TlsAlloc() return values.\n> \n> > Or switching to the static TLS.\n> \n> We are already using static TLS, 0x58(GS) is thread's\n> ThreadLocalStoragePointer for static TLS, but we just set it to one\n> buffer and don't setup and manage .tls, so if other dlls has static\n> TLS will  reset ThreadLocalStoragePointer, will fail.\n\nBy static TLS I mean the 64 entries starting from 0xE10(FS) on 386 (and some similar big number on amd64): http://en.wikipedia.org/wiki/Win32_Thread_Information_Block\n\nThey intended to be allocated during link time and do not interfere with the cells allocated by TlsAlloc()\n\n> \n> I think dynamic TLS is simple and reliable, should use it instead of static TLS.\n> \n> >\n> > http://codereview.appspot.com/4952058/\n> >",
+			"disapproval": false,
+			"date": "2011-09-08 15:40:38.354229",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Wed, Sep 7, 2011 at 14:49,  <jp@webmaster.ms> wrote:\n> Go uses static TLS.\n\nGreat, thanks for the explanation.\n\nWei, why should we change to dynamic TLS?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-09-07 18:54:40.116547",
+			"approval": false
+		},
+		{
+			"sender": "vcc.163@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "2011/9/8  <jp@webmaster.ms>:\n> On 2011/09/08 10:42:45, vcc wrote:\n> Wouldn't something like \"if(TlsAlloc()!=1 && TlsAlloc()!=2) panic()\" in\n> the beginning of execution be a simpler solution ?\n\nNot work, I got TlsAlloc() return 6 for one test program, can't assume\nTlsAlloc() return values.\n\n> Or switching to the static TLS.\n\nWe are already using static TLS, 0x58(GS) is thread's\nThreadLocalStoragePointer for static TLS, but we just set it to one\nbuffer and don't setup and manage .tls, so if other dlls has static\nTLS will  reset ThreadLocalStoragePointer, will fail.\n\nI think dynamic TLS is simple and reliable, should use it instead of static TLS.\n\n>\n> http://codereview.appspot.com/4952058/\n>\n",
+			"disapproval": false,
+			"date": "2011-09-08 14:52:36.471522",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/08 15:40:38, jp wrote:\n> On 2011/09/08 14:52:36, vcc wrote:\n> > 2011/9/8  <jp@webmaster.ms>:\n> > > On 2011/09/08 10:42:45, vcc wrote:\n> > > Wouldn't something like \"if(TlsAlloc()!=1 && TlsAlloc()!=2) panic()\" in\n> > > the beginning of execution be a simpler solution ?\n> > \n> > Not work, I got TlsAlloc() return 6 for one test program, can't assume\n> > TlsAlloc() return values.\n> > \n> > > Or switching to the static TLS.\n> > \n> > We are already using static TLS, 0x58(GS) is thread's\n> > ThreadLocalStoragePointer for static TLS, but we just set it to one\n> > buffer and don't setup and manage .tls, so if other dlls has static\n> > TLS will  reset ThreadLocalStoragePointer, will fail.\n> \n> By static TLS I mean the 64 entries starting from 0xE10(FS) on 386 (and some\n> similar big number on amd64):\n> http://en.wikipedia.org/wiki/Win32_Thread_Information_Block\n> \n> They intended to be allocated during link time and do not interfere with the\n> cells allocated by TlsAlloc()\n\nSorry again, these 64 cell are first 64 allocated by TlsAlloc.\nSo they do not interfere with the cells pointed by ThreadLocalStoragePointer which is currently used in Go runtime.\n\nCan you provide a test case of TLS corruption you are fighting with ?\nI did the following test with no problem\nvar (\n\tmodkernel32 = syscall.NewLazyDLL(\"kernel32.dll\")\n\n\tprocTlsAlloc = modkernel32.NewProc(\"TlsAlloc\")\n\tprocTlsSetValue = modkernel32.NewProc(\"TlsSetValue\")\n)\nfunc TlsAlloc() int {\n\tr1, _, _ := syscall.Syscall(procTlsAlloc.Addr(), 0, 0, 0, 0)\n\treturn int(r1)\n}\nfunc TlsSetValue(i int, v uintptr) {\n\tsyscall.Syscall(procTlsSetValue.Addr(), 2, uintptr(i), v, 0)\n}\nfunc main() {\n\tfor j:=0; j<1000; j++ {\n\t\ti := TlsAlloc();\n\t\tTlsSetValue(i, 100)\n\t}\n}\n\n\n> > \n> > I think dynamic TLS is simple and reliable, should use it instead of static\n> TLS.\n> > \n> > >\n> > > http://codereview.appspot.com/4952058/\n> > >",
+			"disapproval": false,
+			"date": "2011-09-09 14:19:21.563117",
+			"approval": false
+		},
+		{
+			"sender": "jp@webmaster.ms",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/09/10 03:08:29, vcc wrote:\n\nCan you send me the DLLs loaded into Go process ?\nYour odbc32.dll and all the Oracle's DLLs which are loaded in the Go process.\n\n> In real world, my problem is use\n> go-odbc<https://github.com/weigj/go-odbc> with Oracle Database using\n> Oracle ODBC driver.\n> \n> 2011/9/9  <jp@webmaster.ms>:\n> > On 2011/09/08 15:40:38, jp wrote:\n> >>\n> >> On 2011/09/08 14:52:36, vcc wrote:\n> >> > 2011/9/8 &nbsp;<jp@webmaster.ms>:\n> >> > > On 2011/09/08 10:42:45, vcc wrote:\n> >> > > Wouldn't something like \"if(TlsAlloc()!=1 && TlsAlloc()!=2)\n> >\n> > panic()\" in\n> >>\n> >> > > the beginning of execution be a simpler solution ?\n> >> >\n> >> > Not work, I got TlsAlloc() return 6 for one test program, can't\n> >\n> > assume\n> >>\n> >> > TlsAlloc() return values.\n> >> >\n> >> > > Or switching to the static TLS.\n> >> >\n> >> > We are already using static TLS, 0x58(GS) is thread's\n> >> > ThreadLocalStoragePointer for static TLS, but we just set it to one\n> >> > buffer and don't setup and manage .tls, so if other dlls has static\n> >> > TLS will &nbsp;reset ThreadLocalStoragePointer, will fail.\n> >\n> >> By static TLS I mean the 64 entries starting from 0xE10(FS) on 386\n> >\n> > (and some\n> >>\n> >> similar big number on amd64):\n> >> http://en.wikipedia.org/wiki/Win32_Thread_Information_Block\n> >\n> >> They intended to be allocated during link time and do not interfere\n> >\n> > with the\n> >>\n> >> cells allocated by TlsAlloc()\n> >\n> > Sorry again, these 64 cell are first 64 allocated by TlsAlloc.\n> > So they do not interfere with the cells pointed by\n> > ThreadLocalStoragePointer which is currently used in Go runtime.\n> >\n> > Can you provide a test case of TLS corruption you are fighting with ?\n> > I did the following test with no problem\n> > var (\n> > &nbsp; &nbsp; &nbsp; &nbsp;modkernel32 = syscall.NewLazyDLL(\"kernel32.dll\")\n> >\n> > &nbsp; &nbsp; &nbsp; &nbsp;procTlsAlloc = modkernel32.NewProc(\"TlsAlloc\")\n> > &nbsp; &nbsp; &nbsp; &nbsp;procTlsSetValue = modkernel32.NewProc(\"TlsSetValue\")\n> > )\n> > func TlsAlloc() int {\n> > &nbsp; &nbsp; &nbsp; &nbsp;r1, _, _ := syscall.Syscall(procTlsAlloc.Addr(), 0, 0, 0, 0)\n> > &nbsp; &nbsp; &nbsp; &nbsp;return int(r1)\n> > }\n> > func TlsSetValue(i int, v uintptr) {\n> > &nbsp; &nbsp; &nbsp; &nbsp;syscall.Syscall(procTlsSetValue.Addr(), 2, uintptr(i), v, 0)\n> > }\n> > func main() {\n> > &nbsp; &nbsp; &nbsp; &nbsp;for j:=0; j<1000; j++ {\n> > &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;i := TlsAlloc();\n> > &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;TlsSetValue(i, 100)\n> > &nbsp; &nbsp; &nbsp; &nbsp;}\n> > }\n> >\n> >\n> >> >\n> >> > I think dynamic TLS is simple and reliable, should use it instead of\n> >\n> > static\n> >>\n> >> TLS.\n> >> >\n> >> > >\n> >> > > http://codereview.appspot.com/4952058/\n> >> > >\n> >\n> >\n> >\n> > http://codereview.appspot.com/4952058/\n> >",
+			"disapproval": false,
+			"date": "2011-09-10 09:47:30.175341",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"vcc.163@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jp@webmaster.ms",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "removing reviewers",
+			"disapproval": false,
+			"date": "2012-06-03 04:31:23.448334",
+			"approval": false
+		}
+	],
+	"owner_email": "vcc.163@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "vcc",
+	"subject": "code review 4952058: windows/amd64: use dynamic thread local storage.",
+	"created": "2011-09-07 14:58:30.582835",
+	"patchsets": [
+		1,
+		2001,
+		5001,
+		6007
+	],
+	"modified": "2012-06-03 04:31:23.448334",
+	"closed": false,
+	"issue": 4952058
+}

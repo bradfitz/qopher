@@ -1,0 +1,206 @@
+{
+	"description": "Make it possible to draw text using an arbitrary Painter.\nThis requires that Dx and Dy are in Rasterizer rather than\nRGBAPainter. RGBAContext then becomes a specialized version\nof the more general Context. Dx and Dy are removed from RGBAPainter\nand AlphaPainter as they're now unnecessary.\n\nOne other minor change: avoid allocating table when gamma is 1.\n\nBTW the Painter abstraction is lovely - a great example\nof composability in Go (I think Russ's suggestion of a nil\nss in Paint to signify the end of the spans is probably\nslightly better than the current bool flag though).",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"nigeltao@golang.org"
+	],
+	"messages": [
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 25 May 2010 00:28, Nigel Tao <nigel.tao.gnome@gmail.com> wrote:\n> On 24 May 2010 09:05, \u00a0<rogpeppe@gmail.com> wrote:\n>> BTW the Painter abstraction is lovely - a great example\n>> of composability in Go (I think Russ's suggestion of a nil\n>> ss in Paint to signify the end of the spans is probably\n>> slightly better than the current bool flag though).\n>\n> I like the explicit \"done\" bool parameter better. Having nil signify\n> end-of-paint means that the nil []Span means something different from\n> a zero-length []Span. It's do-able, but it's subtle, whereas the bool\n> is pretty clear.\n\nit doesn't have to mean something different. there's never\nany need to pass a zero-length span to a painter, AFAICS,\nso end-of-paint could just as well be signified by a len(ss)==0,\nwhich covers both.\n",
+			"disapproval": false,
+			"date": "2010-05-25 06:25:43.352474",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/1240047/diff/2001/3002\nFile freetype/raster/paint.go (right):\n\nhttp://codereview.appspot.com/1240047/diff/2001/3002#newcode215\nfreetype/raster/paint.go:215: a *[256]uint16\nOn 2010/05/24 16:51:25, nigeltao_golang wrote:\n> I'd rather keep this the way it was. Before, creating a GammaCorrectionPainter\n> was only one malloc, whether or not the gamma was 1.0. After, creating a GCP is\n> one or two mallocs, and looking up the table is a further indirection.\n\nFor future reference, I think the more stylish way to do this is to make GCP.a a slice rather than a pointer to an array. But I'd just revert this change.",
+			"disapproval": false,
+			"date": "2010-05-24 17:01:00.260884",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao_golang (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change.",
+			"disapproval": false,
+			"date": "2010-05-24 16:05:06.287074",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2010/05/24 16:05:06, rog wrote:\n> Hello nigeltao_golang (cc: mailto:golang-dev@googlegroups.com),\n> \n> I'd like you to review this change.\n\nMoving the {Dx,Dy} fields from the painter to the rasterizer seems fair enough.\n\nI'm less convinced about the differentiation between an RGBAContext and a Context, unless there's a pressing need for it. (And FYI, I'm thinking of renaming \"Context\" to \"Canvas\"). If you do feel inclined to do this, please make it a separate change from this one -- smaller, fine-grained self-contained changes are generally easier to understand and review, and to roll back in case of breakage. Also, embedding a Context into an RGBAContext seems to me like an inheritance-based design. Is it possible for a Context to take a freetype.Painter, where a freetype.Painter is an interface type that contains raster.Painter but also SetColor(color image.Color) or SetOffset(dx, dy int) or whatever else you need?",
+			"disapproval": false,
+			"date": "2010-05-24 16:51:08.962234",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/1240047/diff/2001/3002\nFile freetype/raster/paint.go (right):\n\nhttp://codereview.appspot.com/1240047/diff/2001/3002#newcode215\nfreetype/raster/paint.go:215: a *[256]uint16\nI'd rather keep this the way it was. Before, creating a GammaCorrectionPainter was only one malloc, whether or not the gamma was 1.0. After, creating a GCP is one or two mallocs, and looking up the table is a further indirection.",
+			"disapproval": false,
+			"date": "2010-05-24 16:51:25.297201",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 24 May 2010 23:25, roger peppe <rogpeppe@gmail.com> wrote:\n> it doesn't have to mean something different. there's never\n> any need to pass a zero-length span to a painter, AFAICS,\n> so end-of-paint could just as well be signified by a len(ss)==0,\n> which covers both.\n\nThe MonochromePainter takes a []Span, filters out a subset, and passes\na possibly shorter []Span on to its wrapped Painter. Under your\nscheme, it would have to do a little check that its shorter []Span\nwasn't zero length. That's a subtlety I don't have to deal with when I\nuse the explicit done bool.\n",
+			"disapproval": false,
+			"date": "2010-05-25 18:57:46.623430",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Oh, please also add yourself to AUTHORS and CONTRIBUTORS.",
+			"disapproval": false,
+			"date": "2010-05-24 17:04:31.731968",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 24 May 2010 17:51,  <nigeltao@golang.org> wrote:\n> On 2010/05/24 16:05:06, rog wrote:\n>>\n>> Hello nigeltao_golang (cc: mailto:golang-dev@googlegroups.com),\n>\n>> I'd like you to review this change.\n>\n> Moving the {Dx,Dy} fields from the painter to the rasterizer seems fair\n> enough.\n>\n> I'm less convinced about the differentiation between an RGBAContext and\n> a Context, unless there's a pressing need for it. (And FYI, I'm thinking\n> of renaming \"Context\" to \"Canvas\"). If you do feel inclined to do this,\n> please make it a separate change from this one -- smaller, fine-grained\n> self-contained changes are generally easier to understand and review,\n> and to roll back in case of breakage. Also, embedding a Context into an\n> RGBAContext seems to me like an inheritance-based design. Is it possible\n> for a Context to take a freetype.Painter, where a freetype.Painter is an\n> interface type that contains raster.Painter but also SetColor(color\n> image.Color) or SetOffset(dx, dy int) or whatever else you need?\n\na Context can take anything that satisfies the Painter interface.\nso, yes, no problem.\n\nit's not really an inheritance-based design (i have no OO background\nat all). it's just an encapsulation. RGBAContext just makes it\na little more convenient to draw text to an RGBA image without\nhaving to know about painters.\n\nmy \"pressing need\" was that i needed to draw through a couple\nof different Painters when drawing text. in particular, i can draw\nthrough a painter that finds the exact bounding box of the drawn\ntext, and i can draw through a painter that clips the text to\na given rectangle. i can imagine all kind of other uses for it\n(currently you can't draw to an image.Alpha either)\n\nFWIW, i did see rob's comments on the matter earlier, but\nhaving used the package a little, i think Context is an ok name.\nit represents pretty well what it does - it's some precalculated\nstate that speeds up rendering of characters from some particular\nfont. it's really not a \"canvas\", by my understanding of the term anyway.\n\nRGBAContext is less necessary (i left it for backward compatibility);\nit could just be a function:\n\nDrawRGBAText(c *Context, m *image.RGBA, color image.Color, gamma float)\n\nexcept that you'd want to pre-calculate the gamma. maybe\nmaking Gamma a separate entity from GammaCorrectionPainter\nmight be the way to go. then it'd be:\n\nDrawRGBAText(c *Context, m *image.RGBA, color image.Color, gamma *Gamma)\n",
+			"disapproval": false,
+			"date": "2010-05-24 17:27:53.273992",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "i guess i was optimising for the possibly common case of\ngamma=1.0. it's true it's two mallocs, but the extra indirection\nwould be negligible if the indirection was done just once\nat the start of Paint.\n\nfollowing on from my suggestion of separating Gamma from\nGammaCorrectionPainter, you could use a nil *Gamma\nto represent gamma=1, and then there would be no\nneed for the special case.\n\nno need for GammaCorrectionPainter.SetGamma either - just\nmake the gamma a public field.\n\nOn 24 May 2010 17:51,  <nigeltao@golang.org> wrote:\n>\n> http://codereview.appspot.com/1240047/diff/2001/3002\n> File freetype/raster/paint.go (right):\n>\n> http://codereview.appspot.com/1240047/diff/2001/3002#newcode215\n> freetype/raster/paint.go:215: a *[256]uint16\n> I'd rather keep this the way it was. Before, creating a\n> GammaCorrectionPainter was only one malloc, whether or not the gamma was\n> 1.0. After, creating a GCP is one or two mallocs, and looking up the\n> table is a further indirection.\n>\n> http://codereview.appspot.com/1240047/show\n>\n",
+			"disapproval": false,
+			"date": "2010-05-24 17:34:54.762778",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 24 May 2010 10:27, roger peppe <rogpeppe@gmail.com> wrote:\n> RGBAContext is less necessary (i left it for backward compatibility);\n> it could just be a function:\n>\n> DrawRGBAText(c *Context, m *image.RGBA, color image.Color, gamma float)\n>\n> except that you'd want to pre-calculate the gamma. maybe\n> making Gamma a separate entity from GammaCorrectionPainter\n> might be the way to go. then it'd be:\n>\n> DrawRGBAText(c *Context, m *image.RGBA, color image.Color, gamma *Gamma)\n\nIf you do the freetype.Painter thing I suggested, then RGBAContext\ncould just be a function (instead of its own special type). In\nparticular, NewRGBAContext(m *image.RGBA) could return a Context that\nhad the right Painter.\n\nBackwards compatability isn't that important right now -- the Context\nAPI isn't part of the C Freetype library and it's very much subject to\nchange as we explore the space.\n\n\nOn 24 May 2010 10:34, roger peppe <rogpeppe@gmail.com> wrote:\n> i guess i was optimising for the possibly common case of\n> gamma=1.0. it's true it's two mallocs, but the extra indirection\n> would be negligible if the indirection was done just once\n> at the start of Paint.\n\nThe extra indirection is probably negligible, but it might not be if\nit affects the cache. I haven't verified this myself, but this blog\npost [0] says that a Java port of git had poor performance because,\namongst other reasons, \"the bytes themselves are in a different area\nof memory from the container object\".\n\n[0] http://loadcode.blogspot.com/2009/12/go-vs-java.html\n\n\n> following on from my suggestion of separating Gamma from\n> GammaCorrectionPainter, you could use a nil *Gamma\n> to represent gamma=1, and then there would be no\n> need for the special case.\n\nYou could do it that way, but then whenever you set the gamma to non-1\nthen you need to allocate another GCP rather than re-using the\nexisting one. An Android colleague tells me that non-1 gamma is\nactually pretty common.\n\n\n> no need for GammaCorrectionPainter.SetGamma either - just\n> make the gamma a public field.\n\nI don't think that works. SetGamma doesn't just set the gamma field,\nit also calculates the GCP.a lookup table.\n",
+			"disapproval": false,
+			"date": "2010-05-24 23:22:42.147025",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 24 May 2010 09:05,  <rogpeppe@gmail.com> wrote:\n> BTW the Painter abstraction is lovely - a great example\n> of composability in Go (I think Russ's suggestion of a nil\n> ss in Paint to signify the end of the spans is probably\n> slightly better than the current bool flag though).\n\nI like the explicit \"done\" bool parameter better. Having nil signify\nend-of-paint means that the nil []Span means something different from\na zero-length []Span. It's do-able, but it's subtle, whereas the bool\nis pretty clear.\n",
+			"disapproval": false,
+			"date": "2010-05-24 23:28:02.033251",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 25 May 2010 00:22, Nigel Tao <nigel.tao.gnome@gmail.com> wrote:\n> If you do the freetype.Painter thing I suggested, then RGBAContext\n> could just be a function (instead of its own special type). In\n> particular, NewRGBAContext(m *image.RGBA) could return a Context that\n> had the right Painter.\n\nyes, you could do that.\nbut i *think* that rob's original point is that putting drawing\nattributes in a context doesn't really buy you much - it's\nbetter to pass them explicitly in a function.\n\nthis doesn't apply, i don't think, when the attributes have expensive\ncalculations needed to make them usable, which is the case for\nmost of the stuff in Context.\n\nbut it does apply to (at least) the destination image and the colour - there's\nno precalculation involved, just a simple assignment.\n\n> On 24 May 2010 10:34, roger peppe <rogpeppe@gmail.com> wrote:\n>> i guess i was optimising for the possibly common case of\n>> gamma=1.0. it's true it's two mallocs, but the extra indirection\n>> would be negligible if the indirection was done just once\n>> at the start of Paint.\n>\n> The extra indirection is probably negligible, but it might not be if\n> it affects the cache. I haven't verified this myself, but this blog\n> post [0] says that a Java port of git had poor performance because,\n> amongst other reasons, \"the bytes themselves are in a different area\n> of memory from the container object\".\n\nif it's cache performance you're concerned about, then i'm sure it\nwould be better to separate out the gamma correction table\nfrom the Context. as it is, if you have several contexts, each for\na different font, each will have its own gamma correction table,\nwhere only one is necessary. also, if you're worried about\nindirections, it would be much better to have the inner loop\nin GammaCorrectionPainter indirect into the table only once per span\n(saving the array bounds checks too).\n\na separate gamma correction object might potentially be\nuseful in other places too.\n\ntype GammaCorrect [256]uint16\n\nfunc (g *GammaCorrect) Lookup(a uint32) uint32\nfunc (g *GammaCorrect) Init(gamma float) *GammaCorrect\n\n if you were concerned about the cost of the call to Lookup,\nyou could still inline the body of Lookup into the GammaCorrectionPainter\n(until the compiler could inline it).\n\n> You could do it that way, but then whenever you set the gamma to non-1\n> then you need to allocate another GCP rather than re-using the\n> existing one. An Android colleague tells me that non-1 gamma is\n> actually pretty common.\n\na non-1 gamma might be pretty common, but how often does\na screen change gamma? :-)\n\n>> no need for GammaCorrectionPainter.SetGamma either - just\n>> make the gamma a public field.\n>\n> I don't think that works. SetGamma doesn't just set the gamma field,\n> it also calculates the GCP.a lookup table.\n\nyes, i realise that. i was in a hurry so not clear, sorry. when i said\ngamma above, i meant a gamma correction object, such as\nin the interface proposed above.\n",
+			"disapproval": false,
+			"date": "2010-05-25 06:53:39.656422",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 25 May 2010 19:57, Nigel Tao <nigel.tao.gnome@gmail.com> wrote:\n> On 24 May 2010 23:25, roger peppe <rogpeppe@gmail.com> wrote:\n>> it doesn't have to mean something different. there's never\n>> any need to pass a zero-length span to a painter, AFAICS,\n>> so end-of-paint could just as well be signified by a len(ss)==0,\n>> which covers both.\n>\n> The MonochromePainter takes a []Span, filters out a subset, and passes\n> a possibly shorter []Span on to its wrapped Painter. Under your\n> scheme, it would have to do a little check that its shorter []Span\n> wasn't zero length. That's a subtlety I don't have to deal with when I\n> use the explicit done bool.\n\nthat is true, but there are other subtleties involved in the current\nscheme (like the fact that you can't just bail out at the start\nof the function if done==true)\n\ni think the relatively few Painters that eliminate spans can\neasily maintain the len(ss) > 0 invariant (it's just one if statement)\nand be happy that they're saving cpu cycles by avoiding the\ncall to the sub-painter.\n\nbut i don't mind really. just a mild preference.\n",
+			"disapproval": false,
+			"date": "2010-05-25 19:27:51.818622",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "This change does three things:\n1. It moves Dx,Dy from the painters to the rasterizer.\n2. It makes the gamma correction table lazily allocated.\n3. It factors out a Context out of a RGBAContext.\n\nI'm happy with 1, unhappy with 2, and am still thinking about 3. If you update this change to do only 1 (and the AUTHORS + CONTRIBUTORS edit) then I'll happily check this in.",
+			"disapproval": false,
+			"date": "2010-05-26 18:02:25.229309",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"rogpeppe@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Oh, don't forget to update the change description via \"hg change 1240047\".",
+			"disapproval": false,
+			"date": "2010-05-26 18:04:17.750581",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 26 May 2010 11:02,  <nigeltao@golang.org> wrote:\n> This change does three things:\n> 1. It moves Dx,Dy from the painters to the rasterizer.\n> 2. It makes the gamma correction table lazily allocated.\n> 3. It factors out a Context out of a RGBAContext.\n>\n> I'm happy with 1, unhappy with 2, and am still thinking about 3. If you\n> update this change to do only 1 (and the AUTHORS + CONTRIBUTORS edit)\n> then I'll happily check this in.\n\nAh, I'm guessing that it's bedtime in your timezone. I'll just do this\nmyself (http://codereview.appspot.com/1332041).\n",
+			"disapproval": false,
+			"date": "2010-05-26 20:15:40.647370",
+			"approval": false
+		}
+	],
+	"owner_email": "rogpeppe@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "rog",
+	"subject": "code review 1240047: Make it possible to draw text using an arbitrary Painter.",
+	"created": "2010-05-24 16:02:06.275952",
+	"patchsets": [
+		1,
+		2001,
+		12001
+	],
+	"modified": "2010-05-26 20:15:40.647370",
+	"closed": false,
+	"issue": 1240047
+}

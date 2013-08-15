@@ -1,0 +1,116 @@
+{
+	"description": "all: support for NetBSD/ARM (*NOT FOR SUBMISSION*)\ncgo is supported in patch set 3.\n\nhint: \n1. use latest kernel from NetBSD-current with a\nprebuilt SD-card image (2GiB card is enough).\n2. either apply the patch [2] in comment #4 to NetBSD\ngcc or sed -i -e 's/-O2/-O1/' cmd/dist/build.c",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"bsiegert@gmail.com"
+	],
+	"reviewers": [
+		"dave@cheney.net"
+	],
+	"messages": [
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I got throught bootstrap and built cmd/go, but after that I started getting read and write errors on the sdcard. I think we have to wait for a more stable image for the RPi.\n\nI think your changes are good to apply, once you've rolled back the -O0 and arm detect changes.",
+			"disapproval": false,
+			"date": "2013-02-01 01:44:32.192360",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm building this patch now, albeit slowly.\n\nhttps://codereview.appspot.com/7227066/diff/3/src/cmd/dist/arm.c\nFile src/cmd/dist/arm.c (right):\n\nhttps://codereview.appspot.com/7227066/diff/3/src/cmd/dist/arm.c#newcode20\nsrc/cmd/dist/arm.c:20: return \"5\";\nDid this cause the kernel to panic ?\n\nhttps://codereview.appspot.com/7227066/diff/3/src/cmd/dist/build.c\nFile src/cmd/dist/build.c (right):\n\nhttps://codereview.appspot.com/7227066/diff/3/src/cmd/dist/build.c#newcode411\nsrc/cmd/dist/build.c:411: \"-O0\",\nPlease revert this\n\nhttps://codereview.appspot.com/7227066/diff/3/src/pkg/runtime/rt0_netbsd_arm.s\nFile src/pkg/runtime/rt0_netbsd_arm.s (right):\n\nhttps://codereview.appspot.com/7227066/diff/3/src/pkg/runtime/rt0_netbsd_arm.s#newcode5\nsrc/pkg/runtime/rt0_netbsd_arm.s:5: // FreeBSD/NetBSD and Linux use the same linkage to main\nMaybe use a // +build tag here ? Maybe it isn't worth it, this is just one branch during startup.\n\nhttps://codereview.appspot.com/7227066/diff/3/src/pkg/syscall/asm_netbsd_arm.s\nFile src/pkg/syscall/asm_netbsd_arm.s (right):\n\nhttps://codereview.appspot.com/7227066/diff/3/src/pkg/syscall/asm_netbsd_arm.s#newcode110\nsrc/pkg/syscall/asm_netbsd_arm.s:110: MOVW $16(FP), R13 // a4 to a9 are passed on stack\na4 to a6",
+			"disapproval": false,
+			"date": "2013-02-01 01:21:55.352490",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I just got a very very stable NetBSD kernel built, and it performed really\r\nwell\r\nthat I even finished the cgo port.\r\n\r\nPTAL.\r\n\r\nJust built the latest kernel (hint: you can build NetBSD kerne/userland on\r\nalmost every Unix, so no need to install NetBSD first. For example, I built\r\nthe kernel on Linux), and put the generated kernel.img to the fat32 /boot\r\npartition (you can still use the latest pre-built sdcard image).\r\n",
+			"disapproval": false,
+			"date": "2013-02-02 16:54:44.181500",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm just amazed by the fact that enabling cgo together with GOARM=6 can\r\ncrash\r\nthe kernel.\r\nHowever, one can enable either one of those two features (but not both)\r\nwithout\r\nany trouble.\r\n\r\ni have a ugly hack (workarounds) for all these problems in cmd/dist here:\r\nhttps://codereview.appspot.com/7286044/\r\nbut I will try to contact NetBSD team to fix the two bugs before mailing\r\nthat\r\nbag of ugly hacks.\r\n\r\nOn Sun, Feb 3, 2013 at 7:36 AM, Dave Cheney <dave@cheney.net> wrote:\r\n\r\n> > what should we do about this? this bug isn't visible when compiled with\r\n> -O1,\r\n> > so maybe we\r\n> > can do this?\r\n> > diff -r 8696151130b7 src/cmd/dist/build.c\r\n> > --- a/src/cmd/dist/build.c Sun Feb 03 02:36:46 2013 +0800\r\n> > +++ b/src/cmd/dist/build.c Sun Feb 03 06:49:09 2013 +0800\r\n> > @@ -408,7 +408,12 @@\r\n> >   \"-fno-common\",\r\n> >   \"-ggdb\",\r\n> >   \"-pipe\",\r\n> > +#ifdef __NetBSD__\r\n> > + // GCC 4.5.4 (NetBSD nb1 20120916) is known to mis-optimize\r\n> gc/mparith3.c\r\n> > + \"-O1\",\r\n> > +#else\r\n> >   \"-O2\",\r\n> > +#endif\r\n> >  };\r\n>\r\n> I am confused, but probably actually just uneducated, I thought that\r\n> all the BSDs had stuck with gcc 4.2.1, before the move to GPLv3. I\r\n> think there are two options, apply your patch above, or add a check to\r\n> ./make.bash to fail the build if that version of gcc is the default.\r\n> The first is probably the easiest\r\n>\r\nNetBSD base system just uses GCC 4.5.4 and GDB 7.3.1, :-)\r\nit's clearly marked as licensed under gplv3 in the repository, so why\r\nresist it?\r\n\r\n>\r\n> Do you think there is value in creating a small test program, perhaps\r\n> in misc, that is compiled by dist that checks a few things like this.\r\n> We have a similar check inside the runtime that does sanity checks for\r\n> gc.\r\n>\r\nI will try to push the fixes upstream first. the gcc one seems simple enough\r\nto be accepted. the kernel VFP one is more subtle.\r\n\r\n>\r\n> You mentioned you had access to a newer kernel image than the one\r\n> available on the RPi website which resolved the sd card issues, can\r\n> you show me where to get that kernel ?\r\n>\r\nI just compiled the latest kernel from source, compiling them is simple\r\non Unixes (I build them on Linux):\r\n1. get the source (i used git://github.com/jsonn/src.git)\r\n2. cd src\r\n3. ./build.sh -m evbarm tools # this compiles the cross compiling tools\r\n4. ./build.sh -m evbarm -u kernel=RPI # build the default kernel for RPi\r\n5. copy sys/arch/evbarm/compile/obj/RPI/kernel.img to the boot paritition\r\n\r\nI didn't rebuild the whole userland and just used the 20130124 snapshot\r\nimage.\r\nPS: If you don't want to build the kernel from source (it won't take long),\r\ni can provide a copy of mine.\r\n",
+			"disapproval": false,
+			"date": "2013-02-03 17:36:33.922080",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ok, this port is finally finished, and i think all.bash could pass now\r\n(after enlarge some\r\ntime limits) and apply the patch (see [2] below).\r\n\r\nin the past 6 hours, i was troubled by some mysterious test failures like\r\nthis:\r\n--- FAIL: TestSprintf (0.03 seconds)\r\nfmt_test.go:529:        Sprintf(\"%g\", 1.2345675e+06) = \"1.2345675e+06\" want\r\n\"1.2345678e+06\"\r\nfmt_test.go:529:        Sprintf(\"%g\", -7.000000000814907) =\r\n\"-7.000000000814907\" want \"-7\"\r\n\r\nit seems, somehow the softfloat code messed several lower bits of floating\r\npoint number.\r\ni don't understand why, because our softfloat code is tested on every\r\nplatform, and then\r\ni figured it could be due to a faulty gc.\r\n\r\nand indeed, gc can't even correctly handle 1e10!\r\ni don't understand this either, so i just lower the gcc optimization level\r\nin cmd/dist from -O2\r\nto -O0, and needless to say, the floating point bug disappeared.\r\nAfter some lengthy debug, I was able to spot the following error in gcc's\r\ngenerated code for\r\nmpgetflt():\r\nThis C code snippet:\r\nvm >>= 1;\r\nf = (double)(vm);\r\n// ...\r\nGenerates this under -O2:\r\n 5dc:   e1b010a2        lsrs    r1, r2, #1\r\n 5e0:   e1a00061        rrx     r0, r1 // obviously incorrect, as r1 is\r\njust clobbered\r\n 5e4:   eafffff5        b       5c0 <mpgetflt+0x240>\r\n...\r\n 5c0:   ebfffffe        bl      0 <__floatundidf>\r\n 5c4:   e1a02007        mov     r2, r7\r\n 5c8:   ebfffffe        bl      0 <ldexp>\r\n\r\nAfter some digging inside gcc's RTL and comparing NetBSD's copy of gcc with\r\ngcc trunk,\r\ni found this patch [1] solved a similar issue in 2010.\r\n\r\nwhat should we do about this? this bug isn't visible when compiled with\r\n-O1, so maybe we\r\ncan do this?\r\ndiff -r 8696151130b7 src/cmd/dist/build.c\r\n--- a/src/cmd/dist/build.c Sun Feb 03 02:36:46 2013 +0800\r\n+++ b/src/cmd/dist/build.c Sun Feb 03 06:49:09 2013 +0800\r\n@@ -408,7 +408,12 @@\r\n  \"-fno-common\",\r\n  \"-ggdb\",\r\n  \"-pipe\",\r\n+#ifdef __NetBSD__\r\n+ // GCC 4.5.4 (NetBSD nb1 20120916) is known to mis-optimize gc/mparith3.c\r\n+ \"-O1\",\r\n+#else\r\n  \"-O2\",\r\n+#endif\r\n };\r\n\r\n static Vec gccargs;\r\n\r\n\r\n\r\n[1] http://patchwork.ozlabs.org/patch/64562/\r\n[2] patch for NetBSD src:\r\ndiff --git a/external/gpl3/gcc/dist/gcc/config/arm/arm.mdb/external/gpl3/gcc/dist/gcc/config/arm/\r\narm.md\r\nindex 522e984..ac0144a 100644\r\n--- a/external/gpl3/gcc/dist/gcc/config/arm/arm.md\r\n+++ b/external/gpl3/gcc/dist/gcc/config/arm/arm.md\r\n@@ -3189,7 +3189,7 @@\r\n )\r\n\r\n (define_insn \"arm_ashldi3_1bit\"\r\n-  [(set (match_operand:DI            0 \"s_register_operand\" \"=&r,r\")\r\n+  [(set (match_operand:DI            0 \"s_register_operand\" \"=r,&r\")\r\n         (ashift:DI (match_operand:DI 1 \"s_register_operand\" \"0,r\")\r\n                    (const_int 1)))\r\n    (clobber (reg:CC CC_REGNUM))]\r\n@@ -3248,7 +3248,7 @@\r\n )\r\n\r\n (define_insn \"arm_ashrdi3_1bit\"\r\n-  [(set (match_operand:DI              0 \"s_register_operand\" \"=&r,r\")\r\n+  [(set (match_operand:DI              0 \"s_register_operand\" \"=r,&r\")\r\n         (ashiftrt:DI (match_operand:DI 1 \"s_register_operand\" \"0,r\")\r\n                      (const_int 1)))\r\n    (clobber (reg:CC CC_REGNUM))]\r\n@@ -3304,7 +3304,7 @@\r\n )\r\n\r\n (define_insn \"arm_lshrdi3_1bit\"\r\n-  [(set (match_operand:DI              0 \"s_register_operand\" \"=&r,r\")\r\n+  [(set (match_operand:DI              0 \"s_register_operand\" \"=r,&r\")\r\n         (lshiftrt:DI (match_operand:DI 1 \"s_register_operand\" \"0,r\")\r\n                      (const_int 1)))\r\n    (clobber (reg:CC CC_REGNUM))]\r\n",
+			"disapproval": false,
+			"date": "2013-02-02 22:51:29.854310",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> ok, this port is finally finished, and i think all.bash could pass now\r\n> (after enlarge some\r\n> time limits) and apply the patch (see [2] below).\r\n\r\nYes, I had to bump up a lot of the timeouts for freebsd/arm\r\n\r\n#!/bin/bash\r\n\r\nexec sh -c '\r\n        export HOME=/u/builder\r\n        export TMP=/tmp\r\n        export TMPDIR=/tmp\r\n        export GOARM=5\r\n        WORK=/u/work\r\n        TIMEOUT=120m\r\n        exec $HOME/builder -v -buildroot=$WORK -cmdTimeout=$TIMEOUT\r\n-buildTimeout=$TIMEOUT freebsd-arm-pi 2>&1\r\n'\r\n\r\n> in the past 6 hours, i was troubled by some mysterious test failures like\r\n> this:\r\n> --- FAIL: TestSprintf (0.03 seconds)\r\n> fmt_test.go:529:        Sprintf(\"%g\", 1.2345675e+06) = \"1.2345675e+06\" want\r\n> \"1.2345678e+06\"\r\n> fmt_test.go:529:        Sprintf(\"%g\", -7.000000000814907) =\r\n> \"-7.000000000814907\" want \"-7\"\r\n>\r\n> it seems, somehow the softfloat code messed several lower bits of floating\r\n> point number.\r\n> i don't understand why, because our softfloat code is tested on every\r\n> platform, and then\r\n> i figured it could be due to a faulty gc.\r\n>\r\n> and indeed, gc can't even correctly handle 1e10!\r\n> i don't understand this either, so i just lower the gcc optimization level\r\n> in cmd/dist from -O2\r\n> to -O0, and needless to say, the floating point bug disappeared.\r\n> After some lengthy debug, I was able to spot the following error in gcc's\r\n> generated code for\r\n> mpgetflt():\r\n> This C code snippet:\r\n> vm >>= 1;\r\n> f = (double)(vm);\r\n> // ...\r\n> Generates this under -O2:\r\n>  5dc:   e1b010a2        lsrs    r1, r2, #1\r\n>  5e0:   e1a00061        rrx     r0, r1 // obviously incorrect, as r1 is just\r\n> clobbered\r\n>  5e4:   eafffff5        b       5c0 <mpgetflt+0x240>\r\n> ...\r\n>  5c0:   ebfffffe        bl      0 <__floatundidf>\r\n>  5c4:   e1a02007        mov     r2, r7\r\n>  5c8:   ebfffffe        bl      0 <ldexp>\r\n>\r\n> After some digging inside gcc's RTL and comparing NetBSD's copy of gcc with\r\n> gcc trunk,\r\n> i found this patch [1] solved a similar issue in 2010.\r\n\r\nWow, epic debugging win.\r\n\r\n> what should we do about this? this bug isn't visible when compiled with -O1,\r\n> so maybe we\r\n> can do this?\r\n> diff -r 8696151130b7 src/cmd/dist/build.c\r\n> --- a/src/cmd/dist/build.c Sun Feb 03 02:36:46 2013 +0800\r\n> +++ b/src/cmd/dist/build.c Sun Feb 03 06:49:09 2013 +0800\r\n> @@ -408,7 +408,12 @@\r\n>   \"-fno-common\",\r\n>   \"-ggdb\",\r\n>   \"-pipe\",\r\n> +#ifdef __NetBSD__\r\n> + // GCC 4.5.4 (NetBSD nb1 20120916) is known to mis-optimize gc/mparith3.c\r\n> + \"-O1\",\r\n> +#else\r\n>   \"-O2\",\r\n> +#endif\r\n>  };\r\n\r\nI am confused, but probably actually just uneducated, I thought that\r\nall the BSDs had stuck with gcc 4.2.1, before the move to GPLv3. I\r\nthink there are two options, apply your patch above, or add a check to\r\n./make.bash to fail the build if that version of gcc is the default.\r\nThe first is probably the easiest\r\n\r\nDo you think there is value in creating a small test program, perhaps\r\nin misc, that is compiled by dist that checks a few things like this.\r\nWe have a similar check inside the runtime that does sanity checks for\r\ngc.\r\n\r\n>  static Vec gccargs;\r\n>\r\n>\r\n>\r\n> [1] http://patchwork.ozlabs.org/patch/64562/\r\n> [2] patch for NetBSD src:\r\n> diff --git a/external/gpl3/gcc/dist/gcc/config/arm/arm.md\r\n> b/external/gpl3/gcc/dist/gcc/config/arm/arm.md\r\n> index 522e984..ac0144a 100644\r\n> --- a/external/gpl3/gcc/dist/gcc/config/arm/arm.md\r\n> +++ b/external/gpl3/gcc/dist/gcc/config/arm/arm.md\r\n> @@ -3189,7 +3189,7 @@\r\n>  )\r\n>\r\n>  (define_insn \"arm_ashldi3_1bit\"\r\n> -  [(set (match_operand:DI            0 \"s_register_operand\" \"=&r,r\")\r\n> +  [(set (match_operand:DI            0 \"s_register_operand\" \"=r,&r\")\r\n>          (ashift:DI (match_operand:DI 1 \"s_register_operand\" \"0,r\")\r\n>                     (const_int 1)))\r\n>     (clobber (reg:CC CC_REGNUM))]\r\n> @@ -3248,7 +3248,7 @@\r\n>  )\r\n>\r\n>  (define_insn \"arm_ashrdi3_1bit\"\r\n> -  [(set (match_operand:DI              0 \"s_register_operand\" \"=&r,r\")\r\n> +  [(set (match_operand:DI              0 \"s_register_operand\" \"=r,&r\")\r\n>          (ashiftrt:DI (match_operand:DI 1 \"s_register_operand\" \"0,r\")\r\n>                       (const_int 1)))\r\n>     (clobber (reg:CC CC_REGNUM))]\r\n> @@ -3304,7 +3304,7 @@\r\n>  )\r\n>\r\n>  (define_insn \"arm_lshrdi3_1bit\"\r\n> -  [(set (match_operand:DI              0 \"s_register_operand\" \"=&r,r\")\r\n> +  [(set (match_operand:DI              0 \"s_register_operand\" \"=r,&r\")\r\n>          (lshiftrt:DI (match_operand:DI 1 \"s_register_operand\" \"0,r\")\r\n>                       (const_int 1)))\r\n>     (clobber (reg:CC CC_REGNUM))]\r\n>\r\n\r\nYou mentioned you had access to a newer kernel image than the one\r\navailable on the RPi website which resolved the sd card issues, can\r\nyou show me where to get that kernel ?\r\n",
+			"disapproval": false,
+			"date": "2013-02-02 23:36:44.842120",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "> I'm just amazed by the fact that enabling cgo together with GOARM=6 can\r\n> crash\r\n> the kernel.\r\n> However, one can enable either one of those two features (but not both)\r\n> without\r\n> any trouble.\r\n\r\nI have the same problem with freebsd/arm. The VFP detection code used\r\nto crash the kernel, but they fixed that, now a vfp detection passes,\r\nbut a vfp enabled go binary will crash the kernel, hence GOARM=5. Best\r\nI can make out the kernel mode is not saving the VFP registers\r\nproperly. As an observation, not may folks are supporting VFP2.\r\n\r\n> i have a ugly hack (workarounds) for all these problems in cmd/dist here:\r\n> https://codereview.appspot.com/7286044/\r\n> but I will try to contact NetBSD team to fix the two bugs before mailing\r\n> that\r\n> bag of ugly hacks.\r\n\r\nIf you can get the fix into NetBSD then that would be preferable to\r\n-O1 in my mind. Maybe a middle ground for cmd/dist is to use an #ifdef\r\nto hard code GOARM=5 for freebsd and netbsd?\r\n\r\n> NetBSD base system just uses GCC 4.5.4 and GDB 7.3.1, :-)\r\n> it's clearly marked as licensed under gplv3 in the repository, so why resist\r\n> it?\r\n\r\nInteresting, gdb 7.x is available in freebsd ports. but there is no\r\narm support, does the NetBSD gdb 7.3.1 support arm ?\r\n\r\n> I will try to push the fixes upstream first. the gcc one seems simple enough\r\n> to be accepted. the kernel VFP one is more subtle.\r\n\r\nFair enough, it is a lot of work, and only really useful during porting.\r\n\r\n> I just compiled the latest kernel from source, compiling them is simple\r\n> on Unixes (I build them on Linux):\r\n> 1. get the source (i used git://github.com/jsonn/src.git)\r\n> 2. cd src\r\n> 3. ./build.sh -m evbarm tools # this compiles the cross compiling tools\r\n> 4. ./build.sh -m evbarm -u kernel=RPI # build the default kernel for RPi\r\n> 5. copy sys/arch/evbarm/compile/obj/RPI/kernel.img to the boot paritition\r\n\r\nThat is pretty neat, I'll give it a go.\r\n",
+			"disapproval": false,
+			"date": "2013-02-03 22:55:26.970640",
+			"approval": false
+		},
+		{
+			"sender": "minux.ma@gmail.com",
+			"recipients": [
+				"minux.ma@gmail.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"bsiegert@gmail.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=close",
+			"disapproval": false,
+			"date": "2013-07-23 19:34:24.616950",
+			"approval": false
+		}
+	],
+	"owner_email": "minux.ma@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "minux",
+	"subject": "all: support for NetBSD/ARM (*NOT FOR SUBMISSION*)",
+	"created": "2013-01-31 22:42:02.536610",
+	"patchsets": [
+		1,
+		3,
+		9001,
+		15001,
+		18001
+	],
+	"modified": "2013-07-23 19:34:24.785280",
+	"closed": false,
+	"issue": 7227066
+}

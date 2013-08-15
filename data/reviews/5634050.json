@@ -1,0 +1,239 @@
+{
+	"description": "runtime: drop to 32 bit malloc if 64 bit will not work\n\nOn 64 bit UML it is not possible to reserve memory at 0xF8<<32.\nDetect when linux cannot use these high virtual memory addresses\nand drop back to the 32 bit memory allocator.",
+	"cc": [
+		"rsc@golang.org",
+		"cw@f00f.org",
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What calls the functions you changed in mem_linux.c?\nCan the change go there instead (at the call sites)?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-06 19:37:01.724074",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5634050/diff/6001/src/pkg/runtime/mem_linux.c\nFile src/pkg/runtime/mem_linux.c (right):\n\nhttp://codereview.appspot.com/5634050/diff/6001/src/pkg/runtime/mem_linux.c#newcode76\nsrc/pkg/runtime/mem_linux.c:76: // if we can reserve at least 64K and check the assumption in SysMap.\n// Only user-mode Linux (UML) rejects these requests.\n\nhttp://codereview.appspot.com/5634050/diff/6001/src/pkg/runtime/mem_linux.c#newcode77\nsrc/pkg/runtime/mem_linux.c:77: if(sizeof(void*) == 8) {\nif(sizeof(void*) == 8 && (uintptr)v >= 0xffffffffU) {\n\nhttp://codereview.appspot.com/5634050/diff/6001/src/pkg/runtime/mem_linux.c#newcode103\nsrc/pkg/runtime/mem_linux.c:103: if(sizeof(void*) == 8) {\nif(sizeof(void*) == 8 && (uintptr)v >= 0xffffffffU) {",
+			"disapproval": false,
+			"date": "2012-02-06 20:43:39.553900",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Feb 6, 2012 at 16:11,  <borman@google.com> wrote:\n> But shouldn't this be > and not >=? \u00a0Or does the 32 bit build complain\n> otherwise?\n\nIt seems much safer to use >= and not leave room for complaint.\nThese are aligned addresses so it's not any different.\n\nThanks for making the changes; please hg mail 5634050.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2012-02-06 22:58:30.960357",
+			"approval": false
+		},
+		{
+			"sender": "borman@google.com",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5634050/diff/6001/src/pkg/runtime/mem_linux.c\nFile src/pkg/runtime/mem_linux.c (right):\n\nhttp://codereview.appspot.com/5634050/diff/6001/src/pkg/runtime/mem_linux.c#newcode76\nsrc/pkg/runtime/mem_linux.c:76: // if we can reserve at least 64K and check the assumption in SysMap.\nOn 2012/02/06 20:43:39, rsc wrote:\n> // Only user-mode Linux (UML) rejects these requests.\n\nDone.\n\nhttp://codereview.appspot.com/5634050/diff/6001/src/pkg/runtime/mem_linux.c#newcode77\nsrc/pkg/runtime/mem_linux.c:77: if(sizeof(void*) == 8) {\nOn 2012/02/06 20:43:39, rsc wrote:\n> if(sizeof(void*) == 8 && (uintptr)v >= 0xffffffffU) {\n\nDone.\n\nBut shouldn't this be > and not >=?  Or does the 32 bit build complain otherwise?\n\nhttp://codereview.appspot.com/5634050/diff/6001/src/pkg/runtime/mem_linux.c#newcode103\nsrc/pkg/runtime/mem_linux.c:103: if(sizeof(void*) == 8) {\nOn 2012/02/06 20:43:39, rsc wrote:\n> if(sizeof(void*) == 8 && (uintptr)v >= 0xffffffffU) {\n\nDone.",
+			"disapproval": false,
+			"date": "2012-02-06 21:11:36.108168",
+			"approval": false
+		},
+		{
+			"sender": "borman@google.com",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I am not sure I can easily do this without editing mem_linux.c.\n\nhttp://codereview.appspot.com/5634050/diff/2001/src/pkg/runtime/malloc.goc\nFile src/pkg/runtime/malloc.goc (right):\n\nhttp://codereview.appspot.com/5634050/diff/2001/src/pkg/runtime/malloc.goc#newcode364\nsrc/pkg/runtime/malloc.goc:364: if(sizeof(void*) == 8 && (uintptr)(h->bitmap) >= (1ULL << 32))\nOn 2012/02/06 19:08:43, rsc wrote:\n> drop unnecessary () around h->bitmap\n\nDone.\n\nhttp://codereview.appspot.com/5634050/diff/2001/src/pkg/runtime/mem_linux.c\nFile src/pkg/runtime/mem_linux.c (right):\n\nhttp://codereview.appspot.com/5634050/diff/2001/src/pkg/runtime/mem_linux.c#newcode12\nsrc/pkg/runtime/mem_linux.c:12: #define USE64(v) (sizeof(void*) == 8 && (uintptr)(v) >= (1ULL<<32))\nOn 2012/02/06 19:08:43, rsc wrote:\n> This is pushing logic from portable code into OS-specific code.\n> If it's not appropriate for SysReserve, SysMap to do anything,\n> the portable code should avoid calling them.\n> \n> There should be no changes to this file.\n\nI see two problems if we don't change this code.   First, this code masks the failure until after the arena is set up (I don't think we want an mmap in the portable code).  Second, this code assumes that on 64 bit architectures we will always use the 64 bit algorithm.  This is not always true now.\n\nI am open to any suggestion on how to resolve those two issues.",
+			"disapproval": false,
+			"date": "2012-02-06 19:32:32.014777",
+			"approval": false
+		},
+		{
+			"sender": "borman@google.com",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-02-06 19:32:05.772051",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Why not try the region between 1<<32 and 0xf8<<32?  Is the complexity not worth the few extra bits?",
+			"disapproval": false,
+			"date": "2012-02-06 20:27:16.353254",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This seems small and reasonable.  Minor comments below.\nPlease run hg mail 5634050 when you're ready for another review;\nthat will CC golang-dev.\n\nThanks.\n\nhttp://codereview.appspot.com/5634050/diff/2001/src/pkg/runtime/malloc.goc\nFile src/pkg/runtime/malloc.goc (right):\n\nhttp://codereview.appspot.com/5634050/diff/2001/src/pkg/runtime/malloc.goc#newcode364\nsrc/pkg/runtime/malloc.goc:364: if(sizeof(void*) == 8 && (uintptr)(h->bitmap) >= (1ULL << 32))\ndrop unnecessary () around h->bitmap\n\nhttp://codereview.appspot.com/5634050/diff/2001/src/pkg/runtime/mem_linux.c\nFile src/pkg/runtime/mem_linux.c (right):\n\nhttp://codereview.appspot.com/5634050/diff/2001/src/pkg/runtime/mem_linux.c#newcode12\nsrc/pkg/runtime/mem_linux.c:12: #define USE64(v) (sizeof(void*) == 8 && (uintptr)(v) >= (1ULL<<32))\nThis is pushing logic from portable code into OS-specific code.\nIf it's not appropriate for SysReserve, SysMap to do anything,\nthe portable code should avoid calling them.\n\nThere should be no changes to this file.",
+			"disapproval": false,
+			"date": "2012-02-06 19:08:43.508047",
+			"approval": false
+		},
+		{
+			"sender": "borman@google.com",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/06 19:37:01, rsc wrote:\n> What calls the functions you changed in mem_linux.c?\n> Can the change go there instead (at the call sites)?\n> \n> Russ\n\nIt is malloc.goc:296 that makes this call.  Trying to move this logic up seems to require that malloc.goc use the mmap system call.  I think this change (I removed the other checks, I think it should work without them) needs to stay here.",
+			"disapproval": false,
+			"date": "2012-02-06 19:59:56.042147",
+			"approval": false
+		},
+		{
+			"sender": "borman@google.com",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/06 20:27:16, cw wrote:\n> Why not try the region between 1<<32 and 0xf8<<32?  Is the complexity not worth\n> the few extra bits?\n\nThe issue appears to happen only with UML.  Anything more than 32 bits fail IIRC so you will end up with the 32 bit allocator anyhow.",
+			"disapproval": false,
+			"date": "2012-02-06 20:39:54.429409",
+			"approval": false
+		},
+		{
+			"sender": "borman@google.com",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/02/06 22:58:30, rsc wrote:\n> On Mon, Feb 6, 2012 at 16:11,  <mailto:borman@google.com> wrote:\n> > But shouldn't this be > and not >=? &nbsp;Or does the 32 bit build complain\n> > otherwise?\n> \n> It seems much safer to use >= and not leave room for complaint.\n> These are aligned addresses so it's not any different.\n> \n> Thanks for making the changes; please hg mail 5634050.\n> \n> Russ\n\nOkay, I also fixed the same expression in malloc.goc.\nDoing the hg mail now.",
+			"disapproval": false,
+			"date": "2012-02-06 23:29:45.368597",
+			"approval": false
+		},
+		{
+			"sender": "borman@google.com",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello rsc@golang.org, cw@f00f.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-02-06 23:29:57.996570",
+			"approval": false
+		},
+		{
+			"sender": "cw@f00f.org",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-02-07 00:55:25.936051",
+			"approval": true
+		},
+		{
+			"sender": "borman@google.com",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "ping -- just to make sure this does not fall through the cracks",
+			"disapproval": false,
+			"date": "2012-02-08 19:22:46.894221",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=36c9c7810f14 ***\n\nruntime: drop to 32 bit malloc if 64 bit will not work\n\nOn 64 bit UML it is not possible to reserve memory at 0xF8<<32.\nDetect when linux cannot use these high virtual memory addresses\nand drop back to the 32 bit memory allocator.\n\nR=rsc, cw\nCC=golang-dev\nhttp://codereview.appspot.com/5634050\n\nCommitter: Russ Cox <rsc@golang.org>",
+			"disapproval": false,
+			"date": "2012-02-08 19:39:19.993682",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"borman@google.com",
+				"rsc@golang.org",
+				"cw@f00f.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM",
+			"disapproval": false,
+			"date": "2012-02-08 19:33:09.730934",
+			"approval": true
+		}
+	],
+	"owner_email": "borman@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "borman",
+	"subject": "code review 5634050: runtime: drop to 32 bit malloc if 64 bit will not work",
+	"created": "2012-02-06 18:48:06.264585",
+	"patchsets": [
+		1,
+		1002,
+		2001,
+		4002,
+		6001,
+		8001
+	],
+	"modified": "2012-02-08 19:33:09.730934",
+	"closed": false,
+	"issue": 5634050
+}

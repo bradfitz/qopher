@@ -1,0 +1,200 @@
+{
+	"description": "net/http/cookiejar: A cookie jar implementation.\n\nThis implementation is a very simple one: Cookies are\nstored in a unsorted, flat slice.  All operations\n(insert, update, delete, retrieve) are painfully slow\nat the moment but the test cases should cover all\naspects of cookie handling.\n\nStill missing are:\n  - host/domain name canonicalization (this will need\n    additional tables)\n  - an exported method to persist the persistent cookies",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "jeff@somethingsimilar.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"jeff@somethingsimilar.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Could you uncomment the tests in TestRedirectCookiesOnRequest in net/http/client_test.go and make sure they pass? They seem to be failing when I run them with your code.",
+			"disapproval": false,
+			"date": "2012-01-17 04:10:29.287537",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This got rather lengthy even in its unfinished state.\n\nAny comments welcome.\n\nThe non-http stuff could be simplified (just ignoring\nany non-http/https protocol) but I wanted to try all\nthe testcases first.\n\nV.",
+			"disapproval": false,
+			"date": "2012-01-17 00:49:14.735533",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I think the testcase is broken: If the second c..Do uses the same\nclient as the first, it will use the same cookie jar. And this jar\ncontains cookies from the redirect chain triggered by the first\nc.Do.\n\nfunc TestRedirectCookiesOnRequest(t *testing.T) {\n\tvar ts *httptest.Server\n\tts = httptest.NewServer(echoCookiesRedirectHandler)\n\tdefer ts.Close()\n\tc := &Client{}\n\tc.Jar = cookiejar.New(100,100,100)\n\treq, _ := NewRequest(\"GET\", ts.URL, nil)\n\treq.AddCookie(expectedCookies[0])\n\t_ = c\n\tresp, _ := c.Do(req)\n\tmatchReturnedCookies(t, expectedCookies, resp.Cookies())\n\n\treq, _ = NewRequest(\"GET\", ts.URL, nil)\n\tresp, _ = c.Do(req)\n\tmatchReturnedCookies(t, expectedCookies[1:], resp.Cookies())  // BROKEN\n\n\t/*\n\t CC: ChocolateChips; F: First; S: Second\n\n\t jar is empty\n\t req1.AddCookie(CC)                         // manualy added CC to request\n\t c.Do(req1):\n\t     -->  GET / (CC)                              // CC cookie from to requets\n             <--  302 to /second (Set CC; F)        // CC echoed back,\nadditional F\n\t     store CC and F in jar\n\t     -->  GET /second (CC; F)               // both CC and F from jar\n\t     <--  200 (Set CC; F; S)                  // echo CC and F, add S\n\t     update CC and F, store S\n\t 3 cookies recieved\n\n  \t jar contains CC; F; S\n\t\n\t c.Do(fresh_req):                                     // will use same jar!\n\t     -->  GET / (CC; F; S)                          // CC, F and S from jar!\n             <--  302 to /second (Set CC; F; S; F)  // echo all and add F\n             update jar                                         // no\nreal change, still contains CC,F,S\n\t     -->  GET /second (CC; F; S)              // all from jar\n\t     <--  200 (Set CC; F; S; S)                 // echo CC,F,S add S\n\t     update CC,F,S and S a second time\n  \t here 4 cookies are recieved: CC, F, S and S\n\t */\n}\n\nI am not sure if the whole second (fresh) request can test anything\nuseful if it uses the same, filled jar without further modification (cookie\nrestricted to path, expired, etc.)\n\nCorrect me if I am wrong!\n\nVolker\n\nOn 1/17/12, jeff@somethingsimilar.com <jeff@somethingsimilar.com> wrote:\n> Could you uncomment the tests in TestRedirectCookiesOnRequest in\n> net/http/client_test.go and make sure they pass? They seem to be failing\n> when I run them with your code.\n>\n> http://codereview.appspot.com/5544082/\n>\n\n\n-- \nDr. Volker Dobler\n",
+			"disapproval": false,
+			"date": "2012-01-17 10:18:18.870209",
+			"approval": false
+		},
+		{
+			"sender": "jeff@somethingsimilar.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Volker and I accidentally went offline. We agreed that this test was\nwrong and that a nil Jar should mean \"don't pass cookies\". It should\nprobably be removed.\n\nOn Tue, Jan 17, 2012 at 2:18 AM, Volker Dobler\n<dr.volker.dobler@gmail.com> wrote:\n> I think the testcase is broken: If the second c..Do uses the same\n> client as the first, it will use the same cookie jar. And this jar\n> contains cookies from the redirect chain triggered by the first\n> c.Do.\n>\n> func TestRedirectCookiesOnRequest(t *testing.T) {\n> \u00a0 \u00a0 \u00a0 \u00a0var ts *httptest.Server\n> \u00a0 \u00a0 \u00a0 \u00a0ts = httptest.NewServer(echoCookiesRedirectHandler)\n> \u00a0 \u00a0 \u00a0 \u00a0defer ts.Close()\n> \u00a0 \u00a0 \u00a0 \u00a0c := &Client{}\n> \u00a0 \u00a0 \u00a0 \u00a0c.Jar = cookiejar.New(100,100,100)\n> \u00a0 \u00a0 \u00a0 \u00a0req, _ := NewRequest(\"GET\", ts.URL, nil)\n> \u00a0 \u00a0 \u00a0 \u00a0req.AddCookie(expectedCookies[0])\n> \u00a0 \u00a0 \u00a0 \u00a0_ = c\n> \u00a0 \u00a0 \u00a0 \u00a0resp, _ := c.Do(req)\n> \u00a0 \u00a0 \u00a0 \u00a0matchReturnedCookies(t, expectedCookies, resp.Cookies())\n>\n> \u00a0 \u00a0 \u00a0 \u00a0req, _ = NewRequest(\"GET\", ts.URL, nil)\n> \u00a0 \u00a0 \u00a0 \u00a0resp, _ = c.Do(req)\n> \u00a0 \u00a0 \u00a0 \u00a0matchReturnedCookies(t, expectedCookies[1:], resp.Cookies()) \u00a0// BROKEN\n>\n> \u00a0 \u00a0 \u00a0 \u00a0/*\n> \u00a0 \u00a0 \u00a0 \u00a0 CC: ChocolateChips; F: First; S: Second\n>\n> \u00a0 \u00a0 \u00a0 \u00a0 jar is empty\n> \u00a0 \u00a0 \u00a0 \u00a0 req1.AddCookie(CC) \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // manualy added CC to request\n> \u00a0 \u00a0 \u00a0 \u00a0 c.Do(req1):\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 --> \u00a0GET / (CC) \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0// CC cookie from to requets\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 <-- \u00a0302 to /second (Set CC; F) \u00a0 \u00a0 \u00a0 \u00a0// CC echoed back,\n> additional F\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 store CC and F in jar\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 --> \u00a0GET /second (CC; F) \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // both CC and F from jar\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 <-- \u00a0200 (Set CC; F; S) \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0// echo CC and F, add S\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 update CC and F, store S\n> \u00a0 \u00a0 \u00a0 \u00a0 3 cookies recieved\n>\n> \u00a0 \u00a0 \u00a0 \u00a0 jar contains CC; F; S\n>\n> \u00a0 \u00a0 \u00a0 \u00a0 c.Do(fresh_req): \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // will use same jar!\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 --> \u00a0GET / (CC; F; S) \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0// CC, F and S from jar!\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 <-- \u00a0302 to /second (Set CC; F; S; F) \u00a0// echo all and add F\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 update jar \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // no\n> real change, still contains CC,F,S\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 --> \u00a0GET /second (CC; F; S) \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0// all from jar\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 <-- \u00a0200 (Set CC; F; S; S) \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 // echo CC,F,S add S\n> \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 update CC,F,S and S a second time\n> \u00a0 \u00a0 \u00a0 \u00a0 here 4 cookies are recieved: CC, F, S and S\n> \u00a0 \u00a0 \u00a0 \u00a0 */\n> }\n>\n> I am not sure if the whole second (fresh) request can test anything\n> useful if it uses the same, filled jar without further modification (cookie\n> restricted to path, expired, etc.)\n>\n> Correct me if I am wrong!\n>\n> Volker\n>\n> On 1/17/12, jeff@somethingsimilar.com <jeff@somethingsimilar.com> wrote:\n>> Could you uncomment the tests in TestRedirectCookiesOnRequest in\n>> net/http/client_test.go and make sure they pass? They seem to be failing\n>> when I run them with your code.\n>>\n>> http://codereview.appspot.com/5544082/\n>>\n>\n>\n> --\n> Dr. Volker Dobler\n",
+			"disapproval": false,
+			"date": "2012-01-18 05:53:21.509766",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"jeff@somethingsimilar.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello jeff@somethingsimilar.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-20 17:17:17.111602",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"jeff@somethingsimilar.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=bradfitz?",
+			"disapproval": false,
+			"date": "2012-01-19 21:10:38.250848",
+			"approval": false
+		},
+		{
+			"sender": "jeff@somethingsimilar.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"jeff@somethingsimilar.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I haven't had the chance to review more beyond the first few files. Sending this before I forget to.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go\nFile src/pkg/net/http/cookiejar/cookie.go (right):\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go#newcode38\nsrc/pkg/net/http/cookiejar/cookie.go:38: // shouldSendCookie determines whether to send cookie via a secure/nonHttp request\ns/shouldSendCookie/shouldSend/\n\nThe other way may be more clear.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go#newcode45\nsrc/pkg/net/http/cookiejar/cookie.go:45: httpProtocol(c.HttpOnly, !nonHttp)\nThis double negative is troublesome.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go#newcode75\nsrc/pkg/net/http/cookiejar/cookie.go:75: return !c.HostOnly && strings.HasSuffix(host, \".\"+c.Domain)\nWhat happens if c.Domain has a dot at the front? (I think it's expected to?)\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go#newcode97\nsrc/pkg/net/http/cookiejar/cookie.go:97: } else if requestPath[len(c.Path)] == '/' {\nWhen requestPath and c.Path are the same size, this will error.\n\nA better way might be to use strings.LastIndex and reuse that for both of these conditionals.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go\nFile src/pkg/net/http/cookiejar/jar.go (right):\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go#newcode109\nsrc/pkg/net/http/cookiejar/jar.go:109: for _, cookie := range jar.cookies {\nThis seems a little much just to get access to the cookies. Why not do this inline and return an array?\n\nAlso, I don't see a jar.lock.Lock() here. Are you sure we don't need it?\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go#newcode369\nsrc/pkg/net/http/cookiejar/jar.go:369: runtime.GC()\nRemove.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go#newcode425\nsrc/pkg/net/http/cookiejar/jar.go:425: nonHttp := isNonHttp(u)\nDouble negatives are a pain to deal with. \n\nAlso, Go conventions are to capitalize all the letters in an acronym.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go#newcode426\nsrc/pkg/net/http/cookiejar/jar.go:426: /*\nRemove.",
+			"disapproval": false,
+			"date": "2012-01-20 00:13:03.952586",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"jeff@somethingsimilar.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "The main questions which IMHO have to be answered before\ndiging into details of the code are:\n\nA) API of Jar:\n    - naming of constructors\n    - Access to cookies, currently the unsuitable All()\n    - persistence/saving/reading a jar\n    - additional exported methods?\n\nB) Behaviour: is the strict/non-strict switch\n   the proper way to be a bit more browser like?\n   Is this (host cookies for IP addresses) needed?\n\nC) Do the test cases cover all the necessary cases\n   and are they correct?\n\nD) Are the benchmarks meaningful?\n\nOnce C and D are setteled I'll replace the dead\nstupid implementation with something less embarrassing...\nBut i'd like to have a testsuite ready which proves\nthe impl works.\n\nVolker\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go\nFile src/pkg/net/http/cookiejar/cookie.go (right):\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go#newcode38\nsrc/pkg/net/http/cookiejar/cookie.go:38: // shouldSendCookie determines whether to send cookie via a secure/nonHttp request\nOn 2012/01/20 00:13:04, jmhodges wrote:\n> s/shouldSendCookie/shouldSend/\n> \n> The other way may be more clear.\n\nDone.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go#newcode45\nsrc/pkg/net/http/cookiejar/cookie.go:45: httpProtocol(c.HttpOnly, !nonHttp)\nOn 2012/01/20 00:13:04, jmhodges wrote:\n> This double negative is troublesome.\n\nDone.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go#newcode75\nsrc/pkg/net/http/cookiejar/cookie.go:75: return !c.HostOnly && strings.HasSuffix(host, \".\"+c.Domain)\nOn 2012/01/20 00:13:04, jmhodges wrote:\n> What happens if c.Domain has a dot at the front? (I think it's expected to?)\n\ncookiejar.Cookie.Domain never starts with a dot, it is\nstripped (if present) in domainAndType().\nLeading dots for domain cookies are not required:\nhttp://tools.ietf.org/html/rfc6265#section-5.2.3\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/cookie.go#newcode97\nsrc/pkg/net/http/cookiejar/cookie.go:97: } else if requestPath[len(c.Path)] == '/' {\nOn 2012/01/20 00:13:04, jmhodges wrote:\n> When requestPath and c.Path are the same size, this will error.\n\nNo: If this line is reached, than requestPath has c.Path\nas a prefix. So they are identiacal if there length are\nthe same. But requestPath==c.Path is handled above, so\nthis will not fail. (I know: such brain twisters are\nnot good code, but see below)\n\n> A better way might be to use strings.LastIndex and reuse that for both of these\n> conditionals.\n\nYes! The algorithm is a direct translation of the spec.\nI thought about having an algorithm which is\nspec-conforming, set up the testcases and optimise\nthe algos/ds afterwards. \nAdded your comment as TODO.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go\nFile src/pkg/net/http/cookiejar/jar.go (right):\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go#newcode109\nsrc/pkg/net/http/cookiejar/jar.go:109: for _, cookie := range jar.cookies {\nOn 2012/01/20 00:13:04, jmhodges wrote:\n> This seems a little much just to get access to the cookies. Why not do this\n> inline and return an array?\n> \n> Also, I don't see a jar.lock.Lock() here. Are you sure we don't need it?\nNo, I forgot it (as well as close(ch)). \nI totaly aggree that this function is bad. \n\nWe should have A) a way to persist the\n(non-expired) persistent cookies and read them back.\nAnd we should have B) a way to get access to all (valid\ni.e. non-expired) cookies in the jar.\nFor the first issue I was thinking about gob, the\nsecond resulted in this broken hack.\n\nHow should the interface look like? \nFor the access to all valid cookies: It might be\ntricky if a copy is returned as the cookies\nin the jar might change while some goroutine decides\nbased on the copy what to do. Maybe we have too add\nextra methods like Delete(domain, path, name string)\nor DeleteAll(domain string)...\n\nFor the persistence i thought of providing \nGob{En,De}coder. Encoding could be simple,\nbut during decoding there is no need to read all\npersisted cookies back, ony the non-expired\nneed to be processed.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go#newcode369\nsrc/pkg/net/http/cookiejar/jar.go:369: runtime.GC()\nOn 2012/01/20 00:13:04, jmhodges wrote:\n> Remove.\n\nDone.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go#newcode425\nsrc/pkg/net/http/cookiejar/jar.go:425: nonHttp := isNonHttp(u)\nOn 2012/01/20 00:13:04, jmhodges wrote:\n> Double negatives are a pain to deal with. \n> \n> Also, Go conventions are to capitalize all the letters in an acronym.\n\nDone.\n\nhttp://codereview.appspot.com/5544082/diff/2001/src/pkg/net/http/cookiejar/jar.go#newcode426\nsrc/pkg/net/http/cookiejar/jar.go:426: /*\nOn 2012/01/20 00:13:04, jmhodges wrote:\n> Remove.\n\nBrad suggested to have an \"http only\" cookie jar,\nso I just uncommented it (elsewhere too) and commented\nout the http/nonhttp testcases.",
+			"disapproval": false,
+			"date": "2012-01-20 17:30:30.507324",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'll review this also.\n On Jan 19, 2012 1:10 PM, <rsc@golang.org> wrote:\n\n> R=bradfitz?\n>\n>\n> http://codereview.appspot.com/**5544082/<http://codereview.appspot.com/5544082/>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-20 00:16:56.181370",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"jeff@somethingsimilar.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/5544082/diff/7002/src/pkg/net/http/cookiejar/jar.go\nFile src/pkg/net/http/cookiejar/jar.go (right):\n\nhttp://codereview.appspot.com/5544082/diff/7002/src/pkg/net/http/cookiejar/jar.go#newcode24\nsrc/pkg/net/http/cookiejar/jar.go:24: var RejectPublicSuffixes = true\nI don't want this controlled by a global variable. It should be a property of the jar.\n\nhttp://codereview.appspot.com/5544082/diff/7002/src/pkg/net/http/cookiejar/jar.go#newcode31\nsrc/pkg/net/http/cookiejar/jar.go:31: lock    sync.Mutex // the BKL of our jar. TODO(vodo) replace by RWMutex\nthis guards everything? the AllCookies method below doesn't use it.\n\nhttp://codereview.appspot.com/5544082/diff/7002/src/pkg/net/http/cookiejar/jar.go#newcode50\nsrc/pkg/net/http/cookiejar/jar.go:50: func NewCustomJar(maxCookiesPerDomain, maxTotalCookies, maxBytesPerCookie int, strict bool) *Jar {\ntoo many position parameters of the same type.\n\ncould users just create a &cookiejar.Jar{MaxCookiesPerDomain: 5} and have the zero values mean some defaults, specified as consts?\n\nthen you can remove NewCustomJar.\n\nhttp://codereview.appspot.com/5544082/diff/7002/src/pkg/net/http/cookiejar/jar.go#newcode53\nsrc/pkg/net/http/cookiejar/jar.go:53: jar.cookies = make([]Cookie, 0, 16)\nthis can just be lazily initialized.",
+			"disapproval": false,
+			"date": "2012-01-25 16:47:55.984818",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "excellent!\n\nOn Wed, Jan 25, 2012 at 1:29 PM, <dr.volker.dobler@gmail.com> wrote:\n\n> Hi,\n>\n> Currently this is the only suitable way.\n> As an external library I can use go-idn\n> (http://code.google.com/p/go-**idn/ <http://code.google.com/p/go-idn/>)\n> to get\n> canonical host names which will make the jar\n> really RFC 6265 conforming.  Expect a version\n> on github which should be usable after my\n> holidays.\n>\n> Volker\n>\n> http://codereview.appspot.com/**5544082/<http://codereview.appspot.com/5544082/>\n>\n",
+			"disapproval": false,
+			"date": "2012-01-25 22:18:58.476370",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"jeff@somethingsimilar.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi.\n\nI think it's important to have a package that provides a\nreasonable in-memory-only implementation of http.CookieJar\nand also provides helper functions that might allow someone\nto implement persistent jars without duplicating work.\nThanks very much for working on this.\n\nWe're getting to the point in the Go 1 release process,\nwhere we only want to be fixing bugs, not adding new code,\nand not designing new APIs that we won't have time to\nuse in anger before committing to them.\n\nI think we should postpone this CL until after Go 1 is done.\nVolker, if you want to run this code before then, my suggestion\nwould be to post it on code.google.com or github so that we\ncan use go get to install and use it.  Please ping us once \nGo 1 is out so that we can continue this discussion.\n\nI have updated issue 1960 to point to this CL and to note\nthat we're waiting until after Go 1.  If you do post the code\nin an external repository, please add a link to that issue.\nhttp://code.google.com/p/go/issues/detail?id=1960\n\nThanks.\nRuss",
+			"disapproval": false,
+			"date": "2012-01-25 21:12:36.120367",
+			"approval": false
+		},
+		{
+			"sender": "dr.volker.dobler@gmail.com",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"jeff@somethingsimilar.com",
+				"bradfitz@golang.org",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hi,\n\nCurrently this is the only suitable way.\nAs an external library I can use go-idn\n(http://code.google.com/p/go-idn/) to get \ncanonical host names which will make the jar\nreally RFC 6265 conforming.  Expect a version\non github which should be usable after my \nholidays.\n\nVolker",
+			"disapproval": false,
+			"date": "2012-01-25 21:29:16.405435",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"dr.volker.dobler@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2012-06-03 04:54:13.539333",
+			"approval": false
+		}
+	],
+	"owner_email": "dr.volker.dobler@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "volker.dobler",
+	"subject": "code review 5544082: net/http/cookiejar: A cookie jar implementation.",
+	"created": "2012-01-17 00:42:09.497839",
+	"patchsets": [
+		1,
+		2001,
+		7002
+	],
+	"modified": "2012-06-03 04:54:13.539333",
+	"closed": false,
+	"issue": 5544082
+}

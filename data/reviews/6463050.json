@@ -1,0 +1,485 @@
+{
+	"description": "archive/zip: zip64 support",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"r@golang.org",
+		"adg@golang.org"
+	],
+	"reviewers": [
+		"dvyukov@google.com"
+	],
+	"messages": [
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go\nFile src/pkg/archive/zip/reader.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode244\nsrc/pkg/archive/zip/reader.go:244: if tag == 0x0001 { // zip64 extra\nOn 2012/08/15 16:31:38, r wrote:\n> this is ugly code. plus what are all these magic numbers?\n\nWhich part is ugly, the tag comparison or the whole loop? I can make a const for the tag but I dont think that sizes are magic and need consts. Maybe a comment about the zip64 extra format is enough?\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode271\nsrc/pkg/archive/zip/reader.go:271: // will get the crc32 from here until that test is fixed.\nOn 2012/08/15 16:31:38, r wrote:\n> or you could fix the test or you could explain why it shouldn't be fixed. this\n> is not the place for a remark like this.\n\nAgreed. But the file is broken and I have to remove it from the test or change the test so that it reports it as broken. Which one do you prefer?",
+			"disapproval": false,
+			"date": "2012-08-15 21:37:39.052160",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go\nFile src/pkg/archive/zip/reader.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode255\nsrc/pkg/archive/zip/reader.go:255: _ = b.uint32() // ignore disk number\nwhat if size is > 28? won't we read too little?\nand why would the size ever be less than 24?\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode357\nsrc/pkg/archive/zip/reader.go:357: return -1\nthis seems like an error worth knowing about?\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode363\nsrc/pkg/archive/zip/reader.go:363: _ = b.uint32()  // number of the disk with the start of the zip64 end of central directory\neverywhere you're doing this you should do\nb = b[4:]\ninstead. there's no need to do the conversion just to throw it away\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode371\nsrc/pkg/archive/zip/reader.go:371: func readDirectory64End(r io.ReaderAt, offset int64, dir *directoryEnd) (err error) {\ns/dir/d/\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go\nFile src/pkg/archive/zip/writer.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go#newcode65\nsrc/pkg/archive/zip/writer.go:65: if h.CompressedSize64 > 0xffffffff || h.UncompressedSize64 > 0xffffffff || h.offset > 0xffffffff {\nperhaps header should have a method 'isZip64() bool', so this can be\n\nif h.isZip64() {\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go#newcode65\nsrc/pkg/archive/zip/writer.go:65: if h.CompressedSize64 > 0xffffffff || h.UncompressedSize64 > 0xffffffff || h.offset > 0xffffffff {\nthe code above doesn't have comments because it's all self-explanatory\nfor instance\n  b.uint16(h.Flags)\nobviously means \"write h.Flags as a uint16\"\nbut the code you have added has many mysterious constants and none of it is documented.\nplease add comments to every non-obvious line explaining what is going on\neg\n  b.uint32(0xffffffff) // write zip64 directory header\n(or whatever it is)\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go#newcode65\nsrc/pkg/archive/zip/writer.go:65: if h.CompressedSize64 > 0xffffffff || h.UncompressedSize64 > 0xffffffff || h.offset > 0xffffffff {\nconst uint32max = 0xffffffff\nwould be very helpful here\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go#newcode105\nsrc/pkg/archive/zip/writer.go:105: directoryRecords := uint64(len(w.dir))\nrecords\nsize\noffset\nwould be fine names here\nthis entire function is about the directory\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go#newcode135\nsrc/pkg/archive/zip/writer.go:135: directoryRecords = 0xffff\ncomment why\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go#newcode228\nsrc/pkg/archive/zip/writer.go:228: b.uint32(0) // since we are writing a data descriptor crc32,\nreally? why? I didn't see that in the spec.\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go#newcode297\nsrc/pkg/archive/zip/writer.go:297: fh.ReaderVersion = 45\nmore magic numbers\nand shouldn't this happen earlier, under \"update FileHeader\" ?",
+			"disapproval": false,
+			"date": "2012-08-15 23:56:29.576270",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/9001/src/pkg/archive/zip/writer.go\nFile src/pkg/archive/zip/writer.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/9001/src/pkg/archive/zip/writer.go#newcode121\nsrc/pkg/archive/zip/writer.go:121: b.uint16(45)      // version made by\nOn 2012/08/17 01:39:25, adg wrote:\n> please put 45 in a meaningful constant.\n> \n> zip64version ? is that what it is?\n\nIt is \"(zip) version needed to extract\". Do you think b.uint16(zipVersion45) is better? I would have to change line 190 from \"fh.ReaderVersion = 0x14\" (no idea why that is in hex) to \"fh.ReaderVersion = zipVersion20\" in that case.\n\nhttp://codereview.appspot.com/6463050/diff/9001/src/pkg/archive/zip/writer.go#newcode298\nsrc/pkg/archive/zip/writer.go:298: if fh.CompressedSize64 > 0xffffffff || fh.UncompressedSize64 > 0xffffffff {\nOn 2012/08/17 01:39:25, adg wrote:\n> if fh.isZip64?\n\nOops.",
+			"disapproval": false,
+			"date": "2012-08-17 07:38:12.489460",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go\nFile src/pkg/archive/zip/reader.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode271\nsrc/pkg/archive/zip/reader.go:271: // will get the crc32 from here until that test is fixed.\nOn 2012/08/15 21:37:39, serbaut wrote:\n> On 2012/08/15 16:31:38, r wrote:\n> > or you could fix the test or you could explain why it shouldn't be fixed. this\n> > is not the place for a remark like this.\n> \n> Agreed. But the file is broken and I have to remove it from the test or change\n> the test so that it reports it as broken. Which one do you prefer?\n\nMy bad. The file test should fail but it stopped failing when I ignored the data descriptor crc32 that the test messed with. So the test can remain.",
+			"disapproval": false,
+			"date": "2012-08-15 22:22:18.408940",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-17 22:06:47.312570",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 21 August 2012 18:12,  <serbaut@gmail.com> wrote:\r\n>\r\n> http://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go\r\n> File src/pkg/archive/zip/zip_test.go (right):\r\n>\r\n> http://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode99\r\n> src/pkg/archive/zip/zip_test.go:99: // Ignore these fields:\r\n> On 2012/08/21 07:46:50, adg wrote:\r\n>>\r\n>> On 2012/08/21 07:34:41, serbaut wrote:\r\n>> > On 2012/08/21 05:42:28, adg wrote:\r\n>> > > don't do this. just compare the four fields you're interested in\r\n>\r\n> with simple\r\n>>\r\n>> > ==\r\n>> > > statements. you'll give better error messages that way.\r\n>> >\r\n>> > Again, same as test above. Change both?\r\n>\r\n>\r\n>> Actually, no. I think you should also test that UncompressedSize is\r\n>\r\n> set to\r\n>>\r\n>> 0xffffffff, and in the test above check that UncompressedSize64 is set\r\n>> appropriately, too.\r\n>\r\n>\r\n> do you mean\r\n>\r\n> if got, want := fh2.Name\r\n> if got, want := UncompressedSize64\r\n> if ...\r\n>\r\n> instead of\r\n>\r\n> if !reflect.DeepEqual(fh, fh2) {\r\n\r\n\r\nYep.\r\n",
+			"disapproval": false,
+			"date": "2012-08-21 09:17:44.531040",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go\nFile src/pkg/archive/zip/reader.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode244\nsrc/pkg/archive/zip/reader.go:244: if tag == 0x0001 { // zip64 extra\nOn 2012/08/15 21:37:39, serbaut wrote:\n> On 2012/08/15 16:31:38, r wrote:\n> > this is ugly code. plus what are all these magic numbers?\n\nI can't come up with a simpler way to write this code. We have to unpack zero to four values depending on the size of the data. This is the spec for the block:\n\n         -Zip64 Extended Information Extra Field (0x0001):\n\n          The following is the layout of the zip64 extended \n          information \"extra\" block. If one of the size or\n          offset fields in the Local or Central directory\n          record is too small to hold the required data,\n          a Zip64 extended information record is created.\n          The order of the fields in the zip64 extended \n          information record is fixed, but the fields will\n          only appear if the corresponding Local or Central\n          directory record field is set to 0xFFFF or 0xFFFFFFFF.\n\n          Note: all fields stored in Intel low-byte/high-byte order.\n\n          Value      Size       Description\n          -----      ----       -----------\n  (ZIP64) 0x0001     2 bytes    Tag for this \"extra\" block type\n          Size       2 bytes    Size of this \"extra\" block\n          Original \n          Size       8 bytes    Original uncompressed file size\n          Compressed\n          Size       8 bytes    Size of compressed data\n          Relative Header\n          Offset     8 bytes    Offset of local header record\n          Disk Start\n          Number     4 bytes    Number of the disk on which\n                                this file starts \n\n          This entry in the Local header must include BOTH original\n          and compressed file size fields. If encrypting the \n          central directory and bit 13 of the general purpose bit\n          flag is set indicating masking, the value stored in the\n          Local Header for the original file size will be zero.",
+			"disapproval": false,
+			"date": "2012-08-15 22:34:24.563910",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Ok, it looked like a fatal error but maybe it wasnt. Thanks.\r\n\r\nOn Wednesday, August 15, 2012 6:26:15 PM UTC+2, Rob Pike wrote:\r\n>\r\n> don't do the CONTRIBUTORS change in your own CL. we'll take care of \r\n> that separately. the codereview tool will let you mail the CL \r\n> (although it will complain) even if you're not in the file. \r\n>\r\n> -rob \r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-08-15 21:23:22.818080",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-08-15 14:20:57.138850",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/9001/src/pkg/archive/zip/writer.go\nFile src/pkg/archive/zip/writer.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/9001/src/pkg/archive/zip/writer.go#newcode121\nsrc/pkg/archive/zip/writer.go:121: b.uint16(45)      // version made by\nplease put 45 in a meaningful constant.\n\nzip64version ? is that what it is?\n\nhttp://codereview.appspot.com/6463050/diff/9001/src/pkg/archive/zip/writer.go#newcode298\nsrc/pkg/archive/zip/writer.go:298: if fh.CompressedSize64 > 0xffffffff || fh.UncompressedSize64 > 0xffffffff {\nif fh.isZip64?",
+			"disapproval": false,
+			"date": "2012-08-17 01:39:25.679700",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-20 11:47:44.198840",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go\nFile src/pkg/archive/zip/struct.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode97\nsrc/pkg/archive/zip/struct.go:97: func (fi headerFileInfo) Size() int64        { return int64(fi.fh.UncompressedSize) }\nOn 2012/08/20 12:32:47, adg wrote:\n> > I added TestFileHeaderRoundTrip64 to check for this and realized I need to\n> patch\n> > UncompressedSize64 in FileInfo() if it isn't supplied. No very elegant, need\n> > some help here!?\n> \n> I think this should work fine:\n> \n> func (fi headerFileInfo) Size() int64 {\n>   if s := fi.fh.UncompressedSize64 > 0 {\n>     return s\n>   }\n>   if s := fi.fh.UncompressedSize > 0 {\n>     return int64(s)\n>   }\n>   return 0\n> }\n\nYes, that seems less ugly.",
+			"disapproval": false,
+			"date": "2012-08-20 12:52:12.990220",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "don't do the CONTRIBUTORS change in your own CL. we'll take care of\r\nthat separately. the codereview tool will let you mail the CL\r\n(although it will complain) even if you're not in the file.\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2012-08-15 16:26:16.035860",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go\nFile src/pkg/archive/zip/zip_test.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode89\nsrc/pkg/archive/zip/zip_test.go:89: ModifiedTime:       1234,\nOn 2012/08/21 07:34:41, serbaut wrote:\n> On 2012/08/21 05:42:28, adg wrote:\n> > Let's use realistic values here.\n> > 1337\n> > 1207\n> \n> This was just copy/paste from the test above. Do you want me to change that as\n> well?\n\neh, leave it then. :-/\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode99\nsrc/pkg/archive/zip/zip_test.go:99: // Ignore these fields:\nOn 2012/08/21 07:34:41, serbaut wrote:\n> On 2012/08/21 05:42:28, adg wrote:\n> > don't do this. just compare the four fields you're interested in with simple\n> ==\n> > statements. you'll give better error messages that way.\n> \n> Again, same as test above. Change both?\n\nActually, no. I think you should also test that UncompressedSize is set to 0xffffffff, and in the test above check that UncompressedSize64 is set appropriately, too.\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode145\nsrc/pkg/archive/zip/zip_test.go:145: r, err := NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))\nOn 2012/08/21 07:34:41, serbaut wrote:\n> On 2012/08/21 05:42:28, adg wrote:\n> > NewReader(buf) will work fine\n> \n> Perhaps it can be simpler but NewReader(buf) wont work:\n> \n> func NewReader(r io.ReaderAt, size int64)\n> and\n> bytes.Buffer does not implement io.ReaderAt\n\nAh, missed that. Carry on.",
+			"disapproval": false,
+			"date": "2012-08-21 07:46:49.885370",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-21 21:02:46.107720",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go\nFile src/pkg/archive/zip/reader.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode244\nsrc/pkg/archive/zip/reader.go:244: if tag == 0x0001 { // zip64 extra\nthis is ugly code. plus what are all these magic numbers?\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode271\nsrc/pkg/archive/zip/reader.go:271: // will get the crc32 from here until that test is fixed.\nor you could fix the test or you could explain why it shouldn't be fixed. this is not the place for a remark like this.",
+			"disapproval": false,
+			"date": "2012-08-15 16:31:38.898720",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go\nFile src/pkg/archive/zip/reader.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode255\nsrc/pkg/archive/zip/reader.go:255: _ = b.uint32() // ignore disk number\nOn 2012/08/15 23:56:29, adg wrote:\n> what if size is > 28? won't we read too little?\n> and why would the size ever be less than 24? \n\nYes, if they change the spec and add something to zip64 extra that would be a problem. \n\nAccording to the spec you can have the 64 bit uncompressed size in the extra but the other fields in the normal so the size would be just 8 bytes.\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode357\nsrc/pkg/archive/zip/reader.go:357: return -1\nOn 2012/08/15 23:56:29, adg wrote:\n> this seems like an error worth knowing about?\n\ndirectoryEndOffset-directory64LocLen could be < 0 but I can add a check for that and return any io error that follows.\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/reader.go#newcode363\nsrc/pkg/archive/zip/reader.go:363: _ = b.uint32()  // number of the disk with the start of the zip64 end of central directory\nOn 2012/08/15 23:56:29, adg wrote:\n> everywhere you're doing this you should do\n> b = b[4:]\n> instead. there's no need to do the conversion just to throw it away\n\nIt makes it easier to read and less magic imo. The conversion itself is free in the grand scheme of things. I can change it if you really want.\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go\nFile src/pkg/archive/zip/writer.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go#newcode228\nsrc/pkg/archive/zip/writer.go:228: b.uint32(0) // since we are writing a data descriptor crc32,\nOn 2012/08/15 23:56:29, adg wrote:\n> really? why? I didn't see that in the spec.\n\nThe spec is unclear. According to pkware:\n\n\"When using the Data Descriptor, the values would be written as ZERO.\"\n\nhttp://bugs.sun.com/bugdatabase/view_bug.do?bug_id=7073588\n\nThe data descriptor should be used when you can't re-write the local header because you cant seek the output (streaming). An additional problem is that in the case of zip64 you don't even know if you need to allocate space in the local header for the zip64 extra. It is a mess :/",
+			"disapproval": false,
+			"date": "2012-08-16 13:46:57.508120",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go\nFile src/pkg/archive/zip/zip_test.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode89\nsrc/pkg/archive/zip/zip_test.go:89: ModifiedTime:       1234,\nOn 2012/08/21 07:46:50, adg wrote:\n> On 2012/08/21 07:34:41, serbaut wrote:\n> > On 2012/08/21 05:42:28, adg wrote:\n> > > Let's use realistic values here.\n> > > 1337\n> > > 1207\n> > \n> > This was just copy/paste from the test above. Do you want me to change that as\n> > well?\n> \n> eh, leave it then. :-/\n\nI think they actually are realistic values, see msDosTimeToTime() in struct.go\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode99\nsrc/pkg/archive/zip/zip_test.go:99: // Ignore these fields:\nOn 2012/08/21 05:42:28, adg wrote:\n> don't do this. just compare the four fields you're interested in with simple ==\n> statements. you'll give better error messages that way.\n\nMade a function that checks the header, hope that is ok.",
+			"disapproval": false,
+			"date": "2012-08-21 21:09:51.166160",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-16 13:49:25.386820",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/reader.go\nFile src/pkg/archive/zip/reader.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/reader.go#newcode291\nsrc/pkg/archive/zip/reader.go:291: return ErrChecksum\nThis isn't the right error. This error should be returned when the *computed* checksum doesn't match the data. Not when the two stored checksums do not match.\n\nreturn errors.New(\"zip: data descriptor and directory checksum mismatch\")\n\nor even just\n\nreturn ErrFormat\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/reader.go#newcode342\nsrc/pkg/archive/zip/reader.go:342: p, err := findDirectory64End(r, directoryEndOffset)\ndon't return d if an error occurred:\n\nif err == nil && p >= 0 {\n  err = readDirectoryEnd(...)\n}\nif err ! = nil {\n  return nil, err\n}\nreturn d, nil\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go\nFile src/pkg/archive/zip/struct.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode58\nsrc/pkg/archive/zip/struct.go:58: zipVersion45 = 45 // 4.5\n(reads and writes zip64 archives)\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode77\nsrc/pkg/archive/zip/struct.go:77: CompressedSize     uint32\n// deprecated; use CompressedSize64\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode78\nsrc/pkg/archive/zip/struct.go:78: UncompressedSize   uint32\n// deprecated; use UncompressedSize64\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode115\nsrc/pkg/archive/zip/struct.go:115: fh.SetModTime(fi.ModTime())\nif fh.UncompressedSize64 > uint32max {\n   fh.CompressedSize = uint32max\n}\n\nyeah?",
+			"disapproval": false,
+			"date": "2012-08-20 02:34:31.102940",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go\nFile src/pkg/archive/zip/zip_test.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode89\nsrc/pkg/archive/zip/zip_test.go:89: ModifiedTime:       1234,\nOn 2012/08/21 05:42:28, adg wrote:\n> Let's use realistic values here.\n> 1337\n> 1207\n\nThis was just copy/paste from the test above. Do you want me to change that as well?\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode99\nsrc/pkg/archive/zip/zip_test.go:99: // Ignore these fields:\nOn 2012/08/21 05:42:28, adg wrote:\n> don't do this. just compare the four fields you're interested in with simple ==\n> statements. you'll give better error messages that way.\n\nAgain, same as test above. Change both?\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode145\nsrc/pkg/archive/zip/zip_test.go:145: r, err := NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))\nOn 2012/08/21 05:42:28, adg wrote:\n> NewReader(buf) will work fine\n\nPerhaps it can be simpler but NewReader(buf) wont work:\n\nfunc NewReader(r io.ReaderAt, size int64)\nand\nbytes.Buffer does not implement io.ReaderAt\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode149\nsrc/pkg/archive/zip/zip_test.go:149: rc, err := r.File[0].Open()\nOn 2012/08/21 05:42:28, adg wrote:\n> f := r.File[0]\n> rc, err := f.Open()\n> \n> and so on for all occurrences of r.File[0]\n\nDone.\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode159\nsrc/pkg/archive/zip/zip_test.go:159: gotEnd := make([]byte, len(end))\nOn 2012/08/21 05:42:28, adg wrote:\n> instead, do\n> \n> gotEnd, err := ioutil.ReadAll(rc)\n> \n> so it reads until EOF\n\nDone.\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode171\nsrc/pkg/archive/zip/zip_test.go:171: if r.File[0].UncompressedSize != 0xffffffff {\nOn 2012/08/21 05:42:28, adg wrote:\n> if got, want := f.UncompressedSize, uint32max; got != want {\n\nDone.\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode172\nsrc/pkg/archive/zip/zip_test.go:172: t.Errorf(\"UncompressedSize %d, want %d\",\nOn 2012/08/21 05:42:28, adg wrote:\n> t.Errorf(\"UncompressedSize %d, want %d\", got, want)\n\nDone.\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode176\nsrc/pkg/archive/zip/zip_test.go:176: if r.File[0].UncompressedSize64 != (1<<32)+uint64(len(end)) {\nOn 2012/08/21 05:42:28, adg wrote:\n> same as above\n\nDone.",
+			"disapproval": false,
+			"date": "2012-08-21 07:34:41.692430",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go\nFile src/pkg/archive/zip/zip_test.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode99\nsrc/pkg/archive/zip/zip_test.go:99: // Ignore these fields:\nOn 2012/08/21 07:46:50, adg wrote:\n> On 2012/08/21 07:34:41, serbaut wrote:\n> > On 2012/08/21 05:42:28, adg wrote:\n> > > don't do this. just compare the four fields you're interested in with simple\n> > ==\n> > > statements. you'll give better error messages that way.\n> > \n> > Again, same as test above. Change both?\n> \n> Actually, no. I think you should also test that UncompressedSize is set to\n> 0xffffffff, and in the test above check that UncompressedSize64 is set\n> appropriately, too.\n\ndo you mean\n\nif got, want := fh2.Name\nif got, want := UncompressedSize64\nif ...\n\ninstead of\n\nif !reflect.DeepEqual(fh, fh2) {",
+			"disapproval": false,
+			"date": "2012-08-21 08:12:40.005870",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-17 09:43:26.571080",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/reader.go\nFile src/pkg/archive/zip/reader.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/reader.go#newcode291\nsrc/pkg/archive/zip/reader.go:291: return ErrChecksum\nOn 2012/08/20 02:34:31, adg wrote:\n> This isn't the right error. This error should be returned when the *computed*\n> checksum doesn't match the data. Not when the two stored checksums do not match.\n> \n> return errors.New(\"zip: data descriptor and directory checksum mismatch\")\n> \n> or even just\n> \n> return ErrFormat\n\nThe test \"Bad-CRC32-in-data-descriptor\" messes with the data descriptor crc32 so if we return anything else here that test has to be modified to expect a different error. Right now it expects ErrChecksum even if the two crc32 are different.\n\nWhile it is a format error it is also a checksum error since one of the checksums will be incorrect. Not sure if it is worth to change behaviour (the test) for this?\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/reader.go#newcode342\nsrc/pkg/archive/zip/reader.go:342: p, err := findDirectory64End(r, directoryEndOffset)\nOn 2012/08/20 02:34:31, adg wrote:\n> don't return d if an error occurred:\n> \n> if err == nil && p >= 0 {\n>   err = readDirectoryEnd(...)\n> }\n> if err ! = nil {\n>   return nil, err\n> }\n> return d, nil\n\nok\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go\nFile src/pkg/archive/zip/struct.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode107\nsrc/pkg/archive/zip/struct.go:107: if size > (1<<32 - 1) {\nRemove the 4GB test.\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode115\nsrc/pkg/archive/zip/struct.go:115: fh.SetModTime(fi.ModTime())\nOn 2012/08/20 02:34:31, adg wrote:\n> if fh.UncompressedSize64 > uint32max {\n>    fh.CompressedSize = uint32max\n> }\n> \n> yeah?\n\nDo you mean fh.UncompressedSize = uint32max? Otherwise I don't understand.\n\nI added TestFileHeaderRoundTrip64 to check for this and realized I need to patch UncompressedSize64 in FileInfo() if it isn't supplied. No very elegant, need some help here!?",
+			"disapproval": false,
+			"date": "2012-08-20 11:48:01.517350",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go\nFile src/pkg/archive/zip/writer.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/2001/src/pkg/archive/zip/writer.go#newcode228\nsrc/pkg/archive/zip/writer.go:228: b.uint32(0) // since we are writing a data descriptor crc32,\nOn 2012/08/15 23:56:29, adg wrote:\n> really? why? I didn't see that in the spec.\n\nThis is in the spec at least:\n\nCRC-32: (4 bytes)\n          ...\n          If bit 3 of the general purpose flag is set, this\n          field is set to zero in the local header and the correct\n          value is put in the data descriptor and in the central\n          directory.\n          ...\n\nIn go1.0.2 CreateHeader writes the values supplied in FileHeader (sizes, crc) to the local header before they are known (uncompressed size can be of course). Later the correct values are written to the data descriptor and central directory so it is fairly easy to create a broken file (not sure if implementations really reads the local file header since it is hard to get it right).",
+			"disapproval": false,
+			"date": "2012-08-17 08:20:33.581530",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/reader.go\nFile src/pkg/archive/zip/reader.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/reader.go#newcode291\nsrc/pkg/archive/zip/reader.go:291: return ErrChecksum\nOn 2012/08/20 11:48:01, serbaut wrote:\n> On 2012/08/20 02:34:31, adg wrote:\n> > This isn't the right error. This error should be returned when the *computed*\n> > checksum doesn't match the data. Not when the two stored checksums do not\n> match.\n> > \n> > return errors.New(\"zip: data descriptor and directory checksum mismatch\")\n> > \n> > or even just\n> > \n> > return ErrFormat\n> \n> The test \"Bad-CRC32-in-data-descriptor\" messes with the data descriptor crc32 so\n> if we return anything else here that test has to be modified to expect a\n> different error. Right now it expects ErrChecksum even if the two crc32 are\n> different.\n> \n> While it is a format error it is also a checksum error since one of the\n> checksums will be incorrect. Not sure if it is worth to change behaviour (the\n> test) for this?\n\nIn that case, leave it as is. (return ErrChecksum)\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go\nFile src/pkg/archive/zip/struct.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode97\nsrc/pkg/archive/zip/struct.go:97: func (fi headerFileInfo) Size() int64        { return int64(fi.fh.UncompressedSize) }\n> I added TestFileHeaderRoundTrip64 to check for this and realized I need to patch\n> UncompressedSize64 in FileInfo() if it isn't supplied. No very elegant, need\n> some help here!?\n\nI think this should work fine:\n\nfunc (fi headerFileInfo) Size() int64 {\n  if s := fi.fh.UncompressedSize64 > 0 {\n    return s\n  }\n  if s := fi.fh.UncompressedSize > 0 {\n    return int64(s)\n  }\n  return 0\n}\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode107\nsrc/pkg/archive/zip/struct.go:107: if size > (1<<32 - 1) {\nOn 2012/08/20 11:48:01, serbaut wrote:\n> Remove the 4GB test.\n\ngood catch\n\nhttp://codereview.appspot.com/6463050/diff/10004/src/pkg/archive/zip/struct.go#newcode115\nsrc/pkg/archive/zip/struct.go:115: fh.SetModTime(fi.ModTime())\nOn 2012/08/20 11:48:01, serbaut wrote:\n> On 2012/08/20 02:34:31, adg wrote:\n> > if fh.UncompressedSize64 > uint32max {\n> >    fh.CompressedSize = uint32max\n> > }\n> > \n> > yeah?\n> \n> Do you mean fh.UncompressedSize = uint32max? Otherwise I don't understand.\n\nYeah, I did mean that. Typo. I meant you should clamp, instead of wrap, the 32bit value, as you have elsewhere.",
+			"disapproval": false,
+			"date": "2012-08-20 12:32:47.575950",
+			"approval": false
+		},
+		{
+			"sender": "serbaut@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, r@golang.org, adg@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-08-20 12:51:50.315720",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go\nFile src/pkg/archive/zip/zip_test.go (right):\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode89\nsrc/pkg/archive/zip/zip_test.go:89: ModifiedTime:       1234,\nLet's use realistic values here.\n1337\n1207\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode99\nsrc/pkg/archive/zip/zip_test.go:99: // Ignore these fields:\ndon't do this. just compare the four fields you're interested in with simple == statements. you'll give better error messages that way.\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode145\nsrc/pkg/archive/zip/zip_test.go:145: r, err := NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))\nNewReader(buf) will work fine\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode149\nsrc/pkg/archive/zip/zip_test.go:149: rc, err := r.File[0].Open()\nf := r.File[0]\nrc, err := f.Open()\n\nand so on for all occurrences of r.File[0]\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode159\nsrc/pkg/archive/zip/zip_test.go:159: gotEnd := make([]byte, len(end))\ninstead, do\n\ngotEnd, err := ioutil.ReadAll(rc)\n\nso it reads until EOF\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode171\nsrc/pkg/archive/zip/zip_test.go:171: if r.File[0].UncompressedSize != 0xffffffff {\nif got, want := f.UncompressedSize, uint32max; got != want {\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode172\nsrc/pkg/archive/zip/zip_test.go:172: t.Errorf(\"UncompressedSize %d, want %d\",\nt.Errorf(\"UncompressedSize %d, want %d\", got, want)\n\nhttp://codereview.appspot.com/6463050/diff/14007/src/pkg/archive/zip/zip_test.go#newcode176\nsrc/pkg/archive/zip/zip_test.go:176: if r.File[0].UncompressedSize64 != (1<<32)+uint64(len(end)) {\nsame as above",
+			"disapproval": false,
+			"date": "2012-08-21 05:42:27.989230",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM\r\n",
+			"disapproval": false,
+			"date": "2012-08-22 00:53:42.773320",
+			"approval": true
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"serbaut@gmail.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as http://code.google.com/p/go/source/detail?r=9ebf39aaedaa ***\n\narchive/zip: zip64 support\n\nR=golang-dev, r, adg\nCC=golang-dev\nhttp://codereview.appspot.com/6463050\n\nCommitter: Andrew Gerrand <adg@golang.org>",
+			"disapproval": false,
+			"date": "2012-08-22 01:05:31.803760",
+			"approval": false
+		},
+		{
+			"sender": "dvyukov@google.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Fixes issue 3968 as well.",
+			"disapproval": false,
+			"date": "2012-10-10 10:00:20.351760",
+			"approval": false
+		},
+		{
+			"sender": "remyoudompheng@gmail.com",
+			"recipients": [
+				"serbaut@gmail.com",
+				"dvyukov@google.com",
+				"golang-dev@googlegroups.com",
+				"r@golang.org",
+				"adg@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "R=close",
+			"disapproval": false,
+			"date": "2013-07-20 21:23:05.719820",
+			"approval": false
+		}
+	],
+	"owner_email": "serbaut@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "serbaut",
+	"subject": "code review 6463050: archive/zip: zip64 support",
+	"created": "2012-08-14 19:48:36.742350",
+	"patchsets": [
+		1,
+		2001,
+		9001,
+		7003,
+		10004,
+		9008,
+		14007,
+		3010
+	],
+	"modified": "2013-07-20 21:23:06.205350",
+	"closed": false,
+	"issue": 6463050
+}

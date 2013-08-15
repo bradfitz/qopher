@@ -1,0 +1,121 @@
+{
+	"description": "ld: select default arch and os based on build\n\nInstead of hardcoding the defaults to amd64 and linux, pick\nup the default values of $GOROOT, $GOARCH, and $GOOS from the\nbuild configuration.\n\nThis allows 5l, 6l, etc to work correctly without those env vars\nset at runtime.  If $GO* are in the environment at runtime,\nnothing is changed (though for goarch for the linker this may\nbe incorrect -- is it ever valid for 5l to try to import non-arm\nlibraries?)\n\nIf $GOROOT is not set, first $HOME/go is checked to see if it\nexists (which is the existing fallback behavior).  If that doesn't\nexist, the $GOROOT from the build is used.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [],
+	"messages": [
+		{
+			"sender": "swetland@google.com",
+			"recipients": [
+				"swetland@google.com",
+				"r@golang.org",
+				"rsc@golang.org"
+			],
+			"text": "Hello r, rsc,\n\nI'd like you to review the following change.",
+			"disapproval": false,
+			"date": "2009-11-16 05:20:19.445979",
+			"approval": false
+		},
+		{
+			"sender": "swetland@google.com",
+			"recipients": [
+				"swetland@google.com",
+				"r@golang.org",
+				"rsc@golang.org"
+			],
+			"text": "To clarify, this does not change the behavior at all if the $GOOS and $GOARCH variables are defined at linker runtime.  \n\nThe only difference is that if they are not set, instead of hardcoding the defaults to \"linux\" and \"amd64\", they are set to the values of $GOOS and $GOARCH when the linker was built, which ends up with 5l having the default architecture of \"arm\" instead of \"amd64\", for example.\n\nI believe that there's a lot of value in the toolchain doing something reasonable when no environment variables are set, and this patch accomplishes that without altering the behaviour when they are set.",
+			"disapproval": false,
+			"date": "2009-11-17 02:26:18.915829",
+			"approval": false
+		},
+		{
+			"sender": "swetland@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Currently you're baking defaults like \"amd64\" into the arm linker,\nwhich is never going to work -- I think it would make sense to at\nleast use defaults that make sense for the binary.\n\nI do think having the toolchain *requiring* a bunch of environment\nvariables being set to operate correctly is a bug (compared to other\ntoolchains like gnu).  Overriding via environment seems totally\nreasonable, but requiring environment setup beyond PATH for the final\ninstalled tools feels broken.\n\nBrian\n\nOn Tue, Dec 1, 2009 at 10:20 PM, Russ Cox <rsc@golang.org> wrote:\n> < 0 is even better.\n> i still need to think about how much we want\n> to bake into the binaries.\n>\n",
+			"disapproval": false,
+			"date": "2009-12-02 06:25:15.138518",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I agree with you that this should be improved.\nI think there is a better way to do this.\n\nRight now, each program that cares calls\ngetenv(\"GOARCH\") and such and has its\nown defaults and fallbacks.\n\nI propose that instead, you add a file\nsrc/lib9/goenv.c that implements\n\nchar*\ngoenv(char *name)\n{\n...\n}\n\nthat always returns a good value for\n\"GOARCH\", \"GOOS\", and \"GOROOT\".\nthat value can be the environment variable\nor, if not set, the value used during\nthe build.\n\ngoenv can sanity check the values too,\nwith things like the access check for $GOROOT,\nand call\n\n    sysfatal(\"invalid $GOROOT: does not exist\")\n\nor some such.\n\nthen only that one file needs these extra\ncompile-time flags, and only that one\nfile has the policy.\n\nwhere other programs now call\ngetenv(\"GOARCH\") and then have\nfallbacks, they'd instead call goenv(\"GOARCH\")\nand assume that what comes back is good.\n\nthere is a related bug in that a few\nprograms look at too much: 5l should\nassume GOARCH is arm, even if it's not,\nbecause it is 5l and not ?l for other\nvalues of ?.  i think the compilers and\nthe assembler are okay in this regard\n(they don't look at GOARCH).\n",
+			"disapproval": false,
+			"date": "2009-12-02 21:52:09.803150",
+			"approval": false
+		},
+		{
+			"sender": "swetland@google.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Doing this in a central location sounds plenty reasonable to me.  I'll\ntake a crack at a patch that does that in the near future, unless\nsomebody beats me to it.\n\nBrian\n\nOn Wed, Dec 2, 2009 at 1:52 PM, Russ Cox <rsc@golang.org> wrote:\n> I agree with you that this should be improved.\n> I think there is a better way to do this.\n>\n> Right now, each program that cares calls\n> getenv(\"GOARCH\") and such and has its\n> own defaults and fallbacks.\n>\n> I propose that instead, you add a file\n> src/lib9/goenv.c that implements\n>\n> char*\n> goenv(char *name)\n> {\n> ...\n> }\n>\n> that always returns a good value for\n> \"GOARCH\", \"GOOS\", and \"GOROOT\".\n> that value can be the environment variable\n> or, if not set, the value used during\n> the build.\n>\n> goenv can sanity check the values too,\n> with things like the access check for $GOROOT,\n> and call\n>\n> \u00a0 \u00a0sysfatal(\"invalid $GOROOT: does not exist\")\n>\n> or some such.\n>\n> then only that one file needs these extra\n> compile-time flags, and only that one\n> file has the policy.\n>\n> where other programs now call\n> getenv(\"GOARCH\") and then have\n> fallbacks, they'd instead call goenv(\"GOARCH\")\n> and assume that what comes back is good.\n>\n> there is a related bug in that a few\n> programs look at too much: 5l should\n> assume GOARCH is arm, even if it's not,\n> because it is 5l and not ?l for other\n> values of ?. \u00a0i think the compilers and\n> the assembler are okay in this regard\n> (they don't look at GOARCH).\n>\n",
+			"disapproval": false,
+			"date": "2009-12-02 21:59:47.431217",
+			"approval": false
+		},
+		{
+			"sender": "r@google.com",
+			"recipients": [
+				"swetland@google.com",
+				"r@golang.org",
+				"rsc@golang.org",
+				"r@google.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/155051/diff/13/1012\nFile src/cmd/ld/lib.c (right):\n\nhttp://codereview.appspot.com/155051/diff/13/1012#newcode725\nsrc/cmd/ld/lib.c:725: if(access(goroot, X_OK)) {\ni would prefer access() != 0.  the zero-is-ok style makes the code read wrong.",
+			"disapproval": false,
+			"date": "2009-12-02 05:50:27.140367",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "< 0 is even better.\ni still need to think about how much we want\nto bake into the binaries.\n",
+			"disapproval": false,
+			"date": "2009-12-02 06:20:11.112388",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "it's all yours.\n",
+			"disapproval": false,
+			"date": "2009-12-02 23:12:24.533619",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"swetland@google.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I've picked this up as\nhttp://codereview.appspot.com/186173",
+			"disapproval": false,
+			"date": "2010-01-15 22:11:28.436878",
+			"approval": false
+		}
+	],
+	"owner_email": "swetland@google.com",
+	"private": false,
+	"base_url": "",
+	"owner": "swetland",
+	"subject": "code review 155051: ld: select default arch and os based on build",
+	"created": "2009-11-15 10:09:45.467655",
+	"patchsets": [
+		13
+	],
+	"modified": "2010-01-15 22:11:28.697750",
+	"closed": false,
+	"issue": 155051
+}

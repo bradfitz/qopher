@@ -1,0 +1,125 @@
+{
+	"description": "bytes, strings: faster Fields\n\nI'm unhappy about writing this CL, but Fields is much more common\nthan FieldsFunc and an inherently cheaper operation, because most\nspaces are ASCII, so it does seem to justify special case code.\n\npackage bytes:\nBenchmarkFields\t      50\t  23659299 ns/op\t  44.32 MB/s\nBenchmarkFieldsFunc\t      50\t  42000576 ns/op\t  24.97 MB/s\n\npackage strings:\nBenchmarkFields\t     100\t  22852634 ns/op\t  45.88 MB/s\nBenchmarkFieldsFunc\t      50\t  35050756 ns/op\t  29.92 MB/s",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"r@golang.org",
+		"bradfitz@golang.org",
+		"rogpeppe@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Tue, Sep 11, 2012 at 1:29 AM,  <r@golang.org> wrote:\r\n> i'm unhappy too, but if you want to make me unhappy make the payoff big\r\n> enough to compensate.\r\n\r\nFair enough. I played a bit more with this. I can change FieldsFunc to\r\nstart with 10 fields (or len/2 if that's smaller) and then when it\r\ncomes time to realloc, estimate the field count based on the current\r\nfields/length ratio. That cuts the second pass but still avoids a log\r\nn number of reallocs. Also, the Unicode is16 and is32 can use linear\r\nsearch instead of binary search for small tables. For uniform inputs\r\nlinear search keeps up with binary until about n=20, because of the\r\nbetter memory access pattern, and for ASCII-skewed inputs it wins even\r\nmore since it can stop early. I settled on a cutoff of 16 but will\r\nwrite a calibrator. Combined, those two give:\r\n\r\nbenchmark               old MB/s     new MB/s  speedup\r\nBenchmarkFields            29.73       111.57    3.75x\r\nBenchmarkFieldsFunc        27.99        56.30    2.01x\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-11 22:18:01.269510",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This also makes me sad.  I remember smiling at the simplicity of all these\r\nfunctions when I first found them (ToUpper, TrimSpace, etc).\r\n\r\nCould you at least keep the old one-line implementation in a comment?  It'd\r\nbe awesome if a future sufficiently advanced compiler could approach this\r\nspeed-up.\r\n\r\nOn Mon, Sep 10, 2012 at 8:47 PM, <rsc@golang.org> wrote:\r\n\r\n> Reviewers: r,\r\n>\r\n> Message:\r\n> Hello r (cc: golang-dev@googlegroups.com),\r\n>\r\n> I'd like you to review this change to\r\n> https://code.google.com/p/go/\r\n>\r\n>\r\n> Description:\r\n> bytes, strings: faster Fields\r\n>\r\n> I'm unhappy about writing this CL, but Fields is much more common\r\n> than FieldsFunc and an inherently cheaper operation, because most\r\n> spaces are ASCII, so it does seem to justify special case code.\r\n>\r\n> package bytes:\r\n> BenchmarkFields       50          23659299 ns/op          44.32 MB/s\r\n> BenchmarkFieldsFunc           50          42000576 ns/op          24.97\r\n> MB/s\r\n>\r\n> package strings:\r\n> BenchmarkFields      100          22852634 ns/op          45.88 MB/s\r\n> BenchmarkFieldsFunc           50          35050756 ns/op          29.92\r\n> MB/s\r\n>\r\n> Please review this at http://codereview.appspot.com/**6495114/<http://codereview.appspot.com/6495114/>\r\n>\r\n> Affected files:\r\n>   M src/pkg/bytes/bytes.go\r\n>   M src/pkg/bytes/bytes_test.go\r\n>   M src/pkg/strings/strings.go\r\n>   M src/pkg/strings/strings_test.**go\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2012-09-11 03:53:40.184880",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello r (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go/",
+			"disapproval": false,
+			"date": "2012-09-11 03:47:17.607240",
+			"approval": false
+		},
+		{
+			"sender": "rogpeppe@gmail.com",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go\nFile src/pkg/strings/strings.go (right):\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go#newcode256\nsrc/pkg/strings/strings.go:256: for i := 0; i < len(s); i++ {\ni think you could take the i++ out of here, and put it in the ascii case below. then it's slightly fewer instructions in the unicode case (probably irrelevant) and the code is slightly more obvious. same applies to loop below.\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go#newcode258\nsrc/pkg/strings/strings.go:258: c := uint32(s[i])\nwhy the type conversion?\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go#newcode259\nsrc/pkg/strings/strings.go:259: if c < 0x80 {\nutf8.RuneSelf?\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go#newcode277\nsrc/pkg/strings/strings.go:277: a := make([]string, n)\nOn 2012/09/11 05:29:48, r wrote:\n> you can do it in one scan by guessing that, N fields is enough, allocating a\n> slice, and just using append. if len(s) < 80, there can be at most 40 fields and\n> that is the common case you're trying to do. if it's a big string, two passes\n> might be warranted but the strings are rarely big. it might be worth asking the\n> question\n> \n> my point is that if you want to write fast code, write fast code. or to put it\n> more proactively, i want to see better code and bigger speedups\n> \n> another way to save code is to have a helper that takes (data *byte, nbytes int)\n> and sharing that between bytes and strings packages.\n\neven if you don't do that, the code becomes simpler (and it's marginally faster) if you do make([]string, 0, n) and use append below.",
+			"disapproval": false,
+			"date": "2012-09-11 10:21:50.511740",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Sep 10, 2012 at 11:53 PM, Brad Fitzpatrick <bradfitz@golang.org> wrote:\r\n> This also makes me sad.  I remember smiling at the simplicity of all these\r\n> functions when I first found them (ToUpper, TrimSpace, etc).\r\n>\r\n> Could you at least keep the old one-line implementation in a comment?  It'd\r\n> be awesome if a future sufficiently advanced compiler could approach this\r\n> speed-up.\r\n\r\nI am happy to include a comment. I don't see that 'sufficiently\r\nadvanced' thing happening. strings.FieldsFunc is a very general\r\nfunction and strings.Fields is a very specific function. Implementing\r\na specific thing in terms of a general thing almost always carries an\r\ninherent cost.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-11 03:55:33.939240",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "i'm unhappy too, but if you want to make me unhappy make the payoff big enough to compensate.\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go\nFile src/pkg/strings/strings.go (right):\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go#newcode261\nsrc/pkg/strings/strings.go:261: case '\\t', '\\n', '\\v', '\\f', '\\r', ' ':\nyou can do this in fewer comparisons since \\t \\n \\v \\f \\r are sequential.\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go#newcode277\nsrc/pkg/strings/strings.go:277: a := make([]string, n)\nyou can do it in one scan by guessing that, N fields is enough, allocating a slice, and just using append. if len(s) < 80, there can be at most 40 fields and that is the common case you're trying to do. if it's a big string, two passes might be warranted but the strings are rarely big. it might be worth asking the question\n\nmy point is that if you want to write fast code, write fast code. or to put it more proactively, i want to see better code and bigger speedups\n\nanother way to save code is to have a helper that takes (data *byte, nbytes int) and sharing that between bytes and strings packages.",
+			"disapproval": false,
+			"date": "2012-09-11 05:29:47.907040",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"rsc@golang.org",
+				"r@golang.org",
+				"bradfitz@golang.org",
+				"rogpeppe@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "do you have the updated version?\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/bytes/bytes.go\nFile src/pkg/bytes/bytes.go (right):\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/bytes/bytes.go#newcode303\nsrc/pkg/bytes/bytes.go:303: if c < 0x80 {\nutf8.RuneSelf\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/bytes/bytes.go#newcode327\nsrc/pkg/bytes/bytes.go:327: if c < 0x80 {\nutf8.RuneSelf\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go\nFile src/pkg/strings/strings.go (right):\n\nhttp://codereview.appspot.com/6495114/diff/8001/src/pkg/strings/strings.go#newcode283\nsrc/pkg/strings/strings.go:283: if c < 0x80 {\nutf8.RuneSelf",
+			"disapproval": false,
+			"date": "2012-09-21 09:03:35.802900",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Fri, Sep 21, 2012 at 5:03 AM,  <r@golang.org> wrote:\r\n> do you have the updated version?\r\n\r\nNo, not yet. I am still thinking about what the right resizing\r\nstrategy is. I can make the code much faster on the benchmark by\r\nestimating the new array size based on fields/byte processed so far,\r\ncutting out almost all reallocations, but that gives it the chance to\r\nwildly overestimate and overallocate what it would otherwise need. The\r\ncurrent code, while slower by being two passes, at least does not\r\noverallocate. I'm still not quite sure how to balance those. Probably\r\nI will give up that particular speedup and go back to ordinary append.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2012-09-21 14:37:59.820430",
+			"approval": false
+		}
+	],
+	"owner_email": "rsc@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "rsc",
+	"subject": "code review 6495114: bytes, strings: faster Fields",
+	"created": "2012-09-11 03:46:52.555050",
+	"patchsets": [
+		1,
+		2001,
+		4001,
+		8001
+	],
+	"modified": "2012-09-21 14:37:59.820430",
+	"closed": false,
+	"issue": 6495114
+}

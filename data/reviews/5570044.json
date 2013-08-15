@@ -1,0 +1,279 @@
+{
+	"description": "math/big: slight improvement to algorithm used for internal bitLen function\n\nThe bitLen function currently shifts out blocks of 8 bits at a time.\nThis change replaces this sorta-linear algorithm with a log(N)\none (shift out 16 bits, then 8, then 4, then 2, then 1).\nI left the start of it linear at 16 bits at a time so that\nthe function continues to work with 32 or 64 bit values\nwithout any funkiness.\nThe algorithm is similar to several of the nlz (\"number of\nleading zeros\") algorithms from \"Hacker's Delight\" or the\n\"bit twiddling hacks\" pages.\n\nDoesn't make a big difference to the existing benchmarks, but\nI'm using the code in a different context that calls bitLen\nmuch more often, so it seemed worthwhile making the existing\ncodebase faster so that it's a better building block.\n\nMicrobenchmark results on a 64-bit Macbook Pro using 6g from weekly.2012-01-20:\n\nbenchmark                old ns/op    new ns/op    delta\nbig.BenchmarkBitLen0             4            6  +50.12%\nbig.BenchmarkBitLen1             4            6  +33.91%\nbig.BenchmarkBitLen2             6            6   +3.05%\nbig.BenchmarkBitLen3             7            6  -19.05%\nbig.BenchmarkBitLen4             9            6  -30.19%\nbig.BenchmarkBitLen5            11            6  -42.23%\nbig.BenchmarkBitLen8            16            6  -61.78%\nbig.BenchmarkBitLen9             5            6  +18.29%\nbig.BenchmarkBitLen16           18            7  -60.99%\nbig.BenchmarkBitLen17            7            6   -4.64%\nbig.BenchmarkBitLen31           19            7  -62.49%\n\nOn an ARM machine (with the previous weekly):\n\nbenchmark                old ns/op    new ns/op    delta\nbig.BenchmarkBitLen0            37           50  +36.56%\nbig.BenchmarkBitLen1            59           51  -13.69%\nbig.BenchmarkBitLen2            74           59  -20.40%\nbig.BenchmarkBitLen3            92           60  -34.89%\nbig.BenchmarkBitLen4           110           59  -46.09%\nbig.BenchmarkBitLen5           127           60  -52.68%\nbig.BenchmarkBitLen8           181           59  -67.24%\nbig.BenchmarkBitLen9            78           60  -23.05%\nbig.BenchmarkBitLen16          199           69  -65.13%\nbig.BenchmarkBitLen17           91           70  -23.17%\nbig.BenchmarkBitLen31          210           95  -54.43%\n",
+	"cc": [
+		"golang-dev@googlegroups.com",
+		"dave@cheney.net",
+		"edsrzf@gmail.com",
+		"gri@golang.org"
+	],
+	"reviewers": [
+		"brtzsnr@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "dave.andersen@gmail.com",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2012-01-23 06:32:23.308883",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Excellent, very pleased to see the results on arm are also improved.",
+			"disapproval": false,
+			"date": "2012-01-23 07:37:59.734499",
+			"approval": false
+		},
+		{
+			"sender": "dave.andersen@gmail.com",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What range of numbers do you mean for \"small?\"  The benchmark results I posted above considered small as 0 - 32, and large as picked at random between 0 - 1B.  Both of those ranges were substantially faster on both 64bit mac and 32bit ARM.\n\nNote that a lot of the speedup is apparent by examination.  The new code executes 5 conditional operations regardless of the number being examined, and [0-5]*2 arithmetic ops.  The old code executed between 0-12 conditional and arithmetic operations:\n\nNumber  Old code ops    New code ops\n0             2C, 0A              5C, 0A\n1             3C, 1A              5C, 1A\n2-3         4C, 2A              5C, 1A   <-- win some, lose some, arch dep.\n4-7         5C, 3A              5C, 2A   <-- win\n8-15       6C, 4A              5C, 1A   <-- huge win.\n16-31     7C, 5A              5C, 2A   <-- as above.\n2^32-1   14C, 12A          6C, 6A\n\nThe only reason I'm asking is that this is a very specific benchmark, but it takes a fair bit of evaluation to comprehensively see where the differences arise.  People seem to not like having too much time taken up by the benchmark results.  I'm happy to contribute the benchmarks, since I've already written them. :)\n\nOn 2012/01/23 17:20:51, gri wrote:\n> This looks good, but I remember having done exactly the same when I tweaked the\n> bitLen implementation a while ago with not so good results for small numbers (it\n> got significantly slower).\n> \n> These kind of benchmarks can show significant differences on different machines.\n> \n> For a start, can you please add a good benchmark to arith_test.go? Ideally, the\n> code is faster for all number ranges affected. If you write the benchmark\n> results into files, you can use $GOROOT/misc/benchcmp for a nice side-by-side\n> comparison.\n> \n> Thanks.",
+			"disapproval": false,
+			"date": "2012-01-23 18:25:44.223205",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On Mon, Jan 23, 2012 at 10:25 AM,  <dave.andersen@gmail.com> wrote:\n> What range of numbers do you mean for \"small?\" \u00a0The benchmark results I\n> posted above considered small as 0 - 32, and large as picked at random\n\nSounds good. Please just add a benchmark so we can track this over time.\n\n> between 0 - 1B. \u00a0Both of those ranges were substantially faster on both\n> 64bit mac and 32bit ARM.\n>\n> Note that a lot of the speedup is apparent by examination. \u00a0The new code\n\nI am not disagreeing with you.\n\n> executes 5 conditional operations regardless of the number being\n> examined, and [0-5]*2 arithmetic ops. \u00a0The old code executed between\n> 0-12 conditional and arithmetic operations:\n>\n> Number \u00a0Old code ops \u00a0 \u00a0New code ops\n> 0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 2C, 0A \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a05C, 0A\n> 1 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 3C, 1A \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a05C, 1A\n> 2-3 \u00a0 \u00a0 \u00a0 \u00a0 4C, 2A \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a05C, 1A \u00a0 <-- win some, lose some, arch\n> dep.\n> 4-7 \u00a0 \u00a0 \u00a0 \u00a0 5C, 3A \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a05C, 2A \u00a0 <-- win\n> 8-15 \u00a0 \u00a0 \u00a0 6C, 4A \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a05C, 1A \u00a0 <-- huge win.\n> 16-31 \u00a0 \u00a0 7C, 5A \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a05C, 2A \u00a0 <-- as above.\n> 2^32-1 \u00a0 14C, 12A \u00a0 \u00a0 \u00a0 \u00a0 \u00a06C, 6A\n>\n> The only reason I'm asking is that this is a very specific benchmark,\n> but it takes a fair bit of evaluation to comprehensively see where the\n> differences arise. \u00a0People seem to not like having too much time taken\n> up by the benchmark results. \u00a0I'm happy to contribute the benchmarks,\n> since I've already written them. :)\n\nIt seems to me that the benchmark should just test one number for each\nlength; so it's just a loop calling bitLen for 32 or 64 numbers.\n\n- gri\n>\n>\n> On 2012/01/23 17:20:51, gri wrote:\n>>\n>> This looks good, but I remember having done exactly the same when I\n>\n> tweaked the\n>>\n>> bitLen implementation a while ago with not so good results for small\n>\n> numbers (it\n>>\n>> got significantly slower).\n>\n>\n>> These kind of benchmarks can show significant differences on different\n>\n> machines.\n>\n>> For a start, can you please add a good benchmark to arith_test.go?\n>\n> Ideally, the\n>>\n>> code is faster for all number ranges affected. If you write the\n>\n> benchmark\n>>\n>> results into files, you can use $GOROOT/misc/benchcmp for a nice\n>\n> side-by-side\n>>\n>> comparison.\n>\n>\n>> Thanks.\n>\n>\n>\n>\n> http://codereview.appspot.com/5570044/\n",
+			"disapproval": false,
+			"date": "2012-01-23 18:53:33.612735",
+			"approval": false
+		},
+		{
+			"sender": "edsrzf@gmail.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "If this makes a big difference for you, you could implement an\ni386/amd64 assembly version using the BSR instruction. I tried that a\nlong time ago, and while bitLen got much faster the difference didn't\nshow up in any benchmarks so I never submitted a CL. Here's what it\nlooks like for amd64 if you want to try your benchmarks with it:\n\n(Warning: I can't remember how thoroughly I tested this, but I'm\npretty sure it worked.)\n\nTEXT \u00b7bitLen(SB),7,$0\n    MOVQ x+0(FP), AX\n    CMPQ AX, $0\n    JZ Z1\n    BSRQ AX, AX\n    INCQ AX\n    MOVQ AX, n+8(FP)\n    RET\n\nZ1:    MOVQ $0, n+8(FP)\n    RET\n\nI think ARM has an instruction that'll work too, but I haven't looked into it.\n\n- Evan\n",
+			"disapproval": false,
+			"date": "2012-01-23 09:33:23.008585",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Yes, this looks good. You probably don't need that many different\nones. Given your new code, probably one for each power of two maybe.\nThere's no need for a new CL, please just add it to the current CL.\n- gri\n\nOn Mon, Jan 23, 2012 at 11:24 AM,  <dave.andersen@gmail.com> wrote:\n> Before I add another CL, is this roughly the benchmark you hoped for?\n> [Results from 64bit mbp, but I'm really asking about the scope of the\n> benchmark]\n> Old version:\n>\n> big.BenchmarkBitLen0 \u00a0 \u00a0500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a04.32 ns/op\n> big.BenchmarkBitLen1 \u00a0 \u00a0500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a04.95 ns/op\n> big.BenchmarkBitLen3 \u00a0 \u00a0200000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a08.93 ns/op\n> big.BenchmarkBitLen5 \u00a0 \u00a0100000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 13.0 ns/op\n> big.BenchmarkBitLen8 \u00a0 \u00a0100000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 19.4 ns/op\n> big.BenchmarkBitLen13 \u00a0 100000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 13.5 ns/op\n> big.BenchmarkBitLen15 \u00a0 100000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 18.0 ns/op\n> big.BenchmarkBitLen16 \u00a0 100000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 19.8 ns/op\n> big.BenchmarkBitLen17 \u00a0 500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06.76 ns/op\n> big.BenchmarkBitLen29 \u00a0 100000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 17.3 ns/op\n> big.BenchmarkBitLen30 \u00a0 100000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 19.1 ns/op\n> big.BenchmarkBitLen31 \u00a0 100000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 21.4 ns/op\n>\n> New version:\n> big.BenchmarkBitLen0 \u00a0 \u00a0500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06.46 ns/op\n> big.BenchmarkBitLen1 \u00a0 \u00a0500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a05.84 ns/op\n> big.BenchmarkBitLen3 \u00a0 \u00a0500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06.24 ns/op\n> big.BenchmarkBitLen5 \u00a0 \u00a0500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06.12 ns/op\n> big.BenchmarkBitLen8 \u00a0 \u00a0500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06.78 ns/op\n> big.BenchmarkBitLen13 \u00a0 500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06.44 ns/op\n> big.BenchmarkBitLen15 \u00a0 500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06.77 ns/op\n> big.BenchmarkBitLen16 \u00a0 500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a07.00 ns/op\n> big.BenchmarkBitLen17 \u00a0 500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06.19 ns/op\n> big.BenchmarkBitLen29 \u00a0 500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06.91 ns/op\n> big.BenchmarkBitLen30 \u00a0 200000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a08.01 ns/op\n> big.BenchmarkBitLen31 \u00a0 500000000 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a07.10 ns/op\n>\n> http://codereview.appspot.com/5570044/\n",
+			"disapproval": false,
+			"date": "2012-01-23 19:30:11.142637",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "It's not clear that a lookup table approach is much faster; also, in\nthe meantime we have an assembly version CL to be reviewed. At the end\nof the day, measurement is the only way to find out.\n\nThanks for pointing this out.\n- gri\n\nOn Tue, Jan 24, 2012 at 1:05 PM,  <brtzsnr@gmail.com> wrote:\n> Sorry for replying late, but if have already you check the algorithms\n> from\n> http://graphics.stanford.edu/~seander/bithacks.html#IntegerLogLookup\n>\n>\n> On 2012/01/23 22:26:03, dfc wrote:\n>>\n>> That's a great win for arm, thanks a lot.\n>\n>\n>> Sent from my iPhone\n>\n>\n>> On 24/01/2012, at 8:46, mailto:gri@golang.org wrote:\n>\n>\n>> > *** Submitted as 408491a4bde1 ***\n>> >\n>> > math/big: slight improvement to algorithm used for internal bitLen\n>> > function\n>> >\n>> > The bitLen function currently shifts out blocks of 8 bits at a time.\n>> > This change replaces this sorta-linear algorithm with a log(N)\n>> > one (shift out 16 bits, then 8, then 4, then 2, then 1).\n>> > I left the start of it linear at 16 bits at a time so that\n>> > the function continues to work with 32 or 64 bit values\n>> > without any funkiness.\n>> > The algorithm is similar to several of the nlz (\"number of\n>> > leading zeros\") algorithms from \"Hacker's Delight\" or the\n>> > \"bit twiddling hacks\" pages.\n>> >\n>> > Doesn't make a big difference to the existing benchmarks, but\n>> > I'm using the code in a different context that calls bitLen\n>> > much more often, so it seemed worthwhile making the existing\n>> > codebase faster so that it's a better building block.\n>> >\n>> > Microbenchmark results on a 64-bit Macbook Pro using 6g from\n>> > weekly.2012-01-20:\n>> >\n>> > benchmark \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0old ns/op \u00a0 \u00a0new ns/op \u00a0 \u00a0delta\n>> > big.BenchmarkBitLen0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 4 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06 \u00a0+50.12%\n>> > big.BenchmarkBitLen1 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 4 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06 \u00a0+33.91%\n>> > big.BenchmarkBitLen2 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 6 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06 \u00a0 +3.05%\n>> > big.BenchmarkBitLen3 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 7 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06 \u00a0-19.05%\n>> > big.BenchmarkBitLen4 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 9 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06 \u00a0-30.19%\n>> > big.BenchmarkBitLen5 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a011 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06 \u00a0-42.23%\n>> > big.BenchmarkBitLen8 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a016 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06 \u00a0-61.78%\n>> > big.BenchmarkBitLen9 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 5 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06 \u00a0+18.29%\n>> > big.BenchmarkBitLen16 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 18 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a07 \u00a0-60.99%\n>> > big.BenchmarkBitLen17 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a07 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a06 \u00a0 -4.64%\n>> > big.BenchmarkBitLen31 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 19 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a07 \u00a0-62.49%\n>> >\n>> > On an ARM machine (with the previous weekly):\n>> >\n>> > benchmark \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0old ns/op \u00a0 \u00a0new ns/op \u00a0 \u00a0delta\n>> > big.BenchmarkBitLen0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a037 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 50 \u00a0+36.56%\n>> > big.BenchmarkBitLen1 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a059 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 51 \u00a0-13.69%\n>> > big.BenchmarkBitLen2 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a074 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 59 \u00a0-20.40%\n>> > big.BenchmarkBitLen3 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a092 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 60 \u00a0-34.89%\n>> > big.BenchmarkBitLen4 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 110 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 59 \u00a0-46.09%\n>> > big.BenchmarkBitLen5 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 127 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 60 \u00a0-52.68%\n>> > big.BenchmarkBitLen8 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 181 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 59 \u00a0-67.24%\n>> > big.BenchmarkBitLen9 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 \u00a078 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 60 \u00a0-23.05%\n>> > big.BenchmarkBitLen16 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0199 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 69 \u00a0-65.13%\n>> > big.BenchmarkBitLen17 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 91 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 70 \u00a0-23.17%\n>> > big.BenchmarkBitLen31 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0210 \u00a0 \u00a0 \u00a0 \u00a0 \u00a0 95 \u00a0-54.43%\n>> >\n>> > R=golang-dev, dave, edsrzf, gri\n>> > CC=golang-dev\n>> > http://codereview.appspot.com/5570044\n>> >\n>> > Committer: Robert Griesemer <mailto:gri@golang.org>\n>> >\n>> >\n>> > http://codereview.appspot.com/5570044/\n>\n>\n>\n>\n> http://codereview.appspot.com/5570044/\n",
+			"disapproval": false,
+			"date": "2012-01-24 21:58:54.415112",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Looks good. A couple of minor suggestions.\n\nPlease also update the CL description by running the benchmarks before and after the change and piping the result through misc/benchcmp - and then add that output to the CL instead (per rsc's suggestion).\n\nThanks.\n\nhttp://codereview.appspot.com/5570044/diff/4004/src/pkg/math/big/arith_test.go\nFile src/pkg/math/big/arith_test.go (right):\n\nhttp://codereview.appspot.com/5570044/diff/4004/src/pkg/math/big/arith_test.go#newcode338\nsrc/pkg/math/big/arith_test.go:338: func runBenchBitLen(b *testing.B, nbits uint) {\ns/runBenchBitLen/benchmarkBitLenN/\n\nhttp://codereview.appspot.com/5570044/diff/4004/src/pkg/math/big/arith_test.go#newcode349\nsrc/pkg/math/big/arith_test.go:349: func BenchmarkBitLen3(b *testing.B) { runBenchBitLen(b, 3) }\nMaybe add case 2 and 5 for consistency (so we have n, n+1, with n = power of two)",
+			"disapproval": false,
+			"date": "2012-01-23 20:37:03.505433",
+			"approval": false
+		},
+		{
+			"sender": "dave.andersen@gmail.com",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, edsrzf@gmail.com, gri@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-23 21:00:07.310784",
+			"approval": false
+		},
+		{
+			"sender": "dave.andersen@gmail.com",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Must be close to bedtime.  In the microbenchmark results,\nBitl2 is the *old* implementation, obviously.",
+			"disapproval": false,
+			"date": "2012-01-23 06:35:57.711856",
+			"approval": false
+		},
+		{
+			"sender": "dave.andersen@gmail.com",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Before I add another CL, is this roughly the benchmark you hoped for?\n[Results from 64bit mbp, but I'm really asking about the scope of the benchmark]\nOld version:\n\nbig.BenchmarkBitLen0\t500000000\t         4.32 ns/op\nbig.BenchmarkBitLen1\t500000000\t         4.95 ns/op\nbig.BenchmarkBitLen3\t200000000\t         8.93 ns/op\nbig.BenchmarkBitLen5\t100000000\t        13.0 ns/op\nbig.BenchmarkBitLen8\t100000000\t        19.4 ns/op\nbig.BenchmarkBitLen13\t100000000\t        13.5 ns/op\nbig.BenchmarkBitLen15\t100000000\t        18.0 ns/op\nbig.BenchmarkBitLen16\t100000000\t        19.8 ns/op\nbig.BenchmarkBitLen17\t500000000\t         6.76 ns/op\nbig.BenchmarkBitLen29\t100000000\t        17.3 ns/op\nbig.BenchmarkBitLen30\t100000000\t        19.1 ns/op\nbig.BenchmarkBitLen31\t100000000\t        21.4 ns/op\n\nNew version:\nbig.BenchmarkBitLen0\t500000000\t         6.46 ns/op\nbig.BenchmarkBitLen1\t500000000\t         5.84 ns/op\nbig.BenchmarkBitLen3\t500000000\t         6.24 ns/op\nbig.BenchmarkBitLen5\t500000000\t         6.12 ns/op\nbig.BenchmarkBitLen8\t500000000\t         6.78 ns/op\nbig.BenchmarkBitLen13\t500000000\t         6.44 ns/op\nbig.BenchmarkBitLen15\t500000000\t         6.77 ns/op\nbig.BenchmarkBitLen16\t500000000\t         7.00 ns/op\nbig.BenchmarkBitLen17\t500000000\t         6.19 ns/op\nbig.BenchmarkBitLen29\t500000000\t         6.91 ns/op\nbig.BenchmarkBitLen30\t200000000\t         8.01 ns/op\nbig.BenchmarkBitLen31\t500000000\t         7.10 ns/op",
+			"disapproval": false,
+			"date": "2012-01-23 19:24:31.195904",
+			"approval": false
+		},
+		{
+			"sender": "dave.andersen@gmail.com",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, dave@cheney.net, edsrzf@gmail.com, gri@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2012-01-23 20:03:46.664642",
+			"approval": false
+		},
+		{
+			"sender": "dave.andersen@gmail.com",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 2012/01/23 20:37:03, gri wrote:\n> Looks good. A couple of minor suggestions.\n> \n> Please also update the CL description by running the benchmarks before and after\n> the change and piping the result through misc/benchcmp - and then add that\n> output to the CL instead (per rsc's suggestion).\n\nI think that's already done, but you've asked for a few more cases, so I'll re-run and add those as well.\n\nhttp://codereview.appspot.com/5570044/diff/4004/src/pkg/math/big/arith_test.go\n> File src/pkg/math/big/arith_test.go (right):\n> \n> http://codereview.appspot.com/5570044/diff/4004/src/pkg/math/big/arith_test.go#newcode338\n> src/pkg/math/big/arith_test.go:338: func runBenchBitLen(b *testing.B, nbits\n> uint) {\n> s/runBenchBitLen/benchmarkBitLenN/\n> \n> http://codereview.appspot.com/5570044/diff/4004/src/pkg/math/big/arith_test.go#newcode349\n> src/pkg/math/big/arith_test.go:349: func BenchmarkBitLen3(b *testing.B) {\n> runBenchBitLen(b, 3) }\n> Maybe add case 2 and 5 for consistency (so we have n, n+1, with n = power of\n> two)\n\nFixing.",
+			"disapproval": false,
+			"date": "2012-01-23 20:47:29.636816",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "This looks good, but I remember having done exactly the same when I tweaked the bitLen implementation a while ago with not so good results for small numbers (it got significantly slower).\n\nThese kind of benchmarks can show significant differences on different machines.\n\nFor a start, can you please add a good benchmark to arith_test.go? Ideally, the code is faster for all number ranges affected. If you write the benchmark results into files, you can use $GOROOT/misc/benchcmp for a nice side-by-side comparison.\n\nThanks.",
+			"disapproval": false,
+			"date": "2012-01-23 17:20:51.939249",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "LGTM.\n\nThanks for bearing with me.\n- gri",
+			"disapproval": false,
+			"date": "2012-01-23 21:43:51.961504",
+			"approval": true
+		},
+		{
+			"sender": "brtzsnr@gmail.com",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"brtzsnr@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Sorry for replying late, but if have already you check the algorithms from http://graphics.stanford.edu/~seander/bithacks.html#IntegerLogLookup\n\nOn 2012/01/23 22:26:03, dfc wrote:\n> That's a great win for arm, thanks a lot. \n> \n> Sent from my iPhone\n> \n> On 24/01/2012, at 8:46, mailto:gri@golang.org wrote:\n> \n> > *** Submitted as 408491a4bde1 ***\n> > \n> > math/big: slight improvement to algorithm used for internal bitLen\n> > function\n> > \n> > The bitLen function currently shifts out blocks of 8 bits at a time.\n> > This change replaces this sorta-linear algorithm with a log(N)\n> > one (shift out 16 bits, then 8, then 4, then 2, then 1).\n> > I left the start of it linear at 16 bits at a time so that\n> > the function continues to work with 32 or 64 bit values\n> > without any funkiness.\n> > The algorithm is similar to several of the nlz (\"number of\n> > leading zeros\") algorithms from \"Hacker's Delight\" or the\n> > \"bit twiddling hacks\" pages.\n> > \n> > Doesn't make a big difference to the existing benchmarks, but\n> > I'm using the code in a different context that calls bitLen\n> > much more often, so it seemed worthwhile making the existing\n> > codebase faster so that it's a better building block.\n> > \n> > Microbenchmark results on a 64-bit Macbook Pro using 6g from\n> > weekly.2012-01-20:\n> > \n> > benchmark                old ns/op    new ns/op    delta\n> > big.BenchmarkBitLen0             4            6  +50.12%\n> > big.BenchmarkBitLen1             4            6  +33.91%\n> > big.BenchmarkBitLen2             6            6   +3.05%\n> > big.BenchmarkBitLen3             7            6  -19.05%\n> > big.BenchmarkBitLen4             9            6  -30.19%\n> > big.BenchmarkBitLen5            11            6  -42.23%\n> > big.BenchmarkBitLen8            16            6  -61.78%\n> > big.BenchmarkBitLen9             5            6  +18.29%\n> > big.BenchmarkBitLen16           18            7  -60.99%\n> > big.BenchmarkBitLen17            7            6   -4.64%\n> > big.BenchmarkBitLen31           19            7  -62.49%\n> > \n> > On an ARM machine (with the previous weekly):\n> > \n> > benchmark                old ns/op    new ns/op    delta\n> > big.BenchmarkBitLen0            37           50  +36.56%\n> > big.BenchmarkBitLen1            59           51  -13.69%\n> > big.BenchmarkBitLen2            74           59  -20.40%\n> > big.BenchmarkBitLen3            92           60  -34.89%\n> > big.BenchmarkBitLen4           110           59  -46.09%\n> > big.BenchmarkBitLen5           127           60  -52.68%\n> > big.BenchmarkBitLen8           181           59  -67.24%\n> > big.BenchmarkBitLen9            78           60  -23.05%\n> > big.BenchmarkBitLen16          199           69  -65.13%\n> > big.BenchmarkBitLen17           91           70  -23.17%\n> > big.BenchmarkBitLen31          210           95  -54.43%\n> > \n> > R=golang-dev, dave, edsrzf, gri\n> > CC=golang-dev\n> > http://codereview.appspot.com/5570044\n> > \n> > Committer: Robert Griesemer <mailto:gri@golang.org>\n> > \n> > \n> > http://codereview.appspot.com/5570044/",
+			"disapproval": false,
+			"date": "2012-01-24 21:05:35.623194",
+			"approval": false
+		},
+		{
+			"sender": "gri@golang.org",
+			"recipients": [
+				"dave.andersen@gmail.com",
+				"golang-dev@googlegroups.com",
+				"dave@cheney.net",
+				"edsrzf@gmail.com",
+				"gri@golang.org",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "*** Submitted as 408491a4bde1 ***\n\nmath/big: slight improvement to algorithm used for internal bitLen function\n\nThe bitLen function currently shifts out blocks of 8 bits at a time.\nThis change replaces this sorta-linear algorithm with a log(N)\none (shift out 16 bits, then 8, then 4, then 2, then 1).\nI left the start of it linear at 16 bits at a time so that\nthe function continues to work with 32 or 64 bit values\nwithout any funkiness.\nThe algorithm is similar to several of the nlz (\"number of\nleading zeros\") algorithms from \"Hacker's Delight\" or the\n\"bit twiddling hacks\" pages.\n\nDoesn't make a big difference to the existing benchmarks, but\nI'm using the code in a different context that calls bitLen\nmuch more often, so it seemed worthwhile making the existing\ncodebase faster so that it's a better building block.\n\nMicrobenchmark results on a 64-bit Macbook Pro using 6g from weekly.2012-01-20:\n\nbenchmark                old ns/op    new ns/op    delta\nbig.BenchmarkBitLen0             4            6  +50.12%\nbig.BenchmarkBitLen1             4            6  +33.91%\nbig.BenchmarkBitLen2             6            6   +3.05%\nbig.BenchmarkBitLen3             7            6  -19.05%\nbig.BenchmarkBitLen4             9            6  -30.19%\nbig.BenchmarkBitLen5            11            6  -42.23%\nbig.BenchmarkBitLen8            16            6  -61.78%\nbig.BenchmarkBitLen9             5            6  +18.29%\nbig.BenchmarkBitLen16           18            7  -60.99%\nbig.BenchmarkBitLen17            7            6   -4.64%\nbig.BenchmarkBitLen31           19            7  -62.49%\n\nOn an ARM machine (with the previous weekly):\n\nbenchmark                old ns/op    new ns/op    delta\nbig.BenchmarkBitLen0            37           50  +36.56%\nbig.BenchmarkBitLen1            59           51  -13.69%\nbig.BenchmarkBitLen2            74           59  -20.40%\nbig.BenchmarkBitLen3            92           60  -34.89%\nbig.BenchmarkBitLen4           110           59  -46.09%\nbig.BenchmarkBitLen5           127           60  -52.68%\nbig.BenchmarkBitLen8           181           59  -67.24%\nbig.BenchmarkBitLen9            78           60  -23.05%\nbig.BenchmarkBitLen16          199           69  -65.13%\nbig.BenchmarkBitLen17           91           70  -23.17%\nbig.BenchmarkBitLen31          210           95  -54.43%\n\nR=golang-dev, dave, edsrzf, gri\nCC=golang-dev\nhttp://codereview.appspot.com/5570044\n\nCommitter: Robert Griesemer <gri@golang.org>",
+			"disapproval": false,
+			"date": "2012-01-23 21:46:30.854517",
+			"approval": false
+		},
+		{
+			"sender": "dave@cheney.net",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "That's a great win for arm, thanks a lot. \n\nSent from my iPhone\n\nOn 24/01/2012, at 8:46, gri@golang.org wrote:\n\n> *** Submitted as 408491a4bde1 ***\n> \n> math/big: slight improvement to algorithm used for internal bitLen\n> function\n> \n> The bitLen function currently shifts out blocks of 8 bits at a time.\n> This change replaces this sorta-linear algorithm with a log(N)\n> one (shift out 16 bits, then 8, then 4, then 2, then 1).\n> I left the start of it linear at 16 bits at a time so that\n> the function continues to work with 32 or 64 bit values\n> without any funkiness.\n> The algorithm is similar to several of the nlz (\"number of\n> leading zeros\") algorithms from \"Hacker's Delight\" or the\n> \"bit twiddling hacks\" pages.\n> \n> Doesn't make a big difference to the existing benchmarks, but\n> I'm using the code in a different context that calls bitLen\n> much more often, so it seemed worthwhile making the existing\n> codebase faster so that it's a better building block.\n> \n> Microbenchmark results on a 64-bit Macbook Pro using 6g from\n> weekly.2012-01-20:\n> \n> benchmark                old ns/op    new ns/op    delta\n> big.BenchmarkBitLen0             4            6  +50.12%\n> big.BenchmarkBitLen1             4            6  +33.91%\n> big.BenchmarkBitLen2             6            6   +3.05%\n> big.BenchmarkBitLen3             7            6  -19.05%\n> big.BenchmarkBitLen4             9            6  -30.19%\n> big.BenchmarkBitLen5            11            6  -42.23%\n> big.BenchmarkBitLen8            16            6  -61.78%\n> big.BenchmarkBitLen9             5            6  +18.29%\n> big.BenchmarkBitLen16           18            7  -60.99%\n> big.BenchmarkBitLen17            7            6   -4.64%\n> big.BenchmarkBitLen31           19            7  -62.49%\n> \n> On an ARM machine (with the previous weekly):\n> \n> benchmark                old ns/op    new ns/op    delta\n> big.BenchmarkBitLen0            37           50  +36.56%\n> big.BenchmarkBitLen1            59           51  -13.69%\n> big.BenchmarkBitLen2            74           59  -20.40%\n> big.BenchmarkBitLen3            92           60  -34.89%\n> big.BenchmarkBitLen4           110           59  -46.09%\n> big.BenchmarkBitLen5           127           60  -52.68%\n> big.BenchmarkBitLen8           181           59  -67.24%\n> big.BenchmarkBitLen9            78           60  -23.05%\n> big.BenchmarkBitLen16          199           69  -65.13%\n> big.BenchmarkBitLen17           91           70  -23.17%\n> big.BenchmarkBitLen31          210           95  -54.43%\n> \n> R=golang-dev, dave, edsrzf, gri\n> CC=golang-dev\n> http://codereview.appspot.com/5570044\n> \n> Committer: Robert Griesemer <gri@golang.org>\n> \n> \n> http://codereview.appspot.com/5570044/\n",
+			"disapproval": false,
+			"date": "2012-01-23 22:26:03.814556",
+			"approval": false
+		}
+	],
+	"owner_email": "dave.andersen@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "dga",
+	"subject": "code review 5570044: math/big: slight improvement to algorithm used for inte...",
+	"created": "2012-01-23 06:27:27.806597",
+	"patchsets": [
+		1,
+		2001,
+		3,
+		4004,
+		8
+	],
+	"modified": "2012-01-23 22:26:03.814556",
+	"closed": false,
+	"issue": 5570044
+}

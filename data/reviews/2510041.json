@@ -1,0 +1,421 @@
+{
+	"description": "first draft for a Lempel-Ziv-Welch compression package.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"nigeltao@golang.org",
+		"nigel.tao.gnome@gmail.com",
+		"bsiegert@gmail.com"
+	],
+	"messages": [
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Do you know that there are multiple file formats that\nuse the same encoding, to make it worth having a\nseparate package (for example compress/flate is used\nby zip, zlib, gzip, png, ...).  Wikipedia suggests that\ngif, tiff, and pdf all support lzw but that the bit order\ndiffers.  At the least it seems you'd want to allow\nfor that somehow.  (It would be fine to make a pass\nover the data at the end to do a table-based substitution.\nGIF is probably the common case since I believe tiff and\npdf more commonly use flate.)\n\nRuss\n",
+			"disapproval": false,
+			"date": "2010-10-14 14:07:56.190827",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change.",
+			"disapproval": false,
+			"date": "2010-10-14 13:41:27.939183",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I know there's room for improvement. in particular, it could do some buffering and the table lookups could be smarter.\nI'd like to know if the overall design is ok though; ie if I'm on the right track with the reader/writer way, and if it's a good idea to have one goroutine to encode/decode communicating with another one to read/write the data in the right format.",
+			"disapproval": false,
+			"date": "2010-10-14 13:46:57.323901",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "As a first step, you should run\n\n    hg gofmt\n    hg upload 2510041\n\nThere are also various ways in which you could\nbe using Go more effectively or efficiently.  Just\nscanning through:\n\n  * the map[string]uint16 is overkill\n  * each Read and Write should not spawn two goroutines\n  * the buffering is not right: if do single-byte Writes,\n    i will get no compression at all.\n  * consider using io.Pipe to address the last two.\n  * the use of bytes.Add in the writer causes unnecessary mallocs\n  * the writer uses range over a map testing k == foo\n    instead of writing m[foo].\n  * the reader should find a way to avoid the range scans too,\n    probably by reversing the key and elem in dict or replacing\n    it with an array.\n  * when prev is a string, you can write prev[i] instead of []byte(prev)[i],\n    avoiding the expensive copying of the entire string\n    that []byte(prev) does.\n\nYou might find it useful to read the source code for the\ncompress/flate package, which must handle many of\nthe same issues.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2010-10-22 13:48:55.694216",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I agree with everything Russ said, and addressing his concerns would\nprobably involve re-writing the code that the comments below apply to,\nbut modulo that, here are a few more style issues, in no particular\norder:\n\nA method's receiver name is usually just one letter: w instead of\nlzww. Similarly, if you implement io.Reader and io.Writer, the []byte\nargument is typically called p and not out or data.\n\nDelete the commented-out prints. They're fine for your own debugging\nbut they're not for submission or review.\n\nThe package doc comment is erroneously duplicated in all four .go\nfiles. Also, there should be no blank line between it and the package\nline. Run \"godoc compress/lzw\" to check it.\n\nConsecutive var statements can be put in a block, so:\nvar i int\nvar s string\nvar b bool\ncan be written as\nvar (\n    i int\n    s string\n    b bool\n)\nand the result usually looks less cluttered, especially if the\nvariables are related.\n\nA cleaner way to write\nvar words []byte = make([]byte, 2)\nis just\nwords := make([]byte, 2)\nor if the size is constant, just\nvar words [2]byte\n\nI'd drop the \"= 0\" out of \"var shift uint = 0\". Variables are\nzero-initialized by default.\n\nBoth dictSizeIni and endSignal should be constants, not variables.\n\nImports should be sorted alphabetically.\n\n\"for ;; { ... }\" can be just \"for { ... }\", but since you're really\niterating over a channel use \"for word := range lzwr.c { ... }\" and\nclose the channel rather than sending the endSignal sentinal.\n\n\nFinally, if you're adding a new package, your change should also\nmodify src/pkg/Makefile.\n",
+			"disapproval": false,
+			"date": "2010-10-23 00:41:26.513440",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"golang-dev@googlegroups.com",
+				"rsc@golang.org",
+				"nigel.tao.gnome@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for the comments, I'm on it.\nI've got MSB packing order working as well now and I'm using an exposed setter function to let the user set the packing order. Should the variable representing that be a global var or rather a member of the reader/writer struct? \n\nThanks,\nMathieu\n\nOn 2010/10/23 00:41:26, nigeltao_gnome wrote:\n> I agree with everything Russ said, and addressing his concerns would\n> probably involve re-writing the code that the comments below apply to,\n> but modulo that, here are a few more style issues, in no particular\n> order:\n> \n> A method's receiver name is usually just one letter: w instead of\n> lzww. Similarly, if you implement io.Reader and io.Writer, the []byte\n> argument is typically called p and not out or data.\n> \n> Delete the commented-out prints. They're fine for your own debugging\n> but they're not for submission or review.\n> \n> The package doc comment is erroneously duplicated in all four .go\n> files. Also, there should be no blank line between it and the package\n> line. Run \"godoc compress/lzw\" to check it.\n> \n> Consecutive var statements can be put in a block, so:\n> var i int\n> var s string\n> var b bool\n> can be written as\n> var (\n>     i int\n>     s string\n>     b bool\n> )\n> and the result usually looks less cluttered, especially if the\n> variables are related.\n> \n> A cleaner way to write\n> var words []byte = make([]byte, 2)\n> is just\n> words := make([]byte, 2)\n> or if the size is constant, just\n> var words [2]byte\n> \n> I'd drop the \"= 0\" out of \"var shift uint = 0\". Variables are\n> zero-initialized by default.\n> \n> Both dictSizeIni and endSignal should be constants, not variables.\n> \n> Imports should be sorted alphabetically.\n> \n> \"for ;; { ... }\" can be just \"for { ... }\", but since you're really\n> iterating over a channel use \"for word := range lzwr.c { ... }\" and\n> close the channel rather than sending the endSignal sentinal.\n> \n> \n> Finally, if you're adding a new package, your change should also\n> modify src/pkg/Makefile.",
+			"disapproval": false,
+			"date": "2010-10-23 16:13:46.727963",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 24 October 2010 03:13,  <mathieu.lonjaret@gmail.com> wrote:\n> I've got MSB packing order working as well now and I'm using an exposed\n> setter function to let the user set the packing order. Should the\n> variable representing that be a global var or rather a member of the\n> reader/writer struct?\n\nSince GIF and PDF use different packing orders, and it's not\ninconceivable that a program could write both sorts of output, this\nshould not be a global variable.\n",
+			"disapproval": false,
+			"date": "2010-10-24 07:24:01.578066",
+			"approval": false
+		},
+		{
+			"sender": "rsc@google.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2010-11-01 18:51:36.155646",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao_gnome, rsc (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2010-11-15 21:50:29.040441",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "this is a new version of the reader which, I think addresses all of your comments. the writer is in the works.\nI have 2 other questions:\n1) for the same reason you gave me about the packing order variable, I think I should change the wordsize variable as well to be a member of the reader instead of a global var. right?\n2) at no point do I set/return an error but I bet there are some cases where the read operations should return one. any advice on that?\n\nCheers,\nMathieu",
+			"disapproval": false,
+			"date": "2010-11-15 21:55:24.068757",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"rsc@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao_gnome, rsc (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2010-11-22 23:32:01.667286",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"rsc@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I have many concerns about the basic efficiency of your implementation and general programming style (e.g. lots of duplicated code).\n\nI would strongly recommend that you try to study the compress/{flate,gzip,zlib} code until you understand how it works. Their general design is pretty solid and should work equally well for the LZW algorithm.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/Makefile\nFile src/pkg/compress/lzw/Makefile (right):\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/Makefile#newcode1\nsrc/pkg/compress/lzw/Makefile:1: # Copyright 2009 The Go Authors. All rights reserved.\ns/2009/2010/\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go\nFile src/pkg/compress/lzw/reader.go (right):\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode16\nsrc/pkg/compress/lzw/reader.go:16: const dictSizeIni uint16 = 256\nDrop the uint16. Constants are typically ideal numbers.\n\nSimilarly for writer.go.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode22\nsrc/pkg/compress/lzw/reader.go:22: err      os.Error\nr.err is never re-used between different methods. Why is it a field and not a local variable?\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode23\nsrc/pkg/compress/lzw/reader.go:23: dict     map[uint16]string\nIf dict is a dense map with entries from 0 up to some n, then a map is overkill and inefficient. Just use a []string and append.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode30\nsrc/pkg/compress/lzw/reader.go:30: func NewReader(r io.Reader, ws uint8, order string) (io.ReadCloser, os.Error) {\nAll public functions need comments. For example, what does ws and order mean? What are their valid values?\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode31\nsrc/pkg/compress/lzw/reader.go:31: lzwr := new(reader)\nRather than assigning each field in a separate statement, do\nlzwr := &reader{\n  r: r,\n  wordsize: ws,\n  // etcetera.\n}\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode58\nsrc/pkg/compress/lzw/reader.go:58: func (r *reader) Read(p []byte) (n int, err os.Error) {\nRather than reader implementing ReadCloser, it would be simpler if NewReader just returned the read end of the pipe, exactly the same as what compress/flate does. You don't need to use csync to signal the write end that the read end is ready. The io.Pipe already does that. The writer goroutine should just write to the pipe, and it will block until the reader goroutine is ready.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode75\nsrc/pkg/compress/lzw/reader.go:75: input      []byte = make([]byte, 1)\nReading from a Reader one byte at a time is terribly inefficient. Use a bufio.Reader and ReadByte.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode122\nsrc/pkg/compress/lzw/reader.go:122: func (r *reader) readBitsMSB() {\nThere is a lot of copy-and-paste between readBitsMSB and readBitsLSB. I think there's a lot of opportunity to refactor out some duplicated code.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode191\nsrc/pkg/compress/lzw/reader.go:191: b := make([]byte, toRead)\nAllocating a new buffer each time is needless garbage. Just allocate one buffer (possibly a bytes.Buffer) and re-use it.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode245\nsrc/pkg/compress/lzw/reader.go:245: entry = prev + temp[0:1]\nGrowing a string one character at a time is O(N^2), which seems needlessly expensive. You should really be using []byte instead of string, since each conversion between one and the other involves an allocation, a copy, and a garbage cost. In fact, I don't think you should be using strings at all.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader_test.go\nFile src/pkg/compress/lzw/reader_test.go (right):\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader_test.go#newcode13\nsrc/pkg/compress/lzw/reader_test.go:13: func TestDecompressorLSB_11_whole(t *testing.T) {\nRather than having a separate TestFooBar function for each different case, with a lot of copy-and-pasted code, I would prefer a data-driven test with one TestReader function that ranged over a test suite. Look at the tests in compress/gzip and compress/zlib for what I mean.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader_test.go#newcode34\nsrc/pkg/compress/lzw/reader_test.go:34: func TestDecompressorLSB_11_byte(t *testing.T) {\nI don't think the _whole versus _byte distinction is winning you much. I'd much rather have inputs of different sizes to give me confidence that buffer boundaries are tested.\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/writer.go\nFile src/pkg/compress/lzw/writer.go (right):\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/writer.go#newcode5\nsrc/pkg/compress/lzw/writer.go:5: package lzw\nI haven't looked closely at writer.go but a lot of the general comments I made about reader.go apply. For example efficiency, copy-and-pasted code, the need for comments, simpler use of the io.Pipe...\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/writer_test.go\nFile src/pkg/compress/lzw/writer_test.go (right):\n\nhttp://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/writer_test.go#newcode12\nsrc/pkg/compress/lzw/writer_test.go:12: func TestCompressorLSB_11_whole(t *testing.T) {\nIIUC there can be more than one correct encoding of any particular string. Rather than testing that this implementation returns a particular golden value, I'd rather test that wrapping a lzw.Writer and lzw.Reader around the two ends of an io.Pipe is a no-op.\n\nAgain, look at the tests in\ncompress/{gzip,zlib}/*_test.go for what I mean.",
+			"disapproval": false,
+			"date": "2010-11-23 07:14:32.786684",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"rsc@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Thanks for the comments, I'll work on them.\nThere's one point I'm not sure about though:\n\nOn 2010/11/23 07:14:32, nigeltao wrote:\n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode122\n> src/pkg/compress/lzw/reader.go:122: func (r *reader) readBitsMSB() {\n> There is a lot of copy-and-paste between readBitsMSB and readBitsLSB. I think\n> there's a lot of opportunity to refactor out some duplicated code.\n\nI agree some of their parts are similar but I felt they were already complicated and different enough that trying to merge them would result in something quite unreadable. Maybe I can at least isolate a common denominator and put it in another function though. I'll see what I can do, but I'm not confident about that one.",
+			"disapproval": false,
+			"date": "2010-11-23 10:49:37.067877",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Regarding Nigel's comment about duplication,\nplease pick one byte order - the most common one,\nso probably what GIF uses - and hard-code that one.\nCode that wants the opposite byte order can run the\nbytes through a [256]byte lookup table as a post-processing step\n(for compression) or during the reading loop (for uncompression)\n\nRuss\n",
+			"disapproval": false,
+			"date": "2010-11-29 16:04:20.481556",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"rsc@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I remember you already mentionned such a technique, so I thought about it for a while but I didn't really understand what you meant. Like, when and from what does one build this lookup table in the first place? \nI'll think about it some more then, thanks.\n\nOn 2010/11/29 16:04:20, rsc wrote:\n> Regarding Nigel's comment about duplication,\n> please pick one byte order - the most common one,\n> so probably what GIF uses - and hard-code that one.\n> Code that wants the opposite byte order can run the\n> bytes through a [256]byte lookup table as a post-processing step\n> (for compression) or during the reading loop (for uncompression)\n> \n> Russ",
+			"disapproval": false,
+			"date": "2010-11-29 16:19:13.447031",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Mon, Nov 29, 2010 at 11:19,  <mathieu.lonjaret@gmail.com> wrote:\n> I remember you already mentionned such a technique, so I thought about\n> it for a while but I didn't really understand what you meant. Like, when\n> and from what does one build this lookup table in the first place?\n> I'll think about it some more then, thanks.\n\nThe table is in src/pkg/compress/flate/reverse_bits.go.\nIf b is msb-first, then reverseByte[b] is lsb-first and vice versa.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2010-11-29 17:04:36.925298",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Mon, Nov 29, 2010 at 6:04 PM, Russ Cox <rsc@golang.org> wrote:\n\n> The table is in src/pkg/compress/flate/reverse_bits.go.\n> If b is msb-first, then reverseByte[b] is lsb-first and vice versa.\n>\n> Russ\n>\n\nSorry, I don't get it.\nMaybe I understood it wrongly but from what I've read, if we have, say\n(encoded on 11 bits words)\nfoo = 00000101 01101001 and then\nbar = 00000011 10110011\nto pack, the stream will be:\n\nwith LSB:  01101001 10011|101 XX011101 XXXXXXXX\nwith MSB:  10101101 001|01110 110011XX XXXXXXXX\n\n(the pipe is placed an the junction of foo and bar)\nI don't think reversing the bits will allow to go from one to the\nother, at least not directly in one step after compression. What am I\nmissing here?\n",
+			"disapproval": false,
+			"date": "2010-11-30 09:52:47.622390",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Ah.  You are saying that the MSB/LSB setting affects both\nthe order in which bits are inserted into the bit stream and\nthe order in which 8-bit chunks of that bit stream are packed\ninto bytes.  I expected it to affect only the latter.\n\nI have no idea which is the actual behavior.  The thing to do\nis to make a tiny GIF LZW stream and make a tiny PDF LZW stream\nand make sure you can decode both.\n\nRuss\n",
+			"disapproval": false,
+			"date": "2010-11-30 13:58:59.465022",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"rsc@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello,\n\nAnother question:\nwhen the writer is created with a wordsize (and hence a max dictionary size) smaller than the optimum, do you think I should abort and report it as an error (so that the caller can retry with a superior size), or rather switch to a mode where the algorithm (when it has reached the max dict size) keeps using the existing codes without adding new entries to the dict?\n\nI think this is kindof a non-issue with an advanced enough gif implementation since it's supposed to use a variable word/dict size, but I'm not there yet.\n\nMathieu",
+			"disapproval": false,
+			"date": "2011-01-10 11:07:20.730372",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> when the writer is created with a wordsize (and hence a max dictionary\n> size) smaller than the optimum,\n\nI don't quite understand.\nWhat is the optimum?\nHow would the caller know?\n\nRuss\n",
+			"disapproval": false,
+			"date": "2011-01-11 16:48:24.723825",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"rsc@golang.org",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/01/11 16:48:24, rsc wrote:\n> > when the writer is created with a wordsize (and hence a max dictionary\n> > size) smaller than the optimum,\n> \n> I don't quite understand.\n> What is the optimum?\n> How would the caller know?\n> \n> Russ\n\nSay your input is such that the encoding would generate 600 codes for it. If your codes start at 0, continuously until 599, that means they all fit on a 10 bits word, so you can pack them on the final stream as 10 bits words (and not waste 6 bits for each word). 11 would be a waste for all words, and 9 not enough because some of the words would not fit, hence in that case 10 would be the best.\nWith the variable wordsize improvement in gifs, you would start with a very small wordsize, say 5, and increase it by steps of one as much as you need. But I think that's an improvement that can come later, and the fixed wordsize case has to be there anyway since variable is not always used (I think).\n\nThe caller indeed can't know in advance if the chosen wordsize is too small for the input text. That's why I'm proposing to either report a meaningful error (so the wordsize can be increased by the caller), or to keep going without creating additional codes when the dictionary gets full. This last solution can of course be pretty inefficient in terms of compression, and I can't think of a case where anyone would intentionally want that behaviour.\n\nAs to the contrary (wordsize bigger than the optimum, hence bits wasted when packing the words) I'm not sure how to cope with that. \nI could make an automatic mode where there's a first full run of the encoder only to determine what's the optimum wordsize, and then a normal run of decoder+bitswriter. How about that?\n\nMathieu",
+			"disapproval": false,
+			"date": "2011-01-11 17:50:05.042361",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "",
+			"disapproval": false,
+			"date": "2011-01-19 19:56:36.071590",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "after some more reading, it seems like the original LZW used 12 bits words from the start, and simply stopped writing to the dictionary when its 4096 entries are filled, just using it as is for lookups.\nSo I'm going to leave the possibility for the caller to set another wordsize but I'm going to have it default to 12 and not error when the dict is filled but rather keep on going with the dict as is.\n\nThat's for a start. Then possible improvements (apart from variable wordsize) are to simply flush the dict entries when it's filled, or even better: discard entries that are not used often.\n\nDoes that sound ok?",
+			"disapproval": false,
+			"date": "2011-01-20 09:36:13.976573",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 20 January 2011 20:36,  <mathieu.lonjaret@gmail.com> wrote:\n> after some more reading, it seems like the original LZW used 12 bits\n> words from the start, and simply stopped writing to the dictionary when\n> its 4096 entries are filled, just using it as is for lookups.\n> So I'm going to leave the possibility for the caller to set another\n> wordsize but I'm going to have it default to 12 and not error when the\n> dict is filled but rather keep on going with the dict as is.\n\nThat sounds OK to me.\n\nIt might be worth investigating what other open source lzw (or gif of\npdf) libraries do.\n",
+			"disapproval": false,
+			"date": "2011-01-20 22:26:46.168328",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao_gnome, nigeltao (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-02-10 10:46:44.218942",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2010/11/23 07:14:32, nigeltao wrote:\n\n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go\n> File src/pkg/compress/lzw/reader.go (right):\n> \n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode16\n> src/pkg/compress/lzw/reader.go:16: const dictSizeIni uint16 = 256\n> Drop the uint16. Constants are typically ideal numbers.\n> \n> Similarly for writer.go.\n\ndone.\n \n>http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode22\n> src/pkg/compress/lzw/reader.go:22: err      os.Error\n> r.err is never re-used between different methods. Why is it a field and not a\n> local variable?\n\ndone.\n\n>http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode23\n> src/pkg/compress/lzw/reader.go:23: dict     map[uint16]string\n> If dict is a dense map with entries from 0 up to some n, then a map is overkill\n> and inefficient. Just use a []string and append.\n\ndone.\n\n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode30\n> src/pkg/compress/lzw/reader.go:30: func NewReader(r io.Reader, ws uint8, order\n> string) (io.ReadCloser, os.Error) {\n> All public functions need comments. For example, what does ws and order mean?\n> What are their valid values?\n\ndone.\n\n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode31\n> src/pkg/compress/lzw/reader.go:31: lzwr := new(reader)\n> Rather than assigning each field in a separate statement, do\n> lzwr := &reader{\n>   r: r,\n>   wordsize: ws,\n>   // etcetera.\n> }\n\ndone.\n \n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode58\n> src/pkg/compress/lzw/reader.go:58: func (r *reader) Read(p []byte) (n int, err\n> os.Error) {\n> Rather than reader implementing ReadCloser, it would be simpler if NewReader\n> just returned the read end of the pipe, exactly the same as what compress/flate\n> does. You don't need to use csync to signal the write end that the read end is\n> ready. The io.Pipe already does that. The writer goroutine should just write to\n> the pipe, and it will block until the reader goroutine is ready.\n\nI tried going that way, but I needed to implement an explicit Read/Write to do the \"breaking\" of large inputs into reasonably sized chunks (but maybe there's a better way?). So NewReader/NewWriter still returns a *reader/*writer.\n\n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode75\n> src/pkg/compress/lzw/reader.go:75: input      []byte = make([]byte, 1)\n> Reading from a Reader one byte at a time is terribly inefficient. Use a\n> bufio.Reader and ReadByte.\n\ndone.\n\n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode122\n> src/pkg/compress/lzw/reader.go:122: func (r *reader) readBitsMSB() {\n> There is a lot of copy-and-paste between readBitsMSB and readBitsLSB. I think\n> there's a lot of opportunity to refactor out some duplicated code.\n\ndone. merging the two implied adding a lot of branches (switch) so it's probably (a bit?) slower than what I had before, but it is indeed more readable now.\n\n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode191\n> src/pkg/compress/lzw/reader.go:191: b := make([]byte, toRead)\n> Allocating a new buffer each time is needless garbage. Just allocate one buffer\n> (possibly a bytes.Buffer) and re-use it.\n\ndone.\n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader.go#newcode245\n> src/pkg/compress/lzw/reader.go:245: entry = prev + temp[0:1]\n> Growing a string one character at a time is O(N^2), which seems needlessly\n> expensive. You should really be using []byte instead of string, since each\n> conversion between one and the other involves an allocation, a copy, and a\n> garbage cost. In fact, I don't think you should be using strings at all.\n\ndone. I'm now using []byte whenever possible. Please let me know if it can be improved further regarding speed and allocations.\n \n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader_test.go\n> File src/pkg/compress/lzw/reader_test.go (right):\n> \n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader_test.go#newcode13\n> src/pkg/compress/lzw/reader_test.go:13: func TestDecompressorLSB_11_whole(t\n> *testing.T) {\n> Rather than having a separate TestFooBar function for each different case, with\n> a lot of copy-and-pasted code, I would prefer a data-driven test with one\n> TestReader function that ranged over a test suite. Look at the tests in\n> compress/gzip and compress/zlib for what I mean.\n> \n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/reader_test.go#newco\n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/writer_test.go\n> File src/pkg/compress/lzw/writer_test.go (right):\n> \n> http://codereview.appspot.com/2510041/diff/32001/src/pkg/compress/lzw/writer_test.go#newcode12\n> src/pkg/compress/lzw/writer_test.go:12: func TestCompressorLSB_11_whole(t\n> *testing.T) {\n> IIUC there can be more than one correct encoding of any particular string.\n> Rather than testing that this implementation returns a particular golden value,\n> I'd rather test that wrapping a lzw.Writer and lzw.Reader around the two ends of\n> an io.Pipe is a no-op.\n\ndone. and I also mimicked a lot of the behavior of the other compression packages tests as you advised.",
+			"disapproval": false,
+			"date": "2011-02-10 12:21:43.280561",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigel.tao.gnome@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello nigeltao_gnome, nigeltao (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-02-10 16:16:52.389693",
+			"approval": false
+		},
+		{
+			"sender": "mathieu.lonjaret@gmail.com",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigeltao@golang.org",
+				"nigel.tao.gnome@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/02/15 11:56:01, nigeltao_gnome wrote:\n> After a bit of reading, it appears that both GIF and PDF use a maximum\n> word size of 12 bits, since it enables an extremely efficient hash\n> table representation as a []uint32, where each uint32 holds the 12 bit\n> code, the 12 bit code of the immediate prefix, and the 8 bit byte that\n> differentiates what the two codes represent. It is certainly feasible\n> to do something similar in Go. Compared to that, using a\n> map[string]uint16 to encode and a [][]byte to decode would involve\n> many string and []byte allocations (and conversions between the two),\n> and be very costly. I think that practicality trumps generality, and I\n> think it's worth capping the word size at 12 bits, instead of 16 bits.\n\nThis is especially true in that case since I don't see lzw being used for many things other than pdf and gif. (although I saw at least one audio format I think, I'll try to dig it back).\n \n> I might have a crack at writing a GIF decoder later this week, which\n> would help me understand what I would want from a LZW package.\n\nOk, I'll wait for some more input from you then, thanks.\nI'm still gonna try and work on your previous comments in the meanwhile though, in case some of the code can be kept.",
+			"disapproval": false,
+			"date": "2011-02-15 13:45:44.504503",
+			"approval": false
+		},
+		{
+			"sender": "nigeltao@golang.org",
+			"recipients": [
+				"mathieu.lonjaret@gmail.com",
+				"nigeltao@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/Makefile\nFile src/pkg/compress/lzw/Makefile (right):\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/Makefile#newcode1\nsrc/pkg/compress/lzw/Makefile:1: # Copyright 2010 The Go Authors. All rights reserved.\ns/2010/2011/ and similarly in other files in this change.\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/lzw_test.go\nFile src/pkg/compress/lzw/lzw_test.go (right):\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/lzw_test.go#newcode89\nsrc/pkg/compress/lzw/lzw_test.go:89: _, err = compressor.Write(tt.raw)\nIt would be cleaner if you always used io.Copy, with the Reader either being a file reader or a bytes.Buffer.\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/lzw_test.go#newcode126\nsrc/pkg/compress/lzw/lzw_test.go:126: func TestIdentity(t *testing.T) {\nYou have some tests that read(write(x)) is the identity function, but I'd also like some reading-only tests of binary data, similar to the other test cases in compress/{flate,gzip,zlib}.\n\nFor example, only testing for identity doesn't catch the case where both reading and writing have the same bug.\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/reader.go\nFile src/pkg/compress/lzw/reader.go (right):\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/reader.go#newcode7\nsrc/pkg/compress/lzw/reader.go:7: compressed with the Lempel\u2013Ziv\u2013Welch algorithm.\nIs there a canonical reference for the algorithm? I did a quick search and could not find an RFC. The Welch (1984) \"A Technique for High-Performance Data Compression\" paper might be the best reference, but I didn't look too deeply.\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/reader.go#newcode33\nsrc/pkg/compress/lzw/reader.go:33: c     chan uint16\nSending the uint16 values one at a time over a channel sounds inefficient to me. Batching up slices of uint16 would be better. The analogy is that an io.Pipe is based on a chan []byte, not a chan byte.\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/reader.go#newcode107\nsrc/pkg/compress/lzw/reader.go:107: <-r.c\nWhy do you have to wait?\n\nAlso, I don't like how both goroutines are both writing to and reading from r.c. It would feel a lot cleaner if one end only writes, and the other end only reads.\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/reader.go#newcode132\nsrc/pkg/compress/lzw/reader.go:132: case lsb:\nSwitching on a string will be expensive inside an inner loop. You should do the order == \"LSB\" comparison once, and save the result as a bool variable.\n\nhttp://codereview.appspot.com/2510041/diff/57001/src/pkg/compress/lzw/reader.go#newcode254\nsrc/pkg/compress/lzw/reader.go:254: if b.Len() >= bufSize {\nWouldn't it be easier for b to be a bufio.Writer around r.pw, instead of managing the buffering yourself!?",
+			"disapproval": false,
+			"date": "2011-02-15 07:57:09.844497",
+			"approval": false
+		},
+		{
+			"sender": "nigel.tao.gnome@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "After a bit of reading, it appears that both GIF and PDF use a maximum\nword size of 12 bits, since it enables an extremely efficient hash\ntable representation as a []uint32, where each uint32 holds the 12 bit\ncode, the 12 bit code of the immediate prefix, and the 8 bit byte that\ndifferentiates what the two codes represent. It is certainly feasible\nto do something similar in Go. Compared to that, using a\nmap[string]uint16 to encode and a [][]byte to decode would involve\nmany string and []byte allocations (and conversions between the two),\nand be very costly. I think that practicality trumps generality, and I\nthink it's worth capping the word size at 12 bits, instead of 16 bits.\n\nI might have a crack at writing a GIF decoder later this week, which\nwould help me understand what I would want from a LZW package.\n",
+			"disapproval": false,
+			"date": "2011-02-15 11:56:01.618979",
+			"approval": false
+		},
+		{
+			"sender": "bsiegert@gmail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Tue, Feb 15, 2011 at 14:45,  <mathieu.lonjaret@gmail.com> wrote:\n> On 2011/02/15 11:56:01, nigeltao_gnome wrote:\n> This is especially true in that case since I don't see lzw being used\n> for many things other than pdf and gif. (although I saw at least one\n> audio format I think, I'll try to dig it back).\n\ntiff! I am writing a tiff decoder, and I am waiting for the LZW\npackage to be added so that we will be able to read LZW-compressed\ntiff images.\n\n> http://codereview.appspot.com/2510041/\n\n--Benny.\n\n-- \nThe first essential in chemistry is that you should perform practical\nwork and conduct experiments, for he who performs not practical work\nnor makes experiments will never attain the least degree of mastery.\n\u00a0 \u00a0 \u00a0 \u00a0 -- Abu Musa Jabir ibn Hayyan (721-815)\n",
+			"disapproval": false,
+			"date": "2011-02-16 14:27:58.783093",
+			"approval": false
+		}
+	],
+	"owner_email": "mathieu.lonjaret@gmail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "mpl",
+	"subject": "code review 2510041: first draft for a Lempel-Ziv-Welch compression package.",
+	"created": "2010-10-14 13:40:29.470920",
+	"patchsets": [
+		1,
+		2001,
+		11001,
+		22001,
+		28001,
+		32001,
+		53001,
+		57001
+	],
+	"modified": "2011-02-16 14:27:58.783093",
+	"closed": false,
+	"issue": 2510041
+}

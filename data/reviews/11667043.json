@@ -1,0 +1,159 @@
+{
+	"description": "text/template: add ExecuteWhole convenience method.\n\n(API PROPOSAL)\n(Alternate names: ExecuteComplete, ExecuteEntire, ExecuteAtomic,\n ExecuteAll, ExecuteCarbs)\n\nAn extremely common pattern when dealing with templates is to\nexecute them into a bytes.Buffer so that the template execution\nerror can be checked without partial output (consider an\nhttp.ResponseWriter as the destination). Many users don't know\nthat this is the right pattern, and get it wrong (and don't\nrealise their program is handling errors incorrectly).\n\nWhat people usually write is:\n        if err := tmpl.Execute(w, data); err != nil {\n        \t// ... error handling\n                // (some output has probably been written to w)\n        }\n\nThey usually will want something more like:\n        var buf bytes.Buffer\n        if err := tmpl.Execute(&buf, data); err != nil {\n        \t// ... error handling\n        }\n        io.Copy(w, &buf)\n\nAdding ExecuteWhole makes it a lot more foolproof and obvious:\n        if err := tmpl.ExecuteWhole(w, data); err != nil {\n        \t// ... error handling\n                // (nothing was written to w)\n        }",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"r@golang.org",
+		"rsc@golang.org",
+		"bradfitz@golang.org",
+		"adg@golang.org",
+		"adg@google.com"
+	],
+	"messages": [
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Hello r (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://code.google.com/p/go",
+			"disapproval": false,
+			"date": "2013-07-24 04:51:02.797500",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Why not ExecuteBytes(data interface{}) ([]byte, error)?\r\nThen the caller can do whatever it likes with the bytes.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 04:54:46.817060",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "That's more garbagey, not that that's a compelling argument probably.  But\r\nan observation.\r\n\r\nIn David's way, the template package can recycle \"var buf bytes.Buffer\".\r\n If you return ([]byte, error), all bets are off as far as reasoning about\r\nthe lifetime or ownership.\r\n\r\n\r\n\r\nOn Tue, Jul 23, 2013 at 9:54 PM, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Why not ExecuteBytes(data interface{}) ([]byte, error)?\r\n> Then the caller can do whatever it likes with the bytes.\r\n>\r\n> Russ\r\n>\r\n>  --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 04:56:54.418010",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 24 July 2013 14:54, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Why not ExecuteBytes(data interface{}) ([]byte, error)?\r\n> Then the caller can do whatever it likes with the bytes.\r\n\r\nI thought about doing that, but it adds an extra step in using\r\ntemplates and net/http correctly, and I'm trying to simplify it.\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 05:03:33.718320",
+			"approval": false
+		},
+		{
+			"sender": "rsc@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Another question, then. Why is this one writer special?\r\n\r\nWhen I've written serious http servers I've written a wrapper for\r\nResponseWriter that, unless disabled by an explicit method call, buffers\r\nthe output, wherever it came from, so that it can be discarded.\r\n\r\nThe convenience here is minimal and there's no new functionality. The fact\r\nthat it might lead to another magic cache bothers me even more.\r\n\r\nRuss\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 05:10:17.621860",
+			"approval": false
+		},
+		{
+			"sender": "adg@golang.org",
+			"recipients": [
+				"dsymonds@golang.org",
+				"r@golang.org",
+				"rsc@golang.org",
+				"bradfitz@golang.org",
+				"adg@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I don't like the precedent of \"we'll only write to the writer if we're not going to return an error.\" In that sense, ExecuteBytes is more appealing.\n\nIn use:\n\n  b, err := template.ExecuteBytes(data)\n  if err != nil {\n    // handle error\n  }\n  w.Write(b)",
+			"disapproval": false,
+			"date": "2013-07-24 05:10:19.538210",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 24 July 2013 15:10, Russ Cox <rsc@golang.org> wrote:\r\n\r\n> Another question, then. Why is this one writer special?\r\n>\r\n> When I've written serious http servers I've written a wrapper for\r\n> ResponseWriter that, unless disabled by an explicit method call, buffers the\r\n> output, wherever it came from, so that it can be discarded.\r\n>\r\n> The convenience here is minimal and there's no new functionality. The fact\r\n> that it might lead to another magic cache bothers me even more.\r\n\r\nI'm not actually interested in a magic cache. I just want to make this\r\npackage a bit more fool-proof, since I keep seeing people mess this up\r\nover and over again. There should be something in the standard library\r\nthat makes connecting these two easier, and my proposal is one\r\npossibility, and easy to point people at. I don't think we should\r\nexpect people to write wrappers for ResponseWriter; that's even more\r\neffort than the current best practice of executing into a\r\nbytes.Buffer.\r\n\r\nFrom the other angle, I see this less as a convenience and more as a\r\nhelper that makes it easier to get this right first go (a.k.a.\r\ncorrectness helper). Look at the examples I posted in the description:\r\nwith this CL it's adding ~5 characters to the\r\ncurrent-obvious-but-wrong approach to get the code right.\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 05:16:32.329400",
+			"approval": false
+		},
+		{
+			"sender": "adg@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "I'm now thinking the correct fix is on the net/http side, if anywhere.\r\nMaybe we need a better error handling helper in there.\r\n\r\nFor instance, the same problem arises writing responses with json.Encoder..\r\nOn 24 Jul 2013 15:16, \"David Symonds\" <dsymonds@golang.org> wrote:\r\n\r\n> On 24 July 2013 15:10, Russ Cox <rsc@golang.org> wrote:\r\n>\r\n> > Another question, then. Why is this one writer special?\r\n> >\r\n> > When I've written serious http servers I've written a wrapper for\r\n> > ResponseWriter that, unless disabled by an explicit method call, buffers\r\n> the\r\n> > output, wherever it came from, so that it can be discarded.\r\n> >\r\n> > The convenience here is minimal and there's no new functionality. The\r\n> fact\r\n> > that it might lead to another magic cache bothers me even more.\r\n>\r\n> I'm not actually interested in a magic cache. I just want to make this\r\n> package a bit more fool-proof, since I keep seeing people mess this up\r\n> over and over again. There should be something in the standard library\r\n> that makes connecting these two easier, and my proposal is one\r\n> possibility, and easy to point people at. I don't think we should\r\n> expect people to write wrappers for ResponseWriter; that's even more\r\n> effort than the current best practice of executing into a\r\n> bytes.Buffer.\r\n>\r\n> From the other angle, I see this less as a convenience and more as a\r\n> helper that makes it easier to get this right first go (a.k.a.\r\n> correctness helper). Look at the examples I posted in the description:\r\n> with this CL it's adding ~5 characters to the\r\n> current-obvious-but-wrong approach to get the code right.\r\n>\r\n> --\r\n>\r\n> ---\r\n> You received this message because you are subscribed to the Google Groups\r\n> \"golang-dev\" group.\r\n> To unsubscribe from this group and stop receiving emails from it, send an\r\n> email to golang-dev+unsubscribe@googlegroups.com.\r\n> For more options, visit https://groups.google.com/groups/opt_out.\r\n>\r\n>\r\n>\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 05:24:09.535980",
+			"approval": false
+		},
+		{
+			"sender": "dsymonds@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "On 24 July 2013 15:24, Andrew Gerrand <adg@google.com> wrote:\r\n\r\n> I'm now thinking the correct fix is on the net/http side, if anywhere. Maybe\r\n> we need a better error handling helper in there.\r\n>\r\n> For instance, the same problem arises writing responses with json.Encoder..\r\n\r\nAt least there the simplest method is json.Marshal, which returns\r\n([]byte, error), and you have to work a bit harder to go directly to a\r\nwriter. But maybe that's precedent enough to make this ExecuteBytes to\r\nreturn ([]byte, error). Dunno.\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 05:26:04.322910",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "Another way to think about it.\r\n\r\nLet's say we had\r\n\r\nfunc (t *Template) Output(d interface{}) func (io.Writer) error {\r\nreturn func(w io.Writer) error {\r\n return t.Execute(w, d)\r\n}\r\n}\r\n\r\nand also, perhaps in io/ioutil, the function\r\n\r\nfunc AllOrNothing(f(w io.Writer) error) io.Reader {\r\nb := new(bytes.Buffer)\r\nerr := f(b)\r\n if err != nil {\r\nreturn BadReader\r\n}\r\nreturn b\r\n}\r\n\r\nThen we could write\r\n\r\nerr := ioutil.Copy(w, ioutil.AllOrNothing(t.Output(data)))\r\n\r\nOr we could also put the obvious extra wrapping of ioutil.CopyAllOrNothing:\r\n\r\nerr := ioutil.CopyAllOrNothing(w, t.Output(data))\r\n\r\n-rob\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 05:52:55.378010",
+			"approval": false
+		},
+		{
+			"sender": "adg@google.com",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "What about some mechanism in net/http:\r\n\r\nhttp://play.golang.org/p/zm_6IwI2ha\r\n\r\nSo you could write:\r\n\r\nfunc errorHandler(w http.ResponseWriter, r *http.Request) {\r\nrw := http.Buffer(w)\r\ndefer rw.Flush()\r\n\r\nfmt.Fprint(rw, \"Some output\")\r\nhttp.Error(rw, \"it's broken\", 500)\r\n}\r\n\r\nand this would drop the \"Some output\" part and only display \"it's broken\".\r\n\r\nIt would also be possible to wire it up internally so that \"defer\r\nrw.Flush()\" isn't necessary.\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 06:17:49.348570",
+			"approval": false
+		},
+		{
+			"sender": "r@golang.org",
+			"recipients": [
+				"reply@codereview-hr.appspotmail.com"
+			],
+			"text": "SGTM\r\n",
+			"disapproval": false,
+			"date": "2013-07-24 22:21:24.569860",
+			"approval": false
+		}
+	],
+	"owner_email": "dsymonds@golang.org",
+	"private": false,
+	"base_url": "",
+	"owner": "dsymonds",
+	"subject": "code review 11667043: text/template: add ExecuteWhole convenience method.",
+	"created": "2013-07-22 07:32:26.370750",
+	"patchsets": [
+		1,
+		3001,
+		6001,
+		9001
+	],
+	"modified": "2013-07-24 22:21:24.771770",
+	"closed": false,
+	"issue": 11667043
+}

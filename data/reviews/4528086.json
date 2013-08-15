@@ -1,0 +1,306 @@
+{
+	"description": "http: content-type negotiation and Accept header parsing.\n\nThis introduces two functions and one type. The type is Accept\nwhich represents a clause in an Accept header. The functions\nare ParseAccept which parses such a header and Negotiate\nwhich, given a header and a list of alternatives content types\nreturns the most appropriate result.\n\nIt is possible that the Negotiate should default by returning\nthe first of the alternative in the case that the provided\nheader is empty. This doesn't appear to happen often in\npractice and in any case perhaps it is the calling function's\njob to make sure that the header passed in is valid.",
+	"cc": [
+		"golang-dev@googlegroups.com"
+	],
+	"reviewers": [
+		"golang-dev@googlegroups.com",
+		"bradfitz@golang.org",
+		"dchest@gmail.com",
+		"pascal@quies.net"
+	],
+	"messages": [
+		{
+			"sender": "dchest@gmail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dchest@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/05/21 14:41:44, ww wrote:\n> On 21 May 2011 15:33,  <mailto:dchest@gmail.com> wrote:\n> > On 2011/05/21 14:24:16, ww wrote:\n> >>\n> >> All of these headers are quite well structured and rigorously defined\n> >> in the RFC.\n> >\n> > Except, you're receiving an untrusted input.\n> \n> And if it can't be parsed, an error is returned which the application can\n> handle as it wishes/\n\nProvided that the parser code is correct.\n\n> > You'll get what you need for Accept sorting in HeaderField.Value.\n> \n> Which I then have to parse (for Accept and Language) inside the\n> sorting function... And the matching function.\n\nYou do basically the same, but instead of the long parsing method, you have to care only about individual values.\n\nparseAccept(fields []HeaderField) []Accept {\n...\n}\n\n> >> Right now the parsing stages and sorting stages *are* separate.\n> >\n> > But I won't be able to use this parser to implement []Languages, so I'll\n> > have to write another one.\n> \n> Its a pretty simple parser. The format of the string being parsed is\n> different. I don't think this is much of a burden.\n\nI agree that it's simple, but is it different? value;q=...;extension=..., *",
+			"disapproval": false,
+			"date": "2011-05-21 14:53:01.647563",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n\nI'd like you to review this change to\nhttps://go.googlecode.com/hg/",
+			"disapproval": false,
+			"date": "2011-05-20 22:50:59.594423",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> I agree that it's simple, but is it different?\n> value;q=...;extension=..., *\n\nExtension does not exist for Charset, Language, Encoding.\n\n-w\n-- \nWilliam Waites\nEmail: wwaites@gmail.com\nUK tel: +44 131 516 3563\nUK mob: +44 789 798 9965\n",
+			"disapproval": false,
+			"date": "2011-05-21 14:56:51.516356",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 21 May 2011 16:01,  <dchest@gmail.com> wrote:\n> On 2011/05/21 14:56:51, ww wrote:\n>>\n>> > I agree that it's simple, but is it different?\n>> > value;q=...;extension=..., *\n>\n>> Extension does not exist for Charset, Language, Encoding.\n>\n> And thus, ignored when filling\n\nSo you don't want to parse the media type in the generic parser\nbut you do want to parse the extension parameters which are\nillegal in the other headers?\n\nI've just updated with your cosmetic change suggestions.\n\n-w\n\n-- \nWilliam Waites\nEmail: wwaites@gmail.com\nUK tel: +44 131 516 3563\nUK mob: +44 789 798 9965\n",
+			"disapproval": false,
+			"date": "2011-05-21 15:16:43.604925",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "What do you think about:\n\ntype Accept struct{}\n\ntype AcceptList []Accept\n\nfunc (al AcceptList) Negotiate(contentType ...string) string {\n    // ...                                                                                                                                    \n}\n\nfunc (r *Request) Accept() AcceptList {\n}\n\n?",
+			"disapproval": false,
+			"date": "2011-05-20 23:38:29.105959",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Generally I think this would be a nice way to go about it, however\nthere are some concerns:\n\n  * right now there is an accept_slice, which is like AcceptList. It exists for\n    using the sort package and I purposely did not want to expose the sort\n    implementation publicly, not least because it is backwards - sorts from\n    largest to smallest - which could be confusing if someone tried to use it\n    and I can't imagine why they would try to use it anyways. So probably\n    it makes sense to keep the private accept_slice and make AcceptList\n    a separate type that exists only for the purpose of the Negotiate method.\n    Doing this rather than just having a function is just a matter of style and\n    I'm happy to defer to your judgement.\n\n  * Maybe it should handle errors in the Accept header more strictly. With an\n    invalid header right now it will try to do the best it can,\nskipping over anything\n    it doesn't understand how to parse. Returning an error also from Accept\n    would be a stronger statement about the completeness of the implementation\n    then the best effort that it makes now.\n\n  * Likewise for corner cases in the Negotiate function. What should it do if\n    the AcceptList is empty? What should it do if the list of alternatives is\n    empty? On a high level what should happen in the former case is probably\n    return the first alternative, and the second should result in a 406 Not\n    Acceptable. Right now it returns an empty string in both cases which doesn't\n    distinguish. So also returning an error here would probably make sense?\n\n  * Hiding the explicit parse function is probably ok. I can't really see why it\n    would be desirable to want to parse such a header string outside of the\n    context of an http.Request.\n\nI'll work on rejigging it now...\n\nCheers,\n-w\n\nOn 21 May 2011 00:38,  <bradfitz@golang.org> wrote:\n> What do you think about:\n>\n> type Accept struct{}\n>\n> type AcceptList []Accept\n>\n> func (al AcceptList) Negotiate(contentType ...string) string {\n> \u00a0 \u00a0// ...\n>\n> }\n>\n> func (r *Request) Accept() AcceptList {\n> }\n>\n> ?\n>\n> http://codereview.appspot.com/4528086/\n>\n\n\n\n-- \nWilliam Waites\nEmail: wwaites@gmail.com\nUK tel: +44 131 516 3563\nUK mob: +44 789 798 9965\n",
+			"disapproval": false,
+			"date": "2011-05-21 08:37:52.595702",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dchest@gmail.com",
+				"pascal@quies.net",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "http://codereview.appspot.com/4528086/diff/9001/src/pkg/http/autoneg.go\nFile src/pkg/http/autoneg.go (right):\n\nhttp://codereview.appspot.com/4528086/diff/9001/src/pkg/http/autoneg.go#newcode163\nsrc/pkg/http/autoneg.go:163: // such a client would be quite broken...\nisn't this a comma-separated field? multiple headers should mean the same thing according to RFC 2616, no?\n\nThat is:\n\nAccept: application/xml,application/xhtml+xml\n\nand:\n\nAccept: application/xml\nAccept: application/xhtml+xml\n\nAre the same, aren't they?",
+			"disapproval": false,
+			"date": "2011-05-24 00:28:43.510427",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-05-21 09:29:10.592435",
+			"approval": false
+		},
+		{
+			"sender": "dchest@gmail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dchest@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/05/21 12:48:08, ww wrote:\n> On 21 May 2011 12:08,  <mailto:dchest@gmail.com> wrote:\n> > I'd love to have this type somewhere in http package:\n> >\n> > struct HeaderField type {\n> > &nbsp; &nbsp; &nbsp; &nbsp;Value string\n> > &nbsp; &nbsp; &nbsp; &nbsp;Q int\n> > &nbsp; &nbsp; &nbsp; &nbsp;Params map[string]string\n> > }\n> >\n> > and ParseHeaderFields that parses and sorts it. It could be reused in\n> > parsing Accept-Encoding, Accept-Charset, and Accept-Language.\n> \n> The thing is, the sorting algorithm is related but not the same. For\n> Accept we have type/subtype with facilities for wildcards, for Accept-Language\n> we have lang[-country]. I think but am not sure without checking that\n> Accept-Encoding and Accept-Charset would be the same, but still\n> different from the other two. Similarly with the matching algorithm.\n\nIf sorting doesn't apply, we can parse first into the list of HeaderField and then apply different sortings for AcceptList, LanguageList, etc.",
+			"disapproval": false,
+			"date": "2011-05-21 13:09:38.563415",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 21 May 2011 15:33,  <dchest@gmail.com> wrote:\n> On 2011/05/21 14:24:16, ww wrote:\n>>\n>> All of these headers are quite well structured and rigorously defined\n>> in the RFC.\n>\n> Except, you're receiving an untrusted input.\n\nAnd if it can't be parsed, an error is returned which the application can\nhandle as it wishes/\n\n> You'll get what you need for Accept sorting in HeaderField.Value.\n\nWhich I then have to parse (for Accept and Language) inside the\nsorting function... And the matching function.\n\n>> Right now the parsing stages and sorting stages *are* separate.\n>\n> But I won't be able to use this parser to implement []Languages, so I'll\n> have to write another one.\n\nIts a pretty simple parser. The format of the string being parsed is\ndifferent. I don't think this is much of a burden.\n\n-w\n\n\n-- \nWilliam Waites\nEmail: wwaites@gmail.com\nUK tel: +44 131 516 3563\nUK mob: +44 789 798 9965\n",
+			"disapproval": false,
+			"date": "2011-05-21 14:41:44.233915",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 21 May 2011 12:08,  <dchest@gmail.com> wrote:\n> I'd love to have this type somewhere in http package:\n>\n> struct HeaderField type {\n> \u00a0 \u00a0 \u00a0 \u00a0Value string\n> \u00a0 \u00a0 \u00a0 \u00a0Q int\n> \u00a0 \u00a0 \u00a0 \u00a0Params map[string]string\n> }\n>\n> and ParseHeaderFields that parses and sorts it. It could be reused in\n> parsing Accept-Encoding, Accept-Charset, and Accept-Language.\n\nThe thing is, the sorting algorithm is related but not the same. For\nAccept we have type/subtype with facilities for wildcards, for Accept-Language\nwe have lang[-country]. I think but am not sure without checking that\nAccept-Encoding and Accept-Charset would be the same, but still\ndifferent from the other two. Similarly with the matching algorithm.\n\nIf you have time to generalise the implementation in such a way as to\nhandle all of these cases, please feel free.\n\nCheers,\n-w\n-- \nWilliam Waites\nEmail: wwaites@gmail.com\nUK tel: +44 131 516 3563\nUK mob: +44 789 798 9965\n",
+			"disapproval": false,
+			"date": "2011-05-21 12:48:08.435969",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-05-21 09:30:46.416460",
+			"approval": false
+		},
+		{
+			"sender": "bradfitz@golang.org",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On Sat, May 21, 2011 at 8:34 AM, William Waites <wwaites@googlemail.com>wrote:\n\n> Actually, discussing unrelated things in IRC, what would be *really* nice\n> is\n> for the ebnf package's Grammar to be able to unmarshal things in a similar\n> way to the json and xml packages. That would be a nice general solution.\n>\n\nThat might be a distraction.\n\nThat's an internal implementation detail.  Let's get the types & API right\nand if we have to copy/paste a bit of code for now, so be it.  If the\nGrammar package or whatever lets us simplify the implementation in the\nfuture, great.\n\nI also wouldn't mind re-using the same struct type (\"Accept\") for both\n\"Accept\" and \"Accept-Language\", even if one doesn't have optional\nparameters.  Both are arguably about \"Accept\".  Or some other name.  Just\ndocument it well.\n",
+			"disapproval": false,
+			"date": "2011-05-24 00:25:40.128930",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "> If sorting doesn't apply, we can parse first into the list of\n> HeaderField and then apply different sortings for AcceptList,\n> LanguageList, etc.\n\nThe reason I didn't do this originally is that it would mean that the\nAccept (or HeaderField) contains only partially parsed values - I\nthought it cleaner to have the parsing code in the parsing function\nand the sorting and matching code in the sorting and matching\nfunctions.\n\nLooking at RFC2616 at the other negotiation headers, it is indeed\nthe case that Charset and Encoding would be the same. However\nnone of Charset, Encoding or Language have any concept of extra\nparameters.\n\nSo the choices seem to be:\n\n  * Have three different-but-similar types and three different-but-similar\n    parsers\n  * Have one type and move some of the parsing into the sort/match\n    functions which have to be different anyways\n  * Replace HeaderField.Value with an interface that can be used for\n    sorting and a two-pass parser and have a special type for Accept\n    that perhaps embeds HeaderField and adds a map for params\n\nThe types are not complicated (Accept is actually the most\ncomplicated) and neither are the parsers. The redundancy implied by\nthe first option (more or less where we are now) is not that great and\nit keeps the code simple to understand.\n\nThe second option would be the straightforward way of implenting what\nyou suggest, but having parsing in the sorter is ugly as I have mentioned.\n\nThe third stands to remove all possible redundancy in the code and might\nultimately be the nicest but the effort/benefit tradeoff for removing such\na small amount of redundancy (and adding structural complexity to an\notherwise straightforward implementation) seems wrong to me, but I\nwouldn't object if someone else wanted to do it.\n\nCheers,\n-w\n-- \nWilliam Waites\nEmail: wwaites@gmail.com\nUK tel: +44 131 516 3563\nUK mob: +44 789 798 9965\n",
+			"disapproval": false,
+			"date": "2011-05-21 13:46:23.743243",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Actually, discussing unrelated things in IRC, what would be *really* nice is\nfor the ebnf package's Grammar to be able to unmarshal things in a similar\nway to the json and xml packages. That would be a nice general solution.\n\n-w\n\n-- \nWilliam Waites\nEmail: wwaites@gmail.com\nUK tel: +44 131 516 3563\nUK mob: +44 789 798 9965\n",
+			"disapproval": false,
+			"date": "2011-05-21 15:34:51.134660",
+			"approval": false
+		},
+		{
+			"sender": "dchest@gmail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dchest@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "What I'm trying to say is that it would be better if the parsing stages and sorting stages were separate. We have the same parser for 3 different header types.\n\nParseHeaderFields(headerValue string) []HeaderField\n\nIt would return just an unsorted slice of header fields:\n\nParseHeaderFields(\"text/html;q=0.7, text/*\")\n\n=>\n\n[&HeaderField{Value: \"text/html\", Q: 0.7, ...}, &HeaderField{Value: \"text/*\", Q: 1, ...}]\n\nParseHeaderFields(\"en-us;q=0.8, de;q=0.1\")\n\n=>\n\n[&HeaderField{Value: \"en-us\", Q: 0.8, ...}, &HeaderField{Value: \"de\", Q: 0.1, ...}]\n\nThen []Accept, []Languages, []Charsets thing can sort them as needed and return their own values.\nThis way we need to write parser only once, minimizing the effect of the \"Don't parse\" rule (http://cr.yp.to/qmail/guarantee.html) :-)",
+			"disapproval": false,
+			"date": "2011-05-21 14:10:49.112571",
+			"approval": false
+		},
+		{
+			"sender": "dchest@gmail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dchest@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/05/21 14:24:16, ww wrote:\n> All of these headers are quite well structured and rigorously defined\n> in the RFC.\n\nExcept, you're receiving an untrusted input.\n\n> Moreover we have to parse them to do the sorting and matching because those\n> operations depend on the internal structure of things you're suggesting to leave\n> unparsed.\n\nYou'll get what you need for Accept sorting in HeaderField.Value.\n\n> Right now the parsing stages and sorting stages *are* separate.\n\nBut I won't be able to use this parser to implement []Languages, so I'll have to write another one.",
+			"disapproval": false,
+			"date": "2011-05-21 14:33:44.292436",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "The don't parse rule is about \"converting an unstructured sequence of commands,\nin a format usually determined more by psychology than by solid\nengineering, into\nstructured data\"\n\nAll of these headers are quite well structured and rigorously defined\nin the RFC.\nMoreover we have to parse them to do the sorting and matching because those\noperations depend on the internal structure of things you're suggesting to leave\nunparsed.\n\nRight now the parsing stages and sorting stages *are* separate.\n\n-w\n\n-- \nWilliam Waites\nEmail: wwaites@gmail.com\nUK tel: +44 131 516 3563\nUK mob: +44 789 798 9965\n",
+			"disapproval": false,
+			"date": "2011-05-21 14:24:16.270296",
+			"approval": false
+		},
+		{
+			"sender": "dchest@gmail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dchest@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "I'd love to have this type somewhere in http package:\n\nstruct HeaderField type {\n        Value string\n        Q int\n        Params map[string]string\n}\n\nand ParseHeaderFields that parses and sorts it. It could be reused in parsing Accept-Encoding, Accept-Charset, and Accept-Language.\n\nhttp://codereview.appspot.com/4528086/diff/9001/src/pkg/http/autoneg.go\nFile src/pkg/http/autoneg.go (right):\n\nhttp://codereview.appspot.com/4528086/diff/9001/src/pkg/http/autoneg.go#newcode14\nsrc/pkg/http/autoneg.go:14: \nNo empty line here.\n\nhttp://codereview.appspot.com/4528086/diff/9001/src/pkg/http/autoneg.go#newcode25\nsrc/pkg/http/autoneg.go:25: // Structure to represent a clause in an HTTP Accept Header\n. and the end of sentences (everywhere)\n\nhttp://codereview.appspot.com/4528086/diff/9001/src/pkg/http/autoneg.go#newcode33\nsrc/pkg/http/autoneg.go:33: type accept_sorter []Accept\nacceptSorter\n\nhttp://codereview.appspot.com/4528086/diff/9001/src/pkg/http/autoneg.go#newcode64\nsrc/pkg/http/autoneg.go:64: func (al AcceptList) Negotiate(alternatives ...string) (content_type string, err os.Error) {\ncontentType\n\nhttp://codereview.appspot.com/4528086/diff/9001/src/pkg/http/autoneg.go#newcode108\nsrc/pkg/http/autoneg.go:108: media_range := mrp[0]\nmediaRange or something shorter.\n\nhttp://codereview.appspot.com/4528086/diff/9001/src/pkg/http/autoneg.go#newcode122\nsrc/pkg/http/autoneg.go:122: err = os.ErrorString(errs)\nerr = os.NewError(\"autoneg: invalid media range in \" + part)",
+			"disapproval": false,
+			"date": "2011-05-21 11:08:57.542636",
+			"approval": false
+		},
+		{
+			"sender": "dchest@gmail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dchest@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "On 2011/05/21 14:56:51, ww wrote:\n> > I agree that it's simple, but is it different?\n> > value;q=...;extension=..., *\n> \n> Extension does not exist for Charset, Language, Encoding.\n\nAnd thus, ignored when filling \n\ntype Language struct {\n    Script string\n    Region string\n    Q float32 \n}\n\nfrom HeaderField",
+			"disapproval": false,
+			"date": "2011-05-21 15:01:31.215237",
+			"approval": false
+		},
+		{
+			"sender": "pascal@quies.net",
+			"recipients": [
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hi William,\n\nIt seems we have been doing the same thing during the weekend by pure chance.\n\ntype Variant struct {\n    // contains filtered or unexported fields\n}\nThe http.Variant is an immutable resource representation option.\n\nfunc NewVariant(mediaType string, languages ...string) *Variant\nGets a new http.Variant.\nThe mediaType may contain a charset parameter to specify its\ncharacter encoding.\nIf either the mediaType or languages are malformed NewVariant\nreturns nil.\n\nfunc SelectVariant(available []Variant, request *Request, response \nResponseWriter) *Variant\nSelectVariant returns the most appropriate Variant or nil if no match was \nfound.\nWhen nil is returned then no futher action to the ResponseWriter is required.\n\nfunc (v *Variant) Apply(header Header)\nApplies the appropriate content headers for the response message.\n\n\nThe Accept, Accept-Charset and Accept-Language header parsing is done and \ntested but the rest is still under development. I can send you a copy if you \nwant to?\n\nIdealy I'd like to end up with func (mux *ServeMux) HandleVariant(pattern \nstring, handler Handler, content *Variant). What do you think?\n\n\nOn Saturday 21 May 2011 00:50:59 wwaites@googlemail.com wrote:\n> Reviewers: golang-dev_googlegroups.com,\n> \n> Message:\n> Hello golang-dev@googlegroups.com (cc: golang-dev@googlegroups.com),\n> \n> I'd like you to review this change to\n> https://go.googlecode.com/hg/\n> \n> \n> Description:\n> http: content-type negotiation and Accept header parsing.\n> \n> This introduces two functions and one type. The type is Accept\n> which represents a clause in an Accept header. The functions\n> are ParseAccept which parses such a header and Negotiate\n> which, given a header and a list of alternatives content types\n> returns the most appropriate result.\n> \n> It is possible that the Negotiate should default by returning\n> the first of the alternative in the case that the provided\n> header is empty. This doesn't appear to happen often in\n> practice and in any case perhaps it is the calling function's\n> job to make sure that the header passed in is valid.\n> \n> Please review this at http://codereview.appspot.com/4528086/\n> \n> Affected files:\n>    M src/pkg/http/Makefile\n>    A src/pkg/http/autoneg.go\n>    A src/pkg/http/autoneg_test.go\n",
+			"disapproval": false,
+			"date": "2011-05-23 22:47:28.291518",
+			"approval": false
+		},
+		{
+			"sender": "wwaites@googlemail.com",
+			"recipients": [
+				"wwaites@googlemail.com",
+				"golang-dev@googlegroups.com",
+				"bradfitz@golang.org",
+				"dchest@gmail.com",
+				"golang-dev@googlegroups.com",
+				"reply@codereview.appspotmail.com"
+			],
+			"text": "Hello golang-dev@googlegroups.com, bradfitz@golang.org, dchest@gmail.com (cc: golang-dev@googlegroups.com),\n\nPlease take another look.",
+			"disapproval": false,
+			"date": "2011-05-21 15:14:36.777432",
+			"approval": false
+		}
+	],
+	"owner_email": "wwaites@googlemail.com",
+	"private": false,
+	"base_url": "",
+	"owner": "ww",
+	"subject": "code review 4528086: http: content-type negotiation and Accept header parsing.",
+	"created": "2011-05-20 22:50:01.786288",
+	"patchsets": [
+		1,
+		2001,
+		7001,
+		9001,
+		3005
+	],
+	"modified": "2011-05-21 15:14:36.777432",
+	"closed": false,
+	"issue": 4528086
+}
