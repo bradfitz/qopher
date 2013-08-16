@@ -70,6 +70,10 @@ func main() {
 		}
 		updatewg.Wait()
 
+		for _, r := range allReviews() {
+			reviewMap[r.Issue] = r
+		}
+
 		for _, r := range reviewMap {
 			for _, patchID := range r.PatchSets {
 				updatewg.Add(1)
